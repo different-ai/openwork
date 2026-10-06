@@ -25,7 +25,9 @@
  * Use lowerCamelCase with no consecutive capitals.
  *
  * Every feature belongs to exactly one module (`module`, a module id from
- * @openwork/license-contracts). Modules say what an organization has
+ * @openwork/license-contracts). Module ids are location paths such as
+ * "library.connectors"; groups like "org.auth" or "library" are namespaces,
+ * never a feature's module. Modules say what an organization has
  * (permanent, decided by plan or license plus the organization's opt-outs);
  * features say whether new code is safe to show yet (temporary rollout). A
  * feature is on only when its module is on and its flag is on, so a flag can
@@ -70,7 +72,7 @@ export const FEATURES = defineFeatures({
   installLinks: {
     label: "Install links",
     description: "Workspace admins can create desktop install links for their organization.",
-    module: "installLinks",
+    module: "org.installLinks",
     since: "2026-10",
     deployments: everywhere,
     default: true,
@@ -78,7 +80,7 @@ export const FEATURES = defineFeatures({
   mcpConnections: {
     label: "OpenWork Connect",
     description: "Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.",
-    module: "connect",
+    module: "library.connectors",
     since: "2026-10",
     deployments: everywhere,
     default: true,
@@ -86,7 +88,7 @@ export const FEATURES = defineFeatures({
   modelsAnalytics: {
     label: "OpenWork Models task analytics",
     description: "Organization admins can opt in to task analytics for OpenWork Models.",
-    module: "openworkModels.analytics",
+    module: "ai.gateway.openworkModels.analytics",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -94,7 +96,7 @@ export const FEATURES = defineFeatures({
   auditLogs: {
     label: "Audit logs",
     description: "Organization admins can read and configure audit logs. Capture still needs an audit entitlement.",
-    module: "auditLogs",
+    module: "org.observability.auditLogs",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -110,7 +112,7 @@ export const FEATURES = defineFeatures({
   slackAssistant: {
     label: "Slack Assistant",
     description: "Answers Slack mentions and DMs for the organization after the Slack connector is set up.",
-    module: "slackAssistant",
+    module: "library.connectors.slackAssistant",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -118,7 +120,7 @@ export const FEATURES = defineFeatures({
   slackAssistantHeadless: {
     label: "Slack Assistant: headless runtime",
     description: "Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.",
-    module: "slackAssistant.headless",
+    module: "library.connectors.slackAssistant.headless",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -142,7 +144,7 @@ export const FEATURES = defineFeatures({
   litellm: {
     label: "AI Gateway: LiteLLM",
     description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
-    module: "aiGateway",
+    module: "ai.gateway",
     since: "2026-10",
     deployments: everywhere,
     default: false,

@@ -49,9 +49,17 @@ exactly one module (`module` in the registry entry, required).
   area's module id. A brand-new product area adds a module id first in
   `packages/license-contracts` (ids are append-only: never rename, remove or
   reorder one), then declares its flag here with that `module`.
+- **Module ids are location paths.** They mirror where the feature lives in
+  the product, in camelCase segments, at most 4: `org.installLinks`,
+  `library.connectors.slackAssistant`, `ai.gateway.openworkModels.analytics`.
+  A segment is either a module or a **group** (`org`, `org.members`,
+  `org.auth`, `org.observability`, `ai`, `library`,
+  `library.connectors.native`). Groups are pure namespaces, always on, so a
+  feature never names one: pick the module under it (`org.auth.sso`, not
+  `org.auth`).
 - **Finishing a rollout** deletes the flag and its checks. From then on the
   module's entitlement is the only gate.
-- `pnpm features:check` rejects a feature with no `module` or an unknown one.
+- `pnpm features:check` rejects a feature with no `module`, an unknown one, or a group.
 
 ## Does this need a feature?
 
@@ -74,7 +82,7 @@ works rather than *whether* people get it (put it in `env.ts` / Helm `config.<ar
 newThing: {
   label: "New thing",
   description: "What a person gets, in words they see in the product.",
-  module: "connect",
+  module: "library.connectors",
   since: "2026-10",
   deployments: ["cloud", "self_hosted"],
   default: false,
@@ -82,7 +90,7 @@ newThing: {
 ```
 
 - **Key**: lowerCamelCase, no consecutive capitals. Permanent: also the Helm key, `DEN_FEATURE_NEW_THING`, the API field and stored rows.
-- **Module**: the module id the feature belongs to (see "Modules vs features"). Required.
+- **Module**: the module id the feature belongs to, a location path such as `library.connectors` (see "Modules vs features"). Required; never a group.
 - **Deployments**: leave one out on purpose (e.g. `["cloud"]` for a cloud-only feature).
 - **default**: false for new work. A fresh deployment, and a client that cannot reach Den, uses it, so never ship half-done work as `true`.
 - **permanent: true** only when the switch itself is part of the product (e.g. turning Connect off for one organization). Rollouts are temporary.

@@ -7,8 +7,9 @@
 //   pnpm features:check   fail if those files are stale, if the chart renders
 //                         different DEN_FEATURE_* names than den-api reads, if
 //                         a Dockerfile misses a workspace package its service
-//                         needs, if a feature names no module or an unknown
-//                         one, or if code bypasses the registry (see below)
+//                         needs, if a feature names no module, an unknown one
+//                         or a module group, or if code bypasses the registry
+//                         (see below)
 //
 // Read .opencode/skills/add-a-feature/SKILL.md before adding a feature.
 
@@ -22,7 +23,7 @@ import {
   featureAvailableOn,
   featureLockEnvName,
 } from "../packages/features/src/index.ts"
-import { MODULE_IDS } from "../packages/license-contracts/src/module-id-list.ts"
+import { MODULE_GROUPS, MODULE_IDS } from "../packages/license-contracts/src/module-id-list.ts"
 import { checkDockerWorkspacePackages } from "./check-docker-workspace-packages.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -150,6 +151,8 @@ if (check) {
     if (!definition.label.trim() || !definition.description.trim()) problems.push(`Feature "${key}" needs a label and a description.`)
     if (typeof definition.module !== "string" || definition.module === "") {
       problems.push(`Feature "${key}" needs a module: every feature belongs to exactly one module (see .opencode/skills/add-a-feature).`)
+    } else if (MODULE_GROUPS.includes(definition.module)) {
+      problems.push(`Feature "${key}" names "${definition.module}", which is a module group, not a module. Groups are always on and can't gate a feature; use a module id under it from packages/license-contracts/src/module-id-list.ts.`)
     } else if (!MODULE_IDS.includes(definition.module)) {
       problems.push(`Feature "${key}" names unknown module "${definition.module}". Use an id from packages/license-contracts/src/module-id-list.ts, or add the module there first.`)
     }

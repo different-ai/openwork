@@ -99,7 +99,8 @@ Rules:
 
 - Every feature flag belongs to exactly one module: the required `module`
   field in `packages/features/src/registry.ts`, checked by the type and by
-  `pnpm features:check`. Removing or renaming a module id breaks that check.
+  `pnpm features:check`, which also rejects a group id. Removing or renaming
+  a module id breaks that check.
 - A new product area gets a module id first; its code ships behind a flag
   scoped to that module.
 - Effective = module effective ∧ flag on. A flag can only hold a module back;

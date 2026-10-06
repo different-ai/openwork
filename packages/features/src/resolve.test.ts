@@ -82,26 +82,26 @@ test("environment: self_hosted by default, strict values, unknown keys warn", ()
   assert.deepEqual(fatal.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_DEPLOYMENT", true], ["DEN_FEATURE_WORKBOT", true]])
 })
 
-test("every feature belongs to its module (D43)", () => {
+test("every feature belongs to its module (D43, ids per D44)", () => {
   const expected: Record<string, string> = {
-    installLinks: "installLinks",
-    mcpConnections: "connect",
-    modelsAnalytics: "openworkModels.analytics",
-    auditLogs: "auditLogs",
+    installLinks: "org.installLinks",
+    mcpConnections: "library.connectors",
+    modelsAnalytics: "ai.gateway.openworkModels.analytics",
+    auditLogs: "org.observability.auditLogs",
     orgManagedDashboards: "dashboards",
-    slackAssistant: "slackAssistant",
-    slackAssistantHeadless: "slackAssistant.headless",
+    slackAssistant: "library.connectors.slackAssistant",
+    slackAssistantHeadless: "library.connectors.slackAssistant.headless",
     headlessAutomations: "automations.headless",
     workbot: "workbot",
-    litellm: "aiGateway",
+    litellm: "ai.gateway",
   }
   for (const key of FEATURE_KEYS) {
     assert.ok(Object.hasOwn(expected, key), `add ${key} to this table with its module`)
     assert.equal(featureModule(key), expected[key])
   }
-  assert.deepEqual(featureKeysForModule("slackAssistant"), ["slackAssistant"])
-  assert.deepEqual(featureKeysForModule("aiGateway"), ["litellm"])
-  assert.deepEqual(featureKeysForModule("billing"), [])
+  assert.deepEqual(featureKeysForModule("library.connectors.slackAssistant"), ["slackAssistant"])
+  assert.deepEqual(featureKeysForModule("ai.gateway"), ["litellm"])
+  assert.deepEqual(featureKeysForModule("org.billing"), [])
 })
 
 test("a feature is effective only when its module is effective and its flag is on", () => {
