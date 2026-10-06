@@ -213,6 +213,8 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open("/dashboard");
     await user.click({ role: "button", label: "Add to dashboard" });
     await user.click("Create with OpenWork");
+    await user.see({ text: "Add to your dashboard" });
+    await user.click("Create with OpenWork");
     await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     expect(creationPrompt).not.toContain(world.configObjectId);
     await user.type("composer", creationPrompt, { replace: true });
@@ -369,8 +371,8 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see({ text: "Pin the artifacts you check every day" }, { timeoutMs: 30_000 });
     expect(await readApp()).toMatchObject({ onDashboard: false, view: { activeRevisionId: revisionId } });
     await user.click({ role: "button", label: "Add to dashboard" });
-    await user.see("Create with OpenWork");
-    await user.click("Choose an existing artifact");
+    await user.click("Other saved artifacts");
+    await user.see({ label: "Search artifacts" });
     await user.click("Add Team briefing");
     await probe.eventually(readApp, { within: 30_000, label: "personal dashboard placement restored", until: (app) => app.onDashboard === true });
     await user.screenshot();
@@ -836,8 +838,10 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("Dashboard Add opens a creation conversation", async () => {
     await world.open("/dashboard");
     await user.click({ role: "button", label: "Add to dashboard" });
-    await user.see("Choose an existing artifact");
+    await user.see({ label: "Search artifacts" });
     await user.screenshot();
+    await user.click("Create with OpenWork");
+    await user.see({ text: "Add to your dashboard" });
     await user.click("Create with OpenWork");
     await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     await user.screenshot();
