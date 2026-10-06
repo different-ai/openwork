@@ -40,13 +40,17 @@ export type AuthContextVariables = {
 const INTERNAL_MCP_PRINCIPAL_HEADER = "x-den-internal-mcp-principal"
 const INTERNAL_MCP_PRINCIPAL_TTL_MS = 60_000
 export const INTERNAL_CAPABILITY_CONNECTOR_HEADER = "x-den-internal-capability-connector"
-const BETTER_AUTH_SESSION_COOKIE_NAMES = [
-  "openwork-den.session_token",
-  "__Secure-openwork-den.session_token",
-  "better-auth.session_token",
-  "__Secure-better-auth.session_token",
-  "better-auth-session_token",
-] as const
+// With its own cookie prefix (a local world), this Den reads only its own cookies, never another Den's on the
+// same host; the legacy names are for the default prefix only.
+const BETTER_AUTH_SESSION_COOKIE_NAMES = env.authCookiePrefix === "openwork-den"
+  ? [
+    "openwork-den.session_token",
+    "__Secure-openwork-den.session_token",
+    "better-auth.session_token",
+    "__Secure-better-auth.session_token",
+    "better-auth-session_token",
+  ]
+  : [`${env.authCookiePrefix}.session_token`, `__Secure-${env.authCookiePrefix}.session_token`]
 
 // Per-process secret used exclusively to sign the internal MCP principal header.
 // It is generated fresh at startup, lives only in memory, and is never derived

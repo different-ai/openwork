@@ -1033,7 +1033,7 @@ export const auth = betterAuth({
     }),
   },
   advanced: {
-    cookiePrefix: "openwork-den",
+    cookiePrefix: env.authCookiePrefix,
     ...(env.betterAuthCookieDomain
       ? {
         crossSubDomainCookies: {

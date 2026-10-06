@@ -27,6 +27,12 @@ const EnvSchema = z.object({
   DEN_MCP_RESOURCE_URL: z.string().optional(),
   DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
   DEN_BETTER_AUTH_COOKIE_DOMAIN: z.string().optional(),
+  /**
+   * The prefix of Den's sign-in cookies (default "openwork-den"). Browsers share cookies across every port of one
+   * host, so several Dens on 127.0.0.1 (local worlds, dev stacks) would otherwise read each other's sign-in. Each
+   * local world sets its own ("openwork-den-<id>"); den-web forwards any "openwork-den-" cookie already.
+   */
+  DEN_AUTH_COOKIE_PREFIX: z.string().regex(/^openwork-den(-[a-z0-9]{1,32})?$/).optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   DEN_TRUSTED_PROXIES: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
@@ -650,6 +656,7 @@ export const env = {
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl,
   betterAuthCookieDomain,
+  authCookiePrefix: parsed.DEN_AUTH_COOKIE_PREFIX ?? "openwork-den",
   trustedProxies: splitCsv(parsed.DEN_TRUSTED_PROXIES),
   webUrl: normalizePublicWebOrigin(betterAuthUrl),
   // SECURITY: `redis://` carries cached auth-session material in plaintext.
