@@ -89,8 +89,6 @@ config:
     # Preserve the Den runtime for published legacy Desktops during upgrades.
     # Set false only after every Desktop is v0.18.35+ to hard-disable Automations.
     automationsRuntimeEnabled: "true"
-    # Enable only after compatible Desktop MCP Apps hosts are deployed.
-    generatedArtifactViewsEnabled: "false"
     appMcpServersEnabled: "true"
     connectLinkMode: exchange
     connectLinkKeyId: ""

@@ -270,6 +270,15 @@ derive them from `webOrigin`. Keep `apiOrigin`/`mcpResourceUrl` only when you
 intentionally expose a separate API origin for install-link exchange or external
 MCP clients.
 
+### Upgrade note: retired generated Artifact views
+
+`config.public.generatedArtifactViewsEnabled` (`DEN_GENERATED_ARTIFACT_VIEWS_ENABLED`)
+was removed together with Workflow-bound saved apps. The chart has no values
+schema, so a leftover value is ignored; remove it from your values file. If the
+variable still reaches Den as `true`, Den logs a one-time warning at boot and
+ignores it. Saved-app rows stay in the database. Apps are built with App MCP
+servers (`appMcpServersEnabled`).
+
 For private GHCR packages, authenticate before installing:
 
 ```bash

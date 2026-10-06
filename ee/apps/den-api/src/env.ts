@@ -517,16 +517,15 @@ const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && 
   ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
   : null
 
-// Generated custom views require the matching desktop MCP Apps host release.
-// Keep the Den capability fail-closed so a Den deployment cannot advertise
-// bridge-dependent resources to older published desktop builds.
-const generatedArtifactViewsEnabled =
-  (parsed.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? "false").trim().toLowerCase() === "true"
+// Workflow-bound generated Artifact views are retired (D36). Warn operators
+// who still set the flag; delete this after the D19 compatibility window.
+if ((parsed.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? "").trim().toLowerCase() === "true") {
+  console.warn("[den-api] DEN_GENERATED_ARTIFACT_VIEWS_ENABLED is retired and ignored: Workflow-bound saved apps were removed. Build apps with App MCP servers instead.")
+}
 
-// Apps built through Connect are served as their own MCP servers, and older
-// Workflow-bound views become read-only. On by default, including when set
-// empty; false, 0, off, or no (or any other value) restores the previous
-// behavior: no App servers, writable Workflow-bound views.
+// Apps built through Connect are served as their own MCP servers. On by
+// default, including when set empty; false, 0, off, or no (or any other value)
+// turns App servers off, which leaves the organization without an app builder.
 const appMcpServersEnabled = parseBooleanFlag(optionalString(parsed.DEN_APP_MCP_SERVERS_ENABLED) ?? "true")
 
 // Desktop availability stays fail-closed, while an entirely unconfigured
@@ -699,7 +698,6 @@ export const env = {
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,
   connectLink,
-  generatedArtifactViewsEnabled,
   appMcpServersEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   // Lifecycle reminder emails (claim reminder, team nudge). Off unless

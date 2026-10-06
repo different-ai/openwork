@@ -1,10 +1,8 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
-  generatedArtifactViewSchema,
   workflowDetailSchema,
-  type GeneratedArtifactView,
   type WorkflowDetail,
 } from "@openwork/types/workflows";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
@@ -16,14 +14,14 @@ type WorkflowSummary = {
   viewState: "default" | "custom_active" | "build_failed" | "retired"; activeViewTitle: string | null;
   automationCount: number; source: { kind: "created" | "installed_template" };
 };
-export type WorkflowLibraryDetail = { workflow: WorkflowSummary; script: WorkflowDetail; views: GeneratedArtifactView[] };
+export type WorkflowLibraryDetail = { workflow: WorkflowSummary; script: WorkflowDetail };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function parseWorkflowDetail(value: unknown): WorkflowLibraryDetail {
-  if (!isRecord(value) || !isRecord(value.workflow) || !Array.isArray(value.views)) throw new Error("Workflow response was incomplete.");
+  if (!isRecord(value) || !isRecord(value.workflow)) throw new Error("Workflow response was incomplete.");
   const workflow = value.workflow;
   const role = workflow.role === "viewer" || workflow.role === "editor" || workflow.role === "manager" ? workflow.role : null;
   const state = workflow.state === "ready" || workflow.state === "needs_signin" || workflow.state === "needs_admin_setup" ? workflow.state : null;
@@ -44,14 +42,7 @@ function parseWorkflowDetail(value: unknown): WorkflowLibraryDetail {
       automationCount: workflow.automationCount, source: { kind: sourceKind },
     },
     script: workflowDetailSchema.parse(value.script),
-    views: value.views.map((view) => generatedArtifactViewSchema.parse(view)),
   };
-}
-
-async function mutationJson(path: string, method: "POST" | "PUT") {
-  const { response, payload } = await requestJson(path, { method }, 15_000);
-  if (!response.ok) throw new Error(getErrorMessage(payload, `Workflow action failed (${response.status}).`));
-  return payload;
 }
 
 export function useWorkflowLibraryDetail(workflowId: string) {
@@ -62,27 +53,5 @@ export function useWorkflowLibraryDetail(workflowId: string) {
       if (!response.ok) throw new Error(getErrorMessage(payload, `Failed to load Workflow (${response.status}).`));
       return parseWorkflowDetail(payload);
     },
-  });
-}
-
-export function useActivateArtifactView(workflowId: string) {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ viewId, revisionId }: { viewId: string; revisionId: string }) => generatedArtifactViewSchema.parse(await mutationJson(
-      `/v1/artifact-views/${encodeURIComponent(viewId)}/revisions/${encodeURIComponent(revisionId)}/activate`,
-      "POST",
-    )),
-    onSuccess: async () => client.invalidateQueries({ queryKey: ["workflow", workflowId] }),
-  });
-}
-
-export function useRetireArtifactView(workflowId: string) {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (viewId: string) => generatedArtifactViewSchema.parse(await mutationJson(
-      `/v1/artifact-views/${encodeURIComponent(viewId)}/retire`,
-      "POST",
-    )),
-    onSuccess: async () => client.invalidateQueries({ queryKey: ["workflow", workflowId] }),
   });
 }

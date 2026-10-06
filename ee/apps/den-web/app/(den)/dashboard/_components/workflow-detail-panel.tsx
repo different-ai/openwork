@@ -44,21 +44,16 @@ export function WorkflowDetailPanel({ configObjectId, onClose }: { configObjectI
       <WorkflowOverviewTab
         detail={state.detail}
         fields={state.fields}
-        views={state.views}
         technical={state.technical}
         showJsonInput={state.showJsonInput}
         parsedInputSchema={state.parsedInputSchema}
         hasInputForm={state.hasInputForm}
         inputFormValue={state.inputFormValue}
         pending={state.pending}
-        viewPending={state.viewPending}
-        canManageDisplays={state.detail.canManage}
         onTechnicalChange={state.setTechnical}
         onShowJsonInputChange={state.setShowJsonInput}
         onInputChange={(value) => state.update("input", value)}
         onRun={state.runNow}
-        onActivateView={state.activateView}
-        onRetireView={state.retireView}
       />
     </div>
   );

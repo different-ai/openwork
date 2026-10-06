@@ -495,19 +495,6 @@
   },
   {
     "type": "dependency",
-    "from": "specs/saved-app-creation.e2e.test.ts",
-    "to": "@openwork/behaviors",
-    "unresolvedTo": "@openwork/behaviors",
-    "dependencyTypes": [
-      "unknown"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "specs-use-testkit-only"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "specs/saved-script-automations.e2e.test.ts",
     "to": "@openwork/behaviors",
     "unresolvedTo": "@openwork/behaviors",

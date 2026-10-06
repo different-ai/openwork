@@ -883,11 +883,8 @@ export async function server(options: ServerOptions): Promise<Den> {
       DEN_AUTOMATIONS_ENABLED: "true",
       DEN_AUTOMATIONS_RUNTIME_ENABLED: "true",
       DEN_DASHBOARDS_ENABLED: "false",
-      DEN_GENERATED_ARTIFACT_VIEWS_ENABLED:
-        process.env.OPENWORK_EVAL_GENERATED_ARTIFACT_VIEWS_E2E_TEST === "1" ? "true" : "false",
-      // Apps built in OpenWork are on for every organization in production, and
-      // they make Workflow-bound views read-only. Older Workflow-bound journeys
-      // keep testing that mode; the App journeys set this to "true".
+      // Apps built in OpenWork are on for every organization in production.
+      // The App journeys set this to "true".
       DEN_APP_MCP_SERVERS_ENABLED: "false",
       OPENWORK_DEV_MODE: "1",
       PROVISIONER_MODE: "stub",

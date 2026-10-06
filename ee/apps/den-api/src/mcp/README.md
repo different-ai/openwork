@@ -131,10 +131,12 @@ App id, `toolName` is `open_app`), which Den web's Add app picker offers as
 revision, so `update_app` never strands an assigned tile; a member still needs
 the App's Plugin to open it.
 
-Where `create_app` is available, Workflow-bound views are read-only:
-`save_artifact_view` (create or edit), `activate_artifact_view_revision`, and
-the REST save and activate routes return `legacy_view_read_only`. Existing views
-keep their render, preview, run, and resource paths, and can still be retired.
+Workflow-bound generated Artifact views ("saved apps", `save_artifact_view`
+and its sibling tools, `DEN_GENERATED_ARTIFACT_VIEWS_ENABLED`) are retired
+(D36). Their tables are kept but unread. `routes/org/legacy-saved-apps.ts`
+keeps the routes published desktops still call, hidden from OpenAPI and MCP:
+`GET /v1/apps` answers `{ enabled: false, sharingEnabled: false, items: [] }`
+and the others answer 404 `artifact_view_not_found`.
 
 Building your own Apps is on for every organization. It needs
 `DEN_APP_MCP_SERVERS_ENABLED` (default `true`; `false`, `0`, `off`, or `no`
@@ -142,25 +144,17 @@ turns it off for the deployment) and the organization's member-facing MCP
 connections. `appMcpServersEnabled` in `mcp-app-rollout.ts` combines the two,
 and `GET /v1/org` reports the result as the `appMcpServers` capability. The
 retired per-organization `appMcpServers` override is ignored and dropped on the
-next admin capabilities write. Where it is off, an organization keeps the
-previous surface: no builder tools or App servers, the original connection index
-and `save_artifact_view` guidance, and writable Workflow-bound views. MCP Apps
-from connected MCP servers work either way. Eval Dens default the deployment
-flag to `false` so older Workflow-bound journeys keep testing that mode; the
-App journeys set it to `true`.
+next admin capabilities write. Where it is off, an organization has no app
+builder: no builder tools or App servers, the original connection index, and
+agent guidance that offers Workflow results instead. MCP Apps from connected
+MCP servers work either way. Eval Dens default the deployment flag to `false`;
+the App journeys set it to `true`.
 
-### Live generated apps
+### Live Workflows
 
-GeneratedArtifactView.dataMode is optional on the wire. An absent value means
-legacy snapshot; new save_artifact_view calls persist live by default.
-The mode is immutable for a view. Migration 0101_artifact_view_data_mode
-preserves existing rows as snapshots.
-
-Live views expose run_artifact_<id> alongside render and preview tools.
-All three execute the current saved Workflow as the authenticated caller,
-using only exact declared capabilities whose current Den authority marks them
-read-only. Normal explicit Workflow runs and Automation authority are unchanged.
-A view's output schema must match the current version before execution.
+Live Workflow runs (an App tool bound in mode live, or
+`execute_capability_script` with mode live) execute the current saved Workflow
+as the authenticated caller.
 
 The only live run argument is optional timeZone, an IANA zone, defaulting to
 UTC. Desktop callers should supply Intl.DateTimeFormat().resolvedOptions().timeZone.
@@ -171,14 +165,8 @@ Author Workflow input schemas to accept that runtime object; example inputs
 and creation dates are never reused. Arbitrary inputs and receipt overrides
 are rejected.
 
-GET /v1/apps/:appId also executes live views, accepts timeZone, and returns
-Cache-Control: private, no-store. A failed run returns a null payload and an
-optional structured runError, including connection status/card details when
-available. MCP failures retain those details and connection cards.
-
 Receipts, detail results, and snapshot pages are caller-private, including for
-organization admins. Sharing an app shares the Workflow and view, never a
-personal receipt. Explicit snapshot creation rejects capability-dependent
+organization admins. Sharing a Workflow never shares a personal receipt. Explicit snapshot creation rejects capability-dependent
 Workflows, including Google and other personal integrations. External metadata
 hints cannot establish non-personal data. This contract does not provide a
 cross-member snapshot-data sharing override; legacy snapshots and Automation

@@ -307,8 +307,7 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   await using resources = new AsyncDisposableStack();
   const den = await seed.den({
     web: true,
-    // Legacy Workflow-bound views are on so the journey can prove they are read-only beside App servers.
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true" },
+    env: { DEN_APP_MCP_SERVERS_ENABLED: "true" },
     org: { name: `App servers ${Date.now()}`, members: { member: { name: "App teammate" }, outsider: { name: "Ungranted teammate" } } },
     mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool, reserveTool] }) },
   });
@@ -454,18 +453,12 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
     async share() {
       await grant(`/v1/plugins/${created.pluginId}/access`);
     },
-    /** Every write path a Workflow-bound view had, tried against the running Den. */
-    async legacyWrites() {
-      const reactSource = "export default function View() { return <p>legacy</p> }";
-      const results = await Promise.all([
-        call("owner", "save_artifact_view", { configObjectId: procedure.configObjectId, title: "New legacy view", reactSource }),
-        call("owner", "save_artifact_view", { artifactViewId: "existing-legacy-view", configObjectId: procedure.configObjectId, title: "Edited legacy view", reactSource }),
-        call("owner", "activate_artifact_view_revision", { artifactViewId: "existing-legacy-view", revisionId: "existing-legacy-revision" }),
-      ]);
+    /** The retired saved-app save route, as a published desktop still calls it. */
+    async legacySave() {
       const saved = await seed.api(den.admin, "/v1/apps/existing-legacy-view/save", {
         method: "POST", body: JSON.stringify({ revisionId: "existing-legacy-revision", title: "Saved legacy view", useInWorkflow: false, expectedActiveRevisionId: null }),
       });
-      return { tools: results.map(result => ({ isError: result.isError === true, body: payload(result) })), save: { status: saved.response.status, body: record(saved.body) } };
+      return { status: saved.response.status, body: record(saved.body) };
     },
     async update() {
       const current = payload(await call("owner", "read_app", { appId: created.appId }));
@@ -519,7 +512,7 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
   const engine = options.engine ?? "v1";
   const toolStep = (tool: string, args: Record<string, unknown>) => engine === "v2" ? { tool: "execute", arguments: { code: `return await tools["openwork-cloud"].${tool}(${JSON.stringify(args)});` } } : { tool, arguments: args };
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", ...(measured ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}) },
+    env: { DEN_APP_MCP_SERVERS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", ...(measured ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}) },
     org: { name: `App servers chat ${Date.now()}` },
     mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool, reserveTool] }) },
   });

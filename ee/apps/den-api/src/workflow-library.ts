@@ -9,7 +9,6 @@ import type { GeneratedArtifactView } from "@openwork/types/workflows"
 import { db } from "./db.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { getWorkflowDetail } from "./workflows.js"
-import { listArtifactViewsForScript } from "./artifact-views.js"
 import {
   resolvePluginArchResourceRole,
   type PluginArchActorContext,
@@ -35,6 +34,7 @@ export type WorkflowLibraryItem = {
   state: "ready" | "needs_signin" | "needs_admin_setup"
   resultState: "never_run" | "fresh" | "stale" | "needs_attention"
   latestSuccessfulAt: string | null
+  /** Always "default": Workflow-bound Artifact views are retired (D36). Kept on the wire for older clients (D19). */
   viewState: "default" | "custom_active" | "build_failed" | "retired"
   activeViewTitle: string | null
   automationCount: number
@@ -44,6 +44,7 @@ export type WorkflowLibraryItem = {
 export type WorkflowLibraryDetail = {
   workflow: WorkflowLibraryItem
   script: Awaited<ReturnType<typeof getWorkflowDetail>>
+  /** Always empty; see viewState. */
   views: GeneratedArtifactView[]
 }
 
@@ -81,18 +82,6 @@ function accessEdges(input: {
     }
   }
   return [...edges.values()]
-}
-
-function viewLifecycle(views: GeneratedArtifactView[]) {
-  const active = views.find((view) => view.status === "active" && view.activeRevisionId !== null)
-  if (active) return { viewState: "custom_active" as const, activeViewTitle: active.title }
-  if (views.some((view) => view.status === "active" && view.revisions.some((revision) => revision.buildStatus === "failed"))) {
-    return { viewState: "build_failed" as const, activeViewTitle: null }
-  }
-  if (views.length > 0 && views.every((view) => view.status === "retired")) {
-    return { viewState: "retired" as const, activeViewTitle: null }
-  }
-  return { viewState: "default" as const, activeViewTitle: null }
 }
 
 function connectionReadiness(connection: MemberUsableConnectionFacts) {
@@ -142,9 +131,8 @@ async function workflowItem(input: {
   })
   if (!role) return null
   try {
-    const [script, views, grants] = await Promise.all([
+    const [script, grants] = await Promise.all([
       getWorkflowDetail({ context: input.context, configObjectId: input.row.id }),
-      listArtifactViewsForScript({ context: input.context, configObjectId: input.row.id }),
       db.select().from(ConfigObjectAccessGrantTable).where(and(
         eq(ConfigObjectAccessGrantTable.organizationId, input.context.organizationContext.organization.id),
         eq(ConfigObjectAccessGrantTable.configObjectId, input.row.id),
@@ -171,7 +159,8 @@ async function workflowItem(input: {
       }),
       resultState: script.freshness.state,
       latestSuccessfulAt,
-      ...viewLifecycle(views),
+      viewState: "default",
+      activeViewTitle: null,
       automationCount: automationIds.size,
       source: { kind: "created" },
     }
@@ -242,9 +231,8 @@ export async function getWorkflowLibraryDetail(input: {
   configObjectId: string
   maxAgeMs?: number
 }): Promise<WorkflowLibraryDetail> {
-  const [script, views, effectiveAccess, connections] = await Promise.all([
+  const [script, effectiveAccess, connections] = await Promise.all([
     getWorkflowDetail({ context: input.context, configObjectId: input.configObjectId, maxAgeMs: input.maxAgeMs }),
-    listArtifactViewsForScript({ context: input.context, configObjectId: input.configObjectId }),
     listMeEffectivePluginAccess({ context: input.context }),
     listMemberUsableConnectionFacts({ context: input.context }),
   ])
@@ -275,5 +263,5 @@ export async function getWorkflowLibraryDetail(input: {
     connections,
   })
   if (!workflow) throw new Error("workflow_not_found")
-  return { workflow, script, views }
+  return { workflow, script, views: [] }
 }

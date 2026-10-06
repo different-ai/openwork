@@ -79,14 +79,13 @@ async function agentRpc(
 const test = spec.world(async seed => {
   needs(requirements)
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true" },
     org: { name: `Workflow Automation ${Date.now()}`, admin: { name: "Sarah" }, members: { colleague: { name: "Colleague" } } },
     mocks: { reports: seed.mock({ allowUnauthenticatedMcp: true }) },
   })
   return { den }
 }, { timeout: 1_200_000, resources: { surfaces: [], services: ["den", "mock"] } })
 
-test("an owner saves and reopens a snapshot app, and external Workflows run live and unattended (protocol-level)", async ({ world, evidence, step }) => {
+test("saved Workflows run manually, on schedule, and unattended with external tools (protocol-level)", async ({ world, evidence, step, probe }) => {
   const { den } = world
   const orgs = await denFetch(den.admin, "/v1/me/orgs", {
     headers: { authorization: `Bearer ${den.admin.token}` },
@@ -193,60 +192,31 @@ test("an owner saves and reopens a snapshot app, and external Workflows run live
     true,
   )
 
-  const appCode = "return { briefing: { topic: input.topic } }"
-  const appExecuted = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
-    name: "execute_capability_script",
-    arguments: { code: appCode, input: { topic: firstMarker }, inputSchema, outputSchema },
+  await step("retired Workflow-bound saved apps answer as disabled for published desktops", async () => {
+    const listed = await probe.api(den.admin, "/v1/apps")
+    expect(listed.response.status, listed.text).toBe(200)
+    expect(listed.body).toEqual({ enabled: false, sharingEnabled: false, items: [] })
+    const opened = await probe.api(den.admin, "/v1/apps/app_missing")
+    expect(opened.response.status).toBe(404)
+    expect(opened.body).toEqual({ error: "artifact_view_not_found" })
+    for (const path of ["/v1/apps/app_missing/save", "/v1/artifact-views/app_missing/retire"]) {
+      const absent = await denFetch(den.admin, path, { method: "POST", headers: { authorization: `Bearer ${den.admin.token}` } })
+      expect(absent.response.status, path).toBe(404)
+      expect(absent.body).toEqual({ error: "artifact_view_not_found" })
+    }
+    const detail = await probe.api(den.admin, `/v1/workflows/${configObjectId}`)
+    expect(detail.response.status, detail.text).toBe(200)
+    expect(detail.body).toMatchObject({ workflow: { viewState: "default", activeViewTitle: null }, views: [] })
+    const tools = records((await agentRpc(den.ref.apiUrl, mcpToken, "tools/list", {})).tools)
+    expect(tools.map((tool) => tool.name).filter((name) => typeof name === "string" && /artifact_view|render_artifact_|preview_artifact_/.test(name))).toEqual([])
+    evidence.recordAssertionEvidence(
+      "Saved-app routes keep the disabled responses published desktops expect, and no saved-app MCP tools remain",
+      "GET /v1/apps returned enabled:false with no items; open, save and retire returned 404 artifact_view_not_found; the Workflow detail had the default view state and no views; tools/list had no artifact view tools.",
+      true,
+    )
   })
-  expect(appExecuted.isError).not.toBe(true)
-  expect(JSON.stringify(appExecuted.content)).toContain(firstMarker)
-  const appSavedResponse = await saveWorkflow(den.admin, {
-    name: `${scriptName} snapshot app`,
-    code: appCode,
-    currentInput: { topic: firstMarker },
-    inputSchema,
-    outputSchema,
-  })
-  expect(appSavedResponse.status, appSavedResponse.text).toBe(201)
-  const appSaved = requireRecord(appSavedResponse.body, "saved app Workflow")
-  const appPluginId = typeof appSaved.pluginId === "string" ? appSaved.pluginId : ""
-  const appConfigObjectId = typeof appSaved.configObjectId === "string" ? appSaved.configObjectId : ""
-  const appConfigObjectVersionId = typeof appSaved.configObjectVersionId === "string" ? appSaved.configObjectVersionId : ""
-  expect(appPluginId).not.toBe("")
-  expect(appConfigObjectId).not.toBe("")
-  expect(appConfigObjectId).not.toBe(configObjectId)
-  expect(appConfigObjectVersionId).not.toBe("")
-  const appWorkflow = await readWorkflowDetail(den.admin, appConfigObjectId)
-  expect(requireRecord(appWorkflow.script.currentVersion, "app Workflow version").requiredCapabilities).toEqual([])
-  expect(appWorkflow.script.latestSuccessfulSnapshot).toBeNull()
 
-  const initialDraftSource = "export default function Briefing({ data }) { return <article><h1>Briefing</h1><p>{data.briefing.topic}</p></article> }"
-  const emptyDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
-    name: "save_artifact_view",
-    arguments: { configObjectId: appConfigObjectId, dataMode: "snapshot", title: "Briefing app", reactSource: initialDraftSource },
-  })
-  expect(emptyDraft.isError).toBe(true)
-  expect(emptyDraft._meta).toBeUndefined()
-  expect(emptyDraft.structuredContent).toBeUndefined()
-  const emptyText = records(emptyDraft.content)[0]?.text
-  if (typeof emptyText !== "string") throw new Error("Missing preview failure result")
-  const emptyFailure = requireRecord(JSON.parse(emptyText), "empty preview failure")
-  expect(emptyFailure.error).toBe("artifact_view_preview_unavailable")
-  expect(emptyFailure.reason).toBe("workflow_snapshot_not_found")
-  expect(emptyFailure.message).toContain("Run the current saved Workflow version")
-  expect(emptyFailure.configObjectId).toBe(appConfigObjectId)
-  expect(emptyFailure.viewRevisionId).toBeTypeOf("string")
-  const emptyView = { id: emptyFailure.artifactViewId }
-  expect(emptyView.id).toBeTypeOf("string")
-  const beforeExplicitRun = await readWorkflowDetail(den.admin, appConfigObjectId)
-  expect(beforeExplicitRun.script.latestSuccessfulSnapshot).toBeNull()
-  evidence.recordAssertionEvidence(
-    "Legacy draft readiness requires a readable saved Workflow result",
-    "The builder returned artifact_view_preview_unavailable with the compiled revision identity, without ready metadata, activation, result data, or implicit snapshot Workflow execution.",
-    true,
-  )
-
-  const manualResult = await step("the owner's saved Workflow produces a durable validated manual result", async () => {
+  await step("the owner's saved Workflow produces a durable validated manual result", async () => {
     const result = await runWorkflow(den.admin, configObjectId, {
       pluginId,
       configObjectVersionId,
@@ -258,120 +228,6 @@ test("an owner saves and reopens a snapshot app, and external Workflows run live
     evidence.recordAssertionEvidence(
       "The Workflow produces a validated artifact-ready result",
       JSON.stringify({ status: result.status, value: result.value, receiptId: result.receiptId }),
-      true,
-    )
-    return result
-  })
-
-  const appResult = await runWorkflow(den.admin, appConfigObjectId, {
-    pluginId: appPluginId,
-    configObjectVersionId: appConfigObjectVersionId,
-    input: { topic: firstMarker },
-  })
-  expect(appResult.status).toBe("succeeded")
-  expect(appResult.value).toEqual({ briefing: { topic: firstMarker } })
-  expect(String(appResult.receiptId ?? "")).not.toBe("")
-  expect(appResult.receiptId).not.toBe(manualResult.receiptId)
-  const beforePreview = await readWorkflowDetail(den.admin, appConfigObjectId)
-  const appRequest = (session: typeof den.admin, path: string, init: RequestInit = {}) =>
-    denFetch(session, path, { ...init, headers: { authorization: `Bearer ${session.token}` } })
-  const beforePreviewSnapshots = (await appRequest(den.admin, `/v1/workflows/${appConfigObjectId}/snapshots`)).body
-  const draft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
-    name: "save_artifact_view",
-    arguments: {
-      artifactViewId: emptyView.id, configObjectId: appConfigObjectId, dataMode: "snapshot", title: "Briefing app",
-      reactSource: initialDraftSource,
-    },
-  })
-  expect(draft.isError).not.toBe(true)
-  const view = requireRecord(requireRecord(draft.structuredContent, "draft result").view, "draft view")
-  expect(view.id).toBe(emptyView.id)
-  expect(view).toMatchObject({ configObjectId: appConfigObjectId, dataMode: "snapshot" })
-  const revision = records(view.revisions)[0]
-  expect(revision?.buildStatus).toBe("ready")
-  expect(revision?.resourceUri).toBeTypeOf("string")
-  expect(revision?.id).toBeTypeOf("string")
-  expect(draft._meta).toEqual({ "openwork/appDraft": { appId: view.id, revisionId: revision?.id, receiptId: appResult.receiptId, title: "Briefing app" } })
-  expect(JSON.stringify(draft.content)).toContain("Saved immutable view revision")
-  expect(view.activeRevisionId).toBeNull()
-  const previewToolName = `preview_artifact_${view.id}`
-  expect(JSON.stringify(draft.content)).toContain(previewToolName)
-  const previewTools = records((await agentRpc(den.ref.apiUrl, mcpToken, "tools/list", {})).tools)
-  const previewTool = previewTools.find((tool) => tool.name === previewToolName)
-  expect(previewTool).toBeDefined()
-  expect(previewTool?._meta).toMatchObject({ ui: { resourceUri: revision?.resourceUri } })
-  expect(previewTools.find((tool) => tool.name === "save_artifact_view")?._meta).toBeUndefined()
-  const previewUri = requireRecord(requireRecord(previewTool?._meta, "preview tool metadata").ui, "preview UI metadata").resourceUri
-  const previewResource = await agentRpc(den.ref.apiUrl, mcpToken, "resources/read", { uri: previewUri })
-  const previewContent = records(previewResource.contents)[0]
-  expect(previewContent).toMatchObject({ uri: revision?.resourceUri, mimeType: "text/html;profile=mcp-app" })
-  expect(previewContent?.text).toBeTypeOf("string")
-  expect(previewContent?._meta).toMatchObject({ resourceDigest: revision?.resourceDigest })
-  expect(previewResource).not.toHaveProperty("_meta.openwork/appDraft")
-  const preview = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
-    name: previewToolName,
-    arguments: { receiptId: appResult.receiptId },
-  })
-  expect(preview.isError).not.toBe(true)
-  expect(preview.structuredContent).toMatchObject({
-    artifact: { configObjectId: appConfigObjectId, receiptId: appResult.receiptId },
-    data: appResult.value,
-  })
-  expect(preview._meta).toMatchObject({ artifactViewId: view.id, viewRevisionId: revision?.id })
-  expect(preview).not.toHaveProperty("_meta.openwork/appDraft")
-  expect((await readWorkflowDetail(den.admin, appConfigObjectId)).script.latestSuccessfulSnapshot).toEqual(
-    beforePreview.script.latestSuccessfulSnapshot,
-  )
-  const appPath = `/v1/apps/${view.id}`
-  const pinnedPath = `${appPath}?revisionId=${revision?.id}&receiptId=${appResult.receiptId}`
-  const draftApp = await appRequest(den.admin, pinnedPath)
-  expect(draftApp.response.status, draftApp.text).toBe(200)
-  expect(requireRecord(draftApp.body, "draft app preview").html).toBe(previewContent?.text)
-  expect(draftApp.body).toMatchObject({
-    onDashboard: false,
-    view: { activeRevisionId: null, configObjectId: appConfigObjectId, dataMode: "snapshot" },
-    payload: { artifact: { configObjectId: appConfigObjectId, receiptId: appResult.receiptId }, data: appResult.value },
-  })
-  expect((await appRequest(den.admin, "/v1/apps")).body).toMatchObject({ enabled: true, items: [] })
-  expect((await appRequest(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(404)
-  const beforeSave = await readWorkflowDetail(den.admin, appConfigObjectId)
-  const beforeSnapshots = (await appRequest(den.admin, `/v1/workflows/${appConfigObjectId}/snapshots`)).body
-  expect(beforeSnapshots).toEqual(beforePreviewSnapshots)
-  const save = { revisionId: revision?.id, title: "Saved briefing", useInWorkflow: false, expectedActiveRevisionId: null }
-  const colleague = den.members.colleague
-  if (!colleague) throw new Error("Colleague was not provisioned")
-  await step("the owner saves and reopens the exact snapshot; stale saves and an ungranted colleague cannot change it", async () => {
-    const savedApp = await appRequest(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify(save) })
-    expect(savedApp.response.status, savedApp.text).toBe(200)
-    expect(savedApp.body).toMatchObject({ activeRevisionId: revision?.id, title: "Saved briefing", useInWorkflow: false })
-    const reopened = await appRequest(den.admin, appPath)
-    expect(reopened.response.status, reopened.text).toBe(200)
-    expect(reopened.body).toMatchObject({
-      onDashboard: true, revision: { id: revision?.id }, view: { configObjectId: appConfigObjectId },
-      payload: { artifact: { configObjectId: appConfigObjectId, receiptId: appResult.receiptId }, data: appResult.value },
-    })
-    const listedApps = await appRequest(den.admin, "/v1/apps")
-    expect(listedApps.response.status, listedApps.text).toBe(200)
-    expect(requireRecord(listedApps.body, "saved app list").items).toEqual([
-      expect.objectContaining({ onDashboard: true, view: expect.objectContaining({ id: view.id, activeRevisionId: revision?.id, title: "Saved briefing" }) }),
-    ])
-    expect(requireRecord(reopened.body, "reopened app").html).toEqual(requireRecord(draftApp.body, "draft app").html)
-    expect((await readWorkflowDetail(den.admin, appConfigObjectId)).script.currentVersion).toEqual(beforeSave.script.currentVersion)
-    expect((await appRequest(den.admin, `/v1/workflows/${appConfigObjectId}/snapshots`)).body).toEqual(beforeSnapshots)
-    expect((await appRequest(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify({ ...save, title: "Stale overwrite" }) })).response.status).toBe(409)
-    for (const added of [false, true]) {
-      const placement = await appRequest(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added }) })
-      expect(placement.response.status, placement.text).toBe(200)
-      expect((await appRequest(den.admin, appPath)).body).toMatchObject({ onDashboard: added, view: { activeRevisionId: revision?.id, title: "Saved briefing" } })
-    }
-    expect((await appRequest(colleague, appPath)).response.status).toBe(403)
-    expect((await appRequest(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(403)
-    expect((await appRequest(colleague, "/v1/apps")).body).toMatchObject({ items: [] })
-    await appRequest(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: false }) })
-    expect((await appRequest(den.admin, appPath)).body).toMatchObject({ onDashboard: true })
-    evidence.recordAssertionEvidence(
-      "A draft app can be saved and reopened with personal placement without running, scheduling, or granting workflow access",
-      "The real MCP builder retained exact openwork/appDraft revision and receipt metadata for released clients; modern-client suppression is independent of this backend contract. The advertised preview tool's standard UI metadata resolved to the same immutable HTML served by the explicitly requested Apps preview path. The Apps routes retained its exact revision and HTML, saved personal placement without changing workflow version or snapshots, rejected stale saves and an ungranted member, and removed/re-added only the author's card.",
       true,
     )
   })
@@ -627,42 +483,6 @@ test("an owner saves and reopens a snapshot app, and external Workflows run live
   const externalToolCallNames = records(externalManualSnapshot.toolCalls).map((call) => call.name)
   expect(externalToolCallNames).toEqual(["report_source.mock_batch", "report_source.mock_echo"])
 
-  await step("an external Workflow runs live: the preview reaches the provider instead of being blocked", async () => {
-    const beforeLivePreview = new Date().toISOString()
-    const externalDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
-      name: "save_artifact_view",
-      arguments: {
-        configObjectId: externalConfigObjectId, dataMode: "live", title: "Report app",
-        reactSource: "export default function Report({ data }) { return <article><h1>Report</h1><pre>{JSON.stringify(data.briefing)}</pre></article> }",
-      },
-    })
-    const liveCalls = await den.mocks.reports.toolCalls({ sinceIso: beforeLivePreview })
-    expect(liveCalls.map(call => call.name)).toEqual(["mock_batch", "mock_echo"])
-    const failureText = externalDraft.isError ? records(externalDraft.content).find(part => part.type === "text")?.text : undefined
-    if (typeof failureText === "string") {
-      expect(requireRecord(JSON.parse(failureText), "external live preview result").reason).not.toBe("capability_unavailable")
-    }
-    evidence.recordAssertionEvidence(
-      "A live external Workflow reaches its provider",
-      `Provider calls from the live preview: ${liveCalls.map(call => call.name).join(", ")}`,
-      liveCalls.length === 2,
-    )
-
-    const callsBeforeSnapshot = await den.mocks.reports.toolCalls()
-    const snapshotBefore = (await readWorkflowDetail(den.admin, externalConfigObjectId)).script.latestSuccessfulSnapshot
-    const snapshotEscape = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
-      name: "save_artifact_view",
-      arguments: { configObjectId: externalConfigObjectId, dataMode: "snapshot", title: "Report snapshot", reactSource: initialDraftSource },
-    })
-    expect(snapshotEscape.isError).toBe(true)
-    expect(JSON.stringify(snapshotEscape.content)).toContain("artifact_view_snapshot_personal_data_denied")
-    expect(snapshotEscape._meta).toBeUndefined()
-    expect(snapshotEscape.structuredContent).toBeUndefined()
-    expect(await den.mocks.reports.toolCalls()).toEqual(callsBeforeSnapshot)
-    expect((await readWorkflowDetail(den.admin, externalConfigObjectId)).script.latestSuccessfulSnapshot).toEqual(snapshotBefore)
-    evidence.recordAssertionEvidence("Personal external data still cannot be published as a shared snapshot", JSON.stringify(snapshotEscape.content), true)
-  })
-
   const refreshMarker = `launch-refreshed-${stamp}`
   await step("an explicit manual Workflow refresh still works", async () => {
     const beforeRefresh = new Date().toISOString()
@@ -679,17 +499,9 @@ test("an owner saves and reopens a snapshot app, and external Workflows run live
     evidence.recordAssertionEvidence("Manual refresh remains authorized", JSON.stringify({ status: refreshed.status, receiptId: refreshed.receiptId, value: refreshed.value }), true)
   })
 
-  const unrelatedApp = await appRequest(den.admin, appPath)
-  expect(unrelatedApp.body).toMatchObject({
-    view: { configObjectId: appConfigObjectId },
-    payload: { artifact: { receiptId: appResult.receiptId }, data: appResult.value },
-  })
-  expect(JSON.stringify(unrelatedApp.body)).not.toContain(scheduledMarker)
-  expect(JSON.stringify(unrelatedApp.body)).not.toContain(externalMarker)
-  expect(JSON.stringify(unrelatedApp.body)).not.toContain(refreshMarker)
   evidence.recordAssertionEvidence(
     "A connection beyond the first 16 works from discovery through a saved manual Workflow",
-    "Search returned the seventeenth connection's callable script path and its procedure executed, saved, and recorded both provider calls while the unrelated snapshot app stayed unchanged.",
+    "Search returned the seventeenth connection's callable script path and its procedure executed, saved, and recorded both provider calls.",
     true,
   )
 

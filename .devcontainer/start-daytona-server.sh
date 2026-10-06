@@ -42,7 +42,6 @@ export OPENWORK_DEV_MODE="${OPENWORK_DEV_MODE:-1}"
 export DEN_ORG_MODE="${DEN_ORG_MODE:-multi_org}"
 # Eval sign-ups must not depend on the HIBP API.
 export DEN_PASSWORD_BREACH_SCREENING_ENABLED="${DEN_PASSWORD_BREACH_SCREENING_ENABLED:-false}"
-export DEN_GENERATED_ARTIFACT_VIEWS_ENABLED="${DEN_GENERATED_ARTIFACT_VIEWS_ENABLED:-false}"
 export DATABASE_URL="${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den}"
 export DEN_DB_ENCRYPTION_KEY="${DEN_DB_ENCRYPTION_KEY:-daytona-den-db-encryption-key-please-change-1234567890}"
 export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-daytona-den-auth-secret-please-change-1234567890}"
@@ -224,7 +223,6 @@ nohup env \
   WORKER_URL_TEMPLATE="$DEN_WORKER_URL_TEMPLATE" \
   DEN_ORG_MODE="$DEN_ORG_MODE" \
   DEN_PASSWORD_BREACH_SCREENING_ENABLED="$DEN_PASSWORD_BREACH_SCREENING_ENABLED" \
-  DEN_GENERATED_ARTIFACT_VIEWS_ENABLED="$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
   NODE_OPTIONS="--conditions=development" \
   pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts > /tmp/den-api.log 2>&1 &

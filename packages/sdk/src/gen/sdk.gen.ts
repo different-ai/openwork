@@ -193,8 +193,6 @@ import type {
   GetV1AdminUsersResponses,
   GetV1ApiKeysErrors,
   GetV1ApiKeysResponses,
-  GetV1AppsByAppIdResponses,
-  GetV1AppsResponses,
   GetV1AppVersionResponses,
   GetV1AuthBootstrapStatusResponses,
   GetV1AuthLoginOptionsErrors,
@@ -475,8 +473,6 @@ import type {
   GetV1WorkflowsByConfigObjectIdSnapshotsResponses,
   GetV1WorkflowsByConfigObjectIdVersionsErrors,
   GetV1WorkflowsByConfigObjectIdVersionsResponses,
-  GetV1WorkflowsByConfigObjectIdViewsErrors,
-  GetV1WorkflowsByConfigObjectIdViewsResponses,
   GetV1WorkflowsErrors,
   GetV1WorkflowsResponses,
   GetWellKnownOauthAuthorizationServerApiAuthResponses,
@@ -592,14 +588,6 @@ import type {
   PostV1AdminUsersByUserIdInferenceUsageResetResponses,
   PostV1ApiKeysErrors,
   PostV1ApiKeysResponses,
-  PostV1AppsByAppIdDashboardResponses,
-  PostV1AppsByAppIdSaveResponses,
-  PostV1AppsByAppIdShareErrors,
-  PostV1AppsByAppIdShareResponses,
-  PostV1ArtifactViewsByArtifactViewIdRetireErrors,
-  PostV1ArtifactViewsByArtifactViewIdRetireResponses,
-  PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateErrors,
-  PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
   PostV1AuthBootstrapVerifyErrors,
   PostV1AuthBootstrapVerifyResponses,
   PostV1BootstrapClaimsAcceptErrors,
@@ -3363,7 +3351,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Inspect a Workflow
    *
-   * Returns the Workflow's library entry (caller role, connection readiness, result freshness, view state, Automation count), its detail (current and past versions, latest snapshot, latest successful snapshot), and the generated Artifact views bound to it. maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access; when generated Artifact views are disabled for the deployment, views is empty and viewState is default.
+   * Returns the Workflow's library entry (caller role, connection readiness, result freshness, Automation count) and its detail (current and past versions, latest snapshot, latest successful snapshot). maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access. viewState is always default, activeViewTitle null and views empty: Workflow-bound Artifact views are retired; the fields stay for older clients.
    */
   public getV1WorkflowsByConfigObjectId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3389,247 +3377,6 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/workflows/{configObjectId}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * List saved reusable apps
-   *
-   * Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.
-   */
-  public getV1Apps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
-      url: "/v1/apps",
-      ...options,
-    });
-  }
-
-  /**
-   * Share a saved app with a teammate
-   *
-   * Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.
-   */
-  public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
-    parameters: {
-      appId: string;
-      email: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "appId" },
-            { in: "body", key: "email" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<
-      PostV1AppsByAppIdShareResponses,
-      PostV1AppsByAppIdShareErrors,
-      ThrowOnError
-    >({
-      url: "/v1/apps/{appId}/share",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * Open an app or an exact draft preview
-   *
-   * Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. Live apps execute the current saved Workflow as the caller with optional IANA timeZone (UTC by default); receiptId is forbidden for live apps. Legacy snapshots use only the caller's receipts. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.
-   */
-  public getV1AppsByAppId<ThrowOnError extends boolean = false>(
-    parameters: {
-      appId: string;
-      timeZone?: string;
-      revisionId?: string;
-      receiptId?: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "appId" },
-            { in: "query", key: "timeZone" },
-            { in: "query", key: "revisionId" },
-            { in: "query", key: "receiptId" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).get<GetV1AppsByAppIdResponses, unknown, ThrowOnError>({
-      url: "/v1/apps/{appId}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Add or remove an app on your personal dashboard
-   *
-   * Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.
-   */
-  public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
-    parameters: {
-      appId: string;
-      added: boolean;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "appId" },
-            { in: "body", key: "added" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AppsByAppIdDashboardResponses, unknown, ThrowOnError>({
-      url: "/v1/apps/{appId}/dashboard",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * Save an exact app revision for reuse
-   *
-   * Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.
-   */
-  public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
-    parameters: {
-      appId: string;
-      revisionId: string;
-      title: string;
-      useInWorkflow: boolean;
-      expectedActiveRevisionId: string | null;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "appId" },
-            { in: "body", key: "revisionId" },
-            { in: "body", key: "title" },
-            { in: "body", key: "useInWorkflow" },
-            { in: "body", key: "expectedActiveRevisionId" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1AppsByAppIdSaveResponses, unknown, ThrowOnError>({
-      url: "/v1/apps/{appId}/save",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * List generated Artifact views for a Workflow
-   *
-   * Lists the generated Artifact views bound to this Workflow, newest first, each with its recent revisions and their build status. Requires read access to the Workflow. Returns an empty list when generated Artifact views are disabled for the deployment.
-   */
-  public getV1WorkflowsByConfigObjectIdViews<ThrowOnError extends boolean = false>(
-    parameters: {
-      configObjectId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "configObjectId" }] }]);
-    return (options?.client ?? this.client).get<
-      GetV1WorkflowsByConfigObjectIdViewsResponses,
-      GetV1WorkflowsByConfigObjectIdViewsErrors,
-      ThrowOnError
-    >({
-      url: "/v1/workflows/{configObjectId}/views",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Activate or roll back an immutable Artifact view revision
-   *
-   * Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.
-   */
-  public postV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivate<ThrowOnError extends boolean = false>(
-    parameters: {
-      artifactViewId: string;
-      revisionId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "artifactViewId" },
-            { in: "path", key: "revisionId" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<
-      PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
-      PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateErrors,
-      ThrowOnError
-    >({
-      url: "/v1/artifact-views/{artifactViewId}/revisions/{revisionId}/activate",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Retire a generated Artifact view
-   *
-   * Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.
-   */
-  public postV1ArtifactViewsByArtifactViewIdRetire<ThrowOnError extends boolean = false>(
-    parameters: {
-      artifactViewId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "artifactViewId" }] }]);
-    return (options?.client ?? this.client).post<
-      PostV1ArtifactViewsByArtifactViewIdRetireResponses,
-      PostV1ArtifactViewsByArtifactViewIdRetireErrors,
-      ThrowOnError
-    >({
-      url: "/v1/artifact-views/{artifactViewId}/retire",
       ...options,
       ...params,
     });
@@ -3839,7 +3586,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Run an exact Workflow version
    *
-   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live app, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. After receipt-backed saveWorkflow, run this saved version in live mode before save_artifact_view; authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
+   * Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live app, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. Authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.
    */
   public postV1WorkflowsByConfigObjectIdRun<ThrowOnError extends boolean = false>(
     parameters: {

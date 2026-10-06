@@ -200,16 +200,15 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
     evidence.recordAssertionEvidence("The App's dashboard tile opens the App itself", `Adding ${appTitle} saved one tile that opens the App's own server, which the desktop finds by App id: connectionId ${world.created.appId}, open_app, and the App's current revision. The dashboard lists it as "App built in OpenWork".`, true);
   });
 
-  await step("Workflow-bound views from before are read-only beside App servers", async () => {
-    const { tools, save } = await world.legacyWrites();
-    for (const result of tools) {
-      expect(result).toMatchObject({ isError: true, body: { error: "legacy_view_read_only", message: expect.stringContaining("create_app") } });
-    }
-    expect(save).toMatchObject({ status: 409, body: { error: "legacy_view_read_only" } });
+  await step("retired Workflow-bound saved apps are gone beside App servers", async () => {
+    const save = await world.legacySave();
+    expect(save).toEqual({ status: 404, body: { error: "artifact_view_not_found" } });
     const connectTools = rows((await world.rpc("owner", "connect", "tools/list", {})).tools);
-    expect(connectTools.find(tool => tool.name === "save_artifact_view")).toMatchObject({ title: "Legacy Artifact views are read-only" });
-    expect(connectTools.map(tool => tool.name)).toEqual(expect.arrayContaining(["create_app", "update_app", "read_app"]));
-    evidence.recordAssertionEvidence("Older Workflow-bound views cannot be created, edited, or re-activated", "save_artifact_view (create and edit) and activate_artifact_view_revision return legacy_view_read_only pointing to create_app, and the REST save route answers 409 legacy_view_read_only; Connect advertises create_app, update_app, and read_app.", true);
+    const toolNames = connectTools.map(tool => tool.name);
+    expect(toolNames).not.toEqual(expect.arrayContaining(["save_artifact_view"]));
+    expect(toolNames.filter(name => typeof name === "string" && /artifact_view/.test(name))).toEqual([]);
+    expect(toolNames).toEqual(expect.arrayContaining(["create_app", "update_app", "read_app"]));
+    evidence.recordAssertionEvidence("Workflow-bound saved apps are retired; Connect builds Apps only", "Connect lists no save_artifact_view or other artifact view tools and advertises create_app, update_app, and read_app; the saved-app save route answers 404 artifact_view_not_found, as published desktops expect.", true);
   });
 
   await step("the owner shares only the App's Plugin, and the teammate finds the App and its MCP URL there", async () => {

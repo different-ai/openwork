@@ -121,7 +121,6 @@ export type CapabilityRegistryContext = {
   organizationId: DenTypeId<"organization">
   member: McpMemberIdentity | null
   redirectUriBase: string
-  generatedArtifactViewsEnabled: boolean
   externalMcpConnectionsEnabled: boolean
   remoteSessionsEnabled: boolean
   resolvePlatformAdmin: () => Promise<boolean>
@@ -136,7 +135,6 @@ export type CapabilityRegistryContextInput = {
   organizationId: DenTypeId<"organization">
   member: McpMemberIdentity | null
   redirectUriBase: string
-  generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
   organizationFeatures: Pick<FeatureMap, "mcpConnections">
 }
@@ -165,21 +163,11 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     organizationId: input.organizationId,
     member: input.member,
     redirectUriBase: input.redirectUriBase,
-    generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     externalMcpConnectionsEnabled,
     remoteSessionsEnabled: remoteSessionCapabilitiesEnabled(),
     resolvePlatformAdmin,
     resolveNamespaceContext,
   }
-}
-
-export function catalogOperationAvailableToCapabilities(
-  context: Pick<CapabilityRegistryContext, "generatedArtifactViewsEnabled">,
-  operation: Pick<McpToolOperation, "method" | "path">,
-) {
-  if (context.generatedArtifactViewsEnabled) return true
-  return operation.path !== "/v1/workflows/{configObjectId}/views"
-    && !operation.path.startsWith("/v1/artifact-views/")
 }
 
 type CapabilitySearchContext = CapabilityRegistryContext & {
@@ -433,24 +421,17 @@ const catalogSource: CapabilitySource = {
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api) return []
     return searchCapabilities(
-      ctx.catalog.filter((operation) => (
-        !isCredentialBoundNativeOperation(operation)
-        && catalogOperationAvailableToCapabilities(ctx, operation)
-      )),
+      ctx.catalog.filter((operation) => !isCredentialBoundNativeOperation(operation)),
       query,
       limit,
     ).map((match) => ({ ...match, scriptPath: codemodeScriptPath("den", match.name) }))
   },
-  enumerate: (ctx) => Promise.resolve(leavesFromBuilt(buildDenCatalogToolTree({
-    ...ctx,
-    catalog: ctx.catalog.filter((operation) => catalogOperationAvailableToCapabilities(ctx, operation)),
-  }))),
+  enumerate: (ctx) => Promise.resolve(leavesFromBuilt(buildDenCatalogToolTree(ctx))),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "catalog")) return unknownCapabilityResult(input.name)
     const operation = ctx.catalog.find((candidate) => (
       candidate.name === parsed.name
       && !isCredentialBoundNativeOperation(candidate)
-      && catalogOperationAvailableToCapabilities(ctx, candidate)
     ))
     if (!operation) return unknownCapabilityResult(input.name)
     const path = normalizeToolRecord(input.path)

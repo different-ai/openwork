@@ -21,8 +21,6 @@ const extAppsEntry = require.resolve("@modelcontextprotocol/ext-apps/app-with-de
 const reactPackageRoot = require.resolve("react/package.json").replace(/\/package\.json$/u, "")
 const reactDomPackageRoot = require.resolve("react-dom/package.json").replace(/\/package\.json$/u, "")
 
-export const GENERATED_ARTIFACT_VIEW_COMPILER = "openwork-react-view"
-export const GENERATED_ARTIFACT_VIEW_COMPILER_VERSION = "3"
 export const GENERATED_MCP_APP_COMPILER = "openwork-react-mcp-app"
 export const GENERATED_MCP_APP_COMPILER_VERSION = "1"
 export const GENERATED_ARTIFACT_VIEW_CSP: GeneratedArtifactViewCsp = {
@@ -363,12 +361,12 @@ export type GeneratedMcpAppBuildInput = {
   description: string | null
 }
 
-export type GeneratedArtifactViewBuildInput = GeneratedMcpAppBuildInput & {
-  outputSchema: unknown
-}
-
+// Workflow-bound Artifact views are retired (D36). The "artifact" runtime is
+// still reachable only through buildGeneratedArtifactViewInWorker, which the
+// desktop inline-host eval fixture (evals/worlds/library.ts) uses until the
+// desktop saved-app code is removed; M-mcpApps then trims these branches.
 export type GeneratedArtifactViewCompilerInput =
-  | (GeneratedArtifactViewBuildInput & { runtime?: "artifact" })
+  | (GeneratedMcpAppBuildInput & { outputSchema: unknown; runtime?: "artifact" })
   | (GeneratedMcpAppBuildInput & { runtime: "mcp-app" })
 
 function buildMetadata(input: GeneratedArtifactViewCompilerInput) {
@@ -379,8 +377,8 @@ function buildMetadata(input: GeneratedArtifactViewCompilerInput) {
     sourceDigest: digest(mcpApp
       ? JSON.stringify(["mcp-app", GENERATED_MCP_APP_COMPILER_VERSION, reactSource, cssSource, input.title, input.description])
       : `${reactSource}\n\u0000${cssSource}`),
-    compilerName: mcpApp ? GENERATED_MCP_APP_COMPILER : GENERATED_ARTIFACT_VIEW_COMPILER,
-    compilerVersion: mcpApp ? GENERATED_MCP_APP_COMPILER_VERSION : GENERATED_ARTIFACT_VIEW_COMPILER_VERSION,
+    compilerName: mcpApp ? GENERATED_MCP_APP_COMPILER : "openwork-react-view",
+    compilerVersion: mcpApp ? GENERATED_MCP_APP_COMPILER_VERSION : "3",
     reactVersion: React.version,
     csp: GENERATED_ARTIFACT_VIEW_CSP,
   }
@@ -413,10 +411,6 @@ export async function buildGeneratedArtifactViewInWorker(input: GeneratedArtifac
   } catch (error) {
     return { ok: false, ...shared, diagnostics: diagnosticsFrom(error) }
   }
-}
-
-export async function buildGeneratedArtifactView(input: GeneratedArtifactViewBuildInput): Promise<GeneratedArtifactViewBuildResult> {
-  return buildGeneratedView({ ...input, runtime: "artifact" })
 }
 
 export async function buildGeneratedMcpApp(input: GeneratedMcpAppBuildInput): Promise<GeneratedArtifactViewBuildResult> {

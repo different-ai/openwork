@@ -11,9 +11,6 @@ import {
   workflowTestResultSchema,
   workflowVersionSchema,
   generatedArtifactViewSchema,
-  savedAppSummarySchema,
-  savedAppDetailSchema,
-  saveAppSchema,
 } from "@openwork/types/workflows"
 import {
   createWorkflowVersion,
@@ -42,13 +39,6 @@ import type { OrgRouteVariables } from "./shared.js"
 import { codemodeCodeDigest } from "../../workflow-runs.js"
 import { getWorkflowLibraryDetail } from "../../workflow-library.js"
 import { normalizeToolBody } from "../../mcp/invoke.js"
-import {
-  activateArtifactViewRevision,
-  listArtifactViewsForScript,
-  retireArtifactView,
-} from "../../artifact-views.js"
-
-import { getSavedApp, listSavedApps, setAppOnDashboard, shareSavedApp } from "../../saved-apps.js"
 
 const capabilitySchema = z.object({ capabilityName: z.string(), scriptPath: z.string() })
 const scriptSchema = z.object({
@@ -150,19 +140,12 @@ const workflowLibraryDetailSchema = z.object({
   script: workflowDetailSchema,
   views: z.array(generatedArtifactViewSchema),
 })
-const artifactViewsResponseSchema = z.object({ items: z.array(generatedArtifactViewSchema) })
-const artifactViewParamsSchema = z.object({
-  artifactViewId: z.string().trim().min(1).max(160),
-  revisionId: z.string().trim().min(1).max(160).optional(),
-})
 
 function routeFailure(error: unknown) {
   if (error instanceof PluginArchAuthorizationError) {
     return { status: error.status, body: { error: error.error, message: error.message } } as const
   }
   const message = error instanceof Error ? error.message : "Workflow request failed."
-  if (message === "app_changed_since_preview") return { status: 409, body: { error: message, message: "This app was saved elsewhere. Reopen it before saving your changes." } } as const
-  if (message === "legacy_view_read_only") return { status: 409, body: { error: message, message: "This is an older app that can no longer be edited or saved. It still opens and refreshes. To change it, ask OpenWork to build a new App." } } as const
   if (message.includes("not_found")) return { status: 404, body: { error: "workflow_not_found", message } } as const
   if (message === "workflow_matching_test_receipt_required") {
     return {
@@ -215,20 +198,6 @@ function routeFailure(error: unknown) {
   return { status: 400, body: { error: "workflow_rejected", message } } as const
 }
 
-function appRouteFailure(error: unknown) {
-  const failure = routeFailure(error)
-  const code = error instanceof Error ? error.message : ""
-  if (code === "teammate_not_found") return { ...failure, body: { error: code, message: "No teammate with that email belongs to this organization. Ask an admin to invite them first." } }
-  const message = code.includes("not_found")
-    ? "This app is unavailable or you no longer have access."
-    : code === "artifact_view_schema_incompatible"
-      ? "The workflow’s results have changed. Ask OpenWork to update this app before saving."
-      : code === "artifact_view_revision_not_ready"
-        ? "This app is still being prepared. Wait for its preview before saving."
-        : null
-  return message ? { ...failure, body: { ...failure.body, message } } : failure
-}
-
 export const saveWorkflowOperationId = "saveWorkflow"
 
 export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -256,7 +225,6 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       organizationId: context.organization.id,
       member,
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
-      generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures: await getOrganizationFeatures(context.organization.id),
     })
     const buildTools = () => buildCapabilityToolTree(capabilityContext)
@@ -318,7 +286,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId",
     describeRoute({
       tags: ["Workflows"], summary: "Inspect a Workflow",
-      description: "Returns the Workflow's library entry (caller role, connection readiness, result freshness, view state, Automation count), its detail (current and past versions, latest snapshot, latest successful snapshot), and the generated Artifact views bound to it. maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access; when generated Artifact views are disabled for the deployment, views is empty and viewState is default.",
+      description: "Returns the Workflow's library entry (caller role, connection readiness, result freshness, Automation count) and its detail (current and past versions, latest snapshot, latest successful snapshot). maxAgeMs (60 seconds to 30 days, default 24 hours) is the threshold that classifies the latest result as fresh or stale. Version code and example input are redacted for members without manager access. viewState is always default, activeViewTitle null and views empty: Workflow-bound Artifact views are retired; the fields stay for older clients.",
       responses: { 200: jsonResponse("Workflow returned.", workflowLibraryDetailSchema), 404: jsonResponse("Workflow not found.", notFoundSchema) },
     }),
     orgMemberRoute(), queryValidator(detailQuerySchema),
@@ -328,213 +296,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       try {
         const { actorContext } = await contextFor(c)
         const detail = await getWorkflowLibraryDetail({ context: actorContext, configObjectId: params.data.configObjectId, maxAgeMs: c.req.valid("query").maxAgeMs })
-        return c.json(env.generatedArtifactViewsEnabled
-          ? detail
-          : {
-              ...detail,
-              workflow: { ...detail.workflow, viewState: "default" as const, activeViewTitle: null },
-              views: [],
-            })
-      } catch (error) {
-        const failure = routeFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.get(
-    "/v1/apps",
-    describeRoute({
-      tags: ["Apps"], summary: "List saved reusable apps",
-      description: "Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.",
-      responses: {
-        200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
-      },
-    }),
-    orgMemberRoute(),
-    async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, sharingEnabled: false, items: [] })
-      try {
-        const { actorContext } = await contextFor(c)
-        return c.json({ enabled: true, sharingEnabled: true, items: await listSavedApps(actorContext) })
-      } catch (error) {
-        const failure = appRouteFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.post(
-    "/v1/apps/:appId/share",
-    describeRoute({
-      tags: ["Apps"], summary: "Share a saved app with a teammate",
-      description: "Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.",
-      responses: {
-        200: jsonResponse("App shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
-        403: jsonResponse("Only app managers can share.", forbiddenSchema),
-        404: jsonResponse("App or teammate not found.", notFoundSchema),
-      },
-    }),
-    orgMemberRoute(),
-    jsonValidator(z.object({ email: z.string().trim().email().max(320) })),
-    async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
-      try {
-        const { actorContext } = await contextFor(c)
-        await shareSavedApp(actorContext, c.req.param("appId"), c.req.valid("json").email)
-        return c.json({ ok: true })
-      } catch (error) {
-        const failure = appRouteFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.get(
-    "/v1/apps/:appId",
-    describeRoute({
-      tags: ["Apps"], summary: "Open an app or an exact draft preview",
-      description: "Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. Live apps execute the current saved Workflow as the caller with optional IANA timeZone (UTC by default); receiptId is forbidden for live apps. Legacy snapshots use only the caller's receipts. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.",
-      responses: {
-        200: jsonResponse("App preview returned.", savedAppDetailSchema),
-      },
-    }),
-    orgMemberRoute(),
-    queryValidator(artifactRunInputSchema.extend({ revisionId: z.string().trim().min(1).max(160).optional(), receiptId: z.string().trim().min(1).max(160).optional() })),
-    async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
-      try {
-        const { actorContext, buildTools, describeUnavailable } = await contextFor(c)
-        c.header("Cache-Control", "private, no-store")
-        return c.json(await getSavedApp({ context: actorContext, buildTools, describeUnavailable, appId: c.req.param("appId"), ...c.req.valid("query") }))
-      } catch (error) {
-        const failure = appRouteFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.post(
-    "/v1/apps/:appId/dashboard",
-    describeRoute({
-      tags: ["Apps"], summary: "Add or remove an app on your personal dashboard",
-      description: "Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.",
-      responses: {
-        200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
-      },
-    }),
-    orgMemberRoute(), jsonValidator(z.object({ added: z.boolean() })),
-    async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
-      try {
-        const { actorContext } = await contextFor(c)
-        await setAppOnDashboard(actorContext, c.req.param("appId"), c.req.valid("json").added)
-        return c.json({ ok: true })
-      } catch (error) {
-        const failure = appRouteFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.post(
-    "/v1/apps/:appId/save",
-    describeRoute({
-      tags: ["Apps"], summary: "Save an exact app revision for reuse",
-      description: "Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.",
-      responses: {
-        200: jsonResponse("App saved.", generatedArtifactViewSchema),
-      },
-    }),
-    orgMemberRoute(),
-    jsonValidator(saveAppSchema),
-    async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
-      try {
-        const { actorContext } = await contextFor(c)
-        const { revisionId, ...save } = c.req.valid("json")
-        return c.json(await activateArtifactViewRevision({ context: actorContext, artifactViewId: c.req.param("appId"), revisionId, save }))
-      } catch (error) {
-        const failure = appRouteFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.get(
-    "/v1/workflows/:configObjectId/views",
-    describeRoute({
-      tags: ["Workflows"], summary: "List generated Artifact views for a Workflow",
-      description: "Lists the generated Artifact views bound to this Workflow, newest first, each with its recent revisions and their build status. Requires read access to the Workflow. Returns an empty list when generated Artifact views are disabled for the deployment.",
-      responses: {
-        200: jsonResponse("Artifact views returned.", artifactViewsResponseSchema),
-        400: jsonResponse("Invalid Workflow id.", invalidRequestSchema),
-        401: jsonResponse("Sign-in required.", unauthorizedSchema),
-        404: jsonResponse("Workflow not found.", notFoundSchema),
-      },
-    }),
-    orgMemberRoute(),
-    async (c) => {
-      const params = detailParamsSchema.safeParse(c.req.param())
-      if (!params.success) return c.json({ error: "invalid_request", message: "Invalid Workflow id." }, 400)
-      try {
-        const { actorContext } = await contextFor(c)
-        if (!env.generatedArtifactViewsEnabled) return c.json({ items: [] })
-        return c.json({ items: await listArtifactViewsForScript({ context: actorContext, configObjectId: params.data.configObjectId }) })
-      } catch (error) {
-        const failure = routeFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.post(
-    "/v1/artifact-views/:artifactViewId/revisions/:revisionId/activate",
-    describeRoute({
-      tags: ["Codemode Runs"], summary: "Activate or roll back an immutable Artifact view revision",
-      description: "Makes revisionId the active revision of the Artifact view and marks the view active; selecting an older revision performs a rollback without changing its bytes. The revision must have built successfully and not be retired (artifact_view_revision_not_ready), and its output schema digest must match the Workflow's current version (artifact_view_schema_incompatible). Requires manager access to the Workflow.",
-      responses: {
-        200: jsonResponse("Artifact view activated.", generatedArtifactViewSchema),
-        400: jsonResponse("Invalid view revision.", invalidRequestSchema),
-        401: jsonResponse("Sign-in required.", unauthorizedSchema),
-        404: jsonResponse("Artifact view or revision not found, or generated Artifact views are disabled.", notFoundSchema),
-      },
-    }),
-    orgMemberRoute(),
-    async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
-      const params = artifactViewParamsSchema.safeParse(c.req.param())
-      if (!params.success || !params.data.revisionId) return c.json({ error: "invalid_request", message: "Invalid view revision." }, 400)
-      try {
-        const { actorContext } = await contextFor(c)
-        return c.json(await activateArtifactViewRevision({ context: actorContext, artifactViewId: params.data.artifactViewId, revisionId: params.data.revisionId }))
-      } catch (error) {
-        const failure = routeFailure(error)
-        return c.json(failure.body, failure.status)
-      }
-    },
-  )
-
-  app.post(
-    "/v1/artifact-views/:artifactViewId/retire",
-    describeRoute({
-      tags: ["Codemode Runs"], summary: "Retire a generated Artifact view",
-      description: "Retires the Artifact view: its status becomes retired, it loses its active revision and useInWorkflow flag, and it is removed from every member's dashboard. Immutable revisions are kept, so activating one later restores the view. Requires manager access to the Workflow.",
-      responses: {
-        200: jsonResponse("Artifact view retired.", generatedArtifactViewSchema),
-        400: jsonResponse("Invalid view.", invalidRequestSchema),
-        401: jsonResponse("Sign-in required.", unauthorizedSchema),
-        404: jsonResponse("Artifact view not found, or generated Artifact views are disabled.", notFoundSchema),
-      },
-    }),
-    orgMemberRoute(),
-    async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
-      const params = artifactViewParamsSchema.safeParse(c.req.param())
-      if (!params.success) return c.json({ error: "invalid_request", message: "Invalid view." }, 400)
-      try {
-        const { actorContext } = await contextFor(c)
-        return c.json(await retireArtifactView({ context: actorContext, artifactViewId: params.data.artifactViewId }))
+        return c.json(detail)
       } catch (error) {
         const failure = routeFailure(error)
         return c.json(failure.body, failure.status)
@@ -697,7 +459,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/run",
     describeRoute({
       tags: ["Workflows"], summary: "Run an exact Workflow version",
-      description: "Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live app, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. After receipt-backed saveWorkflow, run this saved version in live mode before save_artifact_view; authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.",
+      description: "Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live app, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. Authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.",
       responses: {
         200: jsonResponse("Workflow executed.", runResultSchema),
         400: jsonResponse("Execution rejected.", invalidRequestSchema),

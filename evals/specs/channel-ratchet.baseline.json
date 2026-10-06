@@ -35,7 +35,6 @@
   "reliable-app-recovery.e2e.test.ts": 1,
   "responsive-session-layout.e2e.test.ts": 14,
   "role-change-session-survival.e2e.test.ts": 4,
-  "saved-app-creation.e2e.test.ts": 6,
   "saved-script-automations.e2e.test.ts": 7,
   "scim-okta-lifecycle.e2e.test.ts": 18,
   "session-send-pressure.e2e.test.ts": 1,

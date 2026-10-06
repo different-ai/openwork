@@ -66,21 +66,7 @@ import { executeWorkflowAuthoringTest, workflowAuthoringTestInputSchema } from "
 import { parseNativeCapabilityName } from "./native-capabilities.js"
 import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
 import { recordWorkflowRun } from "../workflow-runs.js"
-import {
-  activateArtifactViewRevision,
-  getGeneratedArtifactViewRevision,
-  listArtifactViews,
-  loadArtifactViewRevision,
-  readArtifactViewSource,
-  retireArtifactView,
-  saveArtifactViewRevision,
-} from "../artifact-views.js"
-import {
-  registerAgentGeneratedArtifactViews,
-  registerGeneratedArtifactResource,
-} from "./generated-artifact-views.js"
 import type { PluginArchActorContext } from "../routes/org/plugin-system/access.js"
-import { parseArtifactViewResourceUri } from "../artifact-view-resource.js"
 import {
   listUsableExternalMcpConnections,
   readyExternalMcpConnectionsForMember,
@@ -99,7 +85,6 @@ import {
   connectionActionAppMeta,
   connectionActionPayloadSchema,
 } from "./connection-action.js"
-import { needsGeneratedArtifactCatalog } from "./generated-artifact-catalog-request.js"
 import { AppBuilderError, mcpAppLaunchResult, registerAppBuilderTools, searchMcpApps } from "./app-builder-tools.js"
 import { appMcpServersEnabled } from "../mcp-app-rollout.js"
 import { resolveMcpAppTools } from "./app-tools.js"
@@ -184,8 +169,8 @@ export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
 /**
  * Connect steering. With App servers on, new apps are built with create_app;
  * with them off (DEN_APP_MCP_SERVERS_ENABLED=false or member-facing MCP
- * connections disabled), the previous Workflow-bound save_artifact_view
- * guidance applies unchanged.
+ * connections disabled), there is no app builder: Workflow-bound Artifact
+ * views are retired (D36), so agents offer Workflow results instead.
  */
 function agentMcpInstructions(appServers: boolean): string {
   return [
@@ -199,7 +184,7 @@ function agentMcpInstructions(appServers: boolean): string {
     "Use create_skill to create one private Cloud skill in a new Plugin, and update_skill to publish a new immutable version of an existing skill. Both return text and structured skill details; do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions.",
     "Skills have direct tools: list_skills returns every built-in and marketplace skill this member may use, and get_skill returns one skill's SKILL.md by its name or exact capability. Prefer them over keyword search for skills; search_capabilities with type skills and execute_capability still return the same skills, and the skill:// resources are unchanged.",
     "Built-in remote skills create-skill, share-plugin, add-to-marketplace, and add-user-to-marketplace are always listed by list_skills and in the skill index. Retrieve and follow the matching one with get_skill (or by executing its exact capability); do not invent a local copy.",
-    appServers ? "When the user asks to build an app, dashboard, calculator, or interactive view, start with prepare_app directly, then write the source using its starter and verified tool schemas, and call create_app directly with its preparationId. These tool calls drive OpenWork’s creation progress; do not claim stages completed in prose. Their presence in the available tools confirms App building is enabled; do not search for the builder or ask the user about flags. Create the complete React App in one call: no saved Workflow, output schema, or Automation is required. Bind declared tools to exact capabilities found through search_capabilities only when the App needs connected data or actions; a local calculator can have no tools. For an existing App, call read_app with its appId, preserve its purpose and bindings, then update_app with the requested change. These tools return the App launch for compatible hosts; do not substitute save_artifact_view, generic config-object writes, or a local HTML file. Only create a Workflow for a reusable procedure or an Automation when the user asks for a schedule. Workflow-bound views from save_artifact_view are read-only." : "For an app, dashboard, or artifact view of Workflow results, call the direct MCP tool save_artifact_view and follow its prerequisites. It is a Cloud MCP tool, not a desktop-only RPC or a search_capabilities match. Its presence in the available tools confirms availability; an empty capability search does not establish a disabled feature flag. Do not substitute a local HTML file for an in-app artifact. Build the complete app in one shot without asking about Workflow internals, names, or runtime code. Live workflows use server-supplied input.runtime for current dates and caller timezone. Use one friendly name for the workflow and app; the user previews the draft and chooses Save to keep both on their dashboard. Only create an Automation when the user asks for a schedule.",
+    appServers ? "When the user asks to build an app, dashboard, calculator, or interactive view, start with prepare_app directly, then write the source using its starter and verified tool schemas, and call create_app directly with its preparationId. These tool calls drive OpenWork’s creation progress; do not claim stages completed in prose. Their presence in the available tools confirms App building is enabled; do not search for the builder or ask the user about flags. Create the complete React App in one call: no saved Workflow, output schema, or Automation is required. Bind declared tools to exact capabilities found through search_capabilities only when the App needs connected data or actions; a local calculator can have no tools. For an existing App, call read_app with its appId, preserve its purpose and bindings, then update_app with the requested change. These tools return the App launch for compatible hosts; do not substitute generic config-object writes or a local HTML file. Only create a Workflow for a reusable procedure or an Automation when the user asks for a schedule." : "Building apps, dashboards, and interactive views is not available in this organization. When the user asks for one, say so plainly and offer Workflow results instead: run or save a Workflow and show its result with render_workflow_artifact. Do not substitute a local HTML file. Only create an Automation when the user asks for a schedule.",
     "Skills teach how to perform work. Workflows are saved procedures discovered through search_capabilities and run through execute_capability. Author an ad hoc procedure with execute_capability_script; Workflow runs produce artifacts rendered by render_workflow_artifact, and Automations trigger Workflows. To keep a successful Code Mode result, save it as a Workflow inside the existing Plugin the member names (pass that pluginId); omit pluginId only for a private Workflow in their My Workflows Plugin. A Workflow inherits discovery and sharing from its Plugin and Marketplaces; never create a separate Workflow package or marketplace entry.",
     appServers
       ? "A match with kind mcp_app is a standard MCP App: an App built in OpenWork, which is also its own MCP server, or an App from a connected MCP server. Execute that exact match through execute_capability and let compatible hosts render its ui:// resource. Never import, convert, or browse for a standalone HTML URL instead; standalone URL-imported Apps are not part of this release."
@@ -217,20 +202,15 @@ function agentMcpInstructions(appServers: boolean): string {
 export const AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(true)
 export const LEGACY_AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(false)
 
-async function mcpRequestInfo(request: Request): Promise<{ method: string | null; resourceUri: string | null; generatedCatalog: boolean }> {
-  if (request.method.toUpperCase() !== "POST") return { method: null, resourceUri: null, generatedCatalog: false }
+async function mcpRequestMethod(request: Request): Promise<string | null> {
+  if (request.method.toUpperCase() !== "POST") return null
   const body: unknown = await request.clone().json().catch(() => null)
-  const method = typeof body === "object"
+  return typeof body === "object"
     && body !== null
     && "method" in body
     && typeof body.method === "string"
     ? body.method
     : null
-  const params = typeof body === "object" && body !== null && "params" in body && typeof body.params === "object" && body.params !== null
-    ? body.params
-    : null
-  const resourceUri = params && "uri" in params && typeof params.uri === "string" ? params.uri : null
-  return { method, resourceUri, generatedCatalog: needsGeneratedArtifactCatalog(method, params) }
 }
 
 export const AGENT_SKILL_INDEX_URI = "skill://index.json"
@@ -481,8 +461,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const connectMcpAppHostSupported = supportsConnectMcpAppHost(
       c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER),
     ) && principal.scopes.has(DEN_MCP_APP_HOST_SCOPE)
-    const requestInfo = await mcpRequestInfo(c.req.raw)
-    const method = requestInfo.method
+    const method = await mcpRequestMethod(c.req.raw)
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const capabilityContext = createCapabilityRegistryContext({
       app: app as unknown as Hono,
@@ -492,7 +471,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       organizationId,
       member: memberIdentity,
       redirectUriBase,
-      generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures,
     })
     const { externalMcpConnectionsEnabled } = capabilityContext
@@ -665,8 +643,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         description: [
           "Search connection actions, saved Workflows, and skills by keyword.",
           appServersEnabled
-            ? "Builder tools such as create_skill, prepare_app, and create_app are outside this search; call them directly. Use prepare_app then create_app for new apps, dashboards, and interactive views; older Workflow-bound views are read-only."
-            : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an app, dashboard, or artifact view of Workflow results, use save_artifact_view and follow its prerequisites.",
+            ? "Builder tools such as create_skill, prepare_app, and create_app are outside this search; call them directly. Use prepare_app then create_app for new apps, dashboards, and interactive views."
+            : "Direct MCP tools such as create_skill are outside this search; call an available direct tool itself. Building apps, dashboards, and interactive views is not available in this organization; offer Workflow results instead.",
           "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
           "Accessible Workflows appear as marketplace matches with kind workflow and execute through execute_capability like every other exact search result.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
@@ -1026,61 +1004,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     registerAgentWorkflowArtifactApp({
       server,
       load: loadWorkflowArtifact,
-      selectApp: async ({ configObjectId, receiptId }) => {
-        if (!artifactContext || !env.generatedArtifactViewsEnabled) return null
-        const views = await listArtifactViews({ context: artifactContext, activeOnly: true, savedOnly: true })
-        const snapshot = await getWorkflowSnapshot({ context: artifactContext, configObjectId, receiptId })
-        if (!snapshot) return null
-        for (const view of views) {
-          if (view.dataMode === "live" || view.configObjectId !== configObjectId || view.useInWorkflow === false) continue
-          const revision = view.revisions.find((entry) => entry.id === view.activeRevisionId)
-          if (!revision || revision.buildStatus !== "ready" || revision.retiredAt
-            || revision.outputSchemaDigest !== snapshot.outputSchemaDigest) continue
-          return { artifactViewId: view.id, viewRevisionId: revision.id, resourceUri: revision.resourceUri, toolName: `render_artifact_${view.id}` }
-        }
-        return null
-      },
     })
-
-    // This server deploys independently from Desktop. Do not advertise or
-    // serve bridge-dependent generated views until the compatible Desktop
-    // MCP Apps host has been released and the operator enables the rollout.
-    if (artifactContext && env.generatedArtifactViewsEnabled) {
-      const loadGeneratedResource = async ({ artifactViewId, revisionId }: { artifactViewId: string; revisionId: string }) => {
-        const { revision } = await loadArtifactViewRevision({ context: artifactContext, artifactViewId, revisionId })
-        if (revision.build_status !== "ready" || !revision.compiled_html || !revision.resource_digest) {
-          throw new Error("artifact_view_revision_not_ready")
-        }
-        return { html: revision.compiled_html, resourceDigest: revision.resource_digest, csp: revision.csp }
-      }
-      const generatedViews = requestInfo.generatedCatalog ? await listArtifactViews({ context: artifactContext }) : []
-      registerAgentGeneratedArtifactViews({
-        server,
-        views: generatedViews,
-        loadResource: loadGeneratedResource,
-        loadData: loadWorkflowArtifact,
-        readSource: (request) => readArtifactViewSource({ context: artifactContext, ...request }),
-        save: (request) => saveArtifactViewRevision({ context: artifactContext, ...request }),
-        activate: (request) => activateArtifactViewRevision({ context: artifactContext, ...request }),
-        retire: (request) => retireArtifactView({ context: artifactContext, ...request }),
-        notifyCatalogChanged: () => {
-          handlers.notify.toolsChanged(notificationScope)
-          handlers.notify.resourcesChanged(notificationScope)
-        },
-        legacyViewsWritable: !appServersEnabled,
-      })
-
-      const exactResource = requestInfo.resourceUri ? parseArtifactViewResourceUri(requestInfo.resourceUri) : null
-      if (exactResource && !generatedViews.some((view) => view.revisions.some((revision) => revision.resourceUri === requestInfo.resourceUri))) {
-        const exact = await getGeneratedArtifactViewRevision({ context: artifactContext, ...exactResource })
-        registerGeneratedArtifactResource({
-          server,
-          view: exact.view,
-          revision: exact.revision,
-          loadResource: loadGeneratedResource,
-        })
-      }
-    }
 
     server.registerTool(
       EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
@@ -1093,7 +1017,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           "Example adhoc code: return 1 + 1. Example live code: return {today:input.runtime.today}. tools.$codemode.search({query}) is for adhoc exploration; saved Workflows must call discovered paths directly.",
           "Optional inputSchema is checked before dispatch and outputSchema after execution; inspect discovered outputSchema for result shape rather than guessing. Successful tests return value plus authoring-test metadata and receiptId; source retention availability/scope controls whether saveWorkflow can reuse that receipt. This is not a saved Workflow artifact snapshot. " + (appServersEnabled
             ? "Apps can bind directly to discovered read-only connection tools without a Workflow. Only when an App needs a reusable live procedure: test with mode:live and outputSchema, saveWorkflow with receiptId and the same schemas (omit code/currentInput), then create_app with a tool bound to that saved Workflow in mode live so the App can load it on open."
-            : "For live apps: test with mode:live and outputSchema, saveWorkflow with receiptId and the same schemas (omit code/currentInput), run the saved version with mode:live and timeZone, then save_artifact_view for draft preview; the user chooses Save."),
+            : "For a reusable live procedure: test with mode:live and outputSchema, then saveWorkflow with receiptId and the same schemas (omit code/currentInput)."),
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         inputSchema: workflowAuthoringTestInputSchema,

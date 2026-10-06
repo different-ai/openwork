@@ -15,6 +15,7 @@ import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
+import { registerOrgLegacySavedAppRoutes } from "./legacy-saved-apps.js"
 import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
 import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceProviderRoutes } from "./inference-providers.js"
@@ -68,6 +69,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgBillingRoutes(app)
   registerOrgBrandAssetRoutes(app)
   registerOrgWorkflowRoutes(app)
+  registerOrgLegacySavedAppRoutes(app)
   registerOrgDashboardRoutes(app)
   registerOrgMcpAppCatalogRoutes(app)
   registerOrgDesktopPolicyRoutes(app)

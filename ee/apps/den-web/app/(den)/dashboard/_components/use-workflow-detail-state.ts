@@ -12,11 +12,7 @@ import {
   useWorkflowSnapshots,
   type WorkflowDraft,
 } from "./workflow-data";
-import {
-  useActivateArtifactView,
-  useRetireArtifactView,
-  useWorkflowLibraryDetail,
-} from "./workflow-detail-data";
+import { useWorkflowLibraryDetail } from "./workflow-detail-data";
 
 export type WorkflowFields = {
   name: string;
@@ -100,8 +96,6 @@ export function useWorkflowDetailState(configObjectId: string) {
   const runMutation = useRunWorkflow(configObjectId);
   const deleteMutation = useDeleteWorkflowSnapshot(configObjectId);
   const updateAutomationMutation = useUpdateWorkflowAutomation(configObjectId);
-  const activateViewMutation = useActivateArtifactView(configObjectId);
-  const retireViewMutation = useRetireArtifactView(configObjectId);
   const [fields, setFields] = useState<WorkflowFields | null>(null);
   const [base, setBase] = useState("");
   const [tested, setTested] = useState<{ result: WorkflowTestResult; fingerprint: string } | null>(null);
@@ -137,15 +131,12 @@ export function useWorkflowDetailState(configObjectId: string) {
     || runMutation.isPending
     || deleteMutation.isPending
     || updateAutomationMutation.isPending;
-  const viewPending = activateViewMutation.isPending || retireViewMutation.isPending;
   const firstError = [
     testMutation.error,
     saveMutation.error,
     runMutation.error,
     deleteMutation.error,
     updateAutomationMutation.error,
-    activateViewMutation.error,
-    retireViewMutation.error,
     detailQuery.error,
     snapshotsQuery.error,
   ].find((value) => value !== null && value !== undefined);
@@ -223,16 +214,6 @@ export function useWorkflowDetailState(configObjectId: string) {
     void updateAutomationMutation.mutateAsync(input).catch((reason) => setLocalError(errorMessage(reason)));
   }
 
-  function activateView(viewId: string, revisionId: string) {
-    setLocalError(null);
-    void activateViewMutation.mutateAsync({ viewId, revisionId }).catch((reason) => setLocalError(errorMessage(reason)));
-  }
-
-  function retireView(viewId: string) {
-    setLocalError(null);
-    void retireViewMutation.mutateAsync(viewId).catch((reason) => setLocalError(errorMessage(reason)));
-  }
-
   function close(onClose: () => void) {
     if (dirty && !window.confirm("Discard your unsaved changes?")) return;
     onClose();
@@ -241,7 +222,6 @@ export function useWorkflowDetailState(configObjectId: string) {
   return {
     libraryDetail,
     detail,
-    views: libraryDetail?.views ?? [],
     fields,
     snapshots,
     selectedSnapshot,
@@ -256,7 +236,6 @@ export function useWorkflowDetailState(configObjectId: string) {
     inputFormValue,
     currentAutomationCount,
     pending,
-    viewPending,
     error,
     loading: detailQuery.isLoading || !libraryDetail || !detail || !fields,
     setTechnical,
@@ -268,8 +247,6 @@ export function useWorkflowDetailState(configObjectId: string) {
     saveNewVersion,
     deleteSnapshot,
     updateAutomation,
-    activateView,
-    retireView,
     close,
   };
 }

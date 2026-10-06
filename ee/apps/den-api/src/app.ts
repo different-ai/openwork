@@ -319,7 +319,6 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     organizationId: normalizedOrganizationId,
     member,
     redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
-    generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationFeatures,
   })
   const result = await executeMarketplaceCapability({
@@ -415,8 +414,6 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },
-      { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },
-      { name: "Apps", description: "Saved reusable apps built from Workflows and Artifact views, and their sharing." },
       { name: "Config Objects", description: "Versioned configuration objects (skills, workflows, and other plugin content)." },
       { name: "Plugins", description: "Plugin packages, access grants, and imports." },
       { name: "Marketplaces", description: "Marketplaces that distribute plugins to members and teams." },
