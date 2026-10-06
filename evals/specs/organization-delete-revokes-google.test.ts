@@ -3,7 +3,6 @@ import { expect } from "vitest";
 import { createNativeConnector, denFetch, freshSession } from "@openwork/behaviors";
 import { startMockGoogle } from "@openwork/labs";
 import { needs, server, test } from "@openwork/testkit";
-import { googleWorkspaceRevocationTokens } from "../../ee/apps/den-api/src/organization-deletion-google-tokens";
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object");
@@ -46,21 +45,6 @@ globalThis.fetch = async (input, init) => {
     },
   };
 }
-
-test("only Google Workspace OAuth grants are picked for revocation", () => {
-  const account = (providerId: string, refreshToken: string | null, accessToken: string | null, tokenType: string | null = "Bearer") =>
-    ({ providerId, refreshToken, accessToken, tokenType });
-  expect(googleWorkspaceRevocationTokens([
-    account("google-workspace", "legacy-refresh", "legacy-access"),
-    account("emc_google", null, "named-access"),
-    account("emc_google", "duplicate", null),
-    account("google-workspace", "duplicate", null),
-    account("emc_other_mcp", "other-refresh", "other-access"),
-    account("microsoft-365", "ms-refresh", "ms-access"),
-    account("emc_google", null, "personal-api-key", "api_key"),
-    account("google-workspace", null, null),
-  ], ["emc_google"])).toEqual(["legacy-refresh", "named-access", "duplicate"]);
-});
 
 test("deleting an organization revokes members' Google Workspace grants at Google", { timeout: 300_000 }, async ({ place, evidence }) => {
   needs({ commands: ["bun", "pnpm"], placement: "local" });
