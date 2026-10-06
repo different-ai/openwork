@@ -29,6 +29,30 @@ Steps 2, 4 and 5 are set per deployment in `/admin` (Features page and each
 organization's row) or with the admin MCP tools `den_list_features`,
 `den_set_feature_rollout` and `den_set_org_capability`.
 
+## Modules vs features
+
+Modules and feature flags are separate layers, and every flag belongs to
+exactly one module (`module` in the registry entry, required).
+
+| | Module | Feature flag |
+|---|---|---|
+| Answers | What does this organization have? | Is this new code safe to show yet? |
+| Lifetime | Permanent | Temporary: deleted when the rollout is done |
+| Decided by | Plan or license entitlement, plus the organization's own opt-outs | The platform team: deployment, kill switch, operator lock, per-organization override, everyone on or off |
+| Declared in | `packages/license-contracts/src/module-ids.ts` and `modules.ts` | `packages/features/src/registry.ts` |
+| Stored in | License snapshot and `organization.modules` | `feature_rollout` and `organization_feature` |
+
+- **On means both.** A feature is on only when its module is on and its flag
+  is on (`isFeatureEffective` in `@openwork/features`). A flag can hold a
+  module back; it never grants one.
+- **Pick the module first.** Work in an existing product area uses that
+  area's module id. A brand-new product area adds a module id first in
+  `packages/license-contracts` (ids are append-only: never rename, remove or
+  reorder one), then declares its flag here with that `module`.
+- **Finishing a rollout** deletes the flag and its checks. From then on the
+  module's entitlement is the only gate.
+- `pnpm features:check` rejects a feature with no `module` or an unknown one.
+
 ## Does this need a feature?
 
 Yes, if any of these is true:
@@ -50,6 +74,7 @@ works rather than *whether* people get it (put it in `env.ts` / Helm `config.<ar
 newThing: {
   label: "New thing",
   description: "What a person gets, in words they see in the product.",
+  module: "connect",
   since: "2026-10",
   deployments: ["cloud", "self_hosted"],
   default: false,
@@ -57,6 +82,7 @@ newThing: {
 ```
 
 - **Key**: lowerCamelCase, no consecutive capitals. Permanent: also the Helm key, `DEN_FEATURE_NEW_THING`, the API field and stored rows.
+- **Module**: the module id the feature belongs to (see "Modules vs features"). Required.
 - **Deployments**: leave one out on purpose (e.g. `["cloud"]` for a cloud-only feature).
 - **default**: false for new work. A fresh deployment, and a client that cannot reach Den, uses it, so never ship half-done work as `true`.
 - **permanent: true** only when the switch itself is part of the product (e.g. turning Connect off for one organization). Rollouts are temporary.
@@ -91,7 +117,7 @@ rather than silently removing it, when the person could act on it.
 2. Turn it on for more organizations, one override at a time, checking errors as you go.
 3. Turn it on for everyone in `/admin` › Features. Organizations can still be turned off one by one.
 4. Anything wrong: **Turn off everywhere** (kill switch). Fix, restore, continue.
-5. Once it is on everywhere: set `default: true`, then delete the entry and every check. `pnpm features:check` asks for a decision six months after `since` unless the entry is `permanent`.
+5. Once it is on everywhere: set `default: true`, then delete the entry and every check; the module's entitlement then decides. `pnpm features:check` asks for a decision six months after `since` unless the entry is `permanent`.
 
 Evals turn features on per organization through the admin API:
 `enableOrganizationCapabilities(seed, admin, { newThing: true })` in

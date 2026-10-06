@@ -23,7 +23,19 @@
  * Keys are permanent: the same name is the Helm values key, the
  * DEN_FEATURE_<KEY> environment variable, the API field, and the stored rows.
  * Use lowerCamelCase with no consecutive capitals.
+ *
+ * Every feature belongs to exactly one module (`module`, a module id from
+ * @openwork/license-contracts). Modules say what an organization has
+ * (permanent, decided by plan or license plus the organization's opt-outs);
+ * features say whether new code is safe to show yet (temporary rollout). A
+ * feature is on only when its module is on and its flag is on, so a flag can
+ * hold a module back but never grants one. A brand-new product area adds a
+ * module id first (append-only, in packages/license-contracts), then declares
+ * its flag here with that module. When the rollout is done, delete the flag
+ * and the module's entitlement is the only gate.
  */
+
+import type { ModuleId } from "@openwork/license-contracts"
 
 export type FeatureDeployment = "cloud" | "self_hosted"
 
@@ -32,6 +44,8 @@ export type FeatureDefinition = {
   label: string
   /** One sentence: what a person gets, in words they see in the product. */
   description: string
+  /** The module this feature belongs to. The feature is on only when the module is on too. */
+  module: ModuleId
   /** Year and month the entry was added or last changed, e.g. "2026-10". */
   since: `${number}-${number}`
   /** Products it exists on. Leave one out on purpose, e.g. ["cloud"] for cloud-only. */
@@ -56,6 +70,7 @@ export const FEATURES = defineFeatures({
   installLinks: {
     label: "Install links",
     description: "Workspace admins can create desktop install links for their organization.",
+    module: "installLinks",
     since: "2026-10",
     deployments: everywhere,
     default: true,
@@ -63,6 +78,7 @@ export const FEATURES = defineFeatures({
   mcpConnections: {
     label: "OpenWork Connect",
     description: "Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.",
+    module: "connect",
     since: "2026-10",
     deployments: everywhere,
     default: true,
@@ -70,6 +86,7 @@ export const FEATURES = defineFeatures({
   modelsAnalytics: {
     label: "OpenWork Models task analytics",
     description: "Organization admins can opt in to task analytics for OpenWork Models.",
+    module: "openworkModels.analytics",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -77,6 +94,7 @@ export const FEATURES = defineFeatures({
   auditLogs: {
     label: "Audit logs",
     description: "Organization admins can read and configure audit logs. Capture still needs an audit entitlement.",
+    module: "auditLogs",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -84,6 +102,7 @@ export const FEATURES = defineFeatures({
   orgManagedDashboards: {
     label: "Dashboards",
     description: "Organization admins publish dashboards to members in Den and the desktop app.",
+    module: "dashboards",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -91,6 +110,7 @@ export const FEATURES = defineFeatures({
   slackAssistant: {
     label: "Slack Assistant",
     description: "Answers Slack mentions and DMs for the organization after the Slack connector is set up.",
+    module: "slackAssistant",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -98,6 +118,7 @@ export const FEATURES = defineFeatures({
   slackAssistantHeadless: {
     label: "Slack Assistant: headless runtime",
     description: "Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.",
+    module: "slackAssistant.headless",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -105,6 +126,7 @@ export const FEATURES = defineFeatures({
   headlessAutomations: {
     label: "Cloud Automations: headless runtime",
     description: "Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.",
+    module: "automations.headless",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -112,6 +134,7 @@ export const FEATURES = defineFeatures({
   workbot: {
     label: "Workbot",
     description: "Members can use Workbot. Needs the deployment's Workbot app.",
+    module: "workbot",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -119,6 +142,7 @@ export const FEATURES = defineFeatures({
   litellm: {
     label: "AI Gateway: LiteLLM",
     description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
+    module: "aiGateway",
     since: "2026-10",
     deployments: everywhere,
     default: false,

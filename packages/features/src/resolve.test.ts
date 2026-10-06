@@ -4,7 +4,10 @@ import {
   FEATURE_KEYS,
   FEATURES,
   featureKeySchema,
+  featureKeysForModule,
   featureLockEnvName,
+  featureModule,
+  isFeatureEffective,
   mapFeatures,
   parseFeatureEnvironment,
   resolveFeature,
@@ -77,4 +80,37 @@ test("environment: self_hosted by default, strict values, unknown keys warn", ()
 
   const fatal = parseFeatureEnvironment({ DEN_DEPLOYMENT: "prod", DEN_FEATURE_WORKBOT: "yes" })
   assert.deepEqual(fatal.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_DEPLOYMENT", true], ["DEN_FEATURE_WORKBOT", true]])
+})
+
+test("every feature belongs to its module (D43)", () => {
+  const expected: Record<string, string> = {
+    installLinks: "installLinks",
+    mcpConnections: "connect",
+    modelsAnalytics: "openworkModels.analytics",
+    auditLogs: "auditLogs",
+    orgManagedDashboards: "dashboards",
+    slackAssistant: "slackAssistant",
+    slackAssistantHeadless: "slackAssistant.headless",
+    headlessAutomations: "automations.headless",
+    workbot: "workbot",
+    litellm: "aiGateway",
+  }
+  for (const key of FEATURE_KEYS) {
+    assert.ok(Object.hasOwn(expected, key), `add ${key} to this table with its module`)
+    assert.equal(featureModule(key), expected[key])
+  }
+  assert.deepEqual(featureKeysForModule("slackAssistant"), ["slackAssistant"])
+  assert.deepEqual(featureKeysForModule("aiGateway"), ["litellm"])
+  assert.deepEqual(featureKeysForModule("billing"), [])
+})
+
+test("a feature is effective only when its module is effective and its flag is on", () => {
+  const on = resolveFeature("installLinks", base)
+  const off = resolveFeature("installLinks", { ...base, overrides: { installLinks: false } })
+  assert.equal(isFeatureEffective(true, on), true)
+  assert.equal(isFeatureEffective(false, on), false)
+  assert.equal(isFeatureEffective(true, off), false)
+  assert.equal(isFeatureEffective(false, off), false)
+  assert.equal(isFeatureEffective(true, true), true)
+  assert.equal(isFeatureEffective(false, true), false)
 })

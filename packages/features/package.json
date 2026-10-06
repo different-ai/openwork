@@ -26,6 +26,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@openwork/license-contracts": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {

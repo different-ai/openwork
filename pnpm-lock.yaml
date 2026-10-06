@@ -1514,6 +1514,9 @@ importers:
 
   packages/features:
     dependencies:
+      '@openwork/license-contracts':
+        specifier: workspace:*
+        version: link:../license-contracts
       zod:
         specifier: ^4.3.6
         version: 4.3.6

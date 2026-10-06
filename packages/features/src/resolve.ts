@@ -11,6 +11,7 @@
  * Pure functions with no I/O, safe in browsers.
  */
 
+import type { ModuleId } from "@openwork/license-contracts"
 import { z } from "zod"
 import {
   FEATURES,
@@ -44,6 +45,27 @@ export function featureAvailableOn(key: FeatureKey, deployment: FeatureDeploymen
 /** Features that exist on this deployment; the only ones with a Helm key there. */
 export function availableFeatureKeys(deployment: FeatureDeployment): FeatureKey[] {
   return FEATURE_KEYS.filter((key) => featureAvailableOn(key, deployment))
+}
+
+/** The module a feature belongs to (D43). */
+export function featureModule(key: FeatureKey): ModuleId {
+  return featureDefinition(key).module
+}
+
+/** Every feature that belongs to a module, in registry order. */
+export function featureKeysForModule(module: ModuleId): FeatureKey[] {
+  return FEATURE_KEYS.filter((key) => featureModule(key) === module)
+}
+
+/**
+ * A feature is effective only when its module is effective and its flag is
+ * on (D43): a flag can hold a module back, never grant one. The caller
+ * decides what "module effective" means for the surface (for example
+ * `isModuleOn` or `isModuleUsable` from @openwork/license-contracts).
+ */
+export function isFeatureEffective(moduleEffective: boolean, feature: Pick<ResolvedFeature, "enabled"> | boolean): boolean {
+  const flagOn = typeof feature === "boolean" ? feature : feature.enabled
+  return moduleEffective && flagOn
 }
 
 /**

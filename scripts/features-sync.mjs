@@ -7,7 +7,8 @@
 //   pnpm features:check   fail if those files are stale, if the chart renders
 //                         different DEN_FEATURE_* names than den-api reads, if
 //                         a Dockerfile misses a workspace package its service
-//                         needs, or if code bypasses the registry (see below)
+//                         needs, if a feature names no module or an unknown
+//                         one, or if code bypasses the registry (see below)
 //
 // Read .opencode/skills/add-a-feature/SKILL.md before adding a feature.
 
@@ -21,6 +22,7 @@ import {
   featureAvailableOn,
   featureLockEnvName,
 } from "../packages/features/src/index.ts"
+import { MODULE_IDS } from "../packages/license-contracts/src/module-ids.ts"
 import { checkDockerWorkspacePackages } from "./check-docker-workspace-packages.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -146,6 +148,11 @@ if (check) {
       problems.push(`Feature key "${key}" must be lowerCamelCase with no consecutive capitals (it becomes ${featureLockEnvName(key)}).`)
     }
     if (!definition.label.trim() || !definition.description.trim()) problems.push(`Feature "${key}" needs a label and a description.`)
+    if (typeof definition.module !== "string" || definition.module === "") {
+      problems.push(`Feature "${key}" needs a module: every feature belongs to exactly one module (see .opencode/skills/add-a-feature).`)
+    } else if (!MODULE_IDS.includes(definition.module)) {
+      problems.push(`Feature "${key}" names unknown module "${definition.module}". Use an id from packages/license-contracts/src/module-ids.ts, or add the module there first.`)
+    }
     const since = /^(\d{4})-(\d{2})$/.exec(definition.since)
     if (!since) {
       problems.push(`Feature "${key}" since must be "YYYY-MM".`)
