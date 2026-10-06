@@ -1818,12 +1818,12 @@ export async function proxyOpencodeRequest(input: {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  let headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
-  headers.delete("host");
   let headers = buildEngineForwardHeaders(input.request.headers);
+
+  const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
+  let search = input.url.search;
+  if (workspace) {
+    const scoped = scopeWorkspaceOpencodeRequest(headers, search, directory);
     headers = scoped.headers;
     search = scoped.search;
   }
