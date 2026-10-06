@@ -1,5 +1,6 @@
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
+import { checkMemberAddEligibility, MemberAddEligibilityError } from "../../member-add-eligibility.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import {
   ConfigObjectAccessGrantTable,
@@ -299,6 +300,14 @@ async function transferProvisionalWorkspace(tx: BootstrapTransaction, claim: {
 
   if (removedMember) {
     return { status: "membership_removed" as const }
+  }
+
+  if (!existingMember) {
+    // The claimer replaces the setup agent, which is not a person.
+    const seatRejection = await checkMemberAddEligibility({ organizationId: claim.organizationId, path: "bootstrap", netNewSeats: 1 })
+    if (seatRejection) {
+      throw new MemberAddEligibilityError(seatRejection)
+    }
   }
 
   const memberId = existingMember?.id ?? createDenTypeId("member")

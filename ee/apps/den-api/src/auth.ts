@@ -4,6 +4,8 @@ import { coreHooks, mergeCoreHookRecords, type CoreBootContributorPoints, type C
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { maybeString, readStringProperty } from "./better-auth-values.js";
 import { db } from "./db.js";
+import { checkMemberAddEligibility } from "./member-add-eligibility.js";
+import type { MemberAddPath } from "./member-add-eligibility-config.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
 import { appLogger } from "./observability/logger.js";
@@ -192,6 +194,21 @@ async function deleteOrganizationMemberConnectedAccounts(input: {
       eq(schema.LlmProviderMemberCredentialTable.organizationId, organizationId),
       eq(schema.LlmProviderMemberCredentialTable.orgMembershipId, orgMembershipId),
     ));
+}
+
+// Which member-add path a Better Auth adapter insert belongs to. Creating an
+// organization adds its first member, the owner, which never needs a seat check.
+function memberAddPathForBetterAuthRequest(path: string | null): MemberAddPath | null {
+  if (path === "/organization/create") {
+    return null;
+  }
+  if (path?.startsWith("/scim/v2/")) {
+    return "scim";
+  }
+  if (path?.startsWith("/sso/callback/") || path?.startsWith("/sso/saml2/")) {
+    return "sso_jit";
+  }
+  return "better_auth_other";
 }
 
 function throwMemberLifecycleError(message: string): never {
@@ -560,6 +577,18 @@ export const auth = betterAuth({
     },
     member: {
       create: {
+        // SCIM provisioning, SSO JIT and any other Better Auth adapter insert
+        // (W0-05 PR D: observe by default, DEN_MEMBER_ADD_ELIGIBILITY_*).
+        before: async (member: Pick<AuthMemberHookRow, "organizationId">, context: { path?: string } | null | undefined) => {
+          const path = memberAddPathForBetterAuthRequest(context?.path ?? null);
+          if (!path) {
+            return;
+          }
+          const rejection = await checkMemberAddEligibility({ organizationId: member.organizationId, path, netNewSeats: 1 });
+          if (rejection) {
+            throw new APIError("FORBIDDEN", { message: rejection.message });
+          }
+        },
         after: async (member: AuthMemberHookRow) => {
           await coreHooks.runPostCommit("member.added", {
             organizationId: normalizeDenTypeId("organization", member.organizationId),
@@ -1007,6 +1036,11 @@ export const auth = betterAuth({
             userId: inviter.id,
             role: readRoleProperty(invitation, "role") ?? ORGANIZATION_MEMBER_ROLE,
           });
+          // Defense in depth: raw /organization/invite-member is denied over HTTP.
+          const seatRejection = await checkMemberAddEligibility({ organizationId, path: "better_auth_invitation", netNewSeats: 1 });
+          if (seatRejection) {
+            throw new APIError("FORBIDDEN", { message: seatRejection.message });
+          }
         },
         beforeRemoveMember: async ({ member }) => {
           const validation = await validateOrganizationMemberRemovalForHook({

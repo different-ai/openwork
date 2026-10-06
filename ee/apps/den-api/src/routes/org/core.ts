@@ -109,6 +109,11 @@ const acceptInvitationSchema = z.object({
   id: z.string().trim().min(1).max(255),
 })
 
+const acceptPaymentRequiredSchema = z.object({
+  error: z.literal("payment_required"),
+  message: z.string(),
+}).meta({ ref: "InvitationAcceptPaymentRequiredError" })
+
 const scimDeprovisionedSchema = z.object({
   error: z.literal("scim_deprovisioned"),
   message: z.string(),
@@ -371,6 +376,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         400: jsonResponse("The invitation acceptance request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to accept an invitation.", unauthorizedSchema),
         403: jsonResponse("API keys cannot accept invitations, or the deployment requires a verified account email.", forbiddenSchema),
+        402: jsonResponse("The workspace has used its free seats and needs a seat subscription before this person can join. Only returned once seat checks are enforced on invitation acceptance.", acceptPaymentRequiredSchema),
         409: jsonResponse("The account cannot join this organization.", z.union([accountEmailDomainNotAllowedSchema, scimDeprovisionedSchema])),
         410: jsonResponse("The user previously accepted this invitation, but their workspace access was removed.", membershipRemovedSchema),
         404: jsonResponse("The invitation could not be found.", notFoundSchema),
@@ -429,6 +435,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         error: "scim_deprovisioned",
         message: "This member is managed by your identity provider. Restore their access in the IdP.",
       }, 409)
+    }
+    if (accepted.status === "payment_required") {
+      return c.json({ error: "payment_required", message: accepted.message }, 402)
     }
 
     await setRequestActiveOrganization(c, accepted.member.organizationId)

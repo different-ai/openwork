@@ -4,6 +4,7 @@ import type { BetterAuthPlugin } from "better-auth"
 import type { createAuthMiddleware } from "better-auth/api"
 import type { SQL } from "@openwork-ee/den-db/drizzle"
 import type { OrganizationOptions } from "better-auth/plugins"
+import type { MemberAddPath } from "../../member-add-eligibility-config.js"
 import type { AfterCommit, CoreHookModuleId, CoreHookRejection, CoreTx } from "./types.js"
 
 // The typed point catalogue (W0-05). One map per phase so every handler is
@@ -89,6 +90,14 @@ export type CoreSignInMethodLookup =
   | { lookup: "organization"; organizationId: OrgId; organizationSlug: string }
 
 export interface CoreGuardPoints {
+  // Whether an organization may gain `netNewSeats` people on `path`. Callers
+  // go through member-add-eligibility.ts, which decides observe vs enforce.
+  // Binding an invitation placeholder adds no seat and is never checked.
+  "member.addEligibility": {
+    organizationId: OrgId
+    path: MemberAddPath
+    netNewSeats: number
+  }
   // Teams: Admin-team members can only be removed by owners and super-admins.
   "member.removalGuard": {
     tx: CoreTx

@@ -2,6 +2,7 @@ import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrgSubscriptionTable } from "@openwork-ee/den-db/schema"
 import {
   cancelOrganizationSubscriptions,
+  getOrganizationSeatAddEligibility,
   syncInferenceSubscriptionQuantityAfterMemberChange,
   syncSeatSubscriptionQuantityAfterMemberChange,
   syncWebSubscriptionQuantityAfterMemberChange,
@@ -84,4 +85,29 @@ coreHooks.registerContributor({
   errorPolicy: "propagate",
   order: CORE_HOOK_ORDER.default + 3,
   contribute: async ({ storedMetadata }) => ({ fields: { plan: parseOrganizationPlan(storedMetadata), entitlements: getOrganizationEntitlements(storedMetadata) } }),
+})
+
+// Seat billing: past the free seats, adding people needs an active seat
+// subscription. Den invitation create enforces it; other add paths observe
+// it until DEN_MEMBER_ADD_ELIGIBILITY_* enforce them (W0-05 PR D).
+coreHooks.registerGuard({
+  point: "member.addEligibility",
+  id: "legacy/billing/seat-subscription-required",
+  registrant: "legacy",
+  order: CORE_HOOK_ORDER.guard,
+  handler: async ({ organizationId }) => {
+    const seatEligibility = await getOrganizationSeatAddEligibility(organizationId)
+    if (seatEligibility.allowed) return null
+    return {
+      code: "payment_required",
+      status: 402,
+      message: `This workspace includes ${seatEligibility.freeSeatCount} free seats. Start seat billing to add more people.`,
+      details: {
+        currentCount: seatEligibility.currentCount,
+        freeSeatCount: seatEligibility.freeSeatCount,
+        billableSeatCount: seatEligibility.billableSeatCount,
+        hasActiveSeatSubscription: seatEligibility.hasActiveSeatSubscription,
+      },
+    }
+  },
 })

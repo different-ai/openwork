@@ -746,6 +746,11 @@ export type InvitationAcceptedResponse = {
   invitationId: string;
 };
 
+export type InvitationAcceptPaymentRequiredError = {
+  error: "payment_required";
+  message: string;
+};
+
 export type AccountEmailDomainNotAllowedError = {
   error: "account_email_domain_not_allowed";
   message: string;
@@ -7736,6 +7741,10 @@ export type PostV1OrgsInvitationsAcceptErrors = {
    * The caller must be signed in to accept an invitation.
    */
   401: UnauthorizedError;
+  /**
+   * The workspace has used its free seats and needs a seat subscription before this person can join. Only returned once seat checks are enforced on invitation acceptance.
+   */
+  402: InvitationAcceptPaymentRequiredError;
   /**
    * API keys cannot accept invitations, or the deployment requires a verified account email.
    */

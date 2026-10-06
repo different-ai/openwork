@@ -46,6 +46,7 @@ import {
 } from "./organization-access.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
 import { isProtectedOrganizationRoleName, shouldRevokeSessionsForRoleChange } from "./organization-role-hierarchy.js"
+import { checkMemberAddEligibility, MemberAddEligibilityError } from "./member-add-eligibility.js"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
 
@@ -70,6 +71,10 @@ export type AcceptInvitationForUserResult = {
 } | {
   status: "scim_deprovisioned"
   invitation: InvitationRow
+} | {
+  status: "payment_required"
+  invitation: InvitationRow
+  message: string
 }
 
 type MemberLifecycleValidationFailure = Extract<MemberLifecycleValidation, { ok: false }>
@@ -558,6 +563,11 @@ async function insertMemberIfMissing(input: {
     return null
   }
 
+  const seatRejection = await checkMemberAddEligibility({ organizationId: input.organizationId, path: "bootstrap", netNewSeats: 1 })
+  if (seatRejection) {
+    throw new MemberAddEligibilityError(seatRejection)
+  }
+
   try {
     await db.insert(MemberTable).values({
       id: createDenTypeId("member"),
@@ -799,6 +809,15 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
       }
     }
 
+    // Legacy invitations without a placeholder add a new person; invitations
+    // with one already hold the seat (W0-05 PR D: observe by default).
+    if (!member && !invitedMember) {
+      const seatRejection = await checkMemberAddEligibility({ organizationId: currentInvitation.organizationId, path: "acceptance", netNewSeats: 1 })
+      if (seatRejection) {
+        return { status: "payment_required" as const, invitation: currentInvitation, message: seatRejection.message }
+      }
+    }
+
     if (!member && removedMember) {
       const memberId = createDenTypeId("member")
       // Legacy invitations may not have a pending member placeholder. They
@@ -953,7 +972,7 @@ export async function acceptInvitationForUser(input: {
     }
     return null
   }
-  if (accepted.status === "scim_deprovisioned") {
+  if (accepted.status === "scim_deprovisioned" || accepted.status === "payment_required") {
     return accepted
   }
   if (accepted.newlyAccepted) {

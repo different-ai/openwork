@@ -15,7 +15,7 @@ import { appLogger } from "../../observability/logger.js"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
 import { validateInvitationRoleAssignment, type OrganizationRolePermission } from "../../organization-access.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
-import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
+import { checkMemberAddEligibility } from "../../member-add-eligibility.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { buildInvitationLink, createInvitationId, createInvitationToken, ensureInviteManager, ensureOrganizationSuperAdmin, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
@@ -213,9 +213,10 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           return { status: "role_error" as const, validation: refreshRole }
         }
       } else {
-        const seatEligibility = await getOrganizationSeatAddEligibility(payload.organization.id)
-        if (!seatEligibility.allowed) {
-          return { status: "payment_required" as const, seatEligibility }
+        // A new invitation creates a placeholder member, which takes a seat.
+        const seatRejection = await checkMemberAddEligibility({ organizationId: payload.organization.id, path: "invitation", netNewSeats: 1 })
+        if (seatRejection) {
+          return { status: "payment_required" as const, seatRejection }
         }
       }
 
@@ -315,14 +316,16 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({ error: validation.error, message: validation.message }, 403)
     }
     if (invitationWrite.status === "payment_required") {
-      const { seatEligibility } = invitationWrite
+      const { seatRejection } = invitationWrite
+      const currentCount = seatRejection.details?.currentCount
+      const freeSeatCount = seatRejection.details?.freeSeatCount
       return c.json({
         error: "payment_required",
         reason: "seat_subscription_required",
         subscriptionType: "seat",
-        currentCount: seatEligibility.currentCount,
-        freeSeatCount: seatEligibility.freeSeatCount,
-        message: `This workspace includes ${seatEligibility.freeSeatCount} free seats. Start seat billing at ${invitationBillingUrl()} to invite more people.`,
+        currentCount: typeof currentCount === "number" ? currentCount : 0,
+        freeSeatCount: typeof freeSeatCount === "number" ? freeSeatCount : 0,
+        message: `This workspace includes ${typeof freeSeatCount === "number" ? freeSeatCount : 0} free seats. Start seat billing at ${invitationBillingUrl()} to invite more people.`,
         billingUrl: invitationBillingUrl(),
       }, 402)
     }

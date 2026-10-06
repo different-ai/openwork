@@ -101,6 +101,7 @@ function emptyGuardStore(): GuardStore {
     "team.mutationGuard": [],
     "org.deletion.pre": [],
     "auth.signInEnforcement": [],
+    "member.addEligibility": [],
   }
 }
 

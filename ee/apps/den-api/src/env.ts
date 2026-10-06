@@ -4,6 +4,7 @@ import path from "node:path"
 import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
+import { parseMemberAddEligibilityConfig } from "./member-add-eligibility-config.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
@@ -116,6 +117,12 @@ const EnvSchema = z.object({
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
+  // Member-add seat eligibility on every add path (W0-05 PR D; owner:
+  // billing). "observe" logs would-be denials; "enforce" refuses on the
+  // listed paths. Den invitation create is always enforced, as before.
+  // Remove both once every path enforces (W0-05 rollout step 7).
+  DEN_MEMBER_ADD_ELIGIBILITY_MODE: z.enum(["observe", "enforce"]).default("observe"),
+  DEN_MEMBER_ADD_ELIGIBILITY_ENFORCE_PATHS: z.string().optional(),
   // Default-on deployment kill switches; the per-org auditLogs capability stays opt-in.
   DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
   DEN_AUDIT_VISIBILITY_ENABLED: z.enum(["true", "false"]).default("true"),
@@ -541,6 +548,10 @@ const automationsRuntimeEnabled = parseBooleanFlag(
 const automationsEnabled = automationsRuntimeEnabled
   && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "false")
 const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "false")
+const memberAddEligibility = parseMemberAddEligibilityConfig({
+  mode: parsed.DEN_MEMBER_ADD_ELIGIBILITY_MODE,
+  enforcePaths: parsed.DEN_MEMBER_ADD_ELIGIBILITY_ENFORCE_PATHS,
+})
 // An edge that already answers CORS (reflecting the caller's origin) in front
 // of den-api makes den-api's own headers duplicates, which browsers reject.
 // The allowlist still feeds proxy-trust decisions; only header emission stops.
@@ -827,6 +838,7 @@ export const env = {
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
   dashboardsEnabled,
+  memberAddEligibility,
   auditCaptureEnabled: parsed.DEN_AUDIT_CAPTURE_ENABLED === "true",
   auditVisibilityEnabled: parsed.DEN_AUDIT_VISIBILITY_ENABLED === "true",
   auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",

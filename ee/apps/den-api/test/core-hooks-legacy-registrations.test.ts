@@ -80,6 +80,7 @@ const expected = {
   "invitation.accepted": ["legacy/teams/assign-invitation-team"],
   "invitation.cancelGuard": ["legacy/teams/admin-team-invitation-cancel"],
   "invitation.createGuard": ["legacy/teams/admin-team-invitation-refresh"],
+  "member.addEligibility": ["legacy/billing/seat-subscription-required"],
   "member.added": [
     "legacy/ai-gateway/mint-member-key-for-adapter-insert",
     "legacy/openwork-models/sync-inference-after-member-added",
