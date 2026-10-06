@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto"
 import { createRemoteJWKSet, errors, jwtVerify, type JWTVerifyGetKey } from "jose"
 import { z } from "zod"
-import { OAuthTokenExchangeError } from "../capability-sources/generic-oauth.js"
+import { OAuthTokenExchangeError } from "../core/oauth/token-exchange-error.js"
 
 export const GOOGLE_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 export const GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"

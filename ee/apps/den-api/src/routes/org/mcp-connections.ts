@@ -39,7 +39,7 @@ import {
   verifyOrgRole,
 } from "../../middleware/index.js"
 import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, okSchema, unauthorizedSchema } from "../../openapi.js"
-import { createOAuthStateToken, verifyOAuthStateToken } from "../../capability-sources/generic-oauth.js"
+import { createOAuthStateToken, verifyOAuthStateToken } from "../../core/oauth/state-token.js"
 import { matchesLegacyExternalMcpOAuthStateIdentityBinding } from "../../capability-sources/external-mcp-oauth-state-identity.js"
 import {
   abandonLegacyExternalMcpAuth,
@@ -82,7 +82,7 @@ import { externalMcpAppResourceUri } from "../../mcp/external-capabilities.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../../mcp/search.js"
 import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
-import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { connectCallbackPage } from "../../core/oauth/callback-page.js"
 import { getConnectedAccount, getOrgOAuthClient, upsertOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
 import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import {

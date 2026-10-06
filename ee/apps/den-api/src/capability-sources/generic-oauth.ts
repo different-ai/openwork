@@ -1,8 +1,6 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { env } from "../env.js"
-import { publicRequestUrl } from "../request-url.js"
+import { OAuthTokenExchangeError } from "../core/oauth/token-exchange-error.js"
 import { clientSelectedFeatures, resolveProviderScopes, type NativeOAuthProviderConfig } from "./provider-registry.js"
 import { readProviderTenantId, resolveTenantEndpointTemplate } from "./oauth-tenant.js"
 import {
@@ -20,133 +18,18 @@ import {
  * registry entry (authorizeUrl/tokenUrl/scopes) differs per provider.
  */
 
+/** @deprecated moved to src/core/oauth/* by W0-P02; removed after batch A. */
+export { createPkcePair } from "../core/oauth/pkce.js"
+/** @deprecated moved to src/core/oauth/* by W0-P02; removed after batch A. */
+export { resolvePublicApiBaseUrl, resolvePublicOrigin } from "../core/oauth/public-origin.js"
+/** @deprecated moved to src/core/oauth/* by W0-P02; removed after batch A. */
+export { createOAuthStateToken, verifyOAuthStateToken, type OAuthStatePayload } from "../core/oauth/state-token.js"
+/** @deprecated moved to src/core/oauth/* by W0-P02; removed after batch A. */
+export { OAuthTokenExchangeError, type OAuthTokenExchangeFailureCode } from "../core/oauth/token-exchange-error.js"
+
 const TOKEN_EXPIRY_SAFETY_WINDOW_MS = 60_000
 const TOKEN_REQUEST_TIMEOUT_MS = 15_000
 const TOKEN_RESPONSE_MAX_BYTES = 64 * 1024
-
-function base64UrlEncode(input: Buffer | string) {
-  const buffer = typeof input === "string" ? Buffer.from(input, "utf8") : input
-  return buffer.toString("base64url")
-}
-
-/**
- * The public API base URL an external OAuth server should redirect back to.
- * A configured pathname is preserved for self-hosted deployments that expose
- * Den behind a prefix such as `/api/den`. Behind a
- * reverse proxy (e.g. Daytona's port-forwarding proxy), `request.url`
- * reflects the *internal* bind address (http://127.0.0.1:8788) rather than
- * the public URL the browser actually called, since the proxy doesn't
- * rewrite the request's own URL — `x-forwarded-proto` can correct the
- * scheme, while `DEN_API_PUBLIC_URL`, when set, is still needed when the
- * proxy does not preserve the public host.
- */
-export function resolvePublicApiBaseUrl(request: Request, apiPublicUrl: string | undefined): string {
-  if (apiPublicUrl) {
-    const url = new URL(apiPublicUrl)
-    const pathname = url.pathname.replace(/\/+$/, "")
-    return `${url.origin}${pathname === "/" ? "" : pathname}`
-  }
-  return publicRequestUrl(request, { trustedOrigins: env.publicUrlTrustedOrigins }).origin
-}
-
-/** Compatibility name retained for existing callback and webhook builders. */
-export const resolvePublicOrigin = resolvePublicApiBaseUrl
-
-export function createPkcePair() {
-  const verifier = base64UrlEncode(randomBytes(32))
-  const challenge = base64UrlEncode(createHash("sha256").update(verifier).digest())
-  return { verifier, challenge }
-}
-
-export type OAuthStatePayload = {
-  version?: 1 | 2
-  organizationId: DenTypeId<"organization">
-  orgMembershipId: DenTypeId<"member">
-  providerId: string
-  binding?: string
-  callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
-  authorizationServerIssuer?: string
-  authorizationResponseIssuerRequired?: boolean
-  nonce: string
-  iat?: number
-  exp: number
-}
-
-export function createOAuthStateToken(input: {
-  organizationId: DenTypeId<"organization">
-  orgMembershipId: DenTypeId<"member">
-  providerId: string
-  binding?: string
-  version?: 1 | 2
-  callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
-  authorizationServerIssuer?: string
-  authorizationResponseIssuerRequired?: boolean
-  secret: string
-  ttlSeconds?: number
-  now?: number
-}) {
-  const nowMs = input.now ?? Date.now()
-  const payload: OAuthStatePayload = {
-    ...(input.version ? { version: input.version } : {}),
-    organizationId: input.organizationId,
-    orgMembershipId: input.orgMembershipId,
-    providerId: input.providerId,
-    ...(input.binding ? { binding: input.binding } : {}),
-    ...(input.callbackMode ? { callbackMode: input.callbackMode } : {}),
-    ...(input.authorizationServerIssuer ? { authorizationServerIssuer: input.authorizationServerIssuer } : {}),
-    ...(input.authorizationResponseIssuerRequired !== undefined
-      ? { authorizationResponseIssuerRequired: input.authorizationResponseIssuerRequired }
-      : {}),
-    nonce: randomUUID(),
-    iat: Math.floor(nowMs / 1000),
-    exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
-  }
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload))
-  const signature = base64UrlEncode(createHmac("sha256", input.secret).update(encodedPayload).digest())
-  return `${encodedPayload}.${signature}`
-}
-
-export function verifyOAuthStateToken(input: { token: string; secret: string; now?: number }): OAuthStatePayload | null {
-  const [encodedPayload, encodedSignature] = input.token.split(".")
-  if (!encodedPayload || !encodedSignature) return null
-
-  const expectedSignature = createHmac("sha256", input.secret).update(encodedPayload).digest()
-  const providedSignature = Buffer.from(encodedSignature, "base64url")
-  const expectedBytes = new Uint8Array(expectedSignature)
-  const providedBytes = new Uint8Array(providedSignature)
-  if (expectedBytes.length !== providedBytes.length || !timingSafeEqual(expectedBytes, providedBytes)) {
-    return null
-  }
-
-  try {
-    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as Partial<OAuthStatePayload>
-    const nowSeconds = Math.floor((input.now ?? Date.now()) / 1000)
-    if (
-      typeof payload.organizationId !== "string"
-      || typeof payload.orgMembershipId !== "string"
-      || typeof payload.providerId !== "string"
-      || (payload.binding !== undefined && typeof payload.binding !== "string")
-      || (payload.version !== undefined && payload.version !== 1 && payload.version !== 2)
-      || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
-      || (payload.authorizationServerIssuer !== undefined && typeof payload.authorizationServerIssuer !== "string")
-      || (payload.authorizationResponseIssuerRequired !== undefined && typeof payload.authorizationResponseIssuerRequired !== "boolean")
-      || typeof payload.nonce !== "string"
-      || (payload.iat !== undefined && typeof payload.iat !== "number")
-      || typeof payload.exp !== "number"
-      || payload.exp < nowSeconds
-      || (payload.version === 2 && (
-        typeof payload.binding !== "string"
-        || (payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
-        || typeof payload.iat !== "number"
-      ))
-    ) {
-      return null
-    }
-    return payload as OAuthStatePayload
-  } catch {
-    return null
-  }
-}
 
 export function buildAuthorizeUrl(input: {
   provider: NativeOAuthProviderConfig
@@ -198,43 +81,6 @@ const oauthErrorResponseSchema = z.object({
   timestamp: z.string().max(64).optional(),
 })
 
-export type OAuthTokenExchangeFailureCode =
-  | "oauth_invalid_client_secret"
-  | "oauth_invalid_client"
-  | "oauth_invalid_grant"
-  | "oauth_invalid_scope"
-  | "oauth_access_denied"
-  | "oauth_provider_unavailable"
-  | "oauth_token_response_invalid"
-  | "oauth_token_response_oversized"
-  | "oauth_token_endpoint_unreachable"
-  | "oauth_token_exchange_failed"
-  | "oauth_scope_required"
-  | "oauth_refresh_token_required"
-  | "oauth_identity_invalid"
-  | "oauth_identity_unavailable"
-  | "oauth_reauthentication_required"
-  | "oauth_token_endpoint_unavailable"
-
-export class OAuthTokenExchangeError extends Error {
-  readonly phase = "AUTH_TOKEN_ACQUISITION"
-
-  constructor(
-    message: string,
-    readonly code: OAuthTokenExchangeFailureCode = "oauth_token_exchange_failed",
-    readonly details: {
-      httpStatus?: number
-      providerOAuthError?: string
-      providerErrorCode?: number
-      providerTraceId?: string
-      providerCorrelationId?: string
-      providerTimestamp?: string
-    } = {},
-  ) {
-    super(message)
-    this.name = "OAuthTokenExchangeError"
-  }
-}
 export class OAuthClientConfigurationError extends Error {}
 
 export function oauthTokenExchangeErrorFromResponse(input: {
