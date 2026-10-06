@@ -15,10 +15,12 @@ import type { Den } from "./den.js"
  */
 
 const fileIdSchema = z.string().regex(/^fl_[a-f0-9]{32}$/)
+/** The runner's own limit on one message; anything longer goes as a file. */
+const MAX_MESSAGE_CHARS = 100_000
 const sendSchema = z
   .object({
     id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
-    text: z.string().trim().max(20_000),
+    text: z.string().trim().max(MAX_MESSAGE_CHARS),
     timeZone: z.string().max(64).optional(),
     attachments: z.array(fileIdSchema).max(20).optional(),
   })
@@ -26,11 +28,13 @@ const sendSchema = z
 const editSchema = z
   .object({
     newId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
-    text: z.string().trim().max(20_000),
+    text: z.string().trim().max(MAX_MESSAGE_CHARS),
     timeZone: z.string().max(64).optional(),
     attachments: z.array(fileIdSchema).max(20).optional(),
   })
   .strict()
+const messageTooLong = { error: "message_too_long", message: "That's too long for one message. Send it as a file instead." } as const
+const tooLong = (error: z.ZodError) => error.issues.some((issue) => issue.path[0] === "text" && issue.code === "too_big")
 const uploadQuerySchema = z.object({ name: z.string().trim().min(1).max(255), timeZone: z.string().max(64).optional() })
 const threadQuerySchema = z.object({ turns: z.coerce.number().int().min(1).max(200).optional() })
 /** Raster images open inline (thumbnails); everything else always downloads, so no file renders as a page. */
@@ -143,7 +147,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.post("/v1/workbot/messages", async (c) => {
     const body = sendSchema.safeParse(await c.req.json().catch(() => null))
-    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    if (!body.success) return c.json(tooLong(body.error) ? messageTooLong : { error: "invalid_request" }, 400)
     if (!body.data.text && !body.data.attachments?.length) return c.json({ error: "invalid_request", message: "Send text or a file." }, 400)
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const member = c.get("member")
@@ -187,7 +191,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   /** Edits one of the person's messages: what came after it is replaced by Workbot's answer to the edit. */
   app.post("/v1/workbot/messages/:id/edit", async (c) => {
     const body = editSchema.safeParse(await c.req.json().catch(() => null))
-    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    if (!body.success) return c.json(tooLong(body.error) ? messageTooLong : { error: "invalid_request" }, 400)
     if (!body.data.text && !body.data.attachments?.length) return c.json({ error: "invalid_request", message: "Send text or a file." }, 400)
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const member = c.get("member")

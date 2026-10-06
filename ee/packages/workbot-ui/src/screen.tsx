@@ -1019,69 +1019,70 @@ function useHeld<T>(value: T, key: string, minMs: number): T {
   return shown.value;
 }
 
-/** True right away, and still true for `ms` after it turns false: a line doesn't vanish between two steps. */
-function useLinger(flag: boolean, ms: number) {
-  const [shown, setShown] = useState(flag);
-  useEffect(() => {
-    if (flag) {
-      setShown(true);
-      return;
-    }
-    const timer = window.setTimeout(() => setShown(false), ms);
-    return () => window.clearTimeout(timer);
-  }, [flag, ms]);
-  return flag || shown;
-}
 
-/** New apps join the line no faster than this; a computer update stays at least this long. */
-const APP_JOIN_MS = 900;
+/** A computer update stays at least this long, so quick commands read as one calm change. */
 const UPDATE_HOLD_MS = 1_600;
 
 /**
- * What Workbot is working with, in one calm line: "Using my computer and Gmail", the logos side by side. Apps join
- * the line as it uses them and never leave until the answer, so nothing flickers between steps; under it, what it
- * is doing on its computer in its own words. Before it touches anything, the typing bubble (DESIGN C3, T1, V6).
+ * Work done between two things Workbot said, where it happened: its computer as a card (the little person at work,
+ * what it is doing, how long), or one quiet line for apps alone ("Using Gmail", then "Used Gmail"). `live` while
+ * nothing has been said after it yet, so a card doesn't blink between two commands (DESIGN C3, T1, V6).
  */
-function Activity({ steps, used }: { steps: WorkbotStep[]; used: UsedApp[] }) {
-  const held = useHeld(used, used.map((app) => app.key).join("|"), APP_JOIN_MS);
-  const computerStep = [...steps].reverse().find((step) => step.icon === "computer" && step.status === "running");
-  const latestUpdate = computerStep?.updates.at(-1) ?? null;
-  const update = useHeld(latestUpdate, latestUpdate ?? "", UPDATE_HOLD_MS);
-  if (held.length === 0) return <TypingBubble />;
-  const others = held.filter((app) => !app.computer);
-  // Its computer always gets the card: the little person at work, what they're doing, how long it's been.
-  if (held.some((app) => app.computer)) {
-    const first = steps.find((step) => step.icon === "computer" && step.startedAt);
+function StepsSegment({ steps, live }: { steps: WorkbotStep[]; live: boolean }) {
+  const used = usedApps(steps, null);
+  const computer = steps.filter((step) => step.icon === "computer");
+  const updates = computer.flatMap((step) => step.updates);
+  const latest = updates.at(-1) ?? null;
+  const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
+  if (used.length === 0) return null;
+  const others = used.filter((app) => !app.computer);
+  if (computer.length > 0) {
     return (
-      <div className="pl-1 pt-0.5">
+      <div className="py-1 pl-1">
         <WorkCard
-          title="Using my computer"
-          detail={update ?? "Getting started"}
-          running
-          outcome={null}
-          startedAt={first?.startedAt ?? null}
-          finishedAt={null}
-          updates={[]}
+          title={live ? "Using my computer" : "Used my computer"}
+          detail={(live ? update : latest) ?? (live ? "Getting started" : "Done")}
+          running={live}
+          outcome={live ? null : "done"}
+          startedAt={computer.find((step) => step.startedAt)?.startedAt ?? null}
+          finishedAt={live ? null : ([...computer].reverse().find((step) => step.finishedAt)?.finishedAt ?? null)}
+          updates={live ? [] : updates}
           action={<AppLogos apps={others} />}
         />
       </div>
     );
   }
-  const label = `Using ${joinNames(held.map((app) => app.name))}`;
+  const label = `${live ? "Using" : "Used"} ${joinNames(others.map((app) => app.name))}`;
   return (
-    <div className="workbot-row-enter flex flex-col pl-1" role="status" aria-live="polite" aria-label={label}>
-      <span className="flex h-6 items-center gap-2">
-        <span aria-hidden className="flex shrink-0 items-center gap-1">
-          {held.map((app) => (
-            <span key={app.key} className="workbot-app-enter grid size-4 place-items-center">
-              <AppMark name={app.name} size={14} />
-            </span>
-          ))}
-        </span>
-        <span key={label} className="workbot-subtitle-enter workbot-shimmer truncate text-[13px] leading-4">{label}</span>
+    <p
+      className={`flex h-7 items-center gap-2 pl-1 text-[12.5px] leading-4 ${live ? "workbot-row-enter" : "text-[var(--wb-faint)]"}`}
+      role={live ? "status" : undefined}
+      aria-live={live ? "polite" : undefined}
+    >
+      <span aria-hidden className="flex shrink-0 items-center gap-1">
+        {others.map((app) => (
+          <span key={app.key} className="workbot-app-enter grid size-4 place-items-center">
+            <AppMark name={app.name} size={14} />
+          </span>
+        ))}
       </span>
-    </div>
+      <span key={label} className={`truncate ${live ? "workbot-shimmer text-[13px]" : ""}`}>{label}</span>
+    </p>
   );
+}
+
+/** True only once `flag` has held for `ms`: the typing bubble doesn't flash for a beat between two steps. */
+function useSettled(flag: boolean, ms: number) {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!flag) {
+      setSettled(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSettled(true), ms);
+    return () => window.clearTimeout(timer);
+  }, [flag, ms]);
+  return flag && settled;
 }
 
 /** The other apps a computer card's work used, as logos in its trailing slot. */
@@ -1098,45 +1099,6 @@ function AppLogos({ apps }: { apps: UsedApp[] }) {
   );
 }
 
-/**
- * Once the answer is in, what it used stays above it: its computer as the same card, quiet (with what it last did,
- * how long, and everything it did on a click), or one quiet line for apps alone ("Used Gmail").
- */
-function UsedLine({ steps }: { steps: WorkbotStep[] }) {
-  const used = usedApps(steps, null);
-  if (used.length === 0) return null;
-  const others = used.filter((app) => !app.computer);
-  const computer = steps.filter((step) => step.icon === "computer");
-  if (computer.length > 0) {
-    const updates = computer.flatMap((step) => step.updates);
-    return (
-      <div className="pb-1 pl-1">
-        <WorkCard
-          title="Used my computer"
-          detail={updates.at(-1) ?? "Done"}
-          running={false}
-          outcome="done"
-          startedAt={computer.find((step) => step.startedAt)?.startedAt ?? null}
-          finishedAt={[...computer].reverse().find((step) => step.finishedAt)?.finishedAt ?? null}
-          updates={updates}
-          action={<AppLogos apps={others} />}
-        />
-      </div>
-    );
-  }
-  return (
-    <p className="flex h-6 items-center gap-2 pl-1 text-[12.5px] leading-4 text-[var(--wb-faint)]">
-      <span aria-hidden className="flex shrink-0 items-center gap-1">
-        {others.map((app) => (
-          <span key={app.key} className="grid size-4 place-items-center">
-            <AppMark name={app.name} size={14} />
-          </span>
-        ))}
-      </span>
-      <span className="truncate">Used {joinNames(others.map((app) => app.name))}</span>
-    </p>
-  );
-}
 
 /**
  * The hello as it is written: nothing while it is still looking things up (a call that starts a lookup, or a short
@@ -1176,20 +1138,21 @@ function TurnView(props: {
   // Workbot's hello streams only its message, never its notes between lookups.
   const liveText = turn.greeting ? helloSoFar(current?.text ?? "", current?.working ?? null) : withoutNextLine(current?.text ?? "");
   const starting = current?.working ?? null;
-  const texts = turn.parts.flatMap((part, index) => (part.kind === "text" ? [{ key: index, text: part.text }] : []));
   // An answer watched while it was written keeps revealing at the same pace once it's stored, instead of the whole
   // text snapping in when the turn ends. Answers already done when the page opened show at once.
   const watched = useRef(working);
   if (working) watched.current = true;
-  const tail: string | null = working ? liveText || null : watched.current ? (texts.at(-1)?.text ?? null) : null;
-  const allSteps = turn.parts.flatMap((part) => (part.kind === "steps" ? part.steps : []));
-  // What it has worked with in this answer only grows: between two steps (or when a live step ends before it is
-  // stored) the card stays instead of blinking back to the typing bubble.
-  const seen = useRef<UsedApp[]>([]);
-  for (const app of usedApps(allSteps, starting)) if (!seen.current.some((known) => known.key === app.key)) seen.current = [...seen.current, app];
-  // While it works, one line says what it is working with; text being written says it by itself. The line lingers
-  // a moment when text starts, so a quick step between two sentences doesn't make it blink.
-  const showActivity = useLinger(working && (!liveText || starting !== null), 700) && working;
+  const parts = turn.parts;
+  const last = parts.at(-1);
+  // The stored last text is revealed in the live slot after the list, so its reveal carries on when it's stored.
+  const lastText = parts.reduce((found, part, index) => (part.kind === "text" ? index : found), -1);
+  const tailIsStored = !working && watched.current && lastText !== -1 && lastText === parts.length - 1;
+  const storedTail = tailIsStored && last?.kind === "text" ? last.text : null;
+  const tail: string | null = working ? liveText || null : storedTail;
+  // Its computer starting before the step is stored: the card shows right away, after what it just said.
+  const startingCard = working && !turn.greeting && starting?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
+  const lastIsLive = working && last?.kind === "steps" && !liveText && !startingCard;
+  const typing = useSettled(working && turn.status !== "queued" && !liveText && !startingCard && (turn.greeting || !lastIsLive), 350);
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
@@ -1198,32 +1161,34 @@ function TurnView(props: {
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
-      {texts.length > 0 || liveText || showActivity ? <Gap /> : null}
-      {working ? null : <UsedLine steps={allSteps} />}
+      {parts.length > 0 || liveText || typing || startingCard || turn.status === "queued" ? <Gap /> : null}
+      {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
-        {(!working && tail !== null ? texts.slice(0, -1) : texts).map((part) => (
-          <AssistantBubble key={part.key}>
-            <WorkbotMarkdown text={part.text} />
-          </AssistantBubble>
-        ))}
+        {parts.map((part, index) => {
+          if (part.kind === "text") {
+            if (tailIsStored && index === lastText) return null;
+            return (
+              <AssistantBubble key={index}>
+                <WorkbotMarkdown text={part.text} />
+              </AssistantBubble>
+            );
+          }
+          // Its hello looks things up out of sight; once it's done, one quiet line says what it read.
+          if (turn.greeting && working) return null;
+          return <StepsSegment key={index} steps={part.steps} live={working && index === parts.length - 1 && lastIsLive} />;
+        })}
         {/* One slot for the text being written, kept when the answer is stored, so the reveal carries on. */}
         {tail ? (
           <AssistantBubble>
             <StreamingText text={tail} />
           </AssistantBubble>
         ) : null}
-        {turn.status === "done" && texts.length > 0 ? <CopyAnswer text={texts.map((part) => part.text).join("\n\n")} /> : null}
+        {startingCard ? <StepsSegment steps={[{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [] }]} live /> : null}
+        {turn.status === "queued" ? <QuietLine label="Up next" /> : typing ? <TypingBubble /> : null}
+        {turn.status === "done" && lastText !== -1 ? (
+          <CopyAnswer text={parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n")} />
+        ) : null}
       </div>
-      {showActivity ? (
-        turn.status === "queued" ? (
-          <QuietLine label="Up next" />
-        ) : turn.greeting ? (
-          // Its hello is looked up in the background: just "typing" until the message is ready.
-          <TypingBubble />
-        ) : (
-          <Activity steps={allSteps} used={seen.current} />
-        )
-      ) : null}
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {turn.tasks.length ? <TaskCards tasks={turn.tasks} /> : null}
       {/* Workbot's hello offers what to ask next, only while it is still the latest message. */}

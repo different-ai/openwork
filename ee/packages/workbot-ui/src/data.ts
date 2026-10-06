@@ -216,10 +216,14 @@ export class WorkbotSendError extends Error {
   }
 }
 
+/** The most one message can carry (the runner's limit); longer text goes as a file. */
+export const MAX_MESSAGE_CHARS = 100_000;
+
 export function useSendWorkbotMessage() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { id: string; text: string; attachments?: string[] }) => {
+      if (input.text.length > MAX_MESSAGE_CHARS) throw new WorkbotSendError("That's too long for one message. Send it as a file instead.", 400);
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson("/v1/workbot/messages", {
         method: "POST",
