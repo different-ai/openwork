@@ -14,7 +14,6 @@ import {
   type AuthMethod,
   type AuthMode,
   type AuthUser,
-  type BillingSummary,
   type LaunchEvent,
   type OnboardingIntent,
   type OrgLimitError,
@@ -29,7 +28,6 @@ import {
   buildOpenworkDeepLink,
   deriveOnboardingWorkerName,
   getAuthInfoForMode,
-  getBillingSummary,
   getEmailDomain,
   getErrorMessage,
   getOrgLimitError,
@@ -152,12 +150,8 @@ type DenFlowContextValue = {
   revalidateSession: () => Promise<AuthUser | null>;
   updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
   resolveUserLandingRoute: () => Promise<string | null>;
-  billingSummary: BillingSummary | null;
-  billingBusy: boolean;
-  billingError: string | null;
   orgLimitError: OrgLimitError | null;
   clearOrgLimitError: () => void;
-  refreshBilling: (options?: { quiet?: boolean }) => Promise<BillingSummary | null>;
   onboardingPending: boolean;
   onboardingDecisionBusy: boolean;
   workers: WorkerListItem[];
@@ -192,7 +186,6 @@ type DenFlowContextValue = {
   openworkDeepLink: string | null;
   openworkAppConnectUrl: string | null;
   hasWorkspaceScopedUrl: boolean;
-  additionalWorkerNeedsPlan: boolean;
   selectedStatusMeta: { label: string; bucket: WorkerStatusBucket };
   isSelectedWorkerFailed: boolean;
   ownedWorkerCount: number;
@@ -284,10 +277,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
   const [webRedirectBusy, setWebRedirectBusy] = useState(false);
   const [webRedirectAttempted, setWebRedirectAttempted] = useState(false);
-  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
-  const [billingBusy, setBillingBusy] = useState(false);
-  const [billingError, setBillingError] = useState<string | null>(null);
-  const [billingLoadedOnce, setBillingLoadedOnce] = useState(false);
   const [orgLimitError, setOrgLimitError] = useState<OrgLimitError | null>(null);
 
   const [workerName, setWorkerName] = useState(DEFAULT_WORKER_NAME);
@@ -351,17 +340,11 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     { autoConnect: true }
   );
   const ownedWorkerCount = workers.filter((item) => item.isMine).length;
-  const additionalWorkerNeedsPlan = Boolean(
-    user &&
-      ownedWorkerCount > 0 &&
-      billingSummary?.featureGateEnabled &&
-      !billingSummary.hasActivePlan
-  );
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
   const isSelectedWorkerFailed = selectedWorkerStatus.trim().toLowerCase() === "failed";
   const onboardingPending = Boolean(onboardingIntent?.shouldLaunch && !onboardingIntent.completed);
-  const onboardingDecisionBusy = onboardingPending && !billingLoadedOnce && (billingBusy || !sessionHydrated);
+  const onboardingDecisionBusy = onboardingPending && !sessionHydrated;
 
   const filteredWorkers = workers.filter((item) => {
     const query = workerQuery.trim().toLowerCase();
@@ -948,66 +931,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function refreshBilling(options: { quiet?: boolean } = {}) {
-    if (!user) {
-      setBillingSummary(null);
-      if (!options.quiet) {
-        setBillingError("Sign in to view billing details.");
-      }
-      return null;
-    }
-
-    const quiet = options.quiet === true;
-    setBillingBusy(true);
-
-    if (!quiet) {
-      setBillingError(null);
-    }
-
-    try {
-      const { response, payload } = await requestJson(
-        "/v1/billing",
-        {
-          method: "GET",
-          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
-        },
-        12000
-      );
-
-      if (!response.ok) {
-        const message = getErrorMessage(payload, `Billing lookup failed with ${response.status}.`);
-        if (!quiet) {
-          setBillingError(message);
-          appendEvent("error", "Billing check failed", message);
-        }
-        return null;
-      }
-
-      const summary = getBillingSummary(payload);
-      if (!summary) {
-        if (!quiet) {
-          setBillingError("Billing response was missing details.");
-          appendEvent("error", "Billing check failed", "Billing summary missing");
-        }
-        return null;
-      }
-
-      setBillingSummary(summary);
-      setBillingLoadedOnce(true);
-
-      return summary;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown network error";
-      if (!quiet) {
-        setBillingError(message);
-        appendEvent("error", "Billing check failed", message);
-      }
-      return null;
-    } finally {
-      setBillingBusy(false);
-    }
-  }
-
   async function copyToClipboard(field: string, value: string | null) {
     if (!value) {
       return;
@@ -1461,11 +1384,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setWorkerLookupId("");
     setWorkersError(null);
     setLaunchError(null);
-    setBillingSummary(null);
-    setBillingError(null);
     setOrgLimitError(null);
-    setBillingBusy(false);
-    setBillingLoadedOnce(false);
     setDeleteBusyWorkerId(null);
     setActionBusy(null);
     setLaunchBusy(false);
@@ -1532,7 +1451,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setLaunchBusy(true);
     setLaunchError(null);
     setOrgLimitError(null);
-    setLaunchStatus(options.source === "signup_auto" ? "Creating your first worker..." : "Checking worker billing and launch eligibility...");
+    setLaunchStatus(options.source === "signup_auto" ? "Creating your first worker..." : "Checking launch eligibility...");
     appendEvent("info", "Launch requested", resolvedLaunchName);
 
     try {
@@ -1559,17 +1478,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       }
 
       if (response.status === 402) {
-        setBillingSummary((current) => {
-          if (!current) {
-            return current;
-          }
-
-          return {
-            ...current,
-            hasActivePlan: false,
-            checkoutRequired: true,
-          };
-        });
         const message = getErrorMessage(payload, "New cloud worker launches are not available for this account.");
         setLaunchStatus(message);
         setLaunchError(message);
@@ -2079,17 +1987,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) {
-      setBillingSummary(null);
-      setBillingError(null);
-      setBillingLoadedOnce(false);
-      return;
-    }
-
-    void refreshBilling({ quiet: true });
-  }, [user?.id, authToken]);
-
-  useEffect(() => {
-    if (!user) {
       return;
     }
 
@@ -2350,14 +2247,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (!billingSummary) {
-      return;
-    }
-
-    if (billingSummary.featureGateEnabled && !billingSummary.hasActivePlan) {
-      return;
-    }
-
     if (ownedWorkerCount > 0) {
       markOnboardingComplete();
       return;
@@ -2380,7 +2269,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     // onboarding complete itself on success; on failure onboarding stays
     // pending so the user sees the error and can retry.
     void launchWorker({ source: "signup_auto", workerNameOverride: onboardingIntent?.workerName ?? DEFAULT_WORKER_NAME });
-  }, [billingSummary?.featureGateEnabled, billingSummary?.hasActivePlan, launchBusy, onboardingIntent?.workerName, onboardingPending, ownedWorkerCount, user?.id]);
+  }, [launchBusy, onboardingIntent?.workerName, onboardingPending, ownedWorkerCount, user?.id]);
 
   useEffect(() => {
     if (!user) {
@@ -2436,12 +2325,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     revalidateSession: () => refreshSession(true),
     updateUserProfile,
     resolveUserLandingRoute,
-    billingSummary,
-    billingBusy,
-    billingError,
     orgLimitError,
     clearOrgLimitError: () => setOrgLimitError(null),
-    refreshBilling,
     onboardingPending,
     onboardingDecisionBusy,
     workers,
@@ -2476,7 +2361,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     openworkDeepLink,
     openworkAppConnectUrl,
     hasWorkspaceScopedUrl,
-    additionalWorkerNeedsPlan,
     selectedStatusMeta,
     isSelectedWorkerFailed,
     ownedWorkerCount,
