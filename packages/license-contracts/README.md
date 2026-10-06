@@ -1,0 +1,98 @@
+# License contracts
+
+`@openwork/license-contracts` is the shared vocabulary for Den modules and the
+license wire contract. den-api, the gateway, den-web, the desktop and the
+private license server all read it. It is pure TypeScript and Zod (`zod` pinned
+to `4.3.6`): no I/O, no env, no clock reads (callers pass `now`).
+
+`pnpm --filter @openwork/license-contracts build` produces the default
+JavaScript and declarations in `dist/`. The `types` and `development`
+conditions expose `src/`.
+
+## Exports
+
+| Subpath | File | Contents |
+|---|---|---|
+| `.` | `src/index.ts` | Everything below |
+| `./modules` | `src/modules.ts` (+ `src/module-ids.ts`) | `MODULE_IDS`, `ModuleDefinition`, `MODULE_DEFINITIONS`, graph helpers, `CLOUD_FREE_PLAN_MODULES`, `validateLicenseModules` |
+| `./resolver` | `src/resolver.ts` (+ `src/operations.ts`) | `resolveModules`, `ModuleState`, `EffectiveModules`, `computeTransitionStart`, `evaluateModuleOperation` |
+| `./errors` | `src/errors.ts` | The "module off" body (`module_disabled`), headers, status, `license_unavailable` |
+| `./license` | `src/license.ts` | License check v1 (frozen) and v2 schemas, constants, normalize, upgrade, project |
+| `./hints` | `src/hints.ts` | Optional Cloud push hint and batch check schemas |
+| `./payload` | `src/payload.ts` | Client wire shape of module states (`/v1/org`, `/v1/me`, desktop config) |
+| `./org-modules` | `src/org-modules.ts` | The `organization.modules` column document and the persisted entitlement snapshot |
+
+## Module ids are append-only
+
+`MODULE_IDS` never loses, renames or reorders an id. Retire one by setting
+`stability: "deprecated"` in its definition, so old licenses and old Den
+versions still parse. `src/module-ids.snapshot.json` must stay a prefix of
+`MODULE_IDS`; append to both when adding a module.
+
+Definition data (names, edges, `entitlement`, `orgToggle`, `expiryPolicy`,
+`transitionOperations`) can change in a reviewed PR. Ids can't.
+
+Rules the tests enforce:
+
+- A dotted id is a sub-module; its `parent` is the prefix (one level). A
+  sub-module is never effective without its parent; a parent works without its
+  sub-modules (D6).
+- `dependsOn` (hard) drives state; `softDependsOn` never does. The hard graph
+  (`parent ∪ dependsOn`) is acyclic.
+- `entitlement: "free"` ⇔ `expiryPolicy: "n/a"`. `expiryPolicy: "restricted"`
+  ⇔ `transitionOperations` with an `other` key.
+
+## Resolution
+
+`resolveModules()` implements discovery §6.3. For each module, in topological
+order, the first matching rule wins: `not_on_deployment`, `not_available`,
+`not_entitled`, `license_expired`, `disabled_by_org` (only `orgToggle:
+"optOut"`), `requires` (first off parent or hard dependency), `restricted`,
+`on`.
+
+- No license key on self-hosted (`source: "none"`) is Core only, free modules
+  included (D14). A Cloud org without a snapshot gets `CLOUD_FREE_PLAN_MODULES`.
+- The license transition starts at the earliest of: expiry, invalidation, a
+  rejected credential (401/403), the end of the 24h verification grace, or the
+  persisted `transitionStartedAt`. Licensed modules then follow their
+  `expiryPolicy` for 30 days. Trials (`kind: "trial"`) end immediately (D22).
+
+## License wire contract
+
+- `POST /v1/licenses/check` with `Authorization: Bearer <license-key>`. The
+  server answers in the request's `schemaVersion`.
+- **v1 is frozen.** The unsuffixed v1 names (`licenseCheckRequestSchema`,
+  `licenseCheckResponseSchema`, `AUTH_TRANSITION_POLICY`, …) are kept byte for
+  byte because the private server imports them; `…SchemaV1` are aliases. v1 has
+  one module, `auth`, which normalizes to `enterpriseAuth`,
+  `enterpriseAuth.sso` and `enterpriseAuth.scim` (D1).
+- **v2** adds `instanceId` and `version` to requests (diagnostics only, never
+  binding) and a flat `modules` map plus `kind: "standard" | "trial"` to
+  responses. Den parses responses tolerantly: unknown fields are stripped and
+  unknown module keys are ignored. Unknown or missing keys mean "not entitled".
+  The license server refuses unknown keys when authoring
+  (`validateLicenseModules`).
+- There are no per-person flags (`userFlags` was dropped, D20). Feature flags
+  never grant a module.
+- Version negotiation: Den sends v2 and, on a 400 from an old server, retries
+  once with v1 and normalizes. `projectLicenseResponseToV1` serves v1 consumers
+  from a v2 answer (`auth` is least privilege).
+
+## Vendoring
+
+The private license server vendors this package with a finite file allowlist
+(`scripts/source-policy.ts`). When adding a file or subpath here, add it to
+that allowlist in the same window, or its sync fails closed. Files today:
+`README.md`, `package.json`, `tsconfig.json`, `tsup.config.ts`,
+`src/{index,module-ids,modules,resolver,operations,errors,license,hints,payload,org-modules}.ts`
+and `src/module-ids.snapshot.json`.
+
+## Docker images
+
+No image needs this package until a consumer depends on it. The first consumer
+(den-db, then den-api, the gateway and den-web) adds to
+`packaging/docker/Dockerfile.den`, `Dockerfile.gateway` and
+`Dockerfile.den-web`: `COPY packages/license-contracts/package.json` next to
+the other manifests, `COPY packages/license-contracts` next to the other
+sources, and `RUN pnpm --dir /app/packages/license-contracts run build` before
+the den-db build.

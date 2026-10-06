@@ -1,0 +1,65 @@
+{
+  "name": "@openwork/license-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./modules": {
+      "types": "./src/modules.ts",
+      "development": "./src/modules.ts",
+      "default": "./dist/modules.js"
+    },
+    "./resolver": {
+      "types": "./src/resolver.ts",
+      "development": "./src/resolver.ts",
+      "default": "./dist/resolver.js"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "development": "./src/errors.ts",
+      "default": "./dist/errors.js"
+    },
+    "./license": {
+      "types": "./src/license.ts",
+      "development": "./src/license.ts",
+      "default": "./dist/license.js"
+    },
+    "./hints": {
+      "types": "./src/hints.ts",
+      "development": "./src/hints.ts",
+      "default": "./dist/hints.js"
+    },
+    "./payload": {
+      "types": "./src/payload.ts",
+      "development": "./src/payload.ts",
+      "default": "./dist/payload.js"
+    },
+    "./org-modules": {
+      "types": "./src/org-modules.ts",
+      "development": "./src/org-modules.ts",
+      "default": "./dist/org-modules.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.11"
+  }
+}
