@@ -6,4 +6,3 @@ export {
   issueMemberFreeInferenceCredential,
   type FreeCredentialRefusal,
 } from "./service.js"
-export { registerFreeInferenceRoutes } from "./routes.js"
