@@ -15,7 +15,7 @@ import { getNativeOAuthClient } from "./native-oauth-client.js"
 import { parseSlackAccountIdentity, slackCloudPolicyError } from "./slack-policy.js"
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
-import { memberFacingMcpConnectionsEnabled } from "./external-mcp-rollout.js"
+import { organizationFeatureEnabled } from "../features.js"
 
 /**
  * Native providers (google-workspace, ...) surface in the SAME member-facing
@@ -124,15 +124,15 @@ export type NativeProviderPolicyError = { kind: "policy_blocked"; message: strin
 
 export async function nativeProviderConnectionPolicyError(organizationId: DenTypeId<"organization">, nativeProviderKey?: string): Promise<NativeProviderPolicyError | null> {
   if (nativeProviderKey === "slack") {
-    const slackPolicy = slackCloudPolicyError()
+    const slackPolicy = await slackCloudPolicyError(organizationId)
     if (slackPolicy) return slackPolicy
   }
   const [organization] = await db
-    .select({ metadata: OrganizationTable.metadata })
+    .select({ id: OrganizationTable.id })
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
-  if (organization && memberFacingMcpConnectionsEnabled(organization.metadata)) return null
+  if (organization && await organizationFeatureEnabled(organization.id, "mcpConnections")) return null
   return {
     kind: "policy_blocked",
     message: organization

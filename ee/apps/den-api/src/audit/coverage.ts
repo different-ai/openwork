@@ -59,7 +59,7 @@ export const providerCoverage: AuditCoverageDeclaration = {
     ...[...new Set([...providerCoveredRoutes.map(({ step }) => step), ...providerBackgroundSteps])].flatMap((step) => ["committed", "attempted"].map((outcome) => `provider.configuration.${step}.${outcome}`)),
   ],
   categories: ["change", "request", "security", "execution"],
-  capturePolicy: "Fresh literal metadata.capabilities.auditLogs=true AND (Enterprise plan OR explicit self-hosted installation entitlement) AND default-on deployment capture switch AND enabled stored policy AND selected category; missing policies initialize with temporary server defaults before snapshot reads. Organization share lock before snapshot reads, state/policy revision recheck before commit. Existing OFF stays OFF. Generic DB writer semantics are unchanged.",
+  capturePolicy: "auditLogs feature on for the organization (read fresh) AND (Enterprise plan OR explicit self-hosted installation entitlement) AND default-on deployment capture switch AND enabled stored policy AND selected category; missing policies initialize with temporary server defaults before snapshot reads. Organization share lock before snapshot reads, state/policy revision recheck before commit. Existing OFF stays OFF. Generic DB writer semantics are unchanged.",
   resources: [...providerCoveredResources.map(({ type }) => type), "organization", "member", "team"],
   snapshotPolicy: "Per-resource allowlisted before/after and changed fields; secret/configuration changes use markers, never secret values or comparison hashes; oversize rejects.",
   emitter: "src/audit/provider.ts:providerAuditMutation; recordProviderAttempt; src/llm/gateway-matrix.ts:refreshGatewayCatalog",

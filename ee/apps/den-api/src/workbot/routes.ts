@@ -11,7 +11,7 @@ import { verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
-import { organizationHasCapability } from "../organization-capabilities.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 
@@ -121,7 +121,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         user,
         organization: { id: organization.id, name: organization.name, brandAppName: readBrandAppName(organization.metadata) },
         memberId,
-        enabled: organizationHasCapability(organization.metadata, "workbot"),
+        enabled: await organizationFeatureEnabled(organization.id, "workbot"),
         canSchedule,
       })
     },
@@ -149,7 +149,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const resolved = await resolve(c.req.raw.headers)
       if (resolved instanceof Response) return resolved
       const { principal, organization } = resolved
-      if (!organizationHasCapability(organization.metadata, "workbot")) {
+      if (!(await organizationFeatureEnabled(organization.id, "workbot"))) {
         return c.json({ error: "workbot_not_enabled", message: "Workbot is off for this workspace." }, 403)
       }
       const retryAfter = await checkRateLimit(`workbot-run-token:${principal.organizationId}:${principal.userId}`, RUN_TOKENS_PER_WINDOW, RUN_TOKEN_WINDOW_MS, Date.now())

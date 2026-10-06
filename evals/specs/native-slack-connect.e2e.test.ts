@@ -3,8 +3,8 @@ import { spec, type User } from "@openwork/testkit";
 import { nativeSlackConnect } from "../worlds/native-slack-connect.ts";
 
 const test = spec.world(nativeSlackConnect, {
-  timeout: 600_000,
-  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
+  timeout: 900_000,
+  resources: { surfaces: ["appWeb", "web"], services: ["den", "mock"] },
   // Native HTTP provider mocks currently have no remote co-location interface.
   // The runner still owns placement; a non-local placement reports needs, never
   // silently switches to local or contacts Slack. This is not packaged proof.
@@ -16,12 +16,86 @@ async function openConnections(user: User) {
   await user.click({ role: "option", label: /^Connectors/ });
 }
 
-test("Cloud members connect different Slack workspaces without configuration and keep private access isolated", async ({ world, user, probe, step, evidence }) => {
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected feature state");
+  return Object.fromEntries(Object.entries(value));
+}
+
+test("a platform admin rolls Slack search out by organization while members keep their own private access", async ({ world, user, probe, step, evidence }) => {
   const second = user.on(world.secondApp);
   const secondProbe = probe.on(world.secondApp);
+  const admin = user.on(world.adminWeb);
+  const adminProbe = probe.on(world.adminWeb);
+  const otherOwner = user.on(world.otherWeb);
+  const member = user.on(world.memberWeb);
   const privateConversation = world.slack.conversations.find(entry => entry.type === "private_channel");
   if (!privateConversation) throw new Error("The synthetic private conversation is missing");
   let retainedSearchName = "";
+  const featureState = async (organizationId: string, key = "nativeSlack") =>
+    record(record((await world.organizationFeatures(organizationId)).featureStates)[key]);
+  const expectFeature = async (organizationId: string, enabled: boolean, override: boolean | null, source: string, key = "nativeSlack") => {
+    const state = await probe.eventually(() => featureState(organizationId, key), {
+      within: 30_000, label: "the shared feature setting is saved",
+      until: value => value.enabled === enabled && value.override === override && value.source === source,
+    });
+    expect(state).toMatchObject({ enabled, override, source });
+  };
+  const openOrganization = async (slug: string) => {
+    await admin.navigate(world.adminUrl);
+    await admin.click({ role: "button", label: /Organizations \(/ });
+    await admin.type({ placeholder: "Org name, slug, or id" }, slug, { replace: true });
+    await probe.eventually(() => adminProbe.dom('[data-testid^="admin-org-row-"]'), {
+      within: 30_000, label: "only the requested organization is on screen", until: value => value.elements.length === 1,
+    });
+    await admin.see({ testId: `admin-org-row-${slug}` });
+    await admin.see({ testId: "admin-capability-nativeSlack" });
+  };
+  const toggleOrganization = async (organizationId: string, slug: string, enabled: boolean, key = "nativeSlack") => {
+    await openOrganization(slug);
+    expect((await featureState(organizationId, key)).enabled).toBe(!enabled);
+    await admin.click({ testId: `admin-capability-${key}` });
+    await expectFeature(organizationId, enabled, enabled, "override", key);
+    await admin.see({ testId: `admin-capability-source-${key}` }, { text: "Set for this organization" });
+    expect((await adminProbe.dom(`[data-testid="admin-capability-${key}"]:checked`)).elements).toHaveLength(enabled ? 1 : 0);
+  };
+  const setEveryone = async (enabled: boolean) => {
+    await admin.navigate(world.featuresUrl);
+    await admin.see({ testId: "admin-feature-nativeSlack" });
+    // Testkit targets cannot be scoped to an ancestor. Resolve the radio index
+    // from the actual generated rows, never from a copied registry key order.
+    const rows = await adminProbe.dom('li[data-testid^="admin-feature-"]');
+    const index = rows.elements.findIndex(entry => entry.text.startsWith("Slack search"));
+    expect(index).toBeGreaterThanOrEqual(0);
+    await admin.click({ role: "radio", label: enabled ? "On" : "Off", nth: index });
+    const saved = await probe.eventually(() => world.globalSlackFeature(), {
+      within: 30_000, label: "the everyone setting is saved", until: value => value?.enabled === enabled,
+    });
+    expect(saved).toMatchObject({ enabled, killed: false, lock: null });
+    await admin.see({ testId: "admin-feature-state-nativeSlack" }, {
+      text: enabled ? "On for everyone · organization overrides apply" : "Off · organization overrides only",
+    });
+  };
+  const expectBlocked = async (identity: "first" | "other") => {
+    const before = world.slack.calls().length;
+    const starts = [];
+    for (const path of ["/v1/mcp-connections/slack/connect/start", "/v1/oauth-providers/slack/connect/start", "/v1/oauth-providers/slack/status"]) {
+      starts.push(await world.memberRequest(identity, path));
+    }
+    expect(starts.every(response => response.status === 403)).toBe(true);
+    const search = await world.memberRequest(identity, "/v1/capabilities/slack/search?query=Amber%20launch");
+    const thread = await world.memberRequest(identity, `/v1/capabilities/slack/threads?channelId=${privateConversation.id}&ts=${privateConversation.ts}`);
+    for (const result of [search, thread]) expect(result).toMatchObject({ status: 403, body: { error: "policy_blocked" } });
+    const catalog = await world.mcp(identity, "search_capabilities", { query: "slack", type: "api", limit: 20 });
+    expect(catalog.status).toBe(200);
+    expect(world.objects(catalog.body).some(entry => typeof entry.name === "string" && entry.name.startsWith("native:") && /slack(?:search|threads)$/i.test(entry.name))).toBe(false);
+    if (retainedSearchName) {
+      const retained = await world.mcp(identity, "execute_capability", { name: retainedSearchName, query: { query: "Amber launch" } });
+      expect(retained.status).toBe(200);
+      expect(world.objects(retained.body).some(entry => entry.error === "policy_blocked")).toBe(true);
+    }
+    expect(world.slack.calls()).toHaveLength(before);
+    return [...starts.map(result => result.status), search.status, thread.status];
+  };
 
   await step("given: both members have isolated, working agent runtimes", async () => {
     await user.see("composer", { editable: true });
@@ -47,15 +121,90 @@ test("Cloud members connect different Slack workspaces without configuration and
     }
   });
 
-  await step("before: Cloud Slack is available without asking the member for developer credentials", async () => {
+  await step("before: deployment credentials alone do not offer Slack to either organization", async () => {
+    await openOrganization(world.organizationSlug);
+    await admin.see({ testId: "admin-capability-source-nativeSlack" }, { text: "Off for everyone" });
+    await expectFeature(world.organizationId, false, null, "everyone");
+    await expectFeature(world.otherOrganizationId, false, null, "everyone");
+    expect(await world.globalSlackFeature()).toMatchObject({ default: false, enabled: false, killed: false, lock: null, available: true, deployments: ["cloud"] });
+    expect((await adminProbe.dom('[data-testid="admin-capability-nativeSlack"]:checked')).elements).toHaveLength(0);
+    expect(await world.connection("first")).toBeUndefined();
+    expect(await world.connection("other")).toBeUndefined();
+    await expectBlocked("first");
+    await expectBlocked("other");
+    expect(world.slack.calls()).toHaveLength(0);
+    await user.see("composer", { editable: true });
+    await openConnections(user);
+    await user.notSee({ role: "button", label: "Connect Slack" });
+    evidence.recordAssertionEvidence("Credentials do not grant the feature", "Both organizations inherit Slack search=false; neither has a native connection or catalog entry. Start/status/search/threads are denied and Slack received 0 requests despite configured synthetic client credentials.", true);
+    await admin.screenshot();
+    await user.screenshot();
+    await user.press("Escape");
+  });
+
+  await step("an organization owner cannot grant themselves a platform feature", async () => {
+    await otherOwner.see({ role: "heading", label: "Admin access required" }, { timeoutMs: 60_000 });
+    const context = await world.memberRequest("other", "/v1/org");
+    expect(context).toMatchObject({ status: 200, body: { organization: { id: world.otherOrganizationId }, currentMember: { isOwner: true } } });
+    const denied = await world.memberRequest("other", `/v1/admin/organizations/${world.otherOrganizationId}/capabilities`, "PUT", { capabilities: { nativeSlack: true } });
+    expect(denied.status).toBe(403);
+    const global = await world.memberRequest("other", "/v1/admin/features/nativeSlack", "PUT", { enabled: true });
+    expect(global.status).toBe(403);
+    await expectFeature(world.otherOrganizationId, false, null, "everyone");
+    evidence.recordAssertionEvidence("Organization ownership is not platform administration", `The authenticated owner of B sees Admin access required; organization override and everyone-setting writes both returned ${denied.status}. B remains default-off.`, true);
+    await otherOwner.screenshot();
+  });
+
+  await step("the platform admin enables Slack search for the first organization only", async () => {
+    await toggleOrganization(world.organizationId, world.organizationSlug, true);
+    await expectFeature(world.otherOrganizationId, false, null, "everyone");
+    const report = await world.organizationFeatures(world.organizationId);
+    expect(report.capabilities).toMatchObject({ nativeSlack: true, mcpConnections: true, slackAssistant: false, slackAssistantHeadless: false });
+    expect(await world.connection("first")).toMatchObject({ id: "slack", connectedForMe: false });
+    expect(await world.connection("other")).toBeUndefined();
+    const statuses = await expectBlocked("other");
+    expect(world.slack.calls()).toHaveLength(0);
+    evidence.recordAssertionEvidence("One organization receives the shared feature override", `The generated Slack search checkbox saved A=true while B inherits false. Slack Assistant and its headless runtime remain false. B's start/status/search/threads returned ${statuses.join(" / ")}; 0 provider requests.`, true);
+    await admin.screenshot();
+  });
+
+  await step("after: the first member gets Connect Slack while the other organization has no entry", async () => {
+    await user.reload();
     await user.see("composer", { editable: true });
     await openConnections(user);
     await user.see({ role: "button", label: "Connect Slack" });
     await user.notSee({ text: /^Client ID$/i });
     await user.notSee({ text: /^Client secret$/i });
-    expect(await world.connection("first")).toMatchObject({ id: "slack", connectedForMe: false });
-    expect(world.slack.calls()).toHaveLength(0);
-    evidence.recordAssertionEvidence("Slack is supplied by Connect, not a member-created app", "The available Slack row offers Connect; no client ID or secret field is shown, and no provider request has occurred.", true);
+    await otherOwner.navigate(world.connectionsUrl);
+    await otherOwner.see({ role: "heading", text: "Your Connections" });
+    await otherOwner.notSee({ testId: "connect-my-mcp-account-slack" });
+    expect(await world.connection("other")).toBeUndefined();
+    evidence.recordAssertionEvidence("The member experience follows the organization switch", "A offers Connect Slack without developer credential fields. B's Your Connections has no Slack connect action and its usable-connection response has no Slack row; no provider request has occurred.", true);
+    await user.screenshot();
+    await otherOwner.screenshot();
+    await user.press("Escape");
+  });
+
+  await step("turning off Connect still blocks an explicitly enabled Slack feature", async () => {
+    await toggleOrganization(world.organizationId, world.organizationSlug, false, "mcpConnections");
+    await expectFeature(world.organizationId, true, true, "override");
+    const before = world.slack.calls().length;
+    const denied = await world.memberRequest("first", "/v1/capabilities/slack/search?query=Amber%20launch");
+    expect(denied).toMatchObject({ status: 403, body: { error: "policy_blocked" } });
+    expect(world.slack.calls()).toHaveLength(before);
+    evidence.recordAssertionEvidence("Slack search does not bypass Connect", `A keeps its Slack search=true override but Connect=false; native search returned ${denied.status} policy_blocked with 0 provider calls.`, true);
+    await admin.screenshot();
+  });
+
+  await step("restoring Connect makes the first member's authorization entry available again", async () => {
+    await toggleOrganization(world.organizationId, world.organizationSlug, true, "mcpConnections");
+    await user.reload();
+    await user.see("composer", { editable: true });
+    await openConnections(user);
+    await user.see({ role: "button", label: "Connect Slack" });
+    expect(await world.connection("first")).toMatchObject({ connectedForMe: false });
+    expect(await world.connection("other")).toBeUndefined();
+    evidence.recordAssertionEvidence("Both shared switches are necessary", "Connect=true and Slack search=true restore A's Connect entry; B remains off and both members still need their own OAuth consent. No account was injected.", true);
     await user.screenshot();
   });
 
@@ -264,7 +413,33 @@ test("Cloud members connect different Slack workspaces without configuration and
     await user.navigate(world.appUrl);
   });
 
-  await step("another Cloud organization gets Slack but must authorize its own account", async () => {
+  await step("the platform admin separately enables Slack search for the other organization", async () => {
+    await toggleOrganization(world.otherOrganizationId, world.otherOrganizationSlug, true);
+    await expectFeature(world.organizationId, true, true, "override");
+    expect(await world.connection("other")).toMatchObject({ connectedForMe: false });
+    await otherOwner.reload();
+    await otherOwner.see({ testId: "connect-my-mcp-account-slack" });
+    evidence.recordAssertionEvidence("The second rollout is an explicit admin action", "The same generated checkbox saved B=true. B now offers Connect but has no authorized account; A's member-owned grant is not inherited.", true);
+    await admin.screenshot();
+    await otherOwner.screenshot();
+  });
+
+  await step("Slack search does not enable an assistant or accept organization app credentials", async () => {
+    await otherOwner.see({ testId: "connect-my-mcp-account-slack" });
+    expect((await world.organizationFeatures(world.otherOrganizationId)).capabilities).toMatchObject({
+      nativeSlack: true, slackAssistant: false, slackAssistantHeadless: false,
+    });
+    const before = world.slack.calls().length;
+    const custom = await world.memberRequest("other", "/v1/oauth-providers/slack/client", "POST", {
+      clientId: "synthetic-rejected-custom-client", clientSecret: "synthetic-rejected-not-a-credential",
+    });
+    expect(custom).toMatchObject({ status: 403, body: { error: "forbidden", message: "Slack search uses the OpenWork-provided app. Organization app configuration is not supported." } });
+    expect(world.slack.calls()).toHaveLength(before);
+    evidence.recordAssertionEvidence("Search availability does not enable adjacent Slack products", "B's Slack search is true while both Slack Assistant flags are false. Its ordinary owner cannot save a custom Slack OAuth app (403, OpenWork-provided app required); 0 provider calls.", true);
+    await otherOwner.screenshot();
+  });
+
+  await step("the newly enabled organization must still authorize its own Slack account", async () => {
     await user.see("composer", { editable: true });
     const authenticated = await world.memberRequest("other", "/v1/org");
     expect(authenticated).toMatchObject({ status: 200, body: { organization: { id: world.otherOrganizationId } } });
@@ -289,45 +464,146 @@ test("Cloud members connect different Slack workspaces without configuration and
     expect(ownSearch.status).toBe(200);
     expect(ownSearch.text).toContain(world.slack.otherConversations[0].text);
     expect(JSON.stringify(await world.connection("first"))).toContain("TSYNTHETIC");
-    evidence.recordAssertionEvidence("The same app serves another Cloud organization without sharing a member grant", "Both start aliases were available in the second organization. Search and retained capability execution required its own connection; after browser OAuth its own workspace search succeeded. No platform configuration was changed.", true);
+    evidence.recordAssertionEvidence("Availability never substitutes for member consent", "After B's explicit rollout, both start aliases returned 200 but search/threads returned 409 and retained execution required a connection. Browser OAuth then connected B's own workspace; its search succeeded without sharing A's grant.", true);
     await user.screenshot();
     await user.navigate(world.appUrl);
   });
 
-  await step("a disabled deployment rejects an already authorized member's retained capability", async () => {
-    await user.see("composer", { editable: true });
-    const authenticated = await world.memberRequest("first", "/v1/org", "GET", undefined, true);
+  await step("turning off the first organization blocks retained grants while the second keeps working", async () => {
+    await toggleOrganization(world.organizationId, world.organizationSlug, false);
+    await expectFeature(world.otherOrganizationId, true, true, "override");
+    const authenticated = await world.memberRequest("first", "/v1/org");
     expect(authenticated).toMatchObject({ status: 200, body: { organization: { id: world.organizationId } } });
-    const before = world.slack.calls().length;
-    const responses = [];
-    for (const path of ["/v1/mcp-connections/slack/connect/start", "/v1/oauth-providers/slack/connect/start"]) {
-      responses.push(await world.memberRequest("first", path, "GET", undefined, true));
-    }
-    responses.push(await world.memberRequest("first", "/v1/capabilities/slack/search?query=Amber%20launch", "GET", undefined, true));
-    responses.push(await world.memberRequest("first", `/v1/capabilities/slack/threads?channelId=${privateConversation.id}&ts=${privateConversation.ts}`, "GET", undefined, true));
-    expect(responses.every(response => response.status === 403 || response.status === 404)).toBe(true);
-    expect(responses.slice(2)).toEqual([
-      expect.objectContaining({ status: 403, body: expect.objectContaining({ error: "policy_blocked" }) }),
-      expect.objectContaining({ status: 403, body: expect.objectContaining({ error: "policy_blocked" }) }),
-    ]);
-    const retained = await world.mcp("first", "execute_capability", { name: retainedSearchName, query: { query: "Amber launch" } }, true);
-    expect(retained.status).toBe(200);
-    expect(world.objects(retained.body).some(entry => entry.error === "policy_blocked")).toBe(true);
-    expect(world.slack.calls()).toHaveLength(before);
-    const management = await world.memberRequest("first", "/v1/mcp-connections?scope=usable", "GET", undefined, true);
-    expect(management.status).toBe(200);
-    expect(world.objects(management.body).find(entry => entry.id === "slack")).toMatchObject({
+    const statuses = await expectBlocked("first");
+    expect(await world.connection("first")).toMatchObject({
       policyBlocked: true, policyOwner: "openwork", connected: false, connectedForMe: true, needsReconnect: false,
     });
-    const disconnected = await world.memberRequest("first", "/v1/oauth-providers/slack/disconnect", "POST", undefined, true);
-    expect(disconnected).toMatchObject({ status: 200, body: { ok: true } });
-    const afterDisconnect = await world.memberRequest("first", "/v1/mcp-connections?scope=usable", "GET", undefined, true);
-    expect(world.objects(afterDisconnect.body).some(entry => entry.id === "slack")).toBe(false);
+    const before = world.slack.calls().length;
+    const otherSearch = await world.memberRequest("other", "/v1/capabilities/slack/search?query=Amber%20launch");
+    expect(otherSearch.status).toBe(200);
+    expect(otherSearch.text).toContain(world.slack.otherConversations[0].text);
+    expect(world.slack.calls().slice(before)).toEqual([expect.objectContaining({ path: "/api/assistant.search.context", workspace: world.slack.otherWorkspace, error: null })]);
+    evidence.recordAssertionEvidence("A live organization override blocks the next requests, not just discovery", `A=false rejected start/status/search/threads (${statuses.join(" / ")}) and its retained MCP capability with 0 provider calls. Its stored account is blocked by OpenWork, not disconnected. B=true still searched its own workspace (200; 1 provider call).`, true);
+    await admin.screenshot();
+  });
+
+  await step("the blocked account remains visible without asking the member to reconnect", async () => {
+    await member.reload();
+    await member.see({ role: "heading", text: "Your Connections" });
+    await member.see({ text: /^Blocked$/ });
+    await member.see({ testId: "disconnect-my-mcp-account-slack" });
+    await member.notSee({ testId: "connect-my-mcp-account-slack" });
+    const account = await world.connection("first");
+    expect(account).toMatchObject({ policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
+    expect(account?.externalAccountId).toBe("slack:TSYNTHETIC:USYNTHFIRST");
+    evidence.recordAssertionEvidence("Blocking does not erase the account", "The first member sees Blocked and Disconnect, not a Connect/Reconnect action. The same saved Slack identity remains connectedForMe=true with policyOwner=openwork and needsReconnect=false.", true);
+    await member.screenshot();
+  });
+
+  await step("enabling Slack for everyone still respects the first organization's explicit off setting", async () => {
+    await setEveryone(true);
+    await expectFeature(world.organizationId, false, false, "override");
+    await expectFeature(world.otherOrganizationId, true, true, "override");
+    await expectBlocked("first");
+    evidence.recordAssertionEvidence("Everyone is a default, not a forced grant", "The shared everyone control is On, but A's explicit false override stays effective and its retained search remains policy_blocked. B's explicit true override remains enabled.", true);
+    await admin.screenshot();
+  });
+
+  await step("using everyone's setting removes the override and restores the existing account", async () => {
+    await openOrganization(world.organizationSlug);
+    await admin.click({ testId: "admin-capability-reset-nativeSlack" });
+    await expectFeature(world.organizationId, true, null, "everyone");
+    await admin.see({ testId: "admin-capability-source-nativeSlack" }, { text: "On for everyone" });
+    expect((await adminProbe.dom('[data-testid="admin-capability-nativeSlack"]:checked')).elements).toHaveLength(1);
+    expect(await world.connection("first")).toMatchObject({ connected: true, connectedForMe: true, needsReconnect: false });
+    const before = world.slack.calls().length;
+    const result = await world.mcp("first", "execute_capability", { name: retainedSearchName, query: { query: "Amber launch" } });
+    expect(result.status).toBe(200);
+    expect(result.body).not.toMatchObject({ isError: true });
+    expect(world.slack.calls().slice(before)).toEqual([expect.objectContaining({ path: "/api/assistant.search.context", member: "first", workspace: "TSYNTHETIC", error: null })]);
+    evidence.recordAssertionEvidence("Null means inherit rather than false", "Use everyone's setting saved override=null; A now inherits On. Its retained read-only MCP token searches with the existing account (1 RTS request, 0 OAuth exchanges).", true);
+    await admin.screenshot();
+  });
+
+  await step("turning everyone's default off leaves the explicitly enabled organization available", async () => {
+    await setEveryone(false);
+    await expectFeature(world.organizationId, false, null, "everyone");
+    await expectFeature(world.otherOrganizationId, true, true, "override");
+    await expectBlocked("first");
+    const otherSearch = await world.memberRequest("other", "/v1/capabilities/slack/search?query=Amber%20launch");
+    expect(otherSearch.status).toBe(200);
+    expect(otherSearch.text).toContain(world.slack.otherConversations[0].text);
+    evidence.recordAssertionEvidence("Default-off and an explicit organization grant are different", "Everyone=Off disables inheriting A without removing its account; explicitly enabled B still returns its own workspace results (200). This is not the global kill switch.", true);
+    await admin.screenshot();
+  });
+
+  await step("the platform admin restores an explicit grant before testing the emergency stop", async () => {
+    await toggleOrganization(world.organizationId, world.organizationSlug, true);
+    await expectFeature(world.otherOrganizationId, true, true, "override");
+    expect(await world.connection("first")).toMatchObject({ connected: true, connectedForMe: true });
+    expect(await world.connection("other")).toMatchObject({ connected: true, connectedForMe: true });
+    evidence.recordAssertionEvidence("Both organizations have real retained grants before the kill", "A=true and B=true both override the Off default; both stored accounts are usable without new authorization. This witnesses the explicit grants the kill must override.", true);
+    await admin.screenshot();
+  });
+
+  await step("turning Slack off everywhere overrides both explicit grants without erasing either account", async () => {
+    await admin.navigate(world.featuresUrl);
+    await admin.see({ testId: "admin-feature-kill-nativeSlack" });
+    await Promise.all([world.confirmAdminKill(), admin.click({ testId: "admin-feature-kill-nativeSlack" })]);
+    await admin.see({ testId: "admin-feature-state-nativeSlack" }, { text: "Turned off everywhere" });
+    expect(await world.globalSlackFeature()).toMatchObject({ enabled: false, killed: true });
+    await expectFeature(world.organizationId, false, true, "killed");
+    await expectFeature(world.otherOrganizationId, false, true, "killed");
+    const before = world.slack.calls().length;
+    await expectBlocked("first");
+    await expectBlocked("other");
+    expect(await world.connection("first")).toMatchObject({ externalAccountId: "slack:TSYNTHETIC:USYNTHFIRST", policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
+    expect(await world.connection("other")).toMatchObject({ externalAccountId: `slack:${world.slack.otherWorkspace}:USYNTHFIRST`, policyBlocked: true, policyOwner: "openwork", connectedForMe: true, needsReconnect: false });
     expect(world.slack.calls()).toHaveLength(before);
+    evidence.recordAssertionEvidence("The global kill outranks both true overrides", "Both organizations resolve source=killed while retaining override=true and their own stored identities. Subsequent starts/status/search/threads and retained MCP execution are blocked for both, with 0 provider calls. No claim is made about already in-flight requests.", true);
+    await admin.screenshot();
+  });
+
+  await step("restoring the feature resumes both saved accounts without another consent flow", async () => {
+    await admin.click({ testId: "admin-feature-restore-nativeSlack" });
+    await admin.see({ testId: "admin-feature-state-nativeSlack" }, { text: "Off · organization overrides only" });
+    await expectFeature(world.organizationId, true, true, "override");
+    await expectFeature(world.otherOrganizationId, true, true, "override");
+    const before = world.slack.calls().length;
+    const firstSearch = await world.memberRequest("first", "/v1/capabilities/slack/search?query=Amber%20launch");
+    const otherSearch = await world.memberRequest("other", "/v1/capabilities/slack/search?query=Amber%20launch");
+    expect(firstSearch.status).toBe(200);
+    expect(otherSearch.status).toBe(200);
+    expect(firstSearch.text).toContain(world.slack.conversations[0].text);
+    expect(firstSearch.text).not.toContain(world.slack.otherConversations[0].text);
+    expect(otherSearch.text).toContain(world.slack.otherConversations[0].text);
+    const calls = world.slack.calls().slice(before);
+    expect(calls).toHaveLength(2);
+    expect(calls.every(call => call.path === "/api/assistant.search.context" && call.error === null)).toBe(true);
+    expect(calls.map(call => call.workspace)).toEqual(["TSYNTHETIC", world.slack.otherWorkspace]);
+    evidence.recordAssertionEvidence("Restore preserves account and organization boundaries", "The Off default remains, both true overrides resume, and the two existing accounts return their own workspace results (200 / 200; 2 RTS requests, 0 OAuth exchanges).", true);
+    await admin.screenshot();
+  });
+
+  await step("a member can disconnect their blocked account without affecting the other organization", async () => {
+    await toggleOrganization(world.organizationId, world.organizationSlug, false);
+    await member.reload();
+    await member.see({ text: /^Blocked$/ });
+    await member.see({ testId: "disconnect-my-mcp-account-slack" });
+    await member.notSee({ testId: "connect-my-mcp-account-slack" });
+    const before = world.slack.calls().length;
+    await member.click({ testId: "disconnect-my-mcp-account-slack" });
+    await probe.eventually(() => world.connection("first"), {
+      within: 30_000, label: "the member removed their blocked Slack account", until: value => value === undefined,
+    });
+    await member.notSee({ testId: "disconnect-my-mcp-account-slack" });
+    expect(world.slack.calls()).toHaveLength(before);
+    expect(await world.connection("other")).toMatchObject({ connected: true, connectedForMe: true });
     expect(world.model.failures()).toEqual([]);
     const allowedMethods = ["/api/oauth.v2.access", "/api/auth.test", "/api/assistant.search.context", "/api/conversations.replies", "/api/chat.getPermalink"];
     expect(world.slack.calls().every(call => allowedMethods.includes(call.path))).toBe(true);
     expect(world.slack.calls().every(call => call.error === null || call.error === "channel_not_found")).toBe(true);
-    evidence.recordAssertionEvidence("Disabling availability stops retained authorization, not just discovery", `A second isolated Den process reads the same scratch database with Slack disabled. Its audience-valid, read-only member token reaches policy_blocked for the retained capability; OAuth aliases/search/threads returned ${responses.map(response => response.status).join(" / ")}. The saved account stays visible as blocked with OpenWork explicitly identified as its policy owner, not a reconnection requirement, and can still be disconnected. There were zero additional provider calls; no actual rollout flag changed.`, true);
+    evidence.recordAssertionEvidence("Blocked accounts remain removable by their owner", "A's member clicked Disconnect while Slack was blocked; their account disappeared with 0 provider calls. B's account remains connected. Every witnessed provider method was read/OAuth-only and the deterministic model reported 0 failures.", true);
+    await member.screenshot();
   });
 });

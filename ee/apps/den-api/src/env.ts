@@ -9,6 +9,7 @@ import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { parseFeatureEnvironment } from "@openwork/features"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -79,8 +80,7 @@ const EnvSchema = z.object({
   DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_MICROSOFT_OAUTH_TOKEN_URL: z.string().optional(),
   DEN_MICROSOFT_GRAPH_BASE_URL: z.string().optional(),
-  // Native Slack is an internal, synthetic-data preview, separate from Slack MCP.
-  DEN_SLACK_ENABLED: z.string().optional(),
+  // Platform app configuration only; availability is the registered nativeSlack feature.
   DEN_SLACK_CLIENT_ID: z.string().optional(),
   DEN_SLACK_CLIENT_SECRET: z.string().optional(),
   DEN_SLACK_SIGNING_SECRET: z.string().optional(),
@@ -549,6 +549,20 @@ const automationsRuntimeEnabled = parseBooleanFlag(
 const automationsEnabled = automationsRuntimeEnabled
   && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "false")
 const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "false")
+
+// Which product this install is (DEN_DEPLOYMENT, default self_hosted so a
+// misconfigured customer install never picks up cloud-only features) and the
+// operator's feature locks (DEN_FEATURE_*, rendered from Helm config.features).
+// See packages/features/src/registry.ts.
+const featureEnvironment = parseFeatureEnvironment(process.env)
+const fatalFeatureProblems = featureEnvironment.problems.filter((problem) => problem.fatal)
+if (fatalFeatureProblems.length > 0) {
+  throw new Error(fatalFeatureProblems.map((problem) => `${problem.variable} ${problem.message}`).join(" "))
+}
+for (const problem of featureEnvironment.problems) {
+  console.warn(`[features] ${problem.variable} ${problem.message}`)
+}
+
 // An edge that already answers CORS (reflecting the caller's origin) in front
 // of den-api makes den-api's own headers duplicates, which browsers reject.
 // The allowlist still feeds proxy-trust decisions; only header emission stops.
@@ -805,8 +819,7 @@ export const env = {
   microsoftOAuthAuthorizeUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_AUTHORIZE_URL),
   microsoftOAuthTokenUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_TOKEN_URL),
   microsoftGraphBaseUrl: optionalString(parsed.DEN_MICROSOFT_GRAPH_BASE_URL),
-  // Opt-in is deployment-controlled and restricted to one approved validation org/workspace.
-  slackEnabled: parseBooleanFlag(parsed.DEN_SLACK_ENABLED ?? "false"),
+  // Credentials stay platform-owned; /admin controls nativeSlack through the shared registry.
   slackClientId: optionalString(parsed.DEN_SLACK_CLIENT_ID),
   slackClientSecret: optionalString(parsed.DEN_SLACK_CLIENT_SECRET),
   slackSigningSecret: optionalString(parsed.DEN_SLACK_SIGNING_SECRET),
@@ -862,6 +875,7 @@ export const env = {
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
   dashboardsEnabled,
+  features: { deployment: featureEnvironment.deployment, locks: featureEnvironment.locks },
   auditCaptureEnabled: parsed.DEN_AUDIT_CAPTURE_ENABLED === "true",
   auditVisibilityEnabled: parsed.DEN_AUDIT_VISIBILITY_ENABLED === "true",
   auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",

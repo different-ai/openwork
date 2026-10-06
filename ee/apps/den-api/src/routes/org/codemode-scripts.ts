@@ -29,6 +29,7 @@ import { orgMemberRoute, jsonValidator, queryValidator } from "../../middleware/
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { env } from "../../env.js"
+import { getOrganizationFeatures } from "../../features.js"
 import { getCatalog } from "../../mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "../../mcp/capability-registry.js"
 import {
@@ -256,7 +257,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       member,
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-      organizationMetadata: context.organization.metadata,
+      organizationFeatures: await getOrganizationFeatures(context.organization.id),
     })
     const buildTools = () => buildCapabilityToolTree(capabilityContext)
     const actorContext = { organizationContext: context, memberTeams: teams, session: c.get("session") }

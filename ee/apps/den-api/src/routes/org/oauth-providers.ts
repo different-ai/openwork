@@ -25,7 +25,7 @@ import {
   slackOAuthConfigurationIsCurrent,
 } from "../../capability-sources/generic-oauth.js"
 import { getNativeOAuthClient } from "../../capability-sources/native-oauth-client.js"
-import { parseSlackAccountIdentity, slackCloudPolicyError } from "../../capability-sources/slack-policy.js"
+import { parseSlackAccountIdentity } from "../../capability-sources/slack-policy.js"
 import { saveSlackInstallation } from "../../capability-sources/slack-installations.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
@@ -354,8 +354,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       const { provider, credentialProviderId } = resolved
 
       if (provider.providerId === "slack") {
-        return c.json({ error: "forbidden", message: slackCloudPolicyError()?.message
-          ?? "The native Slack preview uses an OpenWork-supplied app. Organization app configuration is not supported." }, 403)
+        return c.json({ error: "forbidden", message: "Slack search uses the OpenWork-provided app. Organization app configuration is not supported." }, 403)
       }
       const body = c.req.valid("json")
       const existing = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
@@ -677,7 +676,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           })
 
         if (provider.providerId === "slack" && (
-          !slackOAuthConfigurationIsCurrent({
+          !await slackOAuthConfigurationIsCurrent({
             organizationId: statePayload.organizationId, client,
           })
           || await nativeProviderConnectionPolicyError(statePayload.organizationId, "slack")
@@ -709,7 +708,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         }
         if (provider.providerId === "slack" && tokens.slackHomeGrant) {
           const identity = parseSlackAccountIdentity(externalAccountId)
-          if (identity && slackOAuthConfigurationIsCurrent({ organizationId: statePayload.organizationId, client })) {
+          if (identity && await slackOAuthConfigurationIsCurrent({ organizationId: statePayload.organizationId, client })) {
             try {
               await saveSlackInstallation(client.clientId, identity.workspaceId, tokens.slackHomeGrant)
             } catch {
@@ -718,6 +717,14 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
               console.warn("slack_home_installation_unavailable", { requestId: c.get("requestId") })
             }
           }
+        }
+        if (provider.providerId === "slack" && (
+          !await slackOAuthConfigurationIsCurrent({ organizationId: statePayload.organizationId, client })
+          || await nativeProviderConnectionPolicyError(statePayload.organizationId, "slack")
+        )) {
+          // Recheck after optional Home persistence too. Retain the saved account
+          // for cleanup, but never report it as usable after observing a disable.
+          throw new OAuthTokenExchangeError("Slack became unavailable for this organization. Your saved account cannot be used while access is disabled.", "oauth_reauthentication_required")
         }
       } catch (error) {
         const requestId = c.get("requestId")

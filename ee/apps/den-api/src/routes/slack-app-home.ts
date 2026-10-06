@@ -3,7 +3,6 @@ import type { Env, Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../env.js"
-import { slackCloudPolicyError } from "../capability-sources/slack-policy.js"
 
 const verificationSchema = z.object({
   type: z.literal("url_verification"),
@@ -91,14 +90,18 @@ async function slackRequest(method: "auth.test" | "views.publish", token: string
  * The app passes its existing signedWebhookRoute policy marker so this standalone
  * signature boundary does not import the member-auth/database dependency graph.
  */
-export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWebhookRoute: MiddlewareHandler<E>, homeToken: (workspaceId: string, signal: AbortSignal) => Promise<string | null>) {
+export function registerSlackAppHomeRoutes<E extends Env>(
+  app: Hono<E>,
+  signedWebhookRoute: MiddlewareHandler<E>,
+  homeToken: (workspaceId: string, signal: AbortSignal) => Promise<string | null>,
+  homePolicy: () => Promise<{ kind: "policy_blocked" } | null>,
+) {
   const deliveries = new Map<string, number>()
   let publicationsInFlight = 0
   app.post("/v1/slack/events", describeRoute({ hide: true, security: [] }), signedWebhookRoute, async (c) => {
     c.header("Cache-Control", "no-store")
     c.header("X-Slack-No-Retry", "1")
     const deadline = AbortSignal.timeout(2000)
-    if (slackCloudPolicyError()) return c.json({ error: "policy_blocked" }, 403)
     const clientId = env.slackClientId
     const clientSecret = env.slackClientSecret
     const timestamp = c.req.header("x-slack-request-timestamp") ?? ""
@@ -121,10 +124,11 @@ export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWe
     } catch {
       return c.json({ error: "invalid_body" }, 400)
     }
-    if (slackCloudPolicyError() || secret !== env.slackSigningSecret) return c.json({ error: "policy_blocked" }, 403)
+    if (secret !== env.slackSigningSecret) return c.json({ error: "policy_blocked" }, 403)
     const verification = verificationSchema.safeParse(payload)
     if (verification.success) {
-      // Verification is app-level and authenticated by the signing secret.
+      // App-level endpoint verification grants no organization/member access.
+      // It can run before any org opts in; no feature-table read precedes HMAC.
       return c.json({ challenge: verification.data.challenge })
     }
     const event = homeEventSchema.safeParse(payload)
@@ -139,11 +143,15 @@ export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWe
     // Keep storage work counted until it actually settles: SQL acquisition and
     // row-lock waits cannot be cancelled by racing the HTTP response deadline.
     const publication = (async () => {
+      // Feature DB work belongs inside the existing deadline/concurrency bound,
+      // after signature verification, never on unauthenticated requests.
+      if (await homePolicy()) return c.json({ error: "policy_blocked" }, 403)
+      deadline.throwIfAborted()
       const botToken = await homeToken(event.data.team_id, deadline)
       deadline.throwIfAborted()
       if (!botToken) return c.json({ error: "home_unavailable" }, 503)
       const identity = authSchema.parse(await slackRequest("auth.test", botToken, {}, deadline))
-      if (slackCloudPolicyError() || identity.team_id !== event.data.team_id || secret !== env.slackSigningSecret
+      if (await homePolicy() || identity.team_id !== event.data.team_id || secret !== env.slackSigningSecret
         || clientId !== env.slackClientId || clientSecret !== env.slackClientSecret) return c.json({ error: "policy_blocked" }, 403)
       publishedSchema.parse(await slackRequest("views.publish", botToken, { user_id: event.data.event.user, view: homeView() }, deadline))
       return c.json({ ok: true })

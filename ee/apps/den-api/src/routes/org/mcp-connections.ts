@@ -78,7 +78,6 @@ import {
 } from "../../capability-sources/external-mcp-connections.js"
 import { evaluateToolPolicy } from "../../capability-sources/external-mcp-tool-policy.js"
 import { memberApiKeyUsable, usesMemberApiKey, validMemberApiKey } from "../../capability-sources/member-api-key.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { externalMcpAppResourceUri } from "../../mcp/external-capabilities.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../../mcp/search.js"
 import { listBlockedNativeProviderAccountEntries, listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
@@ -136,6 +135,7 @@ import {
 } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { beginNativeProviderConnect } from "./oauth-providers.js"
+import { organizationFeatureEnabled } from "../../features.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
 const logger = appLogger.child({ component: "mcp_connections" })
@@ -1267,7 +1267,7 @@ export async function listMemberUsableConnectionFacts(input: {
   context: PluginArchActorContext
 }): Promise<MemberUsableConnectionFacts[]> {
   const organization = input.context.organizationContext.organization
-  if (!memberFacingMcpConnectionsEnabled(organization.metadata)) {
+  if (!(await organizationFeatureEnabled(organization.id, "mcpConnections"))) {
     return []
   }
 
@@ -2404,7 +2404,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const isAdmin = verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })
       if (!isAdmin) {
         const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
-        const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata)
+        const canUse = await organizationFeatureEnabled(payload.organization.id, "mcpConnections")
           && await memberCanUseExternalMcpConnection({
             connectionId: connection.id,
             orgMembershipId: payload.currentMember.id,
@@ -2595,7 +2595,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
 
       const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
-      const canUse = memberFacingMcpConnectionsEnabled(payload.organization.metadata)
+      const canUse = await organizationFeatureEnabled(payload.organization.id, "mcpConnections")
         && await memberCanUseExternalMcpConnection({
           connectionId: connection.id,
           orgMembershipId: payload.currentMember.id,
@@ -2699,7 +2699,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const parsedBody = c.req.valid("json")
       let body = parsedBody
       if (!isOrganizationAdmin(payload)) {
-        const denial = !memberFacingMcpConnectionsEnabled(payload.organization.metadata)
+        const denial = !(await organizationFeatureEnabled(payload.organization.id, "mcpConnections"))
           ? "Connections are not enabled for this organization."
           : memberConnectionCreateDenial(parsedBody)
         if (denial || parsedBody.kind === "native_provider") {

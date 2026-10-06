@@ -409,11 +409,11 @@ async function readBoundedTokenResponse(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes)
 }
 
-export function slackOAuthConfigurationIsCurrent(input: {
+export async function slackOAuthConfigurationIsCurrent(input: {
   organizationId: string
   client: NativeOAuthClient
-}): boolean {
-  return !slackCloudPolicyError()
+}): Promise<boolean> {
+  return !(await slackCloudPolicyError(input.organizationId))
     && env.slackClientId === input.client.clientId
     && env.slackClientSecret === input.client.clientSecret
 }
@@ -612,7 +612,7 @@ export async function getValidAccessToken(input: {
   orgMembershipId: DenTypeId<"member">
 }): Promise<{ accessToken: string; account: ConnectedAccountRow } | { error: "not_connected" | "client_not_configured" }> {
   if (input.provider.providerId === "slack"
-    && (input.credentialProviderId !== "slack" || slackCloudPolicyError())
+    && (input.credentialProviderId !== "slack" || await slackCloudPolicyError(input.organizationId))
   ) return { error: "not_connected" }
   const account = await getConnectedAccount({
     organizationId: input.organizationId,
@@ -625,7 +625,7 @@ export async function getValidAccessToken(input: {
 
   if (input.provider.providerId === "slack") {
     const identity = parseSlackAccountIdentity(account.externalAccountId)
-    if (slackCloudPolicyError() || !identity) {
+    if (!identity || await slackCloudPolicyError(input.organizationId)) {
       return { error: "not_connected" }
     }
   }
@@ -647,7 +647,7 @@ export async function getValidAccessToken(input: {
   const slackIdentity = input.provider.providerId === "slack"
     ? await validateSlackTokenIdentity(refreshed, account.externalAccountId ?? "")
     : undefined
-  if (input.provider.providerId === "slack" && !slackOAuthConfigurationIsCurrent({
+  if (input.provider.providerId === "slack" && !await slackOAuthConfigurationIsCurrent({
     organizationId: input.organizationId, client,
   })) return { error: "not_connected" }
   const expiresAt = refreshed.expires_in !== undefined ? new Date(Date.now() + refreshed.expires_in * 1000) : null
@@ -672,7 +672,7 @@ export async function getValidAccessToken(input: {
         : [...new Set(refreshed.scope.split(/[\s,]+/).filter(Boolean))],
     } : {}),
   })
-  if (input.provider.providerId === "slack" && !slackOAuthConfigurationIsCurrent({
+  if (input.provider.providerId === "slack" && !await slackOAuthConfigurationIsCurrent({
     organizationId: input.organizationId, client,
   })) return { error: "not_connected" }
   if (updated?.accessToken) {
@@ -687,7 +687,7 @@ export async function getValidAccessToken(input: {
     providerId: input.credentialProviderId,
   })
   if (input.provider.providerId === "slack" && (
-    !slackOAuthConfigurationIsCurrent({ organizationId: input.organizationId, client })
+    !await slackOAuthConfigurationIsCurrent({ organizationId: input.organizationId, client })
     || current?.externalAccountId !== slackIdentity
   )) return { error: "not_connected" }
   if (

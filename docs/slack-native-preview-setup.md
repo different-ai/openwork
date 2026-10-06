@@ -1,6 +1,6 @@
 # ENG-76 native Slack validation — operational draft
 
-**Historical draft, superseded 2026-09-30. Do not apply this configuration.** The current hosted multi-workspace setup is [Slack Cloud setup](slack-cloud-setup.md). Organization/workspace-ID and global bot-token environment settings below have been removed from the implementation.
+**Historical draft, superseded 2026-09-30. Do not apply this configuration.** The current hosted multi-workspace setup is [Slack Cloud setup](slack-cloud-setup.md). Organization/workspace-ID and global bot-token environment settings below have been removed from the implementation. As of 2026-10-06, the old Slack enablement environment variable below is also retired: use the registered **Slack search** feature in `/admin`, with per-organization overrides, the everyone default, and the shared kill switch. The remaining text is a historical record, not current setup instructions.
 
 **Disabled. No live activation is authorized by this document.** Implementation approval covers code and synthetic tests, not Slack app creation, installation, distribution, fixture provisioning, credential changes, flag enablement, outreach, or real Slack API calls. No live app settings or token grants were inspected. Primary setup documentation was retrieved on **2026-09-28**.
 

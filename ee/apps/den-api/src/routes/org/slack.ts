@@ -7,7 +7,7 @@ import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
 import { getConnectedAccount, type ConnectedAccountRow } from "../../capability-sources/oauth-credentials.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
 import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
-import { parseSlackAccountIdentity, slackCloudPolicyError } from "../../capability-sources/slack-policy.js"
+import { parseSlackAccountIdentity } from "../../capability-sources/slack-policy.js"
 import { readSlackThread, searchSlack, SlackCapabilityError, slackConnectionRequired, slackErrorSchema, slackSearchInputSchema, slackSearchResultSchema, slackThreadInputSchema, slackThreadResultSchema } from "../../capability-sources/slack-api.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { readInternalCapabilityConnectorId } from "../../session.js"
@@ -21,8 +21,6 @@ function checkAccount(member: Member, account: ConnectedAccountRow | null) {
 }
 
 async function slackSession(member: Member, headers: Headers) {
-  const cloudPolicy = slackCloudPolicyError()
-  if (cloudPolicy) throw new SlackCapabilityError(403, { error: cloudPolicy.kind, message: cloudPolicy.message })
   const policy = await nativeProviderConnectionPolicyError(member.organizationId, "slack")
   if (policy) throw new SlackCapabilityError(403, { error: policy.kind, message: policy.message })
   const provider = getNativeOAuthProvider("slack")

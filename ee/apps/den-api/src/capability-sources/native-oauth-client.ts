@@ -13,7 +13,7 @@ export async function getNativeOAuthClient(
   if (credentialProviderId !== "slack") return getOrgOAuthClient(organizationId, credentialProviderId)
   // Native Cloud Slack is platform-managed. The existing Slack MCP/BYO
   // registrations use their own emc_ identities and are deliberately untouched.
-  if (slackCloudPolicyError() || !env.slackClientId || !env.slackClientSecret) return null
+  if (!env.slackClientId || !env.slackClientSecret || await slackCloudPolicyError(organizationId)) return null
   return {
     clientId: env.slackClientId,
     clientSecret: env.slackClientSecret,

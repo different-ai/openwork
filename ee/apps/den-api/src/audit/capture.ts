@@ -3,7 +3,7 @@ import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import { AuditPolicyTable, AuditStateTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { auditPolicySchema, type AuditEntitlement } from "@openwork/types/den/audit"
-import { organizationHasCapability } from "../organization-capabilities.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { AuditReadError } from "./cursors.js"
 import { PILOT_DEFAULT_CATEGORIES } from "./pilot-policy.js"
 
@@ -33,7 +33,10 @@ export async function readAuditAvailability(database: AuditDatabase | AuditTx, o
   const [organization] = await (lock ? query.for("share") : query)
   if (!organization) throw new AuditLogError("audit_storage_inconsistent")
   const { getAuditEntitlement } = await import("../entitlements.js")
-  return { featureEnabled: organizationHasCapability(organization.metadata, "auditLogs"), entitlement: getAuditEntitlement(organization.metadata) }
+  // Read after the organization fence, with the same share lock, so a concurrent
+  // /admin change cannot flip the flag between this check and commit.
+  const featureEnabled = await organizationFeatureEnabled(organizationId, "auditLogs", { database, lock: lock ? "share" : undefined })
+  return { featureEnabled, entitlement: getAuditEntitlement(organization.metadata) }
 }
 
 export async function readAuditEntitlement(database: AuditDatabase | AuditTx, organizationId: string, lock = false): Promise<AuditEntitlement> {

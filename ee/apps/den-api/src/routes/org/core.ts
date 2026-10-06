@@ -10,8 +10,6 @@ import { auth } from "../../auth.js"
 import { verifyBotProtection } from "../../bot-protection.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
 import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
-import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
@@ -21,7 +19,7 @@ import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidato
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
-import { organizationHasCapability, organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
+import { getOrganizationFeatures } from "../../features.js"
 import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
 import { workbotOrigin } from "../../workbot/config.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
@@ -181,6 +179,12 @@ const organizationContextResponseSchema = z.object({
       description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
     }),
   }).passthrough(),
+  /**
+   * Effective on/off for every registry feature (packages/features/src/registry.ts).
+   * New clients read this; `capabilities` is frozen for published clients.
+   * A key missing here means an older server: treat it as off.
+   */
+  features: z.record(z.string(), z.boolean()).meta({ description: "Effective on/off for every OpenWork feature in this organization. Treat a missing key as off." }),
   deploymentCapabilities: deploymentCapabilitiesSchema,
   entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), auditLogs: z.boolean() }),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
@@ -682,6 +686,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
       const [currentOrganization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, payload.organization.id)).limit(1)
       if (!currentOrganization) return c.json({ error: "organization_not_found" }, 404)
+      const features = await getOrganizationFeatures(payload.organization.id)
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
       // Cloud is entitled by OpenWork Web access (paid subscription or the
       // platform-admin complimentary grant) on hosted deployments; there is no
@@ -720,32 +725,33 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         deploymentCapabilities: deploymentCapabilities(),
         plan: parseOrganizationPlan(currentOrganization.metadata),
         entitlements: getOrganizationEntitlements(currentOrganization.metadata),
+        features,
+        // Frozen for published clients; new clients read `features`.
         capabilities: {
-          auditLogs: organizationHasCapability(currentOrganization.metadata, "auditLogs") && env.auditVisibilityEnabled,
+          auditLogs: features.auditLogs && env.auditVisibilityEnabled,
           gatewayDashboard: true,
           // Protocol capability: clients must see this explicit signal before
           // calling the dashboard routes. Older Den versions omit the field,
           // allowing newer Desktop builds to fail closed during a staggered
           // rollout instead of calling an endpoint that does not exist yet.
-          // Per-organization and default-off: platform admins enable it with
-          // metadata.capabilities.orgManagedDashboards = true.
-          orgManagedDashboards: organizationManagedDashboardsEnabled(payload.organization.metadata),
+          // Per-organization and default-off: platform admins enable it in /admin.
+          orgManagedDashboards: features.orgManagedDashboards,
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
-          mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata),
+          mcpConnections: features.mcpConnections,
           // Building your own Apps is on for every organization unless the
           // deployment or the org's member-facing MCP connections turn it off.
-          appMcpServers: appMcpServersEnabled(payload.organization.metadata),
+          appMcpServers: appMcpServersEnabled(features),
           // Workflows/Code Mode are enabled for every organization; the field
           // remains for published clients that still read it.
           workflows: true,
-          installLinks: organizationInstallLinksEnabled(payload.organization.metadata),
+          installLinks: features.installLinks,
           // Effective offer: the deployment switch enables Web generally,
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.
           openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
           // Workbot is its own app (DEN_WORKBOT_URL), per-organization and default-off.
-          workbot: organizationHasCapability(payload.organization.metadata, "workbot") && workbotOrigin() !== null,
+          workbot: features.workbot && workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),
         },
         authMethods: {

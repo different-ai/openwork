@@ -10,8 +10,6 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -31,9 +29,8 @@ import {
   readExternalMcpResource,
 } from "../capability-sources/external-mcp-client-runtime.js"
 import { externalMcpDiagnosticForResponse } from "../capability-sources/external-mcp-diagnostics.js"
-import { memberFacingMcpConnectionsEnabled } from "../capability-sources/external-mcp-rollout.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { evaluateToolPolicy } from "../capability-sources/external-mcp-tool-policy.js"
-import { db } from "../db.js"
 import { env } from "../env.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
@@ -487,7 +484,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     // The direct provider catalog is a member-facing MCP surface, so it obeys
     // the same organization flag as the member-facing connection list.
     const directExposureEnabled = connection.exposeDirectly
-      && await memberFacingMcpConnectionsEnabledForOrganization(organizationId)
+      && await organizationFeatureEnabled(organizationId, "mcpConnections")
 
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const redirectUri = `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connection.id)}/connect/callback`
@@ -506,17 +503,6 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       directExposureEnabled,
     })
   })
-}
-
-async function memberFacingMcpConnectionsEnabledForOrganization(
-  organizationId: ExternalMcpConnectionRow["organizationId"],
-): Promise<boolean> {
-  const rows = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, organizationId))
-    .limit(1)
-  return memberFacingMcpConnectionsEnabled(rows[0]?.metadata)
 }
 
 export const STANDARD_MCP_APP_EXTENSION = {

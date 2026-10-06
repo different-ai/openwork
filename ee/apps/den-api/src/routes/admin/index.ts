@@ -41,9 +41,27 @@ import { adminRoute, jsonValidator, queryValidator } from "../../middleware/inde
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
-import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
-import { normalizeOrganizationCapabilities, readOrganizationCapabilityOverrides } from "../../organization-capabilities.js"
+import {
+  describeFeatures,
+  readFeatureRollouts,
+  readOrganizationFeatureOverrides,
+  readOrganizationFeatureOverridesForMany,
+  setFeatureRollout,
+  setOrganizationFeatureOverrides,
+  type FeatureOverrideChanges,
+} from "@openwork-ee/den-db/organization-features"
+import {
+  FEATURE_KEYS,
+  featureAvailableOn,
+  featureDefinition,
+  featureKeySchema,
+  featureRollout,
+  mapFeatures,
+  type FeatureKey,
+  type FeatureOverrides,
+  type FeatureRollouts,
+  type ResolvedFeature,
+} from "@openwork/features"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
 import { env } from "../../env.js"
@@ -103,17 +121,11 @@ const updateOrganizationDpaSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 }).strict()
 
+// Generated from the feature registry (packages/features/src/registry.ts):
+// every registry key is accepted; unknown and retired keys are ignored.
 const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
-    installLinks: z.boolean().nullable().optional(),
-    mcpConnections: z.boolean().nullable().optional(),
-    modelsAnalytics: z.boolean().nullable().optional(),
-    auditLogs: z.boolean().nullable().optional(),
-    orgManagedDashboards: z.boolean().nullable().optional(),
-    slackAssistant: z.boolean().nullable().optional(),
-    slackAssistantHeadless: z.boolean().nullable().optional(),
-    headlessAutomations: z.boolean().nullable().optional(),
-    workbot: z.boolean().nullable().optional(),
+    ...mapFeatures(() => z.boolean().nullable().optional()),
     gatewayDashboard: z.boolean().nullable().optional().meta({
       deprecated: true,
       description: "Accepted for compatibility only and ignored; AI Gateway no longer has an organization rollout override.",
@@ -122,20 +134,44 @@ const updateOrganizationCapabilitiesSchema = z.object({
 })
 
 const adminOrganizationCapabilitiesSchema = z.object({
-  installLinks: z.boolean(),
-  mcpConnections: z.boolean(),
-  modelsAnalytics: z.boolean(),
-  auditLogs: z.boolean(),
-  orgManagedDashboards: z.boolean(),
-  slackAssistant: z.boolean(),
-  slackAssistantHeadless: z.boolean(),
-  headlessAutomations: z.boolean(),
-  workbot: z.boolean(),
+  ...mapFeatures(() => z.boolean()),
   gatewayDashboard: z.literal(true).meta({
     deprecated: true,
     description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
   }),
 })
+
+const adminFeatureStateSchema = z.object({
+  enabled: z.boolean(),
+  source: z.enum(["unavailable", "killed", "lock", "override", "everyone"]),
+  everyone: z.boolean(),
+  killed: z.boolean(),
+  lock: z.boolean().nullable(),
+  override: z.boolean().nullable(),
+  overrideApplies: z.boolean(),
+})
+
+const adminFeatureStatesSchema = z.object(mapFeatures(() => adminFeatureStateSchema)).meta({
+  description: "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.",
+})
+
+const adminFeatureSchema = z.object({
+  key: featureKeySchema,
+  label: z.string(),
+  description: z.string(),
+  since: z.string(),
+  deployments: z.array(z.enum(["cloud", "self_hosted"])),
+  default: z.boolean(),
+  available: z.boolean(),
+  enabled: z.boolean(),
+  killed: z.boolean(),
+  lock: z.boolean().nullable(),
+}).meta({ ref: "AdminFeature" })
+
+const updateFeatureRolloutSchema = z.object({
+  enabled: z.boolean().optional(),
+  killed: z.boolean().optional(),
+}).strict().refine((value) => value.enabled !== undefined || value.killed !== undefined, { message: "Set enabled, killed, or both." })
 
 const createAdminSchema = z.object({
   email: z.string().trim().max(255).email().transform((email) => email.toLowerCase()),
@@ -205,7 +241,7 @@ const adminOverviewResponseSchema = z.object({
   admins: z.array(z.object({}).passthrough()),
   summary: adminSummarySchema,
   users: z.array(z.object({}).passthrough()),
-  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema, featureStates: adminFeatureStatesSchema }).passthrough()),
   userPage: adminPageInfoSchema,
   organizationPage: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
@@ -219,7 +255,7 @@ const adminUsersPageResponseSchema = z.object({
 }).meta({ ref: "AdminUsersPageResponse" })
 
 const adminOrganizationsPageResponseSchema = z.object({
-  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema, featureStates: adminFeatureStatesSchema }).passthrough()),
   page: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
 }).meta({ ref: "AdminOrganizationsPageResponse" })
@@ -297,22 +333,37 @@ function parseBooleanQuery(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes"
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
+type DescribedFeatures = Record<FeatureKey, ResolvedFeature>
+
+function describeOrganization(rollouts: FeatureRollouts, overrides: FeatureOverrides): DescribedFeatures {
+  return describeFeatures({ rollouts, overrides, environment: env.features })
 }
 
-function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unknown> | string | null | undefined): z.infer<typeof adminOrganizationCapabilitiesSchema> {
+function readAdminFeatureStates(described: DescribedFeatures): z.infer<typeof adminFeatureStatesSchema> {
+  return mapFeatures((key) => {
+    const { enabled, source, everyone, killed, lock, override, overrideApplies } = described[key]
+    return { enabled, source, everyone, killed, lock, override, overrideApplies }
+  })
+}
+
+function readAdminVisibleOrganizationCapabilities(described: DescribedFeatures): z.infer<typeof adminOrganizationCapabilitiesSchema> {
+  return { ...mapFeatures((key) => described[key].enabled), gatewayDashboard: true }
+}
+
+function readAdminFeature(key: FeatureKey, rollouts: FeatureRollouts): z.infer<typeof adminFeatureSchema> {
+  const definition = featureDefinition(key)
+  const { enabled, killed } = featureRollout(key, rollouts)
   return {
-    installLinks: organizationInstallLinksEnabled(metadata),
-    mcpConnections: memberFacingMcpConnectionsEnabled(metadata),
-    modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
-    auditLogs: normalizeOrganizationCapabilities(metadata).auditLogs,
-    orgManagedDashboards: normalizeOrganizationCapabilities(metadata).orgManagedDashboards,
-    slackAssistant: normalizeOrganizationCapabilities(metadata).slackAssistant,
-    slackAssistantHeadless: normalizeOrganizationCapabilities(metadata).slackAssistantHeadless,
-    headlessAutomations: normalizeOrganizationCapabilities(metadata).headlessAutomations,
-    workbot: normalizeOrganizationCapabilities(metadata).workbot,
-    gatewayDashboard: true,
+    key,
+    label: definition.label,
+    description: definition.description,
+    since: definition.since,
+    deployments: [...definition.deployments],
+    default: definition.default,
+    available: featureAvailableOn(key, env.features.deployment),
+    enabled,
+    killed,
+    lock: env.features.locks[key] ?? null,
   }
 }
 
@@ -339,24 +390,6 @@ function readAdminOpenWorkWebAccess(
     hasOngoingSubscription: Boolean(subscription && isOngoingOpenWorkWebSubscriptionStatus(subscription.status)),
     subscriptionStatus: subscription?.status ?? null,
   }
-}
-
-function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
-  const raw = isRecord(metadata.capabilities) ? metadata.capabilities : {}
-  const capabilities: Record<string, unknown> = {}
-
-  for (const [key, value] of Object.entries(raw)) {
-    // "workflows", "codemodeScripts", "remoteMcpApps", "appMcpServers", and
-    // "cloud" are retired rollout keys: those features are now always on (Cloud
-    // is entitled by OpenWork Web access instead), so stale stored overrides
-    // stay managed (dropped on the next capabilities write) instead of passing
-    // through as unmanaged metadata.
-    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "headlessAutomations" && key !== "workbot" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
-      capabilities[key] = value
-    }
-  }
-
-  return capabilities
 }
 
 function getManualPlanMetadata(tier: PlanTier): { tier: PlanTier; source: "manual"; grantedAt?: string } {
@@ -475,6 +508,7 @@ type AdminOrganizationRow = {
   seatsFreeAdditional: number
   billableSeatCount: number
   capabilities: ReturnType<typeof readAdminVisibleOrganizationCapabilities>
+  featureStates: ReturnType<typeof readAdminFeatureStates>
   openworkWebAccess: AdminOpenWorkWebAccess
 }
 
@@ -935,7 +969,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
   }
 
   const organizationIds = rows.map((row) => row.id)
-  const [memberRows, webSubscriptionRows] = await Promise.all([
+  const [memberRows, webSubscriptionRows, featureOverridesByOrg, featureRollouts] = await Promise.all([
     db
       .select({ organizationId: MemberTable.organizationId, memberCount: sql<number>`count(*)` })
       .from(MemberTable)
@@ -953,6 +987,8 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
         inArray(OrgSubscriptionTable.organization_id, organizationIds),
         eq(OrgSubscriptionTable.type, "web"),
       )),
+    readOrganizationFeatureOverridesForMany(db, organizationIds),
+    readFeatureRollouts(db),
   ])
   const memberCountByOrg = new Map<string, number>()
   for (const row of memberRows) {
@@ -961,6 +997,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
   const webSubscriptionByOrg = new Map(webSubscriptionRows.map((row) => [row.organizationId, row]))
 
   return rows.map((entry) => {
+    const described = describeOrganization(featureRollouts, featureOverridesByOrg.get(entry.id) ?? {})
     const metadata = normalizeOrganizationMetadata(entry.metadata).metadata
     const seatLimit = metadata.limits.members ?? DEFAULT_ORGANIZATION_LIMITS.members
     const seatCounts = calculateOrganizationSeatBillingCounts({ memberCount: memberCountByOrg.get(entry.id) ?? 0, metadata })
@@ -976,7 +1013,8 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       freeSeatCount: seatCounts.free,
       seatsFreeAdditional: seatCounts.additionalFree,
       billableSeatCount: seatCounts.chargeable,
-      capabilities: readAdminVisibleOrganizationCapabilities(metadata),
+      capabilities: readAdminVisibleOrganizationCapabilities(described),
+      featureStates: readAdminFeatureStates(described),
       openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null),
     }
   })
@@ -1955,9 +1993,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Get an organization's capability overrides",
-      description: "Returns admin-visible capabilities. The deprecated gatewayDashboard compatibility field is always true, not a mutable organization flag; deployment configuration and authorization still apply.",
+      description: "Returns the effective value of every registry feature (capabilities) and, per feature, its source and whether /admin can change it (featureStates). The deprecated gatewayDashboard compatibility field is always true, not a mutable organization flag; deployment configuration and authorization still apply.",
       responses: {
-        200: jsonResponse("Capability overrides returned.", z.object({ capabilities: adminOrganizationCapabilitiesSchema })),
+        200: jsonResponse("Capability overrides returned.", z.object({ capabilities: adminOrganizationCapabilitiesSchema, featureStates: adminFeatureStatesSchema })),
         400: jsonResponse("The organization id was invalid.", adminRequestErrorSchema),
         ...adminRouteErrors,
         404: jsonResponse("The organization does not exist.", notFoundSchema),
@@ -1981,7 +2019,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(organization.metadata) })
+      const [overrides, rollouts] = await Promise.all([readOrganizationFeatureOverrides(db, organization.id), readFeatureRollouts(db)])
+      const described = describeOrganization(rollouts, overrides)
+      return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
     },
   )
 
@@ -1990,9 +2030,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Set an organization's capability overrides",
-      description: "Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs and orgManagedDashboards overrides. Audit logs and org-managed Dashboards require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
+      description: "Enables, disables or clears (null) per-organization feature overrides. Every key in the feature registry (packages/features/src/registry.ts) is accepted; a feature that is fixed on this deployment (unavailable, off or on for everyone) returns 400, and unknown or retired keys are ignored. A deployment lock (DEN_FEATURE_*) outranks a stored override; featureStates shows the effective value and its source. The auditLogs feature neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true.",
       responses: {
-        200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: adminOrganizationCapabilitiesSchema })),
+        200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: adminOrganizationCapabilitiesSchema, featureStates: adminFeatureStatesSchema })),
         400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
         ...adminRouteErrors,
         404: jsonResponse("The organization does not exist.", notFoundSchema),
@@ -2021,64 +2061,76 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      const metadata = await updateOrganizationMetadata(organizationId, (current) => {
-        const capabilities = readOrganizationCapabilityOverrides(current)
-        const installLinks = body.data.capabilities.installLinks
-        if (installLinks !== undefined) {
-          if (installLinks === null) {
-            delete capabilities.installLinks
-          } else {
-            capabilities.installLinks = installLinks
-          }
+      const changes: FeatureOverrideChanges = {}
+      for (const key of FEATURE_KEYS) {
+        const value = body.data.capabilities[key]
+        if (value === undefined) continue
+        if (!featureAvailableOn(key, env.features.deployment)) {
+          return c.json({ error: "invalid_request", message: `${key} is not part of this deployment.` }, 400)
         }
-        const mcpConnections = body.data.capabilities.mcpConnections
-        if (mcpConnections !== undefined) {
-          if (mcpConnections === null) {
-            delete capabilities.mcpConnections
-          } else {
-            capabilities.mcpConnections = mcpConnections
-          }
-        }
-
-        const modelsAnalytics = body.data.capabilities.modelsAnalytics
-        if (modelsAnalytics === null) delete capabilities.modelsAnalytics
-        else if (modelsAnalytics !== undefined) capabilities.modelsAnalytics = modelsAnalytics
-
-        const auditLogs = body.data.capabilities.auditLogs
-        if (auditLogs === null) delete capabilities.auditLogs
-        else if (auditLogs !== undefined) capabilities.auditLogs = auditLogs
-
-        const orgManagedDashboards = body.data.capabilities.orgManagedDashboards
-        if (orgManagedDashboards === null) delete capabilities.orgManagedDashboards
-        else if (orgManagedDashboards !== undefined) capabilities.orgManagedDashboards = orgManagedDashboards
-
-        const slackAssistant = body.data.capabilities.slackAssistant
-        if (slackAssistant === null) delete capabilities.slackAssistant
-        else if (slackAssistant !== undefined) capabilities.slackAssistant = slackAssistant
-
-        const slackAssistantHeadless = body.data.capabilities.slackAssistantHeadless
-        if (slackAssistantHeadless === null) delete capabilities.slackAssistantHeadless
-        else if (slackAssistantHeadless !== undefined) capabilities.slackAssistantHeadless = slackAssistantHeadless
-
-        const headlessAutomations = body.data.capabilities.headlessAutomations
-        if (headlessAutomations === null) delete capabilities.headlessAutomations
-        else if (headlessAutomations !== undefined) capabilities.headlessAutomations = headlessAutomations
-
-
-        const workbot = body.data.capabilities.workbot
-        if (workbot === null) delete capabilities.workbot
-        else if (workbot !== undefined) capabilities.workbot = workbot
-
-        return {
-          ...current,
-          capabilities: {
-            ...readUnmanagedCapabilityMetadata(current),
-            ...capabilities,
-          },
-        }
+        changes[key] = value
+      }
+      const overrides = await setOrganizationFeatureOverrides(db, {
+        organizationId,
+        changes,
+        source: "platform",
+        setByUserId: c.get("user")?.id ?? null,
       })
 
-      return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(metadata) })
+      const described = describeOrganization(await readFeatureRollouts(db), overrides)
+      return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
+    },
+  )
+
+  app.get(
+    "/v1/admin/features",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "List features and their state",
+      description: "Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (deployments, default) and this deployment's state: on or off for everyone, kill switch, and any operator lock.",
+      responses: {
+        200: jsonResponse("Features returned.", z.object({ deployment: z.enum(["cloud", "self_hosted"]), features: z.array(adminFeatureSchema) })),
+        ...adminRouteErrors,
+      },
+    }),
+    adminRoute(),
+    async (c) => {
+      const rollouts = await readFeatureRollouts(db)
+      return c.json({ deployment: env.features.deployment, features: FEATURE_KEYS.map((key) => readAdminFeature(key, rollouts)) })
+    },
+  )
+
+  app.put(
+    "/v1/admin/features/:key",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Change a feature's state",
+      description: "Turns the feature on or off for everyone on this deployment (organization overrides still apply), and/or sets the kill switch. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert.",
+      responses: {
+        200: jsonResponse("Feature updated.", z.object({ ok: z.literal(true), feature: adminFeatureSchema })),
+        400: jsonResponse("The feature or body was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+      },
+    }),
+    adminRoute(),
+    async (c) => {
+      const key = featureKeySchema.safeParse(c.req.param("key"))
+      if (!key.success) return c.json({ error: "invalid_request", message: "Unknown feature." }, 400)
+      const body = updateFeatureRolloutSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid feature request." }, 400)
+      }
+      if (!featureAvailableOn(key.data, env.features.deployment)) {
+        return c.json({ error: "invalid_request", message: `${key.data} is not part of this deployment.` }, 400)
+      }
+      const rollouts = await setFeatureRollout(db, {
+        key: key.data,
+        enabled: body.data.enabled,
+        killed: body.data.killed,
+        defaultEnabled: featureDefinition(key.data).default,
+        updatedByUserId: c.get("user")?.id ?? null,
+      })
+      return c.json({ ok: true, feature: readAdminFeature(key.data, rollouts) })
     },
   )
 

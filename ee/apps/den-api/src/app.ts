@@ -4,7 +4,7 @@ import { registerWorkbotRoutes } from "./workbot/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { MemberTable } from "@openwork-ee/den-db/schema"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -13,6 +13,7 @@ import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { getOrganizationFeatures } from "./features.js"
 import { publicRoute, signedWebhookRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
@@ -44,9 +45,11 @@ import { DEN_MCP_REQUESTED_SCOPES } from "./mcp/scopes.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
+import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerSlackAppHomeRoutes } from "./routes/slack-app-home.js"
 import { getSlackHomeToken } from "./capability-sources/slack-installations.js"
+import { slackHomePolicyError } from "./capability-sources/slack-policy.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
@@ -284,8 +287,9 @@ registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
 registerWorkbotRoutes(app)
 registerVersionRoutes(app)
+registerFeatureRoutes(app)
 registerWebhookRoutes(app)
-registerSlackAppHomeRoutes(app, signedWebhookRoute, getSlackHomeToken)
+registerSlackAppHomeRoutes(app, signedWebhookRoute, getSlackHomeToken, slackHomePolicyError)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
@@ -306,10 +310,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
   )).limit(1)
   const userId = members[0]?.userId
   if (!userId) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
-  const organizations = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(
-    eq(OrganizationTable.id, normalizedOrganizationId),
-  ).limit(1)
-  const organizationMetadata = organizations[0]?.metadata
+  const organizationFeatures = await getOrganizationFeatures(normalizedOrganizationId)
   const member = await resolveMcpMemberIdentity({ userId, organizationId })
   if (!member) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
   const catalog = await getCatalog(app as unknown as Hono, undefined)
@@ -323,7 +324,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     member,
     redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-    organizationMetadata,
+    organizationFeatures,
   })
   const result = await executeMarketplaceCapability({
     organizationId,

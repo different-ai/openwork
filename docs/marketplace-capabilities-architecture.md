@@ -200,20 +200,14 @@ Scope note: these are `mcp:read`-class operations; nothing on this path writes; 
 ## 7. Org kill switch
 
 Marketplace capability search/execute uses the same effective Connect rail check
-as External MCP connections: `memberFacingMcpConnectionsEnabled(metadata)`
-in `ee/apps/den-api/src/capability-sources/external-mcp-rollout.ts`. There is
-no deployment-level gate; org metadata is authoritative.
-
-Org metadata kill-switch key:
-
-```json
-{ "capabilities": { "mcpConnections": false } }
-```
+as External MCP connections: the `mcpConnections` feature, read with
+`getOrganizationFeatures(organizationId)` from `ee/apps/den-api/src/features.ts`
+and declared in `packages/features/src/registry.ts`.
 
 Connect is default-on, so local dev, self-hosted, evals, and hosted production
-get the feature immediately unless an org explicitly opts out. The backoffice
-capability value outranks legacy flat aliases (`connectEnabled` and
-`mcpConnectionsEnabled`).
+get the feature immediately unless a platform admin turns it off for an
+organization in /admin (stored in the `organization_feature` table), or an
+operator locks it with `config.features.mcpConnections` / `DEN_FEATURE_MCP_CONNECTIONS`.
 
 Check the kill switch in both paths: disabled orgs get an empty marketplace
 merge; execute returns `unknown_capability`. Opted-out is byte-identical to
@@ -229,9 +223,9 @@ nonexistence.
 6. No schema changes, no migrations, no new tables in Phase 1; everything derives from existing plugin-arch tables in `ee/packages/den-db/src/schema/sharables/plugin-arch.ts`.
 7. No prompt changes and no tool-description changes in Phase 1; results are self-describing via `summary`, `status`, and `hint`.
 
-Kill switch uses the same layer as connections: flip org metadata in /admin (or
-an ops script) by setting `metadata.capabilities.mcpConnections` to `false`.
-The old deployment-level env gate is deprecated and inert.
+Kill switch uses the same layer as connections: turn the `mcpConnections`
+feature off for the organization in /admin (or with the `den_set_org_capability`
+admin tool).
 
 ---
 

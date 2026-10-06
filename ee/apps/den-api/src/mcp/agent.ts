@@ -9,7 +9,6 @@ import {
   type ToolAnnotations,
 } from "@modelcontextprotocol/server"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import type { Hono } from "hono"
@@ -39,6 +38,7 @@ import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
 import { env } from "../env.js"
+import { getOrganizationFeatures } from "../features.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
 import { executeLiveArtifactWorkflow, getWorkflowDetail, getWorkflowSnapshot } from "../workflows.js"
 import { artifactFreshness } from "../workflow-artifacts.js"
@@ -477,12 +477,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     })
     const notificationScope = `${principal.organizationId}\0${principal.userId}`
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
-    const organizationRows = await db
-      .select({ metadata: OrganizationTable.metadata })
-      .from(OrganizationTable)
-      .where(eq(OrganizationTable.id, organizationId))
-      .limit(1)
-    const organizationMetadata = organizationRows[0]?.metadata
+    const organizationFeatures = await getOrganizationFeatures(organizationId)
     const connectMcpAppHostSupported = supportsConnectMcpAppHost(
       c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER),
     ) && principal.scopes.has(DEN_MCP_APP_HOST_SCOPE)
@@ -498,12 +493,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       member: memberIdentity,
       redirectUriBase,
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-      organizationMetadata,
+      organizationFeatures,
     })
     const { externalMcpConnectionsEnabled } = capabilityContext
     // Building your own Apps is per-organization and default-off; MCP Apps
     // from connected MCP servers work either way.
-    const appServersEnabled = appMcpServersEnabled(organizationMetadata)
+    const appServersEnabled = appMcpServersEnabled(organizationFeatures)
     // Resolved once per request, and only by the methods that need it: the
     // skill resources at discovery time, and list_skills / get_skill on call.
     let remoteSkillsPromise: Promise<RemoteSkillDescriptor[]> | null = null

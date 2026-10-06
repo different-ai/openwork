@@ -31,10 +31,9 @@ function rpc(raw: string): Record<string, unknown> {
 
 /**
  * Browser-representable desktop UX with real app/server/engine and hosted
- * Connect. Only Slack OAuth/API and inference are synthetic. No BYO connector
- * is created. A second Den process borrows ONLY this world's scratch database:
- * the original gate-off process proves retained-token rejection without a
- * mutable production flag, DB credential injection, or product-code shim.
+ * Connect and /admin. Only Slack OAuth/API and inference are synthetic. No BYO
+ * connector is created. One Cloud Den keeps the same database and member grants
+ * while the platform admin changes the generated, shared feature controls.
  */
 export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }) {
   // The native HTTP fixture is loopback, unlike mcpMock's remote transport.
@@ -50,55 +49,63 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   const slack = setup.use(await startNativeSlackFixture());
   const model = setup.use(await startNativeSlackModel(Object.values(nativeSlackPrompts)));
   const preload = new URL("../packages/labs/src/native-slack-egress.mjs", import.meta.url);
-  const isolated = { NODE_OPTIONS: `--import=${preload.href}`, NODE_ENV: "test", OPENWORK_DEV_MODE: "1", DEN_ORG_MODE: "multi_org", RESEND_API_KEY: "", SMTP_HOST: "", SENTRY_DSN: "", DEN_SLACK_SIGNING_SECRET: "" };
-  const gateOff = await seed.den({ web: false, org: { name: "ENG-76 synthetic Cloud", members: { first: {}, second: {} } }, env: {
-    ...isolated, DEN_SLACK_ENABLED: "false",
-    DEN_SLACK_CLIENT_ID: "", DEN_SLACK_CLIENT_SECRET: "", DEN_SLACK_API_BASE_URL: slack.apiUrl,
-    DEN_SLACK_OAUTH_AUTHORIZE_URL: slack.authorizeUrl, DEN_SLACK_OAUTH_TOKEN_URL: slack.tokenUrl,
-  } });
-  const database = gateOff.database;
-  if (!database || !database.name.startsWith("openwork_eval")) {
-    throw new Error("Synthetic Slack requires the testkit-owned scratch database; refusing a shared database");
-  }
-  const organization = object(object((await seed.api(gateOff.admin, "/v1/org")).body).organization);
-  const organizationId = text(organization.id);
-  const other = await seed.api(gateOff.admin, "/v1/org", { method: "POST", body: JSON.stringify({ name: "ENG-76 second Cloud organization" }) });
-  if (!other.response.ok) throw new Error("Could not arrange the second synthetic organization");
-  const otherOrganizationId = text(object(object(other.body).organization).id);
-  const enabled = await seed.den({ web: false, provision: false, env: {
-    ...isolated, DATABASE_URL: database.url,
-    DEN_SLACK_ENABLED: "true",
+  const den = await seed.den({ web: true, org: {
+    name: "ENG-76 synthetic Cloud", members: { first: {}, second: {}, otherOwner: {} },
+  }, env: {
+    NODE_OPTIONS: `--import=${preload.href}`, NODE_ENV: "test", OPENWORK_DEV_MODE: "1",
+    DEN_DEPLOYMENT: "cloud", DEN_ORG_MODE: "multi_org",
+    RESEND_API_KEY: "", SMTP_HOST: "", SENTRY_DSN: "", DEN_SLACK_SIGNING_SECRET: "",
+    // Do not inherit an operator lock: this world proves the fresh registry
+    // default and platform-admin overrides, not deployment configuration.
+    ...Object.fromEntries(Object.keys(process.env).filter(key => key.startsWith("DEN_FEATURE_")).map(key => [key, ""])),
+    DEN_FEATURE_NATIVE_SLACK: "", DEN_FEATURE_MCP_CONNECTIONS: "", DEN_FEATURE_SLACK_ASSISTANT: "",
     DEN_SLACK_CLIENT_ID: slackFixtureClientId, DEN_SLACK_CLIENT_SECRET: slackFixtureClientSecret,
     DEN_SLACK_API_BASE_URL: slack.apiUrl, DEN_SLACK_OAUTH_AUTHORIZE_URL: slack.authorizeUrl, DEN_SLACK_OAUTH_TOKEN_URL: slack.tokenUrl,
   } });
-  slack.allowCallbackOrigin(enabled.ref.apiUrl);
-  const first = gateOff.members.first;
-  const second = gateOff.members.second;
-  if (!first || !second) throw new Error("Both synthetic members must be provisioned");
-  const sessions = {
-    first: { ...first, ...enabled.ref }, second: { ...second, ...enabled.ref },
-    other: { ...gateOff.admin, ...enabled.ref },
-  };
+  if (!den.database?.name.startsWith("openwork_eval")) {
+    throw new Error("Synthetic Slack requires the testkit-owned scratch database; refusing a shared database");
+  }
+  const organization = object(object((await seed.api(den.admin, "/v1/org")).body).organization);
+  const organizationId = text(organization.id);
+  const first = den.members.first;
+  const second = den.members.second;
+  const otherOwner = den.members.otherOwner;
+  if (!first || !second || !otherOwner) throw new Error("All synthetic member sessions must be provisioned");
+  // seed.den allowlists ONLY den.admin. An ordinary member creates and owns B;
+  // an organization owner is not silently made a platform administrator.
+  const other = await seed.api(otherOwner, "/v1/org", { method: "POST", body: JSON.stringify({ name: "ENG-76 second Cloud organization" }) });
+  if (!other.response.ok) throw new Error("Could not arrange the second synthetic organization");
+  const otherOrganization = object(object(other.body).organization);
+  const otherOrganizationId = text(otherOrganization.id);
+  const active = await seed.api(otherOwner, "/v1/me/active-organization", {
+    method: "POST", body: JSON.stringify({ organizationId: otherOrganizationId }),
+  });
+  if (!active.response.ok) throw new Error("Could not select the other owner's organization");
+  slack.allowCallbackOrigin(den.ref.apiUrl);
+  const sessions = { first, second, other: otherOwner };
   const orgFor = (identity: keyof typeof sessions) => identity === "other" ? otherOrganizationId : organizationId;
-  const memberRequest = async (identity: keyof typeof sessions, path: string, method = "GET", body?: unknown, disabled = false) => {
-    const session = disabled ? { ...sessions[identity], ...gateOff.ref } : sessions[identity];
+  const memberRequest = async (identity: keyof typeof sessions, path: string, method = "GET", body?: unknown) => {
+    const session = sessions[identity];
     const result = await denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": orgFor(identity) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: "manual", signal: AbortSignal.timeout(30_000) });
     return { status: result.response.status, body: result.body, text: result.text };
   };
-  async function mint(identity: keyof typeof sessions, disabled = false): Promise<DenSession> {
-    const result = await memberRequest(identity, "/v1/mcp/token", "POST", { scopes: ["mcp:read"] }, disabled);
+  async function mint(identity: keyof typeof sessions): Promise<DenSession> {
+    const result = await memberRequest(identity, "/v1/mcp/token", "POST", { scopes: ["mcp:read"] });
     if (result.status !== 200) throw new Error(`Synthetic member MCP mint failed: ${result.status}`);
     const minted = object(result.body);
     if (!Array.isArray(minted.scopes) || minted.scopes.length !== 1 || minted.scopes[0] !== "mcp:read") {
       throw new Error("The proof requires an actually minted mcp:read-only token");
     }
-    return { ...sessions[identity], ...(disabled ? gateOff.ref : {}), token: text(minted.token) };
+    return { ...sessions[identity], token: text(minted.token) };
   }
+  // Distinct, member-owned, audience-valid read-only tokens; never a shared
+  // organization read token. The same tokens are replayed after each UI change.
   const tokens = { first: await mint("first"), second: await mint("second"), other: await mint("other") };
-  // Each deployment needs its own valid audience-bound bearer. A wrong-audience
-  // rejection would not witness the Slack rollout policy at all.
-  const disabledTokens = { first: await mint("first", true), second: await mint("second", true), other: await mint("other", true) };
+  const viewport = { width: 1440, height: 1400 };
+  const adminWeb = await seed.web({ den, signedInAs: den.admin, startPath: "/admin", headless: true, viewport });
+  const otherWeb = await seed.web({ den, signedInAs: otherOwner, startPath: "/admin", headless: true, viewport });
+  const memberWeb = await seed.web({ den, signedInAs: first, startPath: "/dashboard/your-connections", headless: true, viewport });
   const makeApp = async (identity: "first" | "second") => {
     const directory = seed.tmpPath(`native-slack-${identity}`);
     await mkdir(directory, { recursive: true });
@@ -107,15 +114,15 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
       permission: { skill: "allow" }, model: "opencode/big-pickle", small_model: "opencode/big-pickle",
       provider: { opencode: { npm: "@ai-sdk/openai-compatible", options: { baseURL: model.url, apiKey: "synthetic-model-key" }, whitelist: ["big-pickle"],
         models: { "big-pickle": { name: "Big Pickle", tool_call: true, provider: { npm: "@ai-sdk/openai-compatible", api: model.url } } } } },
-      mcp: { "openwork-cloud": { type: "remote", url: `${enabled.ref.apiUrl}/mcp/agent`, oauth: false, enabled: true, headers: { Authorization: `Bearer ${tokens[identity].token}` } } },
+      mcp: { "openwork-cloud": { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, oauth: false, enabled: true, headers: { Authorization: `Bearer ${tokens[identity].token}` } } },
     }));
     const app = await seed.appWeb({ name: `native-slack-${identity}`, workspacePath, headless: true, env: {
       // Handoff alone permits cross-origin exchange. Ordinary authenticated
       // browser requests use the existing same-origin Vite proxy, not wider CORS.
       OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1",
-      OPENWORK_DEV_DEN_PROXY_TARGET: enabled.ref.webUrl,
-      OPENWORK_DEV_HEADLESS_DEN_API_TARGET: enabled.ref.apiUrl,
-      VITE_DEN_BASE_URL: enabled.ref.webUrl,
+      OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
+      OPENWORK_DEV_HEADLESS_DEN_API_TARGET: den.ref.apiUrl,
+      VITE_DEN_BASE_URL: den.ref.webUrl,
       VITE_DEN_API_BASE_URL: "/api/den",
       OPENCODE_MODELS_URL: `${model.url}/models`,
       // The isolated app runtime drops ambient package-manager settings.
@@ -154,8 +161,39 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   let rpcId = 0;
   const resources = setup.move();
   return {
-    app: memberOne.app, secondApp: memberTwo.app, slack, model, engine, engineVersion, first: sessions.first, second: sessions.second,
-    organizationId, otherOrganizationId, workspaceId: memberOne.workspace.workspaceId, memberRequest, searchHits: slackSearchHits, incomplete: slackIncomplete, limited: slackLimited, objects: slackResultObjects,
+    app: memberOne.app, secondApp: memberTwo.app, adminWeb, otherWeb, memberWeb,
+    slack, model, engine, engineVersion, first: sessions.first, second: sessions.second,
+    organizationId, otherOrganizationId, organizationSlug: text(organization.slug), otherOrganizationSlug: text(otherOrganization.slug),
+    adminUrl: `${den.ref.webUrl}/admin`, featuresUrl: `${den.ref.webUrl}/admin/features`, connectionsUrl: `${den.ref.webUrl}/dashboard/your-connections`,
+    workspaceId: memberOne.workspace.workspaceId, memberRequest, searchHits: slackSearchHits, incomplete: slackIncomplete, limited: slackLimited, objects: slackResultObjects,
+    async organizationFeatures(organizationId: string) {
+      const result = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
+        headers: { authorization: `Bearer ${den.admin.token}` },
+      });
+      if (!result.response.ok) throw new Error(`Admin feature observation failed: ${result.response.status}`);
+      return object(result.body);
+    },
+    async globalSlackFeature() {
+      const result = await denFetch(den.admin, "/v1/admin/features", { headers: { authorization: `Bearer ${den.admin.token}` } });
+      if (!result.response.ok) throw new Error(`Admin rollout observation failed: ${result.response.status}`);
+      return slackResultObjects(result.body).find(entry => entry.key === "nativeSlack");
+    },
+    async confirmAdminKill() {
+      // User has clicked the real destructive control. Testkit has no native
+      // dialog action; CDP accepts that browser confirmation, without replacing
+      // window.confirm or calling the feature API on the user's behalf.
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        try {
+          await adminWeb.client.send("Page.handleJavaScriptDialog", { accept: true });
+          return;
+        } catch (error) {
+          if (!(error instanceof Error) || !/No dialog is showing/i.test(error.message)) throw error;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      throw new Error("The platform-admin kill control did not open its browser confirmation");
+    },
     prompt: nativeSlackPrompts,
     appRequest(identity: "first" | "second", path: string) {
       return (identity === "first" ? memberOne : memberTwo).request(path);
@@ -188,8 +226,8 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
       if (authorizeUrl.origin !== slack.origin) throw new Error("Refusing a non-synthetic Slack authorization URL");
       return authorizeUrl.toString();
     },
-    async mcp(identity: keyof typeof sessions, name: string, args: Record<string, unknown>, disabled = false) {
-      const session = disabled ? disabledTokens[identity] : tokens[identity];
+    async mcp(identity: keyof typeof sessions, name: string, args: Record<string, unknown>) {
+      const session = tokens[identity];
       const result = await denFetch(session, "/mcp/agent", { method: "POST",
         headers: { authorization: `Bearer ${session.token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
         body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name, arguments: args } }), signal: AbortSignal.timeout(30_000) });

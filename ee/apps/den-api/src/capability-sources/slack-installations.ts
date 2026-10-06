@@ -4,7 +4,7 @@ import { z } from "zod"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import type { SlackHomeGrant } from "./generic-oauth.js"
-import { slackCloudPolicyError } from "./slack-policy.js"
+import { slackHomePolicyError } from "./slack-policy.js"
 
 export async function saveSlackInstallation(clientId: string, workspaceId: string, grant: SlackHomeGrant) {
   await db.insert(SlackInstallationTable).values({ clientId, workspaceId, ...grant })
@@ -42,7 +42,7 @@ async function boundedRefreshBody(response: Response, signal: AbortSignal): Prom
 export async function getSlackHomeToken(workspaceId: string, signal: AbortSignal): Promise<string | null> {
   const clientId = env.slackClientId
   const clientSecret = env.slackClientSecret
-  if (slackCloudPolicyError() || !clientId || !clientSecret) return null
+  if (await slackHomePolicyError() || !clientId || !clientSecret) return null
   const matches = and(eq(SlackInstallationTable.clientId, clientId), eq(SlackInstallationTable.workspaceId, workspaceId))
   // Serialize a rotating bot grant across replicas. No installation can borrow
   // another workspace's token. Hold only this row during the bounded refresh.
@@ -59,7 +59,7 @@ export async function getSlackHomeToken(workspaceId: string, signal: AbortSignal
     })
     if (!response.ok) { await response.body?.cancel(); return null }
     const refreshed = refreshSchema.safeParse(await boundedRefreshBody(response, signal))
-    if (!refreshed.success || refreshed.data.team.id !== workspaceId || slackCloudPolicyError()
+    if (!refreshed.success || refreshed.data.team.id !== workspaceId || await slackHomePolicyError()
       || env.slackClientId !== clientId || env.slackClientSecret !== clientSecret) return null
     signal.throwIfAborted()
     await tx.update(SlackInstallationTable).set({ accessToken: refreshed.data.access_token, refreshToken: refreshed.data.refresh_token,
