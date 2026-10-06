@@ -62,10 +62,17 @@ export const FEATURES = defineFeatures({
   },
   mcpConnections: {
     label: "OpenWork Connect",
-    description: "Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.",
+    description: "Members see the organization's connections on the agent rail and the desktop Connect tab. When it is off, members keep skills and Workflows only if Skills and Workflows without Connect is on.",
     since: "2026-10",
     deployments: everywhere,
     default: true,
+  },
+  libraryWithoutConnect: {
+    label: "Skills and Workflows without Connect",
+    description: "Members keep the organization's skills, plugin capabilities and Workflows in the agent and desktop app when OpenWork Connect is off for their organization.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
   },
   modelsAnalytics: {
     label: "OpenWork Models task analytics",

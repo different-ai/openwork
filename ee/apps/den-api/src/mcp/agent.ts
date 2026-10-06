@@ -495,7 +495,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures,
     })
-    const { externalMcpConnectionsEnabled } = capabilityContext
+    const { connectEnabled, marketplaceEnabled } = capabilityContext
     // Building your own Apps is per-organization and default-off; MCP Apps
     // from connected MCP servers work either way.
     const appServersEnabled = appMcpServersEnabled(organizationFeatures)
@@ -508,7 +508,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         ...(await listAccessibleMarketplaceSkillDescriptors({
           organizationId: principal.organizationId,
           member: memberIdentity,
-          enabled: externalMcpConnectionsEnabled,
+          enabled: marketplaceEnabled,
         })),
       ].sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability)))()
       return remoteSkillsPromise
@@ -539,7 +539,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const artifactContext = libraryContext
     // Apps built here are each served as their own MCP server; Connect lists
     // them in its server index, finds them in search, and builds them.
-    const appAccess = { organizationId: principal.organizationId, member: memberIdentity, enabled: externalMcpConnectionsEnabled }
+    const appAccess = { organizationId: principal.organizationId, member: memberIdentity, enabled: connectEnabled }
     let mcpAppsPromise: Promise<McpAppEntry[]> | null = null
     const loadMcpApps = () => mcpAppsPromise ??= listAccessibleMcpApps(appAccess).catch((error: unknown) => {
       console.error("mcp_app_listing_failed", { organizationId: principal.organizationId, error: error instanceof Error ? error.message : String(error) })
@@ -611,11 +611,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         // Select before the per-member readiness probes so an ordinary client
         // pays only for the connections it may actually see, and skip the
         // lookup entirely when it can see none.
-        const indexReadable = connectMcpAppHostSupported || externalMcpConnectionsEnabled
+        const indexReadable = connectMcpAppHostSupported || connectEnabled
         const indexCandidates = indexReadable
           ? selectConnectMcpServerIndexConnections({
               appHostClient: connectMcpAppHostSupported,
-              memberFacingMcpConnectionsEnabled: externalMcpConnectionsEnabled,
+              memberFacingMcpConnectionsEnabled: connectEnabled,
               connections: await listUsableExternalMcpConnections({
                 organizationId,
                 orgMembershipId: memberIdentity.orgMembershipId,
@@ -637,7 +637,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         skills: await loadRemoteSkills(),
         organizationId: principal.organizationId,
         member: memberIdentity,
-        marketplaceEnabled: externalMcpConnectionsEnabled,
+        marketplaceEnabled,
       })
       if (env.automations.runtimeEnabled) {
         // Owner-scoped: the index only ever carries this member's own
@@ -767,7 +767,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         skill,
         organizationId: principal.organizationId,
         member: memberIdentity,
-        marketplaceEnabled: externalMcpConnectionsEnabled,
+        marketplaceEnabled,
       }),
     })
 

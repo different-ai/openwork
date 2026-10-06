@@ -25,7 +25,8 @@ import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { listAccessibleLlmProviderAccess } from "./llm-provider-access.js"
 import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { getOrganizationFeatures } from "../../features.js"
+import { memberFacingSurfaces } from "../../member-facing-surfaces.js"
 
 type OrganizationId = typeof LlmProviderTable.$inferSelect.organizationId
 type MemberId = NonNullable<typeof LlmProviderAccessTable.$inferSelect.orgMembershipId>
@@ -275,16 +276,17 @@ export function registerOrgResourceRoutes<T extends { Variables: OrgRouteVariabl
         c.get("memberTeams"),
         organizationContext.organization.id,
       ).map((team) => team.id)
+      const surfaces = memberFacingSurfaces(await getOrganizationFeatures(organizationContext.organization.id))
       const items = await listAccessibleMarketplaceCapabilityReferences({
         organizationId: organizationContext.organization.id,
         member: {
           orgMembershipId: organizationContext.currentMember.id,
           teamIds,
         },
-        enabled: await organizationFeatureEnabled(organizationContext.organization.id, "mcpConnections"),
+        enabled: surfaces.marketplace,
       })
       return c.json({
-        items: items.map((item) => ({
+        items: items.filter((item) => surfaces.workflows || item.objectType !== "workflow").map((item) => ({
           ...item,
           // Published desktops only recognize the legacy wire value.
           objectType: item.objectType === "workflow" ? "script" : item.objectType,

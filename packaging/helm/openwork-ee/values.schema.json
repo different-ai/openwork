@@ -36,7 +36,17 @@
                 true,
                 false
               ],
-              "description": "OpenWork Connect: Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. Renders DEN_FEATURE_MCP_CONNECTIONS."
+              "description": "OpenWork Connect: Members see the organization's connections on the agent rail and the desktop Connect tab. When it is off, members keep skills and Workflows only if Skills and Workflows without Connect is on. Renders DEN_FEATURE_MCP_CONNECTIONS."
+            },
+            "libraryWithoutConnect": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Skills and Workflows without Connect: Members keep the organization's skills, plugin capabilities and Workflows in the agent and desktop app when OpenWork Connect is off for their organization. Renders DEN_FEATURE_LIBRARY_WITHOUT_CONNECT."
             },
             "modelsAnalytics": {
               "enum": [

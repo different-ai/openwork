@@ -269,7 +269,7 @@ async function handleMcpAppServerRequestUntimed(input: {
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationFeatures,
   })
-  const access = { organizationId, member, enabled: capabilityContext.externalMcpConnectionsEnabled, requestScope: {} }
+  const access = { organizationId, member, enabled: capabilityContext.connectEnabled, requestScope: {} }
   let definition: McpAppServerDefinition
   try {
     definition = await loadMcpAppServerDefinition({ ...access, appId: input.appId })

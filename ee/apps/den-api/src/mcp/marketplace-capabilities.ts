@@ -1455,6 +1455,8 @@ export async function searchMarketplaceCapabilities(input: {
   objectTypes?: MarketplaceCapabilityObjectType[]
   organizationId: string
   query: string
+  /** false leaves Workflows out of the matches. */
+  workflowsEnabled?: boolean
 }): Promise<MarketplaceCapabilityMatch[]> {
   if (input.enabled === false || !input.member) return []
   const queryTokens = tokenize(input.query)
@@ -1480,6 +1482,7 @@ export async function searchMarketplaceCapabilities(input: {
   for (const row of rows) {
     const objectType = canonicalConfigObjectType(row.configObject.objectType)
     if (input.objectTypes && !input.objectTypes.includes(objectType)) continue
+    if (objectType === "workflow" && input.workflowsEnabled === false) continue
     const score = scoreMarketplaceRow(row, queryTokens)
     if (score <= 0) continue
     // Authored Apps are exposed only by the rollout-gated App search, never
@@ -1578,6 +1581,8 @@ export async function executeMarketplaceCapability(input: {
   redirectUriBase?: string
   validateScriptOutput?: boolean
   liveRuntime?: { timeZone?: string }
+  /** false refuses Workflows as if they did not exist. */
+  workflowsEnabled?: boolean
 }): Promise<MarketplaceCapabilityExecuteResult> {
   const liveRuntime = input.liveRuntime === undefined ? undefined : artifactRunInputSchema.safeParse(input.liveRuntime)
   if (liveRuntime && (!liveRuntime.success || input.body !== undefined)) {
@@ -1612,6 +1617,9 @@ export async function executeMarketplaceCapability(input: {
   const row = visibleRows[0]
   if (!row) {
     return { ok: false, error: "forbidden", message: "You have not been granted access to this plugin capability." }
+  }
+  if (input.workflowsEnabled === false && canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
+    return { ok: false, error: "unknown_capability", message: "No such capability." }
   }
 
   const version = input.configObjectVersionId

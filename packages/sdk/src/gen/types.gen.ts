@@ -145,6 +145,7 @@ export type AdminFeature = {
   key:
     | "installLinks"
     | "mcpConnections"
+    | "libraryWithoutConnect"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -192,6 +193,7 @@ export type AdminOrganizationsPageResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      libraryWithoutConnect: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -220,6 +222,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryWithoutConnect: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -356,6 +367,7 @@ export type AdminOverviewResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      libraryWithoutConnect: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -384,6 +396,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryWithoutConnect: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1565,6 +1586,7 @@ export type CapabilityDisabledError = {
   capability:
     | "installLinks"
     | "mcpConnections"
+    | "libraryWithoutConnect"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -5518,6 +5540,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      libraryWithoutConnect: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -5546,6 +5569,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryWithoutConnect: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5670,6 +5702,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      libraryWithoutConnect: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -5698,6 +5731,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryWithoutConnect: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

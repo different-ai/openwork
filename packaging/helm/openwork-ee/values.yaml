@@ -27,7 +27,8 @@ config:
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
     installLinks: ""           # default on · Workspace admins can create desktop install links for their organization.
-    mcpConnections: ""         # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
+    mcpConnections: ""         # default on · Members see the organization's connections on the agent rail and the desktop Connect tab. When it is off, members keep skills and Workflows only if Skills and Workflows without Connect is on.
+    libraryWithoutConnect: ""  # default off · Members keep the organization's skills, plugin capabilities and Workflows in the agent and desktop app when OpenWork Connect is off for their organization.
     modelsAnalytics: ""        # default off · Organization admins can opt in to task analytics for OpenWork Models.
     auditLogs: ""              # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
     orgManagedDashboards: ""   # default off · Organization admins publish dashboards to members in Den and the desktop app.
