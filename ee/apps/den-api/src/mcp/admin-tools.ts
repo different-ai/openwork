@@ -8,8 +8,8 @@ import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { env } from "../env.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
-import { setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
-import { featureIsAdjustable, featureKeySchema, resolveFeature } from "@openwork/features"
+import { readFeatureRollouts, setFeatureRollout, setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 
 /**
@@ -487,7 +487,7 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_set_org_capability",
     {
       description:
-        "Admin write tool: turn one organization capability on or off (the same switches as the admin panel), e.g. capability='workbot'. enabled=null removes the override and restores the default.",
+        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbot'. enabled=null removes the override so the feature follows its rollout percentage again. The kill switch (den_set_feature_rollout) still outranks it.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
         capability: featureKeySchema.describe("Feature to set (see packages/features/src/registry.ts)"),
@@ -508,8 +508,8 @@ export function registerAdminMcpTools(server: McpServer) {
         if (!organization) {
           throw new Error(`No organization found for ${organizationId}`)
         }
-        if (!featureIsAdjustable(capability, env.features.deployment)) {
-          throw new Error(`${capability} cannot be changed per organization on this deployment.`)
+        if (!featureAvailableOn(capability, env.features.deployment)) {
+          throw new Error(`${capability} is not part of this deployment.`)
         }
         const overrides = await setOrganizationFeatureOverrides(db, {
           organizationId,
@@ -520,8 +520,61 @@ export function registerAdminMcpTools(server: McpServer) {
           ok: true,
           organization: { id: organization.id, name: organization.name, slug: organization.slug },
           capability,
-          enabled: resolveFeature(capability, { ...env.features, overrides }).enabled,
+          enabled: resolveFeature(capability, {
+            ...env.features,
+            rollouts: await readFeatureRollouts(db),
+            overrides,
+            subjects: { organizationId: organization.id },
+          }).enabled,
         }
+      }),
+  )
+
+  server.registerTool(
+    "den_list_features",
+    {
+      description:
+        "Admin read tool: every feature in the registry with its subject (organization or person), the deployments it exists on, and this deployment's rollout (percentage, kill switch, operator lock).",
+      inputSchema: z.object({}),
+    },
+    async () =>
+      run(async () => {
+        const rollouts = await readFeatureRollouts(db)
+        return {
+          deployment: env.features.deployment,
+          features: FEATURE_KEYS.map((key) => {
+            const definition = featureDefinition(key)
+            return {
+              key,
+              label: definition.label,
+              subject: definition.subject,
+              deployments: definition.deployments,
+              available: featureAvailableOn(key, env.features.deployment),
+              ...featureRollout(key, rollouts),
+              lock: env.features.locks[key] ?? null,
+            }
+          }),
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_feature_rollout",
+    {
+      description:
+        "Admin write tool: change a feature's rollout for this whole deployment. percent (0-100) is how much of the feature's subject has it; killed=true turns it off everywhere at once (the revert), outranking operator locks and organization overrides. Raising the percentage only adds subjects.",
+      inputSchema: z.object({
+        feature: featureKeySchema.describe("Feature key (see den_list_features)"),
+        percent: z.number().int().min(0).max(100).optional().describe("0-100"),
+        killed: z.boolean().optional().describe("true to turn it off everywhere, false to clear the kill switch"),
+      }),
+    },
+    async ({ feature, percent, killed }) =>
+      run(async () => {
+        if (percent === undefined && killed === undefined) throw new Error("Set percent, killed, or both.")
+        if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
+        const rollouts = await setFeatureRollout(db, { key: feature, percent, killed, startPercent: featureDefinition(feature).start })
+        return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )
 

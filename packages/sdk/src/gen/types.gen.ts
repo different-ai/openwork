@@ -141,6 +141,29 @@ export type NotFoundError = {
   message?: string;
 };
 
+export type AdminFeature = {
+  key:
+    | "installLinks"
+    | "mcpConnections"
+    | "modelsAnalytics"
+    | "auditLogs"
+    | "orgManagedDashboards"
+    | "slackAssistant"
+    | "slackAssistantHeadless"
+    | "headlessAutomations"
+    | "workbot";
+  label: string;
+  description: string;
+  since: string;
+  subject: "organization" | "person";
+  deployments: Array<"cloud" | "self_hosted">;
+  start: number;
+  available: boolean;
+  percent: number;
+  killed: boolean;
+  lock: boolean | null;
+};
+
 export type AdminPageInfo = {
   total: number;
   limit: number;
@@ -185,71 +208,89 @@ export type AdminOrganizationsPageResponse = {
       gatewayDashboard: true;
     };
     /**
-     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or percentage rollout), and whether an organization override would take effect.
      */
     featureStates: {
       installLinks: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       mcpConnections: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       modelsAnalytics: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       auditLogs: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       orgManagedDashboards: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistant: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistantHeadless: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       headlessAutomations: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       workbot: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
     };
     [key: string]: unknown;
@@ -331,71 +372,89 @@ export type AdminOverviewResponse = {
       gatewayDashboard: true;
     };
     /**
-     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or percentage rollout), and whether an organization override would take effect.
      */
     featureStates: {
       installLinks: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       mcpConnections: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       modelsAnalytics: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       auditLogs: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       orgManagedDashboards: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistant: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistantHeadless: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       headlessAutomations: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       workbot: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
     };
     [key: string]: unknown;
@@ -4664,6 +4723,18 @@ export type DenAppVersionResponse = {
   webUrl?: string;
 };
 
+export type PublicFeatureRollouts = {
+  version: 1;
+  deployment: "cloud" | "self_hosted";
+  features: {
+    [key: string]: {
+      percent: number;
+      killed: boolean;
+      lock: boolean | null;
+    };
+  };
+};
+
 export type PluginArchGithubWebhookIgnoredResponse = {
   ok: true;
   accepted: false;
@@ -5467,71 +5538,89 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       gatewayDashboard: true;
     };
     /**
-     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or percentage rollout), and whether an organization override would take effect.
      */
     featureStates: {
       installLinks: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       mcpConnections: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       modelsAnalytics: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       auditLogs: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       orgManagedDashboards: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistant: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistantHeadless: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       headlessAutomations: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       workbot: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
     };
   };
@@ -5601,71 +5690,89 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       gatewayDashboard: true;
     };
     /**
-     * Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.
+     * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or percentage rollout), and whether an organization override would take effect.
      */
     featureStates: {
       installLinks: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       mcpConnections: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       modelsAnalytics: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       auditLogs: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       orgManagedDashboards: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistant: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       slackAssistantHeadless: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       headlessAutomations: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
       workbot: {
         enabled: boolean;
-        source: "unavailable" | "off" | "on" | "lock" | "override" | "default";
-        adminCanChange: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "rollout";
+        percent: number;
+        killed: boolean;
+        lock: boolean | null;
         override: boolean | null;
-        default: boolean | null;
+        overrideApplies: boolean;
       };
     };
   };
@@ -5673,6 +5780,79 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
 
 export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponse =
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses[keyof PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses];
+
+export type GetV1AdminFeaturesData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/admin/features";
+};
+
+export type GetV1AdminFeaturesErrors = {
+  /**
+   * The caller must be authenticated.
+   */
+  401: UnauthorizedError;
+  /**
+   * The authenticated user is not an admin.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1AdminFeaturesError = GetV1AdminFeaturesErrors[keyof GetV1AdminFeaturesErrors];
+
+export type GetV1AdminFeaturesResponses = {
+  /**
+   * Features returned.
+   */
+  200: {
+    deployment: "cloud" | "self_hosted";
+    features: Array<AdminFeature>;
+  };
+};
+
+export type GetV1AdminFeaturesResponse = GetV1AdminFeaturesResponses[keyof GetV1AdminFeaturesResponses];
+
+export type PutV1AdminFeaturesByKeyData = {
+  body?: never;
+  path: {
+    key: string;
+  };
+  query?: never;
+  url: "/v1/admin/features/{key}";
+};
+
+export type PutV1AdminFeaturesByKeyErrors = {
+  /**
+   * The feature or body was invalid.
+   */
+  400: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * The caller must be authenticated.
+   */
+  401: UnauthorizedError;
+  /**
+   * The authenticated user is not an admin.
+   */
+  403: ForbiddenError;
+};
+
+export type PutV1AdminFeaturesByKeyError = PutV1AdminFeaturesByKeyErrors[keyof PutV1AdminFeaturesByKeyErrors];
+
+export type PutV1AdminFeaturesByKeyResponses = {
+  /**
+   * Rollout updated.
+   */
+  200: {
+    ok: true;
+    feature: AdminFeature;
+  };
+};
+
+export type PutV1AdminFeaturesByKeyResponse = PutV1AdminFeaturesByKeyResponses[keyof PutV1AdminFeaturesByKeyResponses];
 
 export type GetV1AdminUsersData = {
   body?: never;
@@ -27284,6 +27464,22 @@ export type GetV1AppVersionResponses = {
 };
 
 export type GetV1AppVersionResponse = GetV1AppVersionResponses[keyof GetV1AppVersionResponses];
+
+export type GetV1FeaturesRolloutsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/features/rollouts";
+};
+
+export type GetV1FeaturesRolloutsResponses = {
+  /**
+   * Rollout state returned.
+   */
+  200: PublicFeatureRollouts;
+};
+
+export type GetV1FeaturesRolloutsResponse = GetV1FeaturesRolloutsResponses[keyof GetV1FeaturesRolloutsResponses];
 
 export type PostV1WebhooksConnectorsGithubData = {
   body?: never;

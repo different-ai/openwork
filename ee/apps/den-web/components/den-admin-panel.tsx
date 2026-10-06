@@ -130,21 +130,23 @@ type AdminUser = {
   organizations: AdminUserOrganization[];
 };
 
-const ADMIN_FEATURE_SOURCES = ["unavailable", "off", "on", "lock", "override", "default"] as const;
+const ADMIN_FEATURE_SOURCES = ["unavailable", "killed", "lock", "override", "rollout"] as const;
 
 /** One registry feature for one organization, as /v1/admin reports it (featureStates). */
 type AdminFeatureState = {
   enabled: boolean;
   source: (typeof ADMIN_FEATURE_SOURCES)[number];
-  adminCanChange: boolean;
+  percent: number;
+  killed: boolean;
   override: boolean | null;
-  default: boolean | null;
+  /** An organization override would take effect (not killed or locked). */
+  overrideApplies: boolean;
 };
 
 type AdminOrganizationFeatures = Record<FeatureKey, AdminFeatureState>;
 
 function parseAdminFeatureSource(value: unknown): AdminFeatureState["source"] {
-  return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "default";
+  return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "rollout";
 }
 
 /** Server featureStates, falling back to the effective capabilities map from older servers. */
@@ -154,32 +156,34 @@ function parseAdminOrganizationFeatures(featureStates: unknown, capabilities: un
   return mapFeatures((key) => {
     const state = states[key];
     if (!isRecord(state)) {
-      return { enabled: effective[key] === true, source: "default", adminCanChange: true, override: null, default: null };
+      const enabled = effective[key] === true;
+      return { enabled, source: "rollout", percent: enabled ? 100 : 0, killed: false, override: null, overrideApplies: true };
     }
     return {
       enabled: state.enabled === true,
       source: parseAdminFeatureSource(state.source),
-      adminCanChange: state.adminCanChange === true,
+      percent: typeof state.percent === "number" ? state.percent : 0,
+      killed: state.killed === true,
       override: typeof state.override === "boolean" ? state.override : null,
-      default: typeof state.default === "boolean" ? state.default : null,
+      overrideApplies: state.overrideApplies === true,
     };
   });
 }
 
 function describeAdminFeatureSource(state: AdminFeatureState): string {
   switch (state.source) {
-    case "default":
-      return `Default (${state.default ? "on" : "off"})`;
+    case "rollout":
+      if (state.percent >= 100) return "On for everyone";
+      if (state.percent <= 0) return "Not rolled out";
+      return `${state.enabled ? "In" : "Not in"} the ${state.percent}% rollout`;
     case "override":
       return "Set for this organization";
     case "lock":
       return "Set by deployment config";
-    case "on":
-      return "On for everyone";
-    case "off":
-      return "Not released yet";
+    case "killed":
+      return "Turned off everywhere";
     case "unavailable":
-      return "Not available on this deployment";
+      return "Not part of this deployment";
   }
 }
 
@@ -870,7 +874,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     billableSeatCount: target ? 103 : 0,
     features: mapFeatures((key) => {
       const enabled = target && (key === "installLinks" || key === "mcpConnections");
-      return { enabled, source: "default", adminCanChange: true, override: null, default: enabled };
+      return { enabled, source: "rollout", percent: enabled ? 100 : 0, killed: false, override: null, overrideApplies: true };
     }),
     openworkWebAccess: {
       hasAccess: target,
@@ -2163,7 +2167,7 @@ export function DenAdminPanel() {
     });
   }, []);
 
-  // value: true/false sets an override for this organization; null returns it to the registry default.
+  // value: true/false sets an override for this organization; null makes it follow the rollout again.
   const saveOrganizationFeature = useCallback(async (org: AdminOrganization, key: FeatureKey, value: boolean | null) => {
     const previous = org.features;
     setSavingCapabilityOrgId(org.id);
@@ -2174,9 +2178,10 @@ export function DenAdminPanel() {
       ...features,
       [key]: {
         ...features[key],
-        enabled: value ?? features[key].default ?? features[key].enabled,
+        // Following the rollout again depends on this organization's bucket; the server answer replaces this.
+        enabled: value ?? features[key].enabled,
         override: value,
-        source: value === null ? "default" : "override",
+        source: value === null ? "rollout" : "override",
       },
     }));
 
@@ -2762,7 +2767,10 @@ export function DenAdminPanel() {
                   </div>
 
                   <div className="mt-4 border-t border-slate-200 pt-4">
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Features</p>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Features</p>
+                      <a href="/admin/features" className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">Rollouts</a>
+                    </div>
                     {/* Generated from packages/features/src/registry.ts; add features there, not here. */}
                     <ul className="mt-2 grid gap-2">
                       {FEATURE_KEYS.filter((key) => org.features[key].source !== "unavailable").map((key) => {
@@ -2775,7 +2783,7 @@ export function DenAdminPanel() {
                                 type="checkbox"
                                 data-testid={`admin-capability-${key}`}
                                 checked={state.enabled}
-                                disabled={!state.adminCanChange || savingCapabilityOrgId === org.id}
+                                disabled={!state.overrideApplies || savingCapabilityOrgId === org.id}
                                 onChange={(event) => void saveOrganizationFeature(org, key, event.target.checked)}
                                 className="mt-0.5 h-4 w-4 shrink-0 rounded-sm border-slate-300"
                               />
@@ -2785,7 +2793,7 @@ export function DenAdminPanel() {
                                 <span className="block text-xs leading-5 text-slate-400">{definition.description}</span>
                               </span>
                             </label>
-                            {state.source === "override" && state.adminCanChange ? (
+                            {state.source === "override" && state.overrideApplies ? (
                               <button
                                 type="button"
                                 data-testid={`admin-capability-reset-${key}`}
@@ -2793,7 +2801,7 @@ export function DenAdminPanel() {
                                 onClick={() => void saveOrganizationFeature(org, key, null)}
                                 className="shrink-0 text-xs font-medium text-slate-500 underline-offset-2 hover:underline disabled:opacity-50"
                               >
-                                Use default
+                                Follow rollout
                               </button>
                             ) : null}
                           </li>

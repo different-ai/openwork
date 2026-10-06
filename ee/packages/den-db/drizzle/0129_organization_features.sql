@@ -1,3 +1,13 @@
+CREATE TABLE `feature_rollout` (
+	`feature_key` varchar(64) NOT NULL,
+	`percent` int NOT NULL,
+	`killed` boolean NOT NULL DEFAULT false,
+	`updated_by_user_id` varchar(64),
+	`created_at` timestamp(3) NOT NULL DEFAULT (now()),
+	`updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+	CONSTRAINT `feature_rollout_feature_key` PRIMARY KEY(`feature_key`)
+);
+--> statement-breakpoint
 CREATE TABLE `organization_feature` (
 	`organization_id` varchar(64) NOT NULL,
 	`feature_key` varchar(64) NOT NULL,

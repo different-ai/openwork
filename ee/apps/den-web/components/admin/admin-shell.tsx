@@ -1,10 +1,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-export type AdminSection = "overview" | "free-auto";
+export type AdminSection = "overview" | "features" | "free-auto";
 
 const SECTIONS: Array<{ id: AdminSection; label: string; href: string }> = [
   { id: "overview", label: "Overview", href: "/admin" },
+  { id: "features", label: "Features", href: "/admin/features" },
   { id: "free-auto", label: "Free Auto usage", href: "/admin/free-auto" },
 ];
 

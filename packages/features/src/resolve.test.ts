@@ -5,50 +5,66 @@ import {
   FEATURES,
   featureKeySchema,
   featureLockEnvName,
+  inRollout,
   mapFeatures,
   parseFeatureEnvironment,
-  resolveAvailability,
   resolveFeature,
   resolveFeatures,
+  rolloutBucket,
+  type FeatureContext,
 } from "@openwork/features"
 
-const platformOff = { control: "platform", default: false } as const
-const platformOn = { control: "platform", default: true } as const
+const base: FeatureContext = {
+  deployment: "cloud",
+  locks: {},
+  rollouts: {},
+  overrides: {},
+  subjects: { organizationId: "org_a", personId: "usr_a" },
+}
 
-test("fixed availabilities ignore locks and overrides", () => {
-  for (const lock of [undefined, true, false]) {
-    for (const override of [null, true, false]) {
-      assert.equal(resolveAvailability("unavailable", { lock, override }).enabled, false)
-      assert.equal(resolveAvailability("off", { lock, override }).enabled, false)
-      assert.equal(resolveAvailability("on", { lock, override }).enabled, true)
-      assert.equal(resolveAvailability("on", { lock, override }).adminCanChange, false)
-    }
-  }
-})
-
-test("platform features: lock beats override beats default", () => {
-  assert.deepEqual(resolveAvailability(platformOff, { lock: undefined, override: null }), {
-    enabled: false, source: "default", adminCanChange: true, override: null, default: false,
-  })
-  assert.deepEqual(resolveAvailability(platformOff, { lock: undefined, override: true }), {
-    enabled: true, source: "override", adminCanChange: true, override: true, default: false,
-  })
-  assert.deepEqual(resolveAvailability(platformOn, { lock: false, override: true }), {
-    enabled: false, source: "lock", adminCanChange: false, override: true, default: true,
-  })
-  assert.equal(resolveAvailability(platformOn, { lock: undefined, override: false }).enabled, false)
-})
-
-test("resolveFeature reads the registry for the given deployment", () => {
+test("starting percentages come from the registry", () => {
   for (const key of FEATURE_KEYS) {
-    const resolved = resolveFeature(key, { deployment: "self_hosted", locks: {}, overrides: {} })
-    const availability = FEATURES[key].selfHosted
-    assert.equal(resolved.key, key)
-    if (typeof availability === "object") assert.equal(resolved.enabled, availability.default)
+    const resolved = resolveFeature(key, base)
+    assert.equal(resolved.percent, FEATURES[key].start)
+    assert.equal(resolved.source, "rollout")
+    if (FEATURES[key].start === 100) assert.equal(resolved.enabled, true)
+    if (FEATURES[key].start === 0) assert.equal(resolved.enabled, false)
   }
-  const map = resolveFeatures({ deployment: "cloud", locks: { workbot: true }, overrides: { installLinks: false } })
-  assert.equal(map.workbot, true)
-  assert.equal(map.installLinks, false)
+})
+
+test("precedence: unavailable, kill switch, lock, override, percentage", () => {
+  const key = "orgManagedDashboards"
+  assert.equal(resolveFeature(key, { ...base, rollouts: { [key]: { percent: 100, killed: false } } }).enabled, true)
+  assert.equal(resolveFeature(key, { ...base, overrides: { [key]: true } }).source, "override")
+  assert.equal(resolveFeature(key, { ...base, overrides: { [key]: true }, locks: { [key]: false } }).enabled, false)
+  const killed = resolveFeature(key, { ...base, overrides: { [key]: true }, locks: { [key]: true }, rollouts: { [key]: { percent: 100, killed: true } } })
+  assert.equal(killed.enabled, false)
+  assert.equal(killed.source, "killed")
+  assert.equal(killed.overrideApplies, false)
+})
+
+test("percentages are stable, monotonic, and need a subject", () => {
+  const key = "workbot"
+  assert.equal(inRollout(key, "org_x", 0), false)
+  assert.equal(inRollout(key, "org_x", 100), true)
+  assert.equal(inRollout(key, null, 100), true)
+  assert.equal(inRollout(key, null, 50), false)
+  const subjects = Array.from({ length: 2000 }, (_, index) => `org_${index}`)
+  for (const subject of subjects) assert.equal(rolloutBucket(key, subject), rolloutBucket(key, subject))
+  const at10 = subjects.filter((subject) => inRollout(key, subject, 10))
+  const at50 = subjects.filter((subject) => inRollout(key, subject, 50))
+  for (const subject of at10) assert.ok(at50.includes(subject), "raising the percentage only adds subjects")
+  assert.ok(at10.length > 120 && at10.length < 280, `about 10% of subjects, got ${at10.length}`)
+})
+
+test("organization features bucket by organization, ignoring the person", () => {
+  const key = "workbot"
+  const context = { ...base, rollouts: { [key]: { percent: 50, killed: false } } }
+  const forOrg = resolveFeature(key, context).enabled
+  for (const personId of ["usr_1", "usr_2", "usr_3", null]) {
+    assert.equal(resolveFeature(key, { ...context, subjects: { organizationId: "org_a", personId } }).enabled, forOrg)
+  }
+  assert.equal(resolveFeature(key, { ...context, subjects: {} }).enabled, false)
 })
 
 test("mapFeatures and the key schema cover exactly the registry", () => {
@@ -56,6 +72,7 @@ test("mapFeatures and the key schema cover exactly the registry", () => {
   for (const key of FEATURE_KEYS) assert.equal(featureKeySchema.parse(key), key)
   assert.equal(featureKeySchema.safeParse("notAFeature").success, false)
   assert.equal(featureKeySchema.safeParse("appMcpServers").success, false)
+  assert.deepEqual(Object.keys(resolveFeatures(base)).sort(), [...FEATURE_KEYS].sort())
 })
 
 test("every key maps to a unique DEN_FEATURE_ name", () => {

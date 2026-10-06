@@ -175,6 +175,8 @@ import type {
   GetMcpWellKnownOauthProtectedResourceResponses,
   GetReadyErrors,
   GetReadyResponses,
+  GetV1AdminFeaturesErrors,
+  GetV1AdminFeaturesResponses,
   GetV1AdminFreeAutoUsageErrors,
   GetV1AdminFreeAutoUsageResponses,
   GetV1AdminMetricsErrors,
@@ -287,6 +289,7 @@ import type {
   GetV1DesktopPoliciesResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
+  GetV1FeaturesRolloutsResponses,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses,
   GetV1GatewayUsageLimitPoliciesErrors,
@@ -853,6 +856,8 @@ import type {
   PutApiAuthScimV2GroupsByGroupIdResponses,
   PutApiAuthScimV2UsersByUserIdErrors,
   PutApiAuthScimV2UsersByUserIdResponses,
+  PutV1AdminFeaturesByKeyErrors,
+  PutV1AdminFeaturesByKeyResponses,
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
   PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessErrors,
@@ -1273,6 +1278,41 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/capabilities",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List features and their rollout
+   *
+   * Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (subject, deployments, starting percentage) and this deployment's rollout: percentage, kill switch, and any operator lock.
+   */
+  public getV1AdminFeatures<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1AdminFeaturesResponses, GetV1AdminFeaturesErrors, ThrowOnError>({
+      url: "/v1/admin/features",
+      ...options,
+    });
+  }
+
+  /**
+   * Change a feature's rollout
+   *
+   * Sets the percentage (0–100) of the feature's subject that has it, and/or the kill switch, for this deployment. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert. Lowering the percentage turns it off for the subjects added last.
+   */
+  public putV1AdminFeaturesByKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      key: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "key" }] }]);
+    return (options?.client ?? this.client).put<
+      PutV1AdminFeaturesByKeyResponses,
+      PutV1AdminFeaturesByKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/features/{key}",
       ...options,
       ...params,
     });
@@ -14129,6 +14169,18 @@ export class DenClient extends HeyApiClient {
   public getV1AppVersion<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1AppVersionResponses, unknown, ThrowOnError>({
       url: "/v1/app-version",
+      ...options,
+    });
+  }
+
+  /**
+   * Get rollout state for features rolled out to people
+   *
+   * Percentage, kill switch and operator lock for every person feature that is part of this deployment. Clients bucket by user id when signed in and by install id when signed out, with the same rules as packages/features (resolveFeature). A feature missing here is off.
+   */
+  public getV1FeaturesRollouts<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1FeaturesRolloutsResponses, unknown, ThrowOnError>({
+      url: "/v1/features/rollouts",
       ...options,
     });
   }

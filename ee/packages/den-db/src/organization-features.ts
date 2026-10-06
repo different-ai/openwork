@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  clampPercent,
   isFeatureKey,
   mapFeatures,
   resolveFeature,
@@ -9,16 +10,19 @@ import {
   type FeatureKey,
   type FeatureMap,
   type FeatureOverrides,
+  type FeatureRollouts,
+  type FeatureSubjects,
   type ResolvedFeature,
 } from "@openwork/features"
 import type { createDenDb } from "./client"
 import { OrganizationTable } from "./schema/org"
-import { OrganizationFeatureTable } from "./schema/organization-features"
+import { FeatureRolloutTable, OrganizationFeatureTable } from "./schema/organization-features"
 
 /**
- * Storage for per-organization feature overrides. The registry and resolution
- * rules live in @openwork/features; this module only reads and writes
- * the rows. Read features through here, never from organization metadata.
+ * Storage for feature rollouts (percentage and kill switch per feature) and
+ * per-organization overrides. The registry and resolution rules live in
+ * @openwork/features; this module only reads and writes the rows. Read
+ * features through here, never from organization metadata.
  */
 
 type Db = ReturnType<typeof createDenDb>["db"]
@@ -72,23 +76,59 @@ export async function readOrganizationFeatureOverridesForMany(
   return result
 }
 
-/** Effective on/off for every feature of one organization. */
-export async function readOrganizationFeatures(
+/** Deployment-wide rollout state for every feature that has a stored row. */
+export async function readFeatureRollouts(database: FeatureDatabase): Promise<FeatureRollouts> {
+  const rows = await database
+    .select({ feature_key: FeatureRolloutTable.feature_key, percent: FeatureRolloutTable.percent, killed: FeatureRolloutTable.killed })
+    .from(FeatureRolloutTable)
+  const rollouts: FeatureRollouts = {}
+  for (const row of rows) {
+    if (isFeatureKey(row.feature_key)) rollouts[row.feature_key] = { percent: clampPercent(row.percent), killed: row.killed }
+  }
+  return rollouts
+}
+
+/**
+ * Effective on/off for every feature, for one subject: organization features
+ * bucket by `organizationId`, person features by `personId`. The organization's
+ * overrides apply to both.
+ */
+export async function readFeatures(
   database: FeatureDatabase,
-  organizationId: string,
+  subjects: FeatureSubjects,
   environment: FeatureEnvironment,
   options: { lock?: "share" } = {},
 ): Promise<FeatureMap> {
-  const overrides = await readOrganizationFeatureOverrides(database, organizationId, options)
-  return resolveFeatures({ ...environment, overrides })
+  const [rollouts, overrides] = await Promise.all([
+    readFeatureRollouts(database),
+    subjects.organizationId ? readOrganizationFeatureOverrides(database, subjects.organizationId, options) : Promise.resolve({}),
+  ])
+  return resolveFeatures({ ...environment, rollouts, overrides, subjects })
 }
 
 /** Effective state with its source, for /admin. */
-export function describeOrganizationFeatures(
-  overrides: FeatureOverrides,
-  environment: FeatureEnvironment,
-): Record<FeatureKey, ResolvedFeature> {
-  return mapFeatures((key) => resolveFeature(key, { ...environment, overrides }))
+export function describeFeatures(input: {
+  rollouts: FeatureRollouts
+  overrides: FeatureOverrides
+  subjects: FeatureSubjects
+  environment: FeatureEnvironment
+}): Record<FeatureKey, ResolvedFeature> {
+  return mapFeatures((key) => resolveFeature(key, { ...input.environment, rollouts: input.rollouts, overrides: input.overrides, subjects: input.subjects }))
+}
+
+/** Sets the percentage and/or kill switch of one feature for this deployment. */
+export async function setFeatureRollout(
+  database: Db,
+  input: { key: FeatureKey; percent?: number; killed?: boolean; updatedByUserId?: string | null; startPercent: number },
+): Promise<FeatureRollouts> {
+  const updatedByUserId = input.updatedByUserId ? normalizeDenTypeId("user", input.updatedByUserId) : null
+  const current = (await readFeatureRollouts(database))[input.key]
+  const percent = clampPercent(input.percent ?? current?.percent ?? input.startPercent)
+  const killed = input.killed ?? current?.killed ?? false
+  await database.insert(FeatureRolloutTable)
+    .values({ feature_key: input.key, percent, killed, updated_by_user_id: updatedByUserId })
+    .onDuplicateKeyUpdate({ set: { percent, killed, updated_by_user_id: updatedByUserId } })
+  return readFeatureRollouts(database)
 }
 
 function parseMetadata(value: unknown): Record<string, unknown> {

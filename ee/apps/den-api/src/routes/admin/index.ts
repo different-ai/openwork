@@ -42,13 +42,26 @@ import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import {
-  describeOrganizationFeatures,
+  describeFeatures,
+  readFeatureRollouts,
   readOrganizationFeatureOverrides,
   readOrganizationFeatureOverridesForMany,
+  setFeatureRollout,
   setOrganizationFeatureOverrides,
   type FeatureOverrideChanges,
 } from "@openwork-ee/den-db/organization-features"
-import { FEATURE_KEYS, featureIsAdjustable, mapFeatures, type FeatureOverrides } from "@openwork/features"
+import {
+  FEATURE_KEYS,
+  featureAvailableOn,
+  featureDefinition,
+  featureKeySchema,
+  featureRollout,
+  mapFeatures,
+  type FeatureKey,
+  type FeatureOverrides,
+  type FeatureRollouts,
+  type ResolvedFeature,
+} from "@openwork/features"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
 import { env } from "../../env.js"
@@ -130,15 +143,36 @@ const adminOrganizationCapabilitiesSchema = z.object({
 
 const adminFeatureStateSchema = z.object({
   enabled: z.boolean(),
-  source: z.enum(["unavailable", "off", "on", "lock", "override", "default"]),
-  adminCanChange: z.boolean(),
+  source: z.enum(["unavailable", "killed", "lock", "override", "rollout"]),
+  percent: z.number().int().min(0).max(100),
+  killed: z.boolean(),
+  lock: z.boolean().nullable(),
   override: z.boolean().nullable(),
-  default: z.boolean().nullable(),
+  overrideApplies: z.boolean(),
 })
 
 const adminFeatureStatesSchema = z.object(mapFeatures(() => adminFeatureStateSchema)).meta({
-  description: "Per feature: whether it is on, why (registry default, stored override, deployment lock, or fixed in code), and whether /admin can change it.",
+  description: "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or percentage rollout), and whether an organization override would take effect.",
 })
+
+const adminFeatureSchema = z.object({
+  key: featureKeySchema,
+  label: z.string(),
+  description: z.string(),
+  since: z.string(),
+  subject: z.enum(["organization", "person"]),
+  deployments: z.array(z.enum(["cloud", "self_hosted"])),
+  start: z.number().int().min(0).max(100),
+  available: z.boolean(),
+  percent: z.number().int().min(0).max(100),
+  killed: z.boolean(),
+  lock: z.boolean().nullable(),
+}).meta({ ref: "AdminFeature" })
+
+const updateFeatureRolloutSchema = z.object({
+  percent: z.number().int().min(0).max(100).optional(),
+  killed: z.boolean().optional(),
+}).strict().refine((value) => value.percent !== undefined || value.killed !== undefined, { message: "Set percent, killed, or both." })
 
 const createAdminSchema = z.object({
   email: z.string().trim().max(255).email().transform((email) => email.toLowerCase()),
@@ -300,17 +334,40 @@ function parseBooleanQuery(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes"
 }
 
-function readAdminFeatureStates(overrides: FeatureOverrides): z.infer<typeof adminFeatureStatesSchema> {
-  const described = describeOrganizationFeatures(overrides, env.features)
+type DescribedFeatures = Record<FeatureKey, ResolvedFeature>
+
+function describeOrganization(organizationId: string, rollouts: FeatureRollouts, overrides: FeatureOverrides): DescribedFeatures {
+  // Person features have no single person here; they show the organization-wide answer.
+  return describeFeatures({ rollouts, overrides, subjects: { organizationId }, environment: env.features })
+}
+
+function readAdminFeatureStates(described: DescribedFeatures): z.infer<typeof adminFeatureStatesSchema> {
   return mapFeatures((key) => {
-    const { enabled, source, adminCanChange, override, default: defaultValue } = described[key]
-    return { enabled, source, adminCanChange, override, default: defaultValue }
+    const { enabled, source, percent, killed, lock, override, overrideApplies } = described[key]
+    return { enabled, source, percent, killed, lock, override, overrideApplies }
   })
 }
 
-function readAdminVisibleOrganizationCapabilities(overrides: FeatureOverrides): z.infer<typeof adminOrganizationCapabilitiesSchema> {
-  const described = describeOrganizationFeatures(overrides, env.features)
+function readAdminVisibleOrganizationCapabilities(described: DescribedFeatures): z.infer<typeof adminOrganizationCapabilitiesSchema> {
   return { ...mapFeatures((key) => described[key].enabled), gatewayDashboard: true }
+}
+
+function readAdminFeature(key: FeatureKey, rollouts: FeatureRollouts): z.infer<typeof adminFeatureSchema> {
+  const definition = featureDefinition(key)
+  const { percent, killed } = featureRollout(key, rollouts)
+  return {
+    key,
+    label: definition.label,
+    description: definition.description,
+    since: definition.since,
+    subject: definition.subject,
+    deployments: [...definition.deployments],
+    start: definition.start,
+    available: featureAvailableOn(key, env.features.deployment),
+    percent,
+    killed,
+    lock: env.features.locks[key] ?? null,
+  }
 }
 
 function readAdminOpenWorkWebAccess(
@@ -915,7 +972,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
   }
 
   const organizationIds = rows.map((row) => row.id)
-  const [memberRows, webSubscriptionRows, featureOverridesByOrg] = await Promise.all([
+  const [memberRows, webSubscriptionRows, featureOverridesByOrg, featureRollouts] = await Promise.all([
     db
       .select({ organizationId: MemberTable.organizationId, memberCount: sql<number>`count(*)` })
       .from(MemberTable)
@@ -934,6 +991,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
         eq(OrgSubscriptionTable.type, "web"),
       )),
     readOrganizationFeatureOverridesForMany(db, organizationIds),
+    readFeatureRollouts(db),
   ])
   const memberCountByOrg = new Map<string, number>()
   for (const row of memberRows) {
@@ -942,6 +1000,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
   const webSubscriptionByOrg = new Map(webSubscriptionRows.map((row) => [row.organizationId, row]))
 
   return rows.map((entry) => {
+    const described = describeOrganization(entry.id, featureRollouts, featureOverridesByOrg.get(entry.id) ?? {})
     const metadata = normalizeOrganizationMetadata(entry.metadata).metadata
     const seatLimit = metadata.limits.members ?? DEFAULT_ORGANIZATION_LIMITS.members
     const seatCounts = calculateOrganizationSeatBillingCounts({ memberCount: memberCountByOrg.get(entry.id) ?? 0, metadata })
@@ -957,8 +1016,8 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       freeSeatCount: seatCounts.free,
       seatsFreeAdditional: seatCounts.additionalFree,
       billableSeatCount: seatCounts.chargeable,
-      capabilities: readAdminVisibleOrganizationCapabilities(featureOverridesByOrg.get(entry.id) ?? {}),
-      featureStates: readAdminFeatureStates(featureOverridesByOrg.get(entry.id) ?? {}),
+      capabilities: readAdminVisibleOrganizationCapabilities(described),
+      featureStates: readAdminFeatureStates(described),
       openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null),
     }
   })
@@ -1963,8 +2022,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      const overrides = await readOrganizationFeatureOverrides(db, organization.id)
-      return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(overrides), featureStates: readAdminFeatureStates(overrides) })
+      const [overrides, rollouts] = await Promise.all([readOrganizationFeatureOverrides(db, organization.id), readFeatureRollouts(db)])
+      const described = describeOrganization(organization.id, rollouts, overrides)
+      return c.json({ capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
     },
   )
 
@@ -2008,8 +2068,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       for (const key of FEATURE_KEYS) {
         const value = body.data.capabilities[key]
         if (value === undefined) continue
-        if (!featureIsAdjustable(key, env.features.deployment)) {
-          return c.json({ error: "invalid_request", message: `${key} cannot be changed per organization on this deployment.` }, 400)
+        if (!featureAvailableOn(key, env.features.deployment)) {
+          return c.json({ error: "invalid_request", message: `${key} is not part of this deployment.` }, 400)
         }
         changes[key] = value
       }
@@ -2020,7 +2080,60 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         setByUserId: c.get("user")?.id ?? null,
       })
 
-      return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(overrides), featureStates: readAdminFeatureStates(overrides) })
+      const described = describeOrganization(organizationId, await readFeatureRollouts(db), overrides)
+      return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
+    },
+  )
+
+  app.get(
+    "/v1/admin/features",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "List features and their rollout",
+      description: "Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (subject, deployments, starting percentage) and this deployment's rollout: percentage, kill switch, and any operator lock.",
+      responses: {
+        200: jsonResponse("Features returned.", z.object({ deployment: z.enum(["cloud", "self_hosted"]), features: z.array(adminFeatureSchema) })),
+        ...adminRouteErrors,
+      },
+    }),
+    adminRoute(),
+    async (c) => {
+      const rollouts = await readFeatureRollouts(db)
+      return c.json({ deployment: env.features.deployment, features: FEATURE_KEYS.map((key) => readAdminFeature(key, rollouts)) })
+    },
+  )
+
+  app.put(
+    "/v1/admin/features/:key",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Change a feature's rollout",
+      description: "Sets the percentage (0–100) of the feature's subject that has it, and/or the kill switch, for this deployment. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert. Lowering the percentage turns it off for the subjects added last.",
+      responses: {
+        200: jsonResponse("Rollout updated.", z.object({ ok: z.literal(true), feature: adminFeatureSchema })),
+        400: jsonResponse("The feature or body was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+      },
+    }),
+    adminRoute(),
+    async (c) => {
+      const key = featureKeySchema.safeParse(c.req.param("key"))
+      if (!key.success) return c.json({ error: "invalid_request", message: "Unknown feature." }, 400)
+      const body = updateFeatureRolloutSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid rollout request." }, 400)
+      }
+      if (!featureAvailableOn(key.data, env.features.deployment)) {
+        return c.json({ error: "invalid_request", message: `${key.data} is not part of this deployment.` }, 400)
+      }
+      const rollouts = await setFeatureRollout(db, {
+        key: key.data,
+        percent: body.data.percent,
+        killed: body.data.killed,
+        startPercent: featureDefinition(key.data).start,
+        updatedByUserId: c.get("user")?.id ?? null,
+      })
+      return c.json({ ok: true, feature: readAdminFeature(key.data, rollouts) })
     },
   )
 

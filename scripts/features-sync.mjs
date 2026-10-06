@@ -18,8 +18,7 @@ import { fileURLToPath } from "node:url"
 import {
   FEATURES,
   FEATURE_KEYS,
-  featureAvailability,
-  featureIsAdjustable,
+  featureAvailableOn,
   featureLockEnvName,
 } from "../packages/features/src/index.ts"
 import { checkDockerWorkspacePackages } from "./check-docker-workspace-packages.mjs"
@@ -36,25 +35,23 @@ const END = "# END GENERATED features"
 const README_BEGIN = "<!-- BEGIN GENERATED features (pnpm features:sync) -->"
 const README_END = "<!-- END GENERATED features -->"
 
-/** Keys an operator can set: adjustable on at least one deployment. */
-const helmKeys = FEATURE_KEYS.filter((key) => featureIsAdjustable(key, "self_hosted") || featureIsAdjustable(key, "cloud"))
+/** Keys an operator can lock: every feature that exists on at least one deployment. */
+const helmKeys = FEATURE_KEYS.filter((key) => featureAvailableOn(key, "self_hosted") || featureAvailableOn(key, "cloud"))
 
 function defaultLabel(key) {
-  const selfHosted = featureAvailability(key, "self_hosted")
-  const availability = typeof selfHosted === "object" ? selfHosted : featureAvailability(key, "cloud")
-  const scope = featureIsAdjustable(key, "self_hosted") ? "" : " (cloud only)"
-  return `default ${availability.default ? "on" : "off"}${scope}`
+  const scope = featureAvailableOn(key, "self_hosted") ? "" : " (cloud only)"
+  return `starts at ${FEATURES[key].start}%${scope}`
 }
 
 function valuesBlock() {
   const width = Math.max(...helmKeys.map((key) => key.length)) + 5
   const lines = [
     `  ${BEGIN}`,
-    "  # Per-feature switches for this deployment. Each key renders DEN_FEATURE_<KEY>.",
-    "  # Only features platform admins can change per organization appear here.",
-    "  #   \"\"      use the default below; platform admins can change it per organization in /admin",
-    "  #   \"true\"  on for every organization; /admin shows \"Set by deployment config\"",
-    "  #   \"false\" off for every organization; /admin shows \"Set by deployment config\"",
+    "  # Operator locks for this install. Each key renders DEN_FEATURE_<KEY>.",
+    "  #   \"\"      follow this install's rollout: the percentage and organization overrides set in /admin",
+    "  #   \"true\"  on for everyone; /admin shows \"Set by deployment config\"",
+    "  #   \"false\" off for everyone; /admin shows \"Set by deployment config\"",
+    "  # The /admin kill switch still turns a feature off, even when locked on.",
     "  features:",
     ...helmKeys.map((key) => `    ${`${key}: ""`.padEnd(width)}# ${defaultLabel(key)} · ${FEATURES[key].description}`),
     `  ${END}`,
@@ -110,7 +107,7 @@ function renderReadme(current) {
   const rows = helmKeys.map((key) => `| \`${key}\` | \`${featureLockEnvName(key)}\` | ${defaultLabel(key)} | ${FEATURES[key].description} |`)
   const table = [
     README_BEGIN,
-    "| `config.features.*` | Environment variable | Default | What it does |",
+    "| `config.features.*` | Environment variable | Rollout starts at | What it does |",
     "| --- | --- | --- | --- |",
     ...rows,
     README_END,
@@ -154,12 +151,13 @@ if (check) {
       problems.push(`Feature "${key}" since must be "YYYY-MM".`)
       continue
     }
+    if (!Number.isInteger(definition.start) || definition.start < 0 || definition.start > 100) {
+      problems.push(`Feature "${key}" start must be a whole percentage from 0 to 100.`)
+    }
+    if (definition.deployments.length === 0) problems.push(`Feature "${key}" must exist on at least one deployment.`)
     const ageMonths = (now.getUTCFullYear() - Number(since[1])) * 12 + (now.getUTCMonth() + 1 - Number(since[2]))
-    const fixed = [definition.cloud, definition.selfHosted].every((value) => value === "on" || value === "off" || value === "unavailable")
-    const dead = [definition.cloud, definition.selfHosted].every((value) => value === "off" || value === "unavailable")
-    const shipped = [definition.cloud, definition.selfHosted].every((value) => value === "on" || value === "unavailable")
-    if (fixed && (dead || shipped) && ageMonths > 6) {
-      problems.push(`Feature "${key}" has been fixed ${shipped ? "on" : "off"} everywhere since ${definition.since}. Delete the flag and its checks (see .opencode/skills/add-a-feature).`)
+    if (!definition.permanent && ageMonths > 6) {
+      problems.push(`Feature "${key}" has been a rollout since ${definition.since}. Finish it and delete the flag and its checks, or mark it permanent: true if the switch is part of the product (see .opencode/skills/add-a-feature).`)
     }
   }
 

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm"
-import { boolean, mysqlTable, primaryKey, timestamp, varchar } from "drizzle-orm/mysql-core"
+import { boolean, int, mysqlTable, primaryKey, timestamp, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
 
 /**
@@ -18,3 +18,18 @@ export const OrganizationFeatureTable = mysqlTable("organization_feature", {
   created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   updated_at: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
 }, (table) => [primaryKey({ name: "organization_feature_pk", columns: [table.organization_id, table.feature_key] })])
+
+/**
+ * Deployment-wide rollout state per feature, changed in /admin. No row means
+ * the registry's starting percentage and no kill switch.
+ */
+export const FeatureRolloutTable = mysqlTable("feature_rollout", {
+  feature_key: varchar("feature_key", { length: 64 }).notNull().primaryKey(),
+  /** 0–100: how much of the feature's subject (organizations or people) has it. */
+  percent: int("percent").notNull(),
+  /** Off everywhere, outranking locks, overrides and the percentage. */
+  killed: boolean("killed").notNull().default(false),
+  updated_by_user_id: denTypeIdColumn("user", "updated_by_user_id"),
+  created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  updated_at: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+})
