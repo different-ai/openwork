@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono"
+import { beginAuditRequest } from "../audit/request-capture.js"
 import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError } from "../agent-error-envelope.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { getMcpResourceContext, verifyMcpRequest } from "../mcp/auth.js"
@@ -42,6 +43,10 @@ const cloudTransportRouteHandler: MiddlewareHandler<{ Variables: OrganizationCon
   }
 
   c.set("organizationContext", organizationContext)
+  const auditBlocked = await beginAuditRequest(c, { origin: "mcp" })
+  if (auditBlocked) {
+    return auditBlocked
+  }
   await next()
 }
 

@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "audit:pilot": "tsx --conditions=development scripts/audit-pilot.ts",
+    "audit:coverage": "tsx --conditions=development scripts/check-audit-route-coverage.ts",
     "dev": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/main.ts",
     "dev:local": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" PORT=${DEN_API_PORT:-8790} tsx watch src/main.ts",
     "build": "node ./scripts/build.mjs",

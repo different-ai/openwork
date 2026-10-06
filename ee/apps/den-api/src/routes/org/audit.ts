@@ -11,6 +11,7 @@ import { initializeAuditPolicyInTx, requireAuditFeature, readEffectiveAuditPolic
 import { supportedAuditEventTypes } from "../../audit/coverage.js"
 import { AuditReadError } from "../../audit/cursors.js"
 import { auditCsv, auditNdjson } from "../../audit/exports.js"
+import { withAuditRetry } from "../../audit/retry.js"
 import { auditExportQuerySchema, auditOperationsQuerySchema, auditPageQuerySchema, listAuditEvents, listAuditExportEvents, listAuditOperations, readAuditUsage } from "../../audit/queries.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
@@ -77,24 +78,26 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
       principalKey: `user:${organization.currentMember.userId}:member:${organization.currentMember.id}:key:${credentialId ?? "session"}`,
       kind: "audit.access", scope: operationId ?? `audit.${action}`, origin: "api", originTrust: "authenticated", requestId: c.get("requestId") ?? createDenTypeId("request"),
     }
-    const capture = await db.transaction(async (tx) => {
+    // Both appends are request-bound with idempotency keys, so a transient-failure retry is a replay.
+    const retry = { idempotent: true, requestId: context.requestId ?? null, organizationId: context.organizationId }
+    const capture = await withAuditRetry(() => db.transaction(async (tx) => {
       await requireAuditFeature(tx, context.organizationId)
       const policy = await readEffectiveAuditPolicy(tx, context.organizationId, env.auditCaptureEnabled)
       const category = policy?.categories.includes("access") ? "access" : policy?.categories.includes("read") ? "read" : null
       if (!policy || !category) return null
       const event: AuditEventInput = { action: `audit.${action}.requested`, category, outcome: "unknown", resources: [{ type: operationId ? "audit_operation" : "audit_collection", id: operationId ?? `audit.${action}`, relationship: "target" }] }
-      const intent = await appendAuditEvent(tx, { context, policy, event })
+      const intent = await appendAuditEvent(tx, { context, policy, event: { ...event, idempotencyKey: `${context.requestId}:requested` } })
       if (!intent) throw new Error("audit_access_not_recorded")
       return { policy, event, intent }
-    })
+    }), { ...retry, label: `audit.${action}.requested` })
     const response = await read(organization.organization.id)
-    await db.transaction(async (tx) => {
+    await withAuditRetry(() => db.transaction(async (tx) => {
       await requireAuditFeature(tx, context.organizationId)
       if (!capture) return
       await recheckAuditEntitlement(tx, context.organizationId)
-      const served = await appendAuditEvent(tx, { context, policy: capture.policy, event: { ...capture.event, action: `audit.${action}.served`, outcome: "succeeded" } })
+      const served = await appendAuditEvent(tx, { context, policy: capture.policy, event: { ...capture.event, action: `audit.${action}.served`, outcome: "succeeded", idempotencyKey: `${context.requestId}:served` } })
       if (served?.operationId !== capture.intent.operationId) throw new Error("audit_access_operation_changed")
-    })
+    }), { ...retry, label: `audit.${action}.served` })
     return response
   } catch (error) {
     return error instanceof AuditReadError ? c.json({ error: error.code }, error.status) : c.json({ error: "audit_unavailable" }, 503)

@@ -4,7 +4,10 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { invitationCanceledEvent, invitationSavedEvent } from "../../audit/domain/invitations.js"
+import { appendDomainChanges, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { addAuditRequestResource, auditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { invitationBillingUrl } from "../../agent-links.js"
 import { invitationHasAdminTeam, withOrganizationTeamMutation } from "../../organization-team-roles.js"
@@ -145,6 +148,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     }
     const assignedRole = assignableRole.role
 
+    const capture = auditChangeCapture(c)
     const invitationWrite = await db.transaction(async (tx) => {
       await tx
         .select({ id: OrganizationTable.id })
@@ -265,8 +269,20 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         invitationOrgMemberId = memberId
       }
 
+      // Organization row is already locked FOR UPDATE above; append last.
+      const inviterId = normalizeDenTypeId("user", user.id)
+      const auditEventIds = await appendDomainChanges(tx, capture, [invitationSavedEvent({
+        organizationId: payload.organization.id,
+        before: existingInvitation,
+        after: existingInvitation
+          ? { ...existingInvitation, role: assignedRole, inviterId, orgMemberId: payload.currentMember.id, expiresAt }
+          : { id: invitationId, email, role: assignedRole, status: "pending", teamId: null, inviterId, orgMemberId: payload.currentMember.id, expiresAt },
+        placeholderMemberId: invitationOrgMemberId,
+      })])
+
       return {
         status: "saved" as const,
+        auditEventIds,
         createdOrgMemberId,
         expiresAt,
         invitationId,
@@ -306,6 +322,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     }
 
     const {
+      auditEventIds,
       createdOrgMemberId,
       expiresAt,
       invitationId,
@@ -313,12 +330,13 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       inviteToken,
       refreshed,
     } = invitationWrite
+    addAuditRequestResource(c, { type: "invitation", id: invitationId })
 
     if (createdOrgMemberId) {
       await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added" })
     }
 
-    await recordOrganizationAuditEvent({
+    await finishLegacyAuditAction(capture, {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: refreshed
@@ -331,7 +349,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         role: assignedRole,
         expiresAt: expiresAt.toISOString(),
       },
-    })
+    }, auditEventIds)
 
     try {
       await sendEmail({
@@ -410,6 +428,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
+    const capture = auditChangeCapture(c)
     const cancellation = await withOrganizationTeamMutation(payload.organization.id, async (tx) => {
       const invitationRows = await tx
         .select({
@@ -419,6 +438,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
           status: InvitationTable.status,
           organizationId: InvitationTable.organizationId,
           teamId: InvitationTable.teamId,
+          inviterId: InvitationTable.inviterId,
+          orgMemberId: InvitationTable.orgMemberId,
+          expiresAt: InvitationTable.expiresAt,
         })
         .from(InvitationTable)
         .where(and(eq(InvitationTable.id, invitationId), eq(InvitationTable.organizationId, payload.organization.id)))
@@ -446,8 +468,13 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         .set({ status: "canceled" })
         .where(and(eq(InvitationTable.id, invitationId), eq(InvitationTable.status, "pending")))
 
+      const auditEventIds = await appendDomainChanges(tx, capture, [invitationCanceledEvent({
+        organizationId: payload.organization.id, before: invitation, placeholderMemberId: invitedMemberRows[0]?.id ?? null,
+      })])
+
       return {
         status: "canceled" as const,
+        auditEventIds,
         invitation,
         invitedMember: invitedMemberRows[0] ?? null,
       }
@@ -480,7 +507,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       }
     }
 
-    await recordOrganizationAuditEvent({
+    await finishLegacyAuditAction(capture, {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: ORGANIZATION_AUDIT_ACTIONS.invitationCanceled,
@@ -491,7 +518,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         role: cancellation.invitation.role,
         previousStatus: cancellation.invitation.status,
       },
-    })
+    }, cancellation.auditEventIds)
 
     return c.json({ success: true })
     },

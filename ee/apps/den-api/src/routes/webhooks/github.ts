@@ -1,6 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { ConnectorAccountTable } from "@openwork-ee/den-db/schema"
+import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
+import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { signedWebhookRoute } from "../../middleware/index.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
@@ -81,6 +85,21 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
       const repositoryId = typeof repository?.id === "number" ? repository.id : undefined
       const ref = typeof payload.ref === "string" ? payload.ref : undefined
       const headSha = typeof payload.after === "string" ? payload.after : undefined
+
+      // Signature verified: our stored connector accounts for this installation
+      // name the organization. One installation linked to several organizations
+      // has no single tenant, so such deliveries stay in the platform store.
+      if (installationId !== undefined) {
+        const accounts = await db
+          .select({ organizationId: ConnectorAccountTable.organizationId })
+          .from(ConnectorAccountTable)
+          .where(and(eq(ConnectorAccountTable.connectorType, "github"), eq(ConnectorAccountTable.remoteId, String(installationId))))
+        const organizationIds = [...new Set(accounts.map((account) => account.organizationId))]
+        if (organizationIds.length === 1 && organizationIds[0]) {
+          const audited = await attributeAuditRequest(c, { organizationId: organizationIds[0], ...auditServiceAttribution("github", null), origin: "webhook" })
+          if (!audited.ok) return audited.response
+        }
+      }
 
       const accepted = await enqueueGithubWebhookSync({
         deliveryId,

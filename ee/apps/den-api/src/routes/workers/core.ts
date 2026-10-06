@@ -4,6 +4,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { nextCursorSchema } from "../../list-pagination.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
@@ -254,6 +255,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       workspace_path: input.workspacePath,
       sandbox_backend: sandboxBackend,
     })
+    addAuditRequestResource(c, { type: "worker", id: workerId })
 
     const hostToken = token()
     const clientToken = token()

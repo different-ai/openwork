@@ -52,6 +52,7 @@ import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
+import { auditRequestMiddleware } from "./audit/request-capture.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
 
@@ -198,6 +199,11 @@ if (!env.corsHandledByEdge) {
 }
 
 app.use("*", sessionMiddleware)
+// Generic operation audit capture (src/audit/request-capture.ts); every route is
+// declared in src/audit/routes and checked by scripts/check-audit-route-coverage.ts.
+// Registered before preclaimScopeMiddleware so its 403 denials are recorded
+// (platform store) against the endpoint they refused.
+app.use("*", auditRequestMiddleware)
 app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(

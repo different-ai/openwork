@@ -8,7 +8,7 @@ import {
   OrgSubscriptionTable,
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -1483,7 +1483,59 @@ async function syncPaymentStateFromInvoiceEvent(input: {
   return { ...row, payment_failed: paymentFailed }
 }
 
-export async function handleStripeWebhook(input: { payload: string; signature: string | null }) {
+/**
+ * Audit attribution hook for a verified Stripe event. "before": our stored
+ * subscription row already maps the event to an organization and nothing has
+ * been applied yet (false aborts with StripeWebhookAuditBlockedError). "after":
+ * the event created the mapping (first checkout), so it is known only now.
+ */
+export type StripeWebhookOrganizationHook = (organizationId: OrgId, phase: "before" | "after") => Promise<boolean>
+
+export class StripeWebhookAuditBlockedError extends Error {
+  constructor() {
+    super("stripe_webhook_audit_unavailable")
+    this.name = "StripeWebhookAuditBlockedError"
+  }
+}
+
+function stripeEventSubscriptionId(event: Stripe.Event): string | null {
+  switch (event.type) {
+    case "checkout.session.async_payment_failed":
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded":
+      return stripeResourceId(event.data.object.subscription)
+    case "customer.subscription.created":
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted":
+      return event.data.object.id
+    case "invoice.paid":
+    case "invoice.payment_failed":
+      return stripeResourceId(event.data.object.parent?.subscription_details?.subscription)
+    default:
+      return null
+  }
+}
+
+/** The organization our stored subscription rows map a verified event to (never event metadata alone). */
+async function stripeEventOrganizationId(event: Stripe.Event): Promise<OrgId | null> {
+  const subscriptionId = stripeEventSubscriptionId(event)
+  if (subscriptionId) {
+    const row = await findOrgSubscriptionByStripeId(subscriptionId)
+    if (row) return row.organization_id
+  }
+  if ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && event.data.object.mode === "setup") {
+    const metadata = getBillingMetadata(event.data.object.metadata)
+    let metadataOrganizationId: OrgId | null = null
+    try { metadataOrganizationId = metadata.organizationId ? normalizeDenTypeId("organization", metadata.organizationId) : null } catch { metadataOrganizationId = null }
+    if (metadata.subscriptionType === SEAT_SUBSCRIPTION_TYPE && metadataOrganizationId) {
+      const row = await findSeatSubscriptionByOrg(metadataOrganizationId)
+      if (row && typeof event.data.object.customer === "string" && row.stripe_customer_id === event.data.object.customer) return row.organization_id
+    }
+  }
+  return null
+}
+
+export async function handleStripeWebhook(input: { payload: string; signature: string | null }, options: { onOrganization?: StripeWebhookOrganizationHook } = {}) {
   if (!env.stripe.webhookSecret) {
     throw new Error("stripe_webhook_secret_missing")
   }
@@ -1492,6 +1544,23 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
   }
 
   const event = stripe().webhooks.constructEvent(input.payload, input.signature, env.stripe.webhookSecret)
+  let attributed = false
+  if (options.onOrganization) {
+    const organizationId = await stripeEventOrganizationId(event)
+    if (organizationId) {
+      if (!(await options.onOrganization(organizationId, "before"))) throw new StripeWebhookAuditBlockedError()
+      attributed = true
+    }
+  }
+  await applyStripeWebhookEvent(event)
+  if (options.onOrganization && !attributed) {
+    const organizationId = await stripeEventOrganizationId(event)
+    if (organizationId) await options.onOrganization(organizationId, "after")
+  }
+  return { received: true, type: event.type }
+}
+
+async function applyStripeWebhookEvent(event: Stripe.Event) {
   switch (event.type) {
     case "checkout.session.async_payment_failed": {
       const session = event.data.object as Stripe.Checkout.Session
@@ -1569,6 +1638,4 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
       break
     }
   }
-
-  return { received: true, type: event.type }
 }

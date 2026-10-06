@@ -1,5 +1,5 @@
-import { readFeatures, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
-import type { FeatureKey, FeatureMap } from "@openwork/features"
+import { readFeatureRollouts, readFeatures, readOrganizationFeatureOverridesForMany, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
+import { resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -31,6 +31,32 @@ export function getOrganizationFeatures(organizationId: string, options: ReadOpt
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
   return (await getOrganizationFeatures(organizationId, options))[key]
+}
+
+/**
+ * Effective features for several organizations, read fresh: one rollout read
+ * and one override read in total, keyed by the ids as given.
+ */
+export async function getFeaturesForOrganizations(organizationIds: readonly string[]): Promise<Map<string, FeatureMap>> {
+  const result = new Map<string, FeatureMap>()
+  if (organizationIds.length === 0) return result
+  const [rollouts, overrides] = await Promise.all([
+    readFeatureRollouts(db),
+    readOrganizationFeatureOverridesForMany(db, [...organizationIds]),
+  ])
+  for (const organizationId of organizationIds) {
+    result.set(organizationId, resolveFeatures({ ...env.features, rollouts, overrides: overrides.get(organizationId) ?? {} }))
+  }
+  return result
+}
+
+/**
+ * Deployment-wide on/off for a feature that no organization owns: the state
+ * for everyone after the kill switch and operator locks, with no organization
+ * override (the same answer as GET /v1/features). Read fresh on every call.
+ */
+export async function deploymentFeatureEnabled(key: FeatureKey): Promise<boolean> {
+  return (await readFeatures(db, null, env.features))[key]
 }
 
 /**

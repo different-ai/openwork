@@ -117,7 +117,7 @@ import {
 import { resolveImportedConnectorTarget } from "../../../capability-sources/claude-connector-aliases.js"
 import { NATIVE_OAUTH_PROVIDERS } from "../../../capability-sources/provider-registry.js"
 import type { MemberUsableConnectionFacts } from "../mcp-connections.js"
-import { organizationFeatureEnabled } from "../../../features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "../../../features.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 const logger = appLogger.child({ component: "plugin_system_store" })
@@ -6628,10 +6628,13 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     throw new PluginArchRouteFailure(404, "organization_not_found", "Organization not found for connector instance.")
   }
 
-  const member = await resolveOrganizationMemberAuthority({
-    organizationId: input.connectorInstance.organizationId,
-    memberId: input.connectorInstance.createdByOrgMembershipId,
-  })
+  const [member, features] = await Promise.all([
+    resolveOrganizationMemberAuthority({
+      organizationId: input.connectorInstance.organizationId,
+      memberId: input.connectorInstance.createdByOrgMembershipId,
+    }),
+    getOrganizationFeatures(organization.id),
+  ])
   if (!member) {
     throw new PluginArchRouteFailure(404, "member_not_found", "Connector creator member not found.")
   }
@@ -6667,6 +6670,7 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         slug: organization.slug,
         updatedAt: organization.updatedAt,
       },
+      features,
       roles: [],
       teams: [],
     },

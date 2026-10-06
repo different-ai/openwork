@@ -441,6 +441,10 @@ jobs:
             exit 1
           fi
           echo "OpenAPI snapshot and generated SDK match the route source."
+      # Every den-api route and better-auth endpoint must carry an audit
+      # declaration (src/audit/routes) and src/audit/COVERAGE.md must be current.
+      - name: Check audit route coverage
+        run: pnpm --filter @openwork-ee/den-api audit:coverage
       - name: Lint the contract and typecheck the SDK
         run: pnpm api:lint && pnpm --filter @openwork/sdk typecheck
 

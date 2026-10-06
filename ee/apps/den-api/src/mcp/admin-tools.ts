@@ -11,6 +11,7 @@ import { normalizeOrganizationMetadata } from "../organization-limits.js"
 import { readFeatureRollouts, setFeatureRollout, setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
 import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
+import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 
 /**
  * den-admin MCP toolset: read-only Den analytics for allowlisted platform
@@ -373,7 +374,17 @@ export async function buildAdminMcpVersionInfo() {
 
 // --- tool registration ---
 
-export function registerAdminMcpTools(server: McpServer) {
+/**
+ * `admin` is the verified platform admin calling the tools; org-mutating tools
+ * are audited for it (src/audit/service-actions.ts) and refuse without it.
+ * Pass null only for catalog listing.
+ */
+export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAuditActor | null) {
+  const requireAdmin = () => {
+    if (!admin) throw new Error("Admin write tools require an authenticated platform admin.")
+    return admin
+  }
+
   server.registerTool(
     "den_admin_version",
     {
@@ -456,7 +467,7 @@ export function registerAdminMcpTools(server: McpServer) {
           throw new Error(`No organization found for ${organizationId}`)
         }
 
-        const metadata = await updateOrganizationMetadata(organizationId, (current) => {
+        const metadata = await runPlatformAdminServiceAction("organization.plan.set", requireAdmin(), organization, () => updateOrganizationMetadata(organizationId, (current) => {
           const normalized = normalizeOrganizationMetadata(current).metadata
           const plan = { ...readOrganizationMetadata(current.plan), ...manualPlan(tier) }
           if (tier !== "enterprise") delete plan.grantedAt
@@ -468,7 +479,7 @@ export function registerAdminMcpTools(server: McpServer) {
               members: seatLimit,
             },
           }
-        })
+        }))
 
         return {
           ok: true,
@@ -511,11 +522,11 @@ export function registerAdminMcpTools(server: McpServer) {
         if (!featureAvailableOn(capability, env.features.deployment)) {
           throw new Error(`${capability} is not part of this deployment.`)
         }
-        const overrides = await setOrganizationFeatureOverrides(db, {
+        const overrides = await runPlatformAdminServiceAction("organization.capability.set", requireAdmin(), organization, () => setOrganizationFeatureOverrides(db, {
           organizationId,
           changes: { [capability]: enabled },
           source: "platform",
-        })
+        }))
         return {
           ok: true,
           organization: { id: organization.id, name: organization.name, slug: organization.slug },
@@ -571,7 +582,9 @@ export function registerAdminMcpTools(server: McpServer) {
       run(async () => {
         if (enabled === undefined && killed === undefined) throw new Error("Set enabled, killed, or both.")
         if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
-        const rollouts = await setFeatureRollout(db, { key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default })
+        // Deployment-wide: no organization's data changes, so platform evidence only.
+        const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
+          setFeatureRollout(db, { key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default }))
         return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )

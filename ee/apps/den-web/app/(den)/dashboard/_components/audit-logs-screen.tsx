@@ -59,7 +59,11 @@ function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypes
   const [error, setError] = useState<string | null>(null);
   const actions = [...new Set([...eventTypes, ...(draft.action ? [draft.action] : [])])].sort();
   const actors = new Map(members.flatMap((member) => member.userId ? [[member.userId, member.user.name] satisfies [string, string]] : []));
-  for (const operation of operations) if (operation.initiatingActor.id && !actors.has(operation.initiatingActor.id)) actors.set(operation.initiatingActor.id, auditActorLabel(operation.initiatingActor, members));
+  for (const { initiatingActor: actor, origin } of operations) {
+    if (!actor.id || actors.has(actor.id)) continue;
+    const label = auditActorLabel(actor, members, origin);
+    actors.set(actor.id, label === "Platform administrator" ? `${label} (${actor.id})` : label);
+  }
   if (draft.actorId && !actors.has(draft.actorId)) actors.set(draft.actorId, "Previously selected actor");
   function apply(event: FormEvent) {
     event.preventDefault();
@@ -75,7 +79,7 @@ function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypes
     <div className="flex flex-wrap items-end gap-3" data-testid="audit-primary-filters">
       <label className="flex min-w-48 flex-1 flex-col gap-1">From (local time)<DenInput type="datetime-local" aria-label="From (local time)" title="Operation start time" value={from} onChange={(event) => setFrom(event.target.value)} aria-invalid={Boolean(error)} /></label>
       <label className="flex min-w-48 flex-1 flex-col gap-1">To (local time)<DenInput type="datetime-local" aria-label="To (local time)" title="Operation start time" value={to} onChange={(event) => setTo(event.target.value)} aria-invalid={Boolean(error)} /></label>
-      <label className="flex min-w-56 flex-1 flex-col gap-1" aria-busy={eventTypesPending}>Event type<DenSelect aria-label="Event type" disabled={eventTypesPending} value={draft.action ?? ""} onChange={(event) => setDraft({ ...draft, action: event.target.value || undefined })}>
+      <label className="flex min-w-56 flex-1 flex-col gap-1" aria-busy={eventTypesPending}>Event type<DenSelect aria-label="Event type" searchLabel="Search event types" searchEmptyLabel="No event types match. Try another word." disabled={eventTypesPending} value={draft.action ?? ""} onChange={(event) => setDraft({ ...draft, action: event.target.value || undefined })}>
         <option value="">All event types</option>{actions.map((action) => <option key={action} value={action}>{auditLabel(action)}</option>)}
       </DenSelect></label>
       <label className="flex min-w-56 flex-1 flex-col gap-1">Search IDs<DenInput aria-label="Search IDs" placeholder="Operation, event, request, or resource ID" title="Exact operation, event, request, or resource ID" maxLength={255} value={draft.searchId ?? ""} onChange={(event) => setDraft({ ...draft, searchId: event.target.value })} /></label>
@@ -126,7 +130,7 @@ export function AuditLogsContent({ scope, members }: { scope: AuditScope; member
       {query.isError ? <AuditReadFailure retained={Boolean(query.data)} verifiedAt={query.dataUpdatedAt} retry={() => { void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch()); }} busy={query.isFetching} /> : null}
       {query.isPending ? <AuditSkeleton /> : operations.length ? <DenTable<AuditOperationSummary> density="compact" rows={operations} getRowKey={(operation) => operation.id} columns={[
         { key: "action", header: "Operation", render: (operation) => <span className="font-medium">{auditLabel(operation.action)}</span> },
-        { key: "actor", header: "Actor", render: (operation) => auditActorLabel(operation.initiatingActor, members) },
+        { key: "actor", header: "Actor", render: (operation) => auditActorLabel(operation.initiatingActor, members, operation.origin) },
         { key: "origin", header: "Origin", render: (operation) => <>{auditOriginLabels[operation.origin]}{operation.originTrust === "reported" ? <span className="block text-xs text-[var(--dls-text-secondary)]">Reported origin</span> : null}</> },
         { key: "started", header: "Started", render: (operation) => <AuditTime value={operation.startedAt} /> },
         { key: "outcome", header: "Result", render: (operation) => <AuditOutcome outcome={operation.outcome} /> },

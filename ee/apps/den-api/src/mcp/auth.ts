@@ -134,6 +134,21 @@ function readStringClaim(payload: Record<string, unknown>, claim: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
+/**
+ * Non-secret identifier of the credential behind a principal, for audit
+ * attribution: the OAuth grant id, else the headless-run token row id, else the
+ * OAuth client id (JWT `client_id`/`azp`). Never token material.
+ */
+export function mcpPrincipalCredentialId(principal: McpPrincipal): string | null {
+  const payload = principal.payload
+  const grantId = readStringClaim(payload, DEN_MCP_GRANT_ID_CLAIM)
+  if (grantId) return `grant:${grantId}`
+  const runTokenId = payload.client_id === DEN_MCP_HEADLESS_RUN_CLIENT_ID ? readStringClaim(payload, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM) : null
+  if (runTokenId) return `run_token:${runTokenId}`
+  const clientId = readStringClaim(payload, "client_id") ?? readStringClaim(payload, "azp")
+  return clientId ? `client:${clientId}` : null
+}
+
 function readTokenAudiences(payload: Record<string, unknown>) {
   const audience = payload.aud
   if (typeof audience === "string" && audience.trim()) return [audience.trim()]
