@@ -23,6 +23,14 @@ const sendSchema = z
     attachments: z.array(fileIdSchema).max(20).optional(),
   })
   .strict()
+const editSchema = z
+  .object({
+    newId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+    text: z.string().trim().max(20_000),
+    timeZone: z.string().max(64).optional(),
+    attachments: z.array(fileIdSchema).max(20).optional(),
+  })
+  .strict()
 const uploadQuerySchema = z.object({ name: z.string().trim().min(1).max(255), timeZone: z.string().max(64).optional() })
 const threadQuerySchema = z.object({ turns: z.coerce.number().int().min(1).max(200).optional() })
 /** Raster images open inline (thumbnails); everything else always downloads, so no file renders as a page. */
@@ -156,6 +164,42 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const member = c.get("member")
     try {
       return c.json(await workbotFor(member).stop(actorOf(member)))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** Deletes one of the person's messages and Workbot's answer to it. */
+  app.delete("/v1/workbot/messages/:id", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    try {
+      const result = await workbotFor(member).deleteMessage(actorOf(member), c.req.param("id"))
+      if (!result.ok) return c.json({ error: result.code }, result.code === "busy" ? 409 : 404)
+      return c.json({ ok: true as const })
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** Edits one of the person's messages: what came after it is replaced by Workbot's answer to the edit. */
+  app.post("/v1/workbot/messages/:id/edit", async (c) => {
+    const body = editSchema.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    if (!body.data.text && !body.data.attachments?.length) return c.json({ error: "invalid_request", message: "Send text or a file." }, 400)
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    const retryAfter = rateLimited(member.den.memberId)
+    if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
+    try {
+      const result = await workbotFor(member).editMessage(actorOf(member), { id: c.req.param("id"), ...body.data })
+      if (!result.ok) {
+        const status = result.code === "busy" ? 409 : result.code === "unknown_message" ? 404 : result.code === "unknown_file" ? 400 : 429
+        return c.json({ error: result.code }, status)
+      }
+      return c.json({ ok: true as const }, 202)
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
       throw error

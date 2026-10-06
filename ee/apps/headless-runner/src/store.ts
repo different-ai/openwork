@@ -365,6 +365,36 @@ export class Store {
     return Number(this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id).changes) > 0
   }
 
+  /**
+   * Removes a message from the conversation with everything it led to: its transcript, the background tasks it
+   * started and their reports. With `andAfter`, every message sent after it goes too (editing a message replays the
+   * conversation from there). Returns the removed message ids; null when one of them is still queued or running,
+   * so nothing is removed from under a live answer.
+   */
+  deleteTurns(sessionId: string, messageId: string, options: { andAfter?: boolean } = {}): string[] | null {
+    const turns = this.listTurns(sessionId)
+    const rootOf = (id: string) => id.split(".")[0] ?? id
+    const index = turns.findIndex((turn) => turn.messageId === messageId)
+    if (index === -1) return []
+    // The conversation's own messages from here on; tasks and reports go with the message that started them.
+    const roots = new Set(
+      options.andAfter ? turns.slice(index).filter((turn) => turn.kind === undefined).map((turn) => turn.messageId) : [rootOf(messageId)],
+    )
+    const removed = turns.filter((turn) => roots.has(rootOf(turn.messageId)))
+    if (removed.some((turn) => ACTIVE.has(turn.status))) return null
+    const ids = removed.map((turn) => turn.messageId)
+    this.transaction(() => {
+      const deleteMessages = this.db.prepare("DELETE FROM messages WHERE session_id = ? AND message_id = ?")
+      const deleteTurn = this.db.prepare("DELETE FROM turns WHERE session_id = ? AND message_id = ?")
+      for (const id of ids) {
+        deleteMessages.run(sessionId, id)
+        deleteTurn.run(sessionId, id)
+      }
+    })
+    for (const id of ids) this.onChange?.(sessionId, id)
+    return ids
+  }
+
   getTurn(sessionId: string, messageId: string): Turn | null {
     const row = this.db.prepare("SELECT * FROM turns WHERE session_id = ? AND message_id = ?").get(sessionId, messageId)
     return row ? toTurn(row) : null

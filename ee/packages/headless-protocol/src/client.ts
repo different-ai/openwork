@@ -381,6 +381,17 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      * the session. `reached` is the runner answering; `stopped` is whether
      * anything was still running or queued to stop.
      */
+    /**
+     * Removes a message and what it led to; `andAfter` removes every later message too (editing replays from there).
+     * Fails with `turn_busy` (409) while one of them is still queued or running.
+     */
+    async deleteTurns(sessionId: string, messageId: string, options: { andAfter?: boolean } = {}): Promise<RunnerResult<{ removed: string[] }>> {
+      const { status, payload } = await request(deps, "DELETE", `${sessionPath(sessionId)}/turns/${encodeURIComponent(messageId)}${options.andAfter ? "?after=1" : ""}`)
+      const parsed = z.object({ removed: z.array(z.string()) }).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false, status, error: errorCode(payload, "runner_unavailable") }
+      return { ok: true, value: parsed.data }
+    },
+
     async abort(sessionId: string, messageId?: string): Promise<{ reached: boolean; stopped: boolean }> {
       const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/abort`, messageId ? { messageId } : {})
       const parsed = z.object({ accepted: z.boolean() }).safeParse(payload)

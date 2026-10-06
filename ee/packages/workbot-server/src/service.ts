@@ -243,6 +243,41 @@ export async function sendWorkbotMessage(
   return { ok: true as const }
 }
 
+/** One of the person's own messages, by the page's id: never a task, a report or Workbot's hello. */
+const MESSAGE_ID = /^[A-Za-z0-9_-]{8,64}$/
+
+/**
+ * Deletes one of the person's messages with Workbot's answer to it (and anything that answer started), so it is
+ * gone from the conversation and from what Workbot remembers of it.
+ */
+export async function deleteWorkbotMessage(actor: WorkbotActor, id: string, deps: WorkbotDeps) {
+  if (!MESSAGE_ID.test(id)) return { ok: false as const, code: "unknown_message" as const }
+  const removed = await clientOf(deps).deleteTurns(workbotSessionId(actor.organizationId, actor.memberId), `${WORKBOT_MESSAGE_PREFIX}${id}`)
+  if (!removed.ok && removed.status === 409) return { ok: false as const, code: "busy" as const }
+  if (!removed.ok && removed.status === 404) return { ok: false as const, code: "unknown_message" as const }
+  if (!removed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  return { ok: true as const }
+}
+
+/**
+ * Edits one of the person's messages: it and everything after it make way for the edited message, which Workbot
+ * answers fresh, as if it had been sent that way.
+ */
+export async function editWorkbotMessage(
+  actor: WorkbotActor,
+  input: { id: string; newId: string; text: string; timeZone?: string; attachments?: string[] },
+  deps: WorkbotDeps,
+) {
+  if (!MESSAGE_ID.test(input.id) || !MESSAGE_ID.test(input.newId)) return { ok: false as const, code: "unknown_message" as const }
+  const removed = await clientOf(deps).deleteTurns(workbotSessionId(actor.organizationId, actor.memberId), `${WORKBOT_MESSAGE_PREFIX}${input.id}`, {
+    andAfter: true,
+  })
+  if (!removed.ok && removed.status === 409) return { ok: false as const, code: "busy" as const }
+  if (!removed.ok && removed.status === 404) return { ok: false as const, code: "unknown_message" as const }
+  if (!removed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  return sendWorkbotMessage(actor, { id: input.newId, text: input.text, timeZone: input.timeZone, attachments: input.attachments }, deps)
+}
+
 /** A background task's page id: the id of the message that started it, then `.t<number>`. */
 const TASK_ID = /^[A-Za-z0-9_:-]{1,100}\.t\d{1,3}$/
 
@@ -319,6 +354,9 @@ export function createWorkbot(deps: WorkbotDeps) {
     send: (actor: WorkbotActor, input: { id: string; text: string; timeZone?: string; attachments?: string[] }) => sendWorkbotMessage(actor, input, deps),
     stop: (actor: WorkbotActor) => stopWorkbot(actor, deps),
     stopTask: (actor: WorkbotActor, taskId: string) => stopWorkbotTask(actor, taskId, deps),
+    deleteMessage: (actor: WorkbotActor, id: string) => deleteWorkbotMessage(actor, id, deps),
+    editMessage: (actor: WorkbotActor, input: { id: string; newId: string; text: string; timeZone?: string; attachments?: string[] }) =>
+      editWorkbotMessage(actor, input, deps),
     openEvents: (actor: WorkbotActor, signal: AbortSignal) => openWorkbotEvents(actor, signal, deps),
     uploadFile: (actor: WorkbotActor, input: { name: string; mediaType: string; bytes: ArrayBuffer; timeZone?: string }) => uploadWorkbotFile(actor, input, deps),
     listFiles: (actor: WorkbotActor) => listWorkbotFiles(actor, deps),

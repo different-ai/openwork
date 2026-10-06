@@ -300,6 +300,18 @@ export function createApp(input: {
     return c.json({ state: result.state, turn: result.turn }, 202)
   })
 
+  // Removes a message and what it led to (its answer, tasks and reports); `after=1` removes every later message too,
+  // for editing a message. Refused while any of them is still queued or running.
+  app.delete("/v1/sessions/:id/turns/:messageId", (c) => {
+    const sessionId = c.req.param("id")
+    if (!store.getSession(sessionId)) return c.json({ error: "unknown_session" }, 404)
+    const messageId = messageIdSchema.safeParse(c.req.param("messageId"))
+    if (!messageId.success) return c.json({ error: "invalid_request" }, 400)
+    const removed = store.deleteTurns(sessionId, messageId.data, { andAfter: c.req.query("after") === "1" })
+    if (removed === null) return c.json({ error: "turn_busy" }, 409)
+    return c.json({ removed })
+  })
+
   app.post("/v1/sessions/:id/abort", async (c) => {
     if (!store.getSession(c.req.param("id"))) return c.json({ error: "unknown_session" }, 404)
     const body = abortBody.safeParse(await c.req.json().catch(() => ({})))

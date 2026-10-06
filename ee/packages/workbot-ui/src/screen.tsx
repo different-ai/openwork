@@ -1,10 +1,12 @@
 "use client";
 
-import { ArrowUp, Check, FileText, Lock } from "lucide-react";
+import { ArrowUp, Check, Copy, FileText, Lock, Pencil, Trash2 } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import {
+  useDeleteWorkbotMessage,
+  useEditWorkbotMessage,
   useSendWorkbotMessage,
   useStartWorkbot,
   useStopWorkbot,
@@ -65,6 +67,10 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   const thread = useWorkbotThread({ turns: turnWindow, awaiting: greetingAwaited || pending.some((entry) => !entry.failed), live: stream.connected });
   const send = useSendWorkbotMessage();
   const stop = useStopWorkbot();
+  const removeMessage = useDeleteWorkbotMessage();
+  const editMessage = useEditWorkbotMessage();
+  // Messages deleted or replaced by an edit leave the page at once; the conversation catches up on its next read.
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const uploads = useUploads();
   const data = thread.data?.available ? thread.data : null;
   // The open file at its newest version: when Workbot revises it, the preview follows (same id, newer updatedAt).
@@ -94,6 +100,13 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     if (welcome === "done" && hello?.greeting && hello.sentAt) rememberWelcomed(hello.sentAt);
   }, [data, welcome]);
 
+  // Once the conversation no longer has a hidden message, it needn't be hidden any more.
+  useEffect(() => {
+    if (!data || hidden.size === 0) return;
+    const present = new Set(data.turns.map((turn) => turn.id));
+    if ([...hidden].some((id) => !present.has(id))) setHidden((current) => new Set([...current].filter((id) => present.has(id))));
+  }, [data, hidden]);
+
   // A sent message stays on screen as written until the conversation shows it.
   useEffect(() => {
     if (!data) return;
@@ -119,6 +132,39 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
         onSuccess: () => void queryClient.invalidateQueries({ queryKey: workbotFilesKey }),
       });
     });
+  };
+
+  /** Deletes one of the person's messages and the answer to it; it reappears if that fails. */
+  const deleteTurn = (turn: WorkbotTurn, onError: (message: string) => void) => {
+    setHidden((current) => new Set([...current, turn.id]));
+    removeMessage.mutate(turn.id, {
+      onError: (error) => {
+        setHidden((current) => new Set([...current].filter((id) => id !== turn.id)));
+        onError(error.message);
+      },
+    });
+  };
+
+  /** Sends an edited message in place of the old one: it and everything after it make way for the new answer. */
+  const editTurn = (turn: WorkbotTurn, text: string, onError: (message: string) => void) => {
+    const trimmed = text.trim();
+    if (!trimmed && turn.attachments.length === 0) return;
+    const turns = data?.turns ?? [];
+    const from = turns.findIndex((entry) => entry.id === turn.id);
+    const replaced = from === -1 ? [turn.id] : turns.slice(from).map((entry) => entry.id);
+    const id = newMessageId();
+    setHidden((current) => new Set([...current, ...replaced]));
+    setPending((current) => [...current, { id, text: trimmed, sentAt: Date.now(), uploads: [], failed: null }]);
+    editMessage.mutate(
+      { id: turn.id, newId: id, text: trimmed, attachments: turn.attachments.map((file) => file.id) },
+      {
+        onError: (error) => {
+          setHidden((current) => new Set([...current].filter((entry) => !replaced.includes(entry))));
+          setPending((current) => current.filter((entry) => entry.id !== id));
+          onError(error.message);
+        },
+      },
+    );
   };
 
   if (thread.isPending) return <WorkbotSkeleton />;
@@ -196,7 +242,10 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
       ) : (
         <>
           <Conversation
-            turns={data.turns}
+            turns={hidden.size ? data.turns.filter((turn) => !hidden.has(turn.id)) : data.turns}
+            canChange={!busy}
+            onDelete={deleteTurn}
+            onEdit={editTurn}
             pending={pending}
             live={stream.live}
             hasEarlier={data.hasEarlier}
@@ -456,6 +505,10 @@ function Conversation(props: {
   onSuggestion: (text: string) => void;
   /** Workbot is about to say hello (right after the welcome). */
   starting: boolean;
+  /** Whether the person's messages can be edited or deleted now (not while Workbot is answering). */
+  canChange: boolean;
+  onDelete: (turn: WorkbotTurn, onError: (message: string) => void) => void;
+  onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -534,6 +587,9 @@ function Conversation(props: {
                   {stamp ? <Timestamp at={row.at} /> : null}
                   {row.turn ? (
                     <TurnView
+                      canChange={props.canChange}
+                      onDelete={props.onDelete}
+                      onEdit={props.onEdit}
                       turn={row.turn}
                       live={props.live[row.turn.id] ?? null}
                       latest={row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
@@ -592,6 +648,163 @@ function UserBubble({ text, muted = false, reaction = null }: { text: string; mu
           </span>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+const iconButton =
+  "grid size-7 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)] disabled:opacity-40";
+
+/**
+ * One of the person's own messages, which they can change: Edit and Delete appear beside it on hover or focus
+ * (always on touch). Editing happens in the bubble itself and sends the edit in place of the original; deleting
+ * asks once, right there. Neither while Workbot is answering.
+ */
+function OwnMessage(props: {
+  turn: WorkbotTurn;
+  canChange: boolean;
+  onDelete: (turn: WorkbotTurn, onError: (message: string) => void) => void;
+  onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
+}) {
+  const { turn } = props;
+  const [mode, setMode] = useState<"idle" | "editing" | "confirming">("idle");
+  const [draft, setDraft] = useState(turn.text);
+  const [error, setError] = useState<string | null>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const element = field.current;
+    if (mode !== "editing" || !element) return;
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 240)}px`;
+  }, [draft, mode]);
+  useEffect(() => {
+    if (mode !== "editing") return;
+    const element = field.current;
+    element?.focus();
+    element?.setSelectionRange(element.value.length, element.value.length);
+  }, [mode]);
+
+  const save = () => {
+    const text = draft.trim();
+    if (!text) return;
+    setMode("idle");
+    setError(null);
+    if (text === turn.text.trim()) return;
+    props.onEdit(turn, text, setError);
+  };
+
+  if (mode === "editing") {
+    return (
+      <div className="flex justify-end">
+        <div className="flex w-full max-w-[85%] flex-col gap-2 sm:max-w-[480px]">
+          <textarea
+            ref={field}
+            value={draft}
+            rows={1}
+            aria-label="Edit your message"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setDraft(turn.text);
+                setMode("idle");
+              } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                save();
+              }
+            }}
+            className="w-full resize-none rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring),0_4px_14px_-6px_#0116271a] outline-none focus:shadow-[0_0_0_1.5px_var(--wb-ink),0_4px_14px_-6px_#0116271a]"
+          />
+          <div className="flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(turn.text);
+                setMode("idle");
+              }}
+              className="h-8 rounded-full px-3 text-[13px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={!draft.trim()}
+              className="h-8 rounded-full bg-[var(--wb-ink)] px-3.5 text-[13px] font-medium text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group/own flex flex-col items-end gap-1">
+      <div className="flex w-full items-center justify-end gap-1">
+        {props.canChange && mode === "idle" ? (
+          <div className="flex shrink-0 items-center opacity-0 transition-opacity duration-150 group-hover/own:opacity-100 group-focus-within/own:opacity-100 [@media(hover:none)]:opacity-100">
+            <button type="button" aria-label="Edit message" title="Edit" onClick={() => setMode("editing")} className={iconButton}>
+              <Pencil size={14} strokeWidth={1.75} aria-hidden />
+            </button>
+            <button type="button" aria-label="Delete message" title="Delete" onClick={() => setMode("confirming")} className={iconButton}>
+              <Trash2 size={14} strokeWidth={1.75} aria-hidden />
+            </button>
+          </div>
+        ) : null}
+        <UserBubble text={turn.text} reaction={turn.reaction} />
+      </div>
+      {mode === "confirming" ? (
+        <div className="workbot-row-enter flex items-center gap-1.5 pr-1 text-[13px] leading-4 text-[var(--wb-muted)]" role="group" aria-label="Delete this message">
+          <span className="pr-1">Delete this message and its answer?</span>
+          <button
+            type="button"
+            onClick={() => setMode("idle")}
+            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode("idle");
+              setError(null);
+              props.onDelete(turn, setError);
+            }}
+            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-danger)] transition-colors duration-150 hover:bg-[#c4302b14] focus-visible:outline-2 focus-visible:outline-[var(--wb-danger)]"
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
+      {error ? <p className="pr-1 text-[13px] leading-4 text-[var(--wb-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
+/** Copies one of Workbot's answers, with a moment of "Copied" to say it worked. */
+function CopyAnswer({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <div className="flex h-7 items-center pl-0.5 opacity-0 transition-opacity duration-150 group-hover/answer:opacity-100 group-focus-within/answer:opacity-100 [@media(hover:none)]:opacity-100">
+      <button
+        type="button"
+        aria-label={copied ? "Copied" : "Copy answer"}
+        title={copied ? "Copied" : "Copy"}
+        onClick={() => {
+          void navigator.clipboard.writeText(text).then(() => setCopied(true)).catch(() => undefined);
+        }}
+        className={iconButton}
+      >
+        {copied ? <Check size={14} strokeWidth={2} aria-hidden /> : <Copy size={14} strokeWidth={1.75} aria-hidden />}
+      </button>
     </div>
   );
 }
@@ -931,6 +1144,9 @@ function helloSoFar(text: string, working: LiveText["working"] | null) {
 }
 
 function TurnView(props: {
+  canChange: boolean;
+  onDelete: (turn: WorkbotTurn, onError: (message: string) => void) => void;
+  onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
   turn: WorkbotTurn;
   live: LiveText | null;
   latest: boolean;
@@ -962,20 +1178,27 @@ function TurnView(props: {
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
-      <UserBubble text={turn.text} reaction={turn.reaction} />
+      {turn.text && !turn.greeting && turn.status !== "queued" ? (
+        <OwnMessage turn={turn} canChange={props.canChange} onDelete={props.onDelete} onEdit={props.onEdit} />
+      ) : (
+        <UserBubble text={turn.text} reaction={turn.reaction} />
+      )}
       {texts.length > 0 || liveText || showActivity ? <Gap /> : null}
       {working ? null : <UsedLine steps={allSteps} />}
-      {(!working && tail !== null ? texts.slice(0, -1) : texts).map((part) => (
-        <AssistantBubble key={part.key}>
-          <WorkbotMarkdown text={part.text} />
-        </AssistantBubble>
-      ))}
-      {/* One slot for the text being written, kept when the answer is stored, so the reveal carries on. */}
-      {tail ? (
-        <AssistantBubble>
-          <StreamingText text={tail} />
-        </AssistantBubble>
-      ) : null}
+      <div className="group/answer flex flex-col">
+        {(!working && tail !== null ? texts.slice(0, -1) : texts).map((part) => (
+          <AssistantBubble key={part.key}>
+            <WorkbotMarkdown text={part.text} />
+          </AssistantBubble>
+        ))}
+        {/* One slot for the text being written, kept when the answer is stored, so the reveal carries on. */}
+        {tail ? (
+          <AssistantBubble>
+            <StreamingText text={tail} />
+          </AssistantBubble>
+        ) : null}
+        {turn.status === "done" && texts.length > 0 ? <CopyAnswer text={texts.map((part) => part.text).join("\n\n")} /> : null}
+      </div>
       {showActivity ? (
         turn.status === "queued" ? (
           <QuietLine label="Up next" />

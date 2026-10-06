@@ -291,6 +291,44 @@ export function useStartWorkbot() {
   });
 }
 
+/** What went wrong deleting or editing a message, in the person's words. */
+function messageChangeError(status: number, payload: unknown, fallback: string) {
+  if (status === 409 && typeof payload === "object" && payload !== null && "error" in payload && payload.error === "busy") {
+    return "Workbot is still working on this. Stop it first.";
+  }
+  return getErrorMessage(payload, fallback);
+}
+
+/** Deletes one of the person's messages and Workbot's answer to it. */
+export function useDeleteWorkbotMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { response, payload } = await requestJson(`/v1/workbot/messages/${encodeURIComponent(id)}`, { method: "DELETE" }, 15_000);
+      if (!response.ok) throw new Error(messageChangeError(response.status, payload, "Couldn't delete it."));
+    },
+    onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
+  });
+}
+
+/** Edits one of the person's messages; Workbot answers the edited message fresh, from that point on. */
+export function useEditWorkbotMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; newId: string; text: string; attachments?: string[] }) => {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const { id, ...body } = input;
+      const { response, payload } = await requestJson(
+        `/v1/workbot/messages/${encodeURIComponent(id)}/edit`,
+        { method: "POST", body: JSON.stringify({ ...body, timeZone }) },
+        30_000,
+      );
+      if (!response.ok) throw new Error(messageChangeError(response.status, payload, "That didn't send."));
+    },
+    onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
+  });
+}
+
 /** Stops one background task from its card. */
 export function useStopWorkbotTask() {
   const queryClient = useQueryClient();
