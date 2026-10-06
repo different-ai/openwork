@@ -714,7 +714,7 @@ function OwnMessage(props: {
                 save();
               }
             }}
-            className="w-full resize-none rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring),0_4px_14px_-6px_#0116271a] outline-none focus:shadow-[0_0_0_1.5px_var(--wb-ink),0_4px_14px_-6px_#0116271a]"
+            className="w-full resize-none rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-composer-shadow)] outline-none"
           />
           <div className="flex items-center justify-end gap-1.5">
             <button
