@@ -11,6 +11,31 @@ The document is also consumed at runtime: `src/mcp/catalog.ts` derives the MCP
 `search_capabilities` catalog from it, so summaries, descriptions, tags and
 request schemas are user-facing text for agents, not just for Swagger.
 
+## Fast contract workflow
+
+Run `pnpm den:contract` after editing Den routes/shared schemas and before
+committing. It builds the MCP App assets once, snapshots the API once, and feeds
+that snapshot directly to SDK generation. Commit both generated outputs with
+the source change; there is no repair-bot commit or second CI run.
+
+`openapi.json` uses one path/schema per line, retains route-registration order,
+and ends with a newline. This allows unrelated edits to merge without expanding
+nested schemas into tens of thousands of lines or reordering SDK methods.
+It is still generated JSON: do not edit it by hand.
+
+For automatic generation during commits, opt in with `pnpm hooks:install`.
+Unrelated commits skip generation. API/schema or generated-contract commits
+regenerate and stage only `packages/docs/openapi.json` and
+`packages/sdk/src/gen/**`. Unstaged/untracked contract inputs or outputs stop the
+hook before it writes anything: finish staging the intended source first. The
+installer refuses to replace an existing hook setup. Disable the hook with
+`git config --local --unset core.hooksPath`.
+
+If a merge still conflicts, resolve source conflicts, run `pnpm den:contract`,
+and stage the regenerated outputs. Never choose ours/theirs for the whole
+contract or regenerate migration snapshots. Hooks are optional and bypassable;
+CI freshness checks remain the authority. No Warden or CI exemption is added.
+
 ## How the gate works
 
 | Check | Where | Fails the build when |
