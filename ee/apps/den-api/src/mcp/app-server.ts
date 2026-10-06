@@ -39,7 +39,7 @@ import { executeCapabilityWithBudget } from "./agent.js"
 import { callMcpAppTool } from "./app-tools.js"
 import type { McpPrincipal } from "./auth.js"
 import { createCapabilityRegistryContext, type ExecuteCapabilityToolResult } from "./capability-registry.js"
-import { resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { resolveMcpMemberIdentity } from "../core/mcp/member-identity.js"
 import { getCatalog } from "./index.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 

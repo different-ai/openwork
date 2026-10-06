@@ -8,7 +8,7 @@ import { connectionActionAppResourceUri, connectionActionIntentSchema, connectio
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { probeExternalConnectionStatus } from "./external-capabilities.js"
 import { connectedConnectionActionPayload, connectionActionPayloadFromStatus, connectionActionTextFallback } from "./connection-action.js"
-import { RESOURCE_MIME_TYPE, registerAppResource, registerAppTool } from "./mcp-app-v2.js"
+import { RESOURCE_MIME_TYPE, registerAppResource, registerAppTool } from "../core/mcp/mcp-app-v2.js"
 
 const inputSchema = z.object({ connectionId: z.string().trim().min(1).max(160) }).strict()
 const intentInputSchema = inputSchema.extend({ action: z.enum(["authenticate", "skip"]) })

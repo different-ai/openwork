@@ -27,7 +27,7 @@ import {
 } from "@openwork/types/mcp-app"
 import { db } from "./db.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
-import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
+import type { McpMemberIdentity } from "./core/mcp/member-identity.js"
 import { buildMarketplaceCapabilityName, listAccessibleMarketplaceCapabilityReferences, parseMarketplaceCapabilityName } from "./mcp/marketplace-capabilities.js"
 import { PluginArchAuthorizationError, type PluginArchActorContext } from "./core/sharing/resource-access.js"
 import { requirePluginArchResourceRole } from "./routes/org/plugin-system/access.js"
