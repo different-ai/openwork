@@ -18,6 +18,8 @@ export default defineConfig({
     "audit-log": "src/audit-log.ts",
     "organization-features": "src/organization-features.ts",
     "audit-accounting": "src/audit-accounting.ts",
+    "organization-modules": "src/organization-modules.ts",
+    "license-snapshot": "src/license-snapshot.ts",
   },
   format: ["esm"],
   dts: true,

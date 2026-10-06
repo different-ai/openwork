@@ -1,4 +1,4 @@
-import { bigint, int, mysqlTable, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, int, json, mysqlTable, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, timestamps } from "../columns"
 
 export const RateLimitTable = mysqlTable(
@@ -22,5 +22,15 @@ export const AdminAllowlistTable = mysqlTable(
   },
   (table) => [uniqueIndex("admin_allowlist_email").on(table.email)],
 )
+
+/**
+ * Self-hosted instance entitlement snapshot (discovery §7.2, the one table
+ * exception). Keyed by hex SHA-256 of `licenseKey + "\n" + normalizedBaseUrl`,
+ * never the key itself; kept at one row by `writeLicenseSnapshot`.
+ */
+export const LicenseSnapshotTable = mysqlTable("license_snapshot", {
+  fingerprint: varchar("fingerprint", { length: 64 }).notNull().primaryKey(),
+  snapshot: json("snapshot").$type<unknown>().notNull(),
+})
 
 export const rateLimit = RateLimitTable
