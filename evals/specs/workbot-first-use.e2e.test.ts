@@ -52,12 +52,13 @@ test("a member understands Workbot and keeps chatting while a real background jo
     await user.see({ text: "Your launch brief is ready." }, { timeoutMs: 90_000 });
     await user.notSee({ role: "button", text: "Stop" });
     expect(JSON.stringify(await world.files())).toContain("launch-brief.md");
+    expect(world.witness().reportWritesRejected).toBe(true);
     await user.reload();
     await user.see({ text: world.hello });
     await user.see({ text: "Your launch brief is ready." });
     await user.notSee({ role: "button", text: "Get started" });
     await user.screenshot();
-    evidence.recordAssertionEvidence("The result remains available after the job ends", "The saved launch-brief.md and completion message remain, and reload preserves the greeting without repeating onboarding.", true);
+    evidence.recordAssertionEvidence("The result remains available without granting a report permission to act", "The saved launch-brief.md and completion message remain; a write attempted by the report turn was refused. Reload preserves the greeting.", true);
   });
   await step("the member stops another job without losing their saved result", async () => {
     await user.type(composer, world.job);

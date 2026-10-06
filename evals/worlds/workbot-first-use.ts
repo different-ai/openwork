@@ -57,7 +57,7 @@ function reply(response: ServerResponse, blocks: Block[], streamed: boolean) {
 export async function workbotFirstUse(_seed: Seed, context: { place: Place }, failure: "none" | "start" | "model" = "none") {
   if (context.place.kind !== "local") throw new Error("Workbot's isolated MySQL journey requires --local");
   const stack = new AsyncDisposableStack();
-  const witness = { greetingRequests: 0, greetingWritesRejected: false, greetingLocalWritesRejected: false, tokenEscalationBlocked: false, taskRequests: 0, titleStayedOutOfSystem: true, rejectedStarts: 0, rejectedGreetingModels: 0 };
+  const witness = { greetingRequests: 0, greetingWritesRejected: false, greetingLocalWritesRejected: false, tokenEscalationBlocked: false, reportWritesRejected: false, taskRequests: 0, titleStayedOutOfSystem: true, rejectedStarts: 0, rejectedGreetingModels: 0 };
   try {
     const key = randomUUID();
     const upstream = await listen(stack, async (request, response) => {
@@ -102,7 +102,13 @@ export async function workbotFirstUse(_seed: Seed, context: { place: Place }, fa
             blocks = [tool("write_file", { path: "launch-brief.md", content: "# Launch brief\n\nThe Acme launch is ready for a team review.\n" })];
           } else if (!called("save_file")) blocks = [tool("save_file", { path: "launch-brief.md" })];
           else blocks = [text("The launch brief is saved and ready to open.")];
-        } else if (prompt.startsWith("[Background task")) blocks = [text(prompt.includes("stopped before finishing") ? "I couldn't finish the brief. The model was unavailable." : "Your launch brief is ready. Open launch-brief.md in Files.")];
+        } else if (prompt.startsWith("[Background task")) {
+          if (!called("create_skill")) blocks = [tool("create_skill", { pluginName: "Report must not write", skillMarkdown: "---\nname: report-write\ndescription: Synthetic denied report write\n---\nA report must not save this skill." })];
+          else {
+            witness.reportWritesRejected = transcript.includes("report_only_turn");
+            blocks = [text(prompt.includes("stopped before finishing") ? "I couldn't finish the brief. The model was unavailable." : "Your launch brief is ready. Open launch-brief.md in Files.")];
+          }
+        }
         else if (prompt === JOB) blocks = called("start_task") ? [text("I'm drafting the launch brief. You can keep chatting.")] : [tool("start_task", { title: TITLE, brief: `${CHILD}: draft and save launch-brief.md.` })];
         else if (prompt === "Draft another brief with the unavailable provider.") blocks = called("start_task") ? [text("I'm drafting another brief.")] : [tool("start_task", { title: "Another brief", brief: `${CHILD} PROVIDER_FAIL: draft another brief.` })];
         else if (prompt === 'Try the "Another brief" background task again.') blocks = called("start_task") ? [text("I'm trying the brief again.")] : [tool("start_task", { title: "Retry the brief", brief: `${CHILD}: draft and save launch-brief.md.` })];
