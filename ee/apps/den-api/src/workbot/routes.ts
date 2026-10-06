@@ -165,12 +165,16 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       responses: {
         200: jsonResponse("The connections.", workbotConnectionsSchema),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
+        403: jsonResponse("Workbot is off for this workspace.", signedOutSchema),
       },
     }),
     tokenRoute,
     async (c) => {
       const resolved = await resolve(c.req.raw.headers)
       if (resolved instanceof Response) return resolved
+      if (!(await organizationFeatureEnabled(resolved.organization.id, "workbot"))) {
+        return c.json({ error: "workbot_not_enabled", message: "Workbot is off for this workspace." }, 403)
+      }
       const organizationContext = await getOrganizationContextForUser({ userId: normalizeDenTypeId("user", resolved.principal.userId), organizationId: resolved.organization.id })
       if (!organizationContext) return c.json({ connections: [] })
       const memberTeams = await listTeamsForMember({ organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) })

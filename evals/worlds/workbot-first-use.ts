@@ -118,6 +118,7 @@ export async function workbotFirstUse(_seed: Seed, context: { place: Place }, fa
       } catch { response.writeHead(400).end(); }
     });
     let denApi = "";
+    let greetingToken = "";
     const world = await bootWorkbot(stack, undefined, {
       live: false, upstream: { baseUrl: upstream, key, model: "workbot-journey" },
       runnerProxy: async (runnerUrl: string) => listen(stack, async (request, response) => {
@@ -129,6 +130,7 @@ export async function workbotFirstUse(_seed: Seed, context: { place: Place }, fa
         }
         const payload: unknown = body ? JSON.parse(body) : null;
         if (record(payload) && record(payload.credentials) && payload.credentials.readOnly === true && typeof payload.credentials.mcpToken === "string") {
+          greetingToken = payload.credentials.mcpToken;
           const escalation = await fetch(`${denApi}/v1/workbot/run-token`, { method: "POST", headers: { authorization: `Bearer ${payload.credentials.mcpToken}`, "content-type": "application/json" }, body: JSON.stringify({ readOnly: false }) });
           witness.tokenEscalationBlocked = escalation.status === 403;
           await escalation.arrayBuffer();
@@ -155,10 +157,16 @@ export async function workbotFirstUse(_seed: Seed, context: { place: Place }, fa
     }) });
     return {
       app, url: world.workbotUrl, hello: HELLO, job: JOB, title: TITLE,
+      den: world.den, orgId: world.orgId,
       witness: () => ({ ...witness }),
       thread: async () => (await login.call("/v1/workbot?turns=30")).json(),
       files: async () => (await login.call("/v1/workbot/files")).json(),
       anonymousStatus: async () => (await fetch(`${world.workbotUrl}/v1/workbot`)).status,
+      denConnections: async () => {
+        const response = await fetch(`${denApi}/v1/workbot/connections`, { headers: { authorization: `Bearer ${greetingToken}` } });
+        return { status: response.status, body: await response.json() };
+      },
+      appConnectionsStatus: async () => (await login.call("/v1/workbot/connections")).status,
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };
   } catch (error) { await stack.disposeAsync(); throw error; }

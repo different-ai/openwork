@@ -27980,6 +27980,13 @@ export type ListWorkbotConnectionsErrors = {
    * The token is missing, expired or revoked, or the membership ended.
    */
   401: UnauthorizedError;
+  /**
+   * Workbot is off for this workspace.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
 };
 
 export type ListWorkbotConnectionsError = ListWorkbotConnectionsErrors[keyof ListWorkbotConnectionsErrors];

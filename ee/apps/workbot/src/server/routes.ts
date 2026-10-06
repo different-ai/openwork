@@ -119,6 +119,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   /** The everyday apps to connect on the welcome screen; connecting happens in Den, in a new tab. */
   app.get("/v1/workbot/connections", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const member = c.get("member")
     const connections = await den.connections(member.accessToken).catch(() => null)
     if (!connections) return c.json({ connections: [] })

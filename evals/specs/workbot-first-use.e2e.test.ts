@@ -5,7 +5,7 @@ import { workbotFirstUse, workbotGreetingRecovery, workbotModelGreetingRecovery 
 const test = spec.world(workbotFirstUse, { resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, needs: { placement: "local" }, timeout: 900_000 });
 const composer = { label: "Message Workbot" };
 
-test("a member understands Workbot and keeps chatting while a real background job runs", async ({ world, user, probe, step, evidence }) => {
+test("a member understands Workbot and keeps chatting while a real background job runs", async ({ world, user, probe, seed, step, evidence }) => {
   await step("before: the member has no conversation or work in progress", async () => {
     await user.navigate(world.url);
     await user.see({ text: "I'm Workbot." });
@@ -91,6 +91,19 @@ test("a member understands Workbot and keeps chatting while a real background jo
     await user.see({ text: "I'm trying the brief again." });
     await user.screenshot();
     evidence.recordAssertionEvidence("Retry starts a new job from the member's explicit action", "The failed card's action sent the retry request and a new runner task is visible with Stop.", true);
+  });
+  await step("a workspace with Workbot disabled does not expose its connections", async () => {
+    await user.click({ role: "button", text: "Stop" });
+    const disabled = await seed.api(world.den.admin, `/v1/admin/organizations/${world.orgId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { workbot: false, headlessAutomations: false } }) });
+    expect(disabled.response.ok).toBe(true);
+    const connections = await world.denConnections();
+    expect(connections.status).toBe(403);
+    expect(JSON.stringify(connections.body)).not.toContain('"connections"');
+    await probe.eventually(() => world.appConnectionsStatus(), { within: 45_000, until: (status) => status === 409, label: "The Workbot host refreshes the workspace's disabled state" });
+    await user.reload();
+    await user.see({ text: "Workbot isn't on for your organization yet." });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Disabled Workbot refuses connection discovery before loading facts", "The member's Den request returns 403 with no connection data; the host returns 409 and shows the workspace as disabled.", true);
   });
 });
 
