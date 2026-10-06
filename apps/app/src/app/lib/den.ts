@@ -1000,10 +1000,9 @@ async function fetchRuntimeConfigDenApiUrl(baseUrl: string): Promise<string | nu
 
 async function resolveDenBootstrapConfigWithRuntimeApi(
   input: Parameters<typeof resolveDenBootstrapConfig>[0],
-  preserveExplicitApi = false,
 ): Promise<DenBootstrapConfig> {
   const resolved = resolveDenBootstrapConfig(input);
-  if (!isDesktopRuntime() || (preserveExplicitApi && input.apiBaseUrl)) {
+  if (!isDesktopRuntime()) {
     return resolved;
   }
 
@@ -1341,7 +1340,7 @@ export async function setDenBootstrapConfig(
       next.enterpriseActivation !== undefined
         ? next.enterpriseActivation
         : previous.enterpriseActivation,
-  }, Boolean(next.apiBaseUrl));
+  });
 
   if (isDesktopRuntime()) {
     // An explicit persist is a new authoritative bootstrap: retire any
@@ -1362,7 +1361,7 @@ export async function setDenBootstrapConfig(
       ...(normalized.enterpriseActivation ? { enterpriseActivation: normalized.enterpriseActivation } : {}),
     });
     
-    applyDesktopBootstrapConfig(await resolveDenBootstrapConfigWithRuntimeApi({ ...persisted, source: "file" }, Boolean(next.apiBaseUrl)));
+    applyDesktopBootstrapConfig(await resolveDenBootstrapConfigWithRuntimeApi({ ...persisted, source: "file" }));
   } else {
     applyDesktopBootstrapConfig(normalized);
   }

@@ -2079,7 +2079,6 @@ export function createRuntimeManager({
     engineState.opencodeUsername = config.opencodeUsername ?? null;
     engineState.opencodePassword = config.opencodePassword ?? null;
     engineState.execution = inProcessServer.managedOpencodeExecution ?? null;
-    engineState.managedPid = inProcessServer.managedOpencode.pid ?? null;
     engineState.child = null;
     engineState.childExited = false;
   }
@@ -2134,8 +2133,9 @@ export function createRuntimeManager({
           engineState.projectDir = safeProjectDir;
           await persistPreferredOpenworkPort(safeProjectDir, openworkServerState.port);
         }
-        // Adopt the current primary after rollover as well as first workspace setup.
-        adoptManagedEngineConnection();
+        // A server started before any workspace existed never learned its
+        // engine connection from a workspace; adopt it from the server.
+        if (!engineState.baseUrl) adoptManagedEngineConnection();
         return snapshotEngineState(engineState);
       }
     }
@@ -2207,8 +2207,6 @@ export function createRuntimeManager({
 
   async function engineInfo() {
     if (inProcessServer?.managedOpencode) {
-      // Preserve the unconfigured first-boot snapshot until workspace setup.
-      if (engineState.baseUrl) adoptManagedEngineConnection();
       engineState.managedPid = inProcessServer.managedOpencode.pid ?? null;
     }
     return { ...snapshotEngineState(engineState), lifecycleState };

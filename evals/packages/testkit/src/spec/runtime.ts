@@ -1087,14 +1087,6 @@ export class ProbeChannel implements Probe {
     return this.#runtime.call("probe", "connectorCatalog", "connectorCatalog", surface, () => readConnectorCatalog(surface));
   }
 
-  desktopBootstrap() {
-    const surface = requireSurface(this.#surface);
-    return this.#runtime.call("probe", "desktopBootstrap", "desktopBootstrap(<routing-only>)", surface, () => callFunctionOnSurface(surface, async () => {
-      const bootstrap = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
-      return { apiBaseUrl: bootstrap?.apiBaseUrl ?? null, sessionOriginPresent: Boolean(localStorage.getItem("openwork.den.sessionOrigin")) };
-    }, []));
-  }
-
   credentialInputState(selector: string, candidate = ""): Promise<CredentialInputState> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "credentialInputState", "credentialInputState(<masked>)", surface, async () => {
