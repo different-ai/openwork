@@ -35,5 +35,5 @@ The trusted `judge-vision` job in `pr-proof.yml` runs
 `evals/scripts/design-review-journeys.mjs` after judging screenshot claims.
 Notes go to the job summary and into the proof record; the review report shows
 them on each screenshot (count in the gallery, outlined regions and the notes
-in the viewer) and the evidence comment counts them. The step is
+in the viewer), and a manual `--publish` evidence comment counts them. The step is
 `continue-on-error`: a finding or a provider error never fails the job.
