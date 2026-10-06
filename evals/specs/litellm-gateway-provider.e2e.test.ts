@@ -449,6 +449,15 @@ test("an owner connects the team's LiteLLM proxy three ways, and each member's r
   expect(personalLog).toMatchObject({ input_tokens: 1000, output_tokens: 100, cost_micro_usd: null, spend_tracking: "disabled" });
   const bobPaste = await den(bob, orgId, `/v1/inference-providers/${personalId}/litellm/member-key`, { method: "PUT", body: { apiKey: ALICE_KEY } });
   expect(bobPaste.status).toBe(403);
+  // Only the "Can connect a LiteLLM key" grant lets someone connect. An admin grant of one
+  // team's group must not, or Bob's key could pull him into a broader group automatically.
+  const personalSetId = stringAt(rowsAt(recordAt(personal.body, "inferenceProvider"), "credentialSets")[0], "id");
+  const narrowGrant = await den(owner, orgId, `/v1/inference-providers/${personalId}/access-grants`, {
+    body: { modelGroupId: stringAt(pasted.body, "modelGroupId"), credentialSetId: personalSetId, audience: { type: "member", memberId: bobId } },
+  });
+  expect(narrowGrant.status).toBe(201);
+  const bobNarrowPaste = await den(bob, orgId, `/v1/inference-providers/${personalId}/litellm/member-key`, { method: "PUT", body: { apiKey: ALICE_KEY } });
+  expect(bobNarrowPaste.status).toBe(403);
   // Carol's key has no team. LiteLLM lists every model for it but serves only her own list.
   const carolPaste = await den(carol, orgId, `/v1/inference-providers/${personalId}/litellm/member-key`, { method: "PUT", body: { apiKey: CAROL_KEY } });
   expect(carolPaste.status).toBe(200);
@@ -459,7 +468,7 @@ test("an owner connects the team's LiteLLM proxy three ways, and each member's r
   expect(litellm.chats.at(-1)).toEqual({ key: CAROL_KEY, model: "claude-sonnet" });
   evidence.recordAssertionEvidence(
     "with each person's own key, Alice pastes hers once and her requests carry it; Bob, without access, cannot connect",
-    `A non-admin key was refused as the admin key (litellm_not_admin). Before: no models and 1 connect request. After pasting, Alice joined "LiteLLM · research" with the same ow_gw_ key; LiteLLM saw her own key for claude-sonnet; OpenWork logged tokens with no cost (spend tracking disabled). Bob's paste: HTTP ${bobPaste.status}.`,
+    `A non-admin key was refused as the admin key (litellm_not_admin). Before: no models and 1 connect request. After pasting, Alice joined "LiteLLM · research" with the same ow_gw_ key; LiteLLM saw her own key for claude-sonnet; OpenWork logged tokens with no cost (spend tracking disabled). Bob's paste: HTTP ${bobPaste.status}, and still HTTP ${bobNarrowPaste.status} after an admin grants him only the research group (only the "Can connect a LiteLLM key" grant allows connecting).`,
     true,
   );
   evidence.recordAssertionEvidence(

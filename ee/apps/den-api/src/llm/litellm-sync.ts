@@ -16,7 +16,7 @@
  * provider lock and recheck what they depend on.
  */
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
@@ -203,18 +203,26 @@ export function groupName(modelIds: string[], alias: string | null) {
   return alias ? `LiteLLM · ${alias}`.slice(0, 255) : `LiteLLM · ${modelIds.length} model${modelIds.length === 1 ? "" : "s"}`
 }
 
+/**
+ * Whether a member may connect their own LiteLLM key (personal) or have one
+ * created (issued). Only an admin grant of this provider's access group counts
+ * ("Can connect a LiteLLM key" / "Gets a LiteLLM key"). A grant of any other
+ * group, such as one team's models, never makes a member eligible: otherwise
+ * their key could pull them into a broader group through an automatic grant.
+ */
 export async function memberEligible(tx: GatewayTx | typeof db, provider: GatewayProvider, set: GatewaySet, memberId: GatewayMemberId, settings: LiteLlmSettings) {
+  const accessGroupId = settings.groups[SIGN_IN_GROUP_KEY]
+  if (!accessGroupId || !isDenTypeId("gatewayModelGroup", accessGroupId)) return false
   const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)
     .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt)))
   if (!member) return false
-  const issued = await tx.select({ grantId: GatewayLiteLlmIssuedKeyTable.access_grant_id }).from(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id))
-  const automatic = new Set([...Object.values(settings.members).flatMap((entry) => entry.grantId ? [entry.grantId] : []), ...issued.flatMap((row) => row.grantId ? [row.grantId] : [])])
   const rows = await tx.select({ grant: GatewayProviderAccessTable }).from(GatewayProviderAccessTable)
     .innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.status, "active")))
-    .where(and(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id), eq(GatewayProviderAccessTable.credential_set_id, set.id)))
+    .where(and(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id), eq(GatewayProviderAccessTable.credential_set_id, set.id),
+      eq(GatewayProviderAccessTable.model_group_id, accessGroupId)))
   const teams = await memberGatewayTeams(tx, provider.organization_id, memberId)
   return set.status === "active" && provider.status === "active"
-    && effectiveGatewayGrants(rows.map((row) => row.grant).filter((grant) => !automatic.has(grant.id)), memberId, teams.map((team) => team.id)).length > 0
+    && effectiveGatewayGrants(rows.map((row) => row.grant), memberId, teams.map((team) => team.id)).length > 0
 }
 
 async function dropAssignment(tx: GatewayTx, provider: GatewayProvider, settings: LiteLlmSettings, memberId: string) {
