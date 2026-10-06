@@ -8,7 +8,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { updateChangedRows } from "../core/db/affected-rows.js"
 import { DEN_MCP_HEADLESS_RUN_CLIENT_ID } from "../mcp/headless-run-token.js"
 import { appLogger } from "../observability/logger.js"
 import {
@@ -209,7 +209,7 @@ async function settle(
     .update(Handoff)
     .set({ ...changes, availableAt: new Date(now + delayMs), leaseOwner: null, leaseUntil: null })
     .where(owned(handoff))
-  return automationUpdateChangedRows(result)
+  return updateChangedRows(result)
 }
 
 /** Extends the lease right before posting so no other instance can post the same outcome meanwhile. */
@@ -218,7 +218,7 @@ async function holdLease(handoff: HandoffRow, now: number) {
     .update(Handoff)
     .set({ leaseUntil: new Date(now + LEASE_MS) })
     .where(and(owned(handoff), gt(Handoff.leaseUntil, new Date(now))))
-  return automationUpdateChangedRows(result)
+  return updateChangedRows(result)
 }
 
 export type HandoffSweepDeps = {

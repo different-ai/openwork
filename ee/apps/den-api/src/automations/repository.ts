@@ -40,7 +40,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
-import { automationAffectedRows, automationUpdateChangedRows } from "./update-result.js"
+import { automationAffectedRows, automationUpdateChangedRows } from "../core/db/affected-rows.js"
 import { cloudArtifactStateUpdate } from "./cloud-artifact-state.js"
 
 type AutomationRow = typeof AutomationTable.$inferSelect
