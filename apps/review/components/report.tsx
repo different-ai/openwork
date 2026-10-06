@@ -187,6 +187,12 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
                                 Visual checks {item.judgments.filter((judgment) => judgment.state === "passed").length}/{item.judgments.length} passed
                               </p>
                             )}
+                            {item.designNotes && item.designNotes.length > 0 && (
+                              <p className="design-notes-count">
+                                {item.designNotes.length} design {item.designNotes.length === 1 ? "note" : "notes"}
+                                {item.designNotes.some((note) => note.severity === "medium") ? `, ${item.designNotes.filter((note) => note.severity === "medium").length} worth fixing` : ""}
+                              </p>
+                            )}
                           </div>
                         </figcaption>
                       </figure>

@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
+  designReviewFileSchema,
   docShotReceiptSchema,
   reviewSchema,
   summarizeReview,
 } from "@openwork/review";
-import type { ReviewReport } from "@openwork/review";
+import type { DesignNote as ReviewDesignNote, ReviewReport } from "@openwork/review";
 import type { ReviewAsset } from "@openwork/review/storage";
 import { readTestRunDirectory } from "./scan.ts";
 
@@ -18,6 +19,21 @@ async function regularFile(path: string): Promise<Buffer> {
   if (!info.isFile() || info.size > 25 * 1024 * 1024)
     throw new Error(`Invalid or oversized evidence file: ${basename(path)}`);
   return readFile(path);
+}
+
+/**
+ * Advisory notes from `design-review.json`, keyed by screenshot file name.
+ * A missing, malformed or other-commit file contributes nothing: design notes
+ * must never block publishing the evidence itself.
+ */
+async function readDesignNotes(directory: string, gitSha: string): Promise<Record<string, ReviewDesignNote[]>> {
+  try {
+    const parsed = designReviewFileSchema.safeParse(JSON.parse((await regularFile(join(directory, "design-review.json"))).toString("utf8")));
+    if (!parsed.success || (parsed.data.gitSha && parsed.data.gitSha.toLowerCase() !== gitSha.toLowerCase())) return {};
+    return parsed.data.notes;
+  } catch {
+    return {};
+  }
 }
 
 export async function assembleReview(options: {
@@ -59,6 +75,7 @@ export async function assembleReview(options: {
         ),
       ),
     });
+    const designNotes = await readDesignNotes(directory, stored.testRun.gitSha);
     sources.push({
       id: sourceId,
       kind: "test-run",
@@ -100,6 +117,7 @@ export async function assembleReview(options: {
           ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
           ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
           ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
+          ...(designNotes[artifact.fileName]?.length ? { designNotes: designNotes[artifact.fileName]?.slice(0, 20) } : {}),
         });
       } else {
         if (judgments.length === 0) continue;
@@ -179,5 +197,10 @@ export function renderReviewComment(
     lines.push("", `Coverage gaps: ${report.gaps.join("; ")}`);
   if (summary.pendingVisual > 0)
     lines.push("", `${summary.pendingVisual} visual judgment(s) pending.`);
+  const designNotes = report.evidence.flatMap((item) => item.kind === "image" ? item.designNotes ?? [] : []);
+  if (designNotes.length > 0) {
+    const medium = designNotes.filter((note) => note.severity === "medium").length;
+    lines.push("", `Design review (advisory): ${designNotes.length} note(s), ${medium} worth fixing before merge.`);
+  }
   return lines.join("\n");
 }

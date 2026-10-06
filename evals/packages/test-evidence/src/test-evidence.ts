@@ -6,6 +6,7 @@ import { resolveEvalEngine } from "@openwork/env/eval-engine";
 import type { EvalEngine } from "@openwork/env/eval-engine";
 import { resolveSandboxRef } from "@openwork/env/eval-ref";
 import type { ScreenshotArtifact } from "./screenshot.ts";
+import { layoutFileName, type LayoutSnapshot } from "@openwork/design-review";
 import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
 import { judgeVision } from "./validate.ts";
 import type { ValidateOptions, VisualEvidenceResult, VisualExpectationResult } from "./validate.ts";
@@ -109,6 +110,8 @@ export interface TestRunRecord {
 interface StoredTestArtifact extends TestArtifact {
   sequence: number;
   png: Buffer | null;
+  /** Written beside the PNG as `NN-caption.layout.json` for design checks. */
+  layout: LayoutSnapshot | null;
   validationKey: string | null;
 }
 
@@ -624,6 +627,9 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
       await mkdir(dir, { recursive: true });
       for (const artifact of artifacts) {
         if (artifact.png) await writeFile(join(dir, artifact.fileName), artifact.png);
+        if (artifact.png && artifact.layout) {
+          await writeFile(join(dir, layoutFileName(artifact.fileName)), `${JSON.stringify(artifact.layout)}\n`, "utf8");
+        }
       }
       for (const artifact of jsonArtifacts) {
         await writeFile(join(dir, artifact.fileName), `${JSON.stringify(artifact.value, null, 2)}\n`, "utf8");
@@ -686,6 +692,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         judgments: [],
         sequence,
         png: screenshotArtifact.png,
+        layout: screenshotArtifact.layout ?? null,
         validationKey: null,
         checkpoint: screenshotArtifact.checkpoint,
         checkpointMatch: screenshotArtifact.checkpointMatch,
@@ -743,6 +750,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         judgments: [{ expectation: caption, state: passed ? "passed" : "failed", reasoning: evidence }],
         sequence,
         png: null,
+        layout: null,
         validationKey: JSON.stringify([caption]),
       });
     },

@@ -232,6 +232,13 @@ placeholder, or test id. Bound every wait; declare external requirements in
   If the screenshots would not convince you, they will not convince the reviewer.
   Read the captions in `index.html` top to bottom: they should tell the
   before → after story on their own.
+- Your own eye passes what you designed. Run the design review on the same
+  record before pushing and fix its `medium` notes, or say in the PR why the
+  screen is right (`evals/design-review/README.md`):
+
+  ```sh
+  pnpm --dir evals design:review -- --test-run latest
+  ```
 - In CI the spec runs on `PR change proof`, one job per spec; the trusted
   publisher aggregates every changed spec's records into one report. Failed,
   skipped, and cancelled runs stay visible as such; nothing substitutes for them.

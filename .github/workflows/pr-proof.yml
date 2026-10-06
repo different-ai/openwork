@@ -234,6 +234,24 @@ jobs:
           status=0
           node evals/scripts/judge-journeys.mjs || status=$?
           if [ "$status" -gt 2 ]; then exit "$status"; fi
+      # Advisory design review of every screenshot: measured layout rules
+      # (overlap, sideways scroll, columns drifting from their rows, lanes,
+      # contrast) plus, with a key, a critique against DESIGN.md and the
+      # OpenWork Design rubric in evals/design-review/rubric.md. Notes land in
+      # design-review.json beside each record, in this job's summary, and on
+      # each screenshot in the review report. A finding never fails the job.
+      - name: Review the design of every screenshot (advisory)
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENWORK_EVAL_VISION_MODEL: gpt-5.6-luna
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ ! -f evals/scripts/design-review-journeys.mjs ]; then
+            echo 'The default branch does not have the design review yet.'
+            exit 0
+          fi
+          node evals/scripts/design-review-journeys.mjs
       - name: Replace the proof records with judged ones
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
