@@ -13,15 +13,14 @@ import {
 import { forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, okSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   buildAuthorizeUrl,
-  createOAuthStateToken,
-  createPkcePair,
   exchangeCodeForTokens,
   OAuthClientConfigurationError,
-  OAuthTokenExchangeError,
-  resolvePublicOrigin,
-  verifyOAuthStateToken,
 } from "../../capability-sources/generic-oauth.js"
-import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
+import { createOAuthStateToken, verifyOAuthStateToken } from "../../core/oauth/state-token.js"
+import { createPkcePair } from "../../core/oauth/pkce.js"
+import { OAuthTokenExchangeError } from "../../core/oauth/token-exchange-error.js"
+import { resolvePublicOrigin } from "../../core/oauth/public-origin.js"
+import { connectCallbackPage } from "../../core/oauth/callback-page.js"
 import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
 import {
   clientSelectedFeatures,

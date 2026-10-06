@@ -35,7 +35,7 @@ import {
 } from "./search.js"
 import { resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
-import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { resolvePublicOrigin } from "../core/oauth/public-origin.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
 import { env } from "../env.js"

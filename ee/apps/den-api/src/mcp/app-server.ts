@@ -23,7 +23,7 @@ import {
   type McpAppToolBinding,
 } from "@openwork/types/mcp-app"
 import type { Context, Hono } from "hono"
-import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { resolvePublicOrigin } from "../core/oauth/public-origin.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appMcpServersEnabled } from "../mcp-app-rollout.js"

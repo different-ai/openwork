@@ -36,7 +36,7 @@ import { evaluateToolPolicy } from "../capability-sources/external-mcp-tool-poli
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { tokenRoute } from "../middleware/index.js"
-import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { resolvePublicOrigin } from "../core/oauth/public-origin.js"
 import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { externalMcpAppResourceUri, resolveMcpMemberIdentity } from "./external-capabilities.js"
