@@ -40,7 +40,6 @@ import {
   type GithubMarketplaceInfo,
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
-import { uniqueIds } from "./connector-cleanup.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
@@ -148,6 +147,7 @@ import {
   serializePlugin,
   serializeVersion,
   type TeamId,
+  uniqueIds,
   upsertGrant,
 } from "../../../modules/marketplace/store/internal.js"
 import { deriveProjection, deriveSkillProjection } from "../../../modules/marketplace/store/projections.js"

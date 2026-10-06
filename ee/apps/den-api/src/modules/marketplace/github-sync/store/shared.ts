@@ -7,7 +7,7 @@ import {
   ConnectorTargetTable,
 } from "@openwork-ee/den-db/schema"
 import { type PluginArchActorContext, requirePluginArchResourceRole } from "../../../../routes/org/plugin-system/access.js"
-import { getGithubConnectorAppConfig, GithubConnectorConfigError, GithubConnectorRequestError } from "../../../../routes/org/plugin-system/github-app.js"
+import { getGithubConnectorAppConfig, GithubConnectorConfigError, GithubConnectorRequestError } from "../github-app.js"
 import { db } from "../../../../db.js"
 import { env } from "../../../../env.js"
 import { PluginArchRouteFailure } from "../../store/route-failure.js"

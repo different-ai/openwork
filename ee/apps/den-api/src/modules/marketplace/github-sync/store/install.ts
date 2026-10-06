@@ -10,7 +10,7 @@ import {
   listGithubInstallationRepositories,
   validateGithubInstallationTarget,
   verifyGithubInstallStateToken,
-} from "../../../../routes/org/plugin-system/github-app.js"
+} from "../github-app.js"
 import { db } from "../../../../db.js"
 import { env } from "../../../../env.js"
 import { PluginArchRouteFailure } from "../../store/route-failure.js"

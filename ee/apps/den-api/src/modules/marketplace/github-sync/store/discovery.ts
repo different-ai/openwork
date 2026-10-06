@@ -21,7 +21,7 @@ import {
   getGithubRepositoryHeadSha,
   getGithubRepositoryTextFile,
   getGithubRepositoryTree,
-} from "../../../../routes/org/plugin-system/github-app.js"
+} from "../github-app.js"
 import {
   buildGithubRepoDiscovery,
   type GithubDiscoveredPlugin,

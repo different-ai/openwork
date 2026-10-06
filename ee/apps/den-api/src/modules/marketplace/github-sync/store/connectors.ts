@@ -29,7 +29,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { type PluginArchActorContext, resolvePluginArchResourceRole } from "../../../../routes/org/plugin-system/access.js"
-import { planConnectorImportedResourceCleanup, uniqueIds } from "../../../../routes/org/plugin-system/connector-cleanup.js"
+import { planConnectorImportedResourceCleanup } from "../connector-cleanup.js"
 import { db } from "../../../../db.js"
 import { PluginArchRouteFailure } from "../../store/route-failure.js"
 import {
@@ -54,6 +54,7 @@ import {
   type PluginId,
   type PluginMcpRequirementBindingId,
   serializePlugin,
+  uniqueIds,
 } from "../../store/internal.js"
 import {
   ensureEditableConnectorInstance,

@@ -1,4 +1,4 @@
-import { GithubConnectorRequestError } from "../routes/org/plugin-system/github-app.js"
+import { GithubConnectorRequestError } from "../modules/marketplace/github-sync/github-app.js"
 
 export function isTransientGithubSyncError(error: unknown): boolean {
   if (error instanceof GithubConnectorRequestError) {
