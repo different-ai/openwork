@@ -1,4 +1,7 @@
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { OrgSubscriptionTable } from "@openwork-ee/den-db/schema"
 import {
+  cancelOrganizationSubscriptions,
   syncInferenceSubscriptionQuantityAfterMemberChange,
   syncSeatSubscriptionQuantityAfterMemberChange,
   syncWebSubscriptionQuantityAfterMemberChange,
@@ -37,4 +40,27 @@ quantitySyncs.forEach(({ name, sync }, index) => {
     errorPolicy: "propagate",
     handler: (input) => sync({ organizationId: input.organizationId, memberCount: input.memberCount }),
   })
+})
+
+coreHooks.registerGuard({
+  point: "org.deletion.pre",
+  id: "legacy/billing/cancel-organization-subscriptions",
+  registrant: "legacy",
+  order: CORE_HOOK_ORDER.default,
+  handler: async ({ organizationId }) => {
+    // A failure aborts deletion, as today: nothing is deleted while Stripe still bills.
+    await cancelOrganizationSubscriptions({ organizationId })
+    return null
+  },
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/billing/purge-organization-subscriptions",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 12,
+  handler: async ({ tx, organizationId }) => {
+    await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))
+  },
 })

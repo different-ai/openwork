@@ -1,5 +1,5 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { ExternalIdentityTable } from "@openwork-ee/den-db/schema"
+import { ExternalIdentityTable, SsoConnectionTable, SsoProviderTable } from "@openwork-ee/den-db/schema"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
 
@@ -13,5 +13,18 @@ coreHooks.registerTx({
   order: CORE_HOOK_ORDER.cleanup,
   handler: async ({ tx, userId }) => {
     await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
+  },
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/enterprise-auth-sso/purge-organization-sso",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 10,
+  handler: async ({ tx, organizationId }) => {
+    await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.organizationId, organizationId))
+    await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.organizationId, organizationId))
+    await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.organizationId, organizationId))
   },
 })

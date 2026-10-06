@@ -60,6 +60,11 @@ export interface CoreGuardPoints {
     teamId: TeamId
     operation: "delete" | "assignMember"
   }
+  // Runs before the deletion transaction. A handler may refuse deletion, and a
+  // thrown error aborts it (billing cancels subscriptions here).
+  "org.deletion.pre": {
+    organizationId: OrgId
+  }
 }
 
 export interface CoreTxPoints {
@@ -88,6 +93,13 @@ export interface CoreTxPoints {
     organizationId: OrgId
     teamId: TeamId
     removedAt: Date
+  }
+  // Inside the org-delete transaction, after the org-row lock and before Core
+  // deletes invitations, members and the organization row. Every module purges
+  // its organization-scoped rows here.
+  "org.deletion.purge": {
+    tx: CoreTx
+    organizationId: OrgId
   }
   // A user spans organizations, so this point is instance-scoped.
   "user.deleting": {
@@ -128,6 +140,9 @@ export interface CorePostCommitPoints {
     organizationId: OrgId
     ownerMemberId: MemberId | null
     source: "den" | "betterAuth"
+  }
+  "org.deletion.post": {
+    organizationId: OrgId
   }
   // Point type only; the dispatcher and triggers come with W0-P14.
   "module.enabledForOrg": {

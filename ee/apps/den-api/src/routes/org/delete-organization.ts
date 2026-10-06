@@ -1,102 +1,25 @@
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { deleteGatewayUsageForOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import {
   AuthApiKeyTable,
   AuthSessionTable,
-  AuditEventTable,
-  AuditEventResourceTable,
-  AuditOperationTable,
-  AuditOperationStepTable,
-  AuditPolicyTable,
-  AuditStateTable,
-  AuditUsageFactTable,
-  ConfigObjectAccessGrantTable,
-  ConfigObjectTable,
-  ConfigObjectVersionTable,
-  ConnectedAccountTable,
-  ConnectorAccountTable,
-  ConnectorInstanceAccessGrantTable,
-  ConnectorInstanceTable,
-  ConnectorMappingTable,
-  ConnectorSourceBindingTable,
-  ConnectorSourceTombstoneTable,
-  ConnectorSyncEventTable,
-  ConnectorTargetTable,
-  CloudRuntimeInstanceTable,
-  DaytonaSandboxTable,
-  DesktopConnectGrantTable,
-  DesktopPolicyMemberTable,
-  DesktopPolicyTable,
-  ExternalIdentityTable,
-  ExternalMcpConnectionAccessGrantTable,
-  ExternalMcpConnectionTable,
-  InferenceKeyTable,
-  InferenceOrgLimitPolicyTable,
-  InferenceOrgUpstreamProviderKeyTable,
-  InferenceOrgUsageBucketTable,
-  GatewayKeyTable,
-  GatewayCredentialSetTable,
-  GatewayModelGroupTable,
-  GatewayModelGroupModelTable,
-  GatewayProviderAccessTable,
-  GatewayProviderCredentialTable,
-  GatewayProviderModelTable,
-  GatewayProviderOauthStateTable,
-  GatewayProviderTable,
-  GatewayRequestLogTable,
-  InferenceUsageLedgerBucketChargeTable,
-  InferenceUsageLedgerEntryTable,
-  GatewayUsageRollupTable,
-  InstallLinkTable,
+  DeviceCodeTable,
   InvitationTable,
-  LlmProviderAccessTable,
-  LlmProviderMemberCredentialTable,
-  LlmProviderModelTable,
-  LlmProviderTable,
-  MarketplaceAccessGrantTable,
-  MarketplacePluginTable,
-  MarketplaceTable,
   MemberTable,
-  OrgOAuthClientTable,
-  OrganizationBrandAssetTable,
-  OrganizationDiagnosticCredentialTable,
   OrganizationRoleTable,
   OrganizationTable,
-  OrganizationWebOriginTable,
-  OrgSubscriptionTable,
-  PluginAccessGrantTable,
-  PluginConfigObjectTable,
-  PluginMcpRequirementBindingTable,
-  PluginTable,
-  ScimGroupMemberTable,
-  ScimGroupTable,
-  ScimProviderTable,
-  ScimSyncEventTable,
-  ScimUserTombstoneTable,
-  SsoConnectionTable,
-  SsoProviderTable,
-  TeamMemberTable,
-  TeamTable,
-  WorkerBundleTable,
-  WorkerInstanceTable,
-  WorkerTable,
-  WorkerTokenTable,
-  WorkspaceBootstrapTable,
-  WorkspaceClaimTable,
+  TempFileTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { cache } from "../../cache.js"
+import { coreHooks } from "../../core/hooks/index.js"
 import { db } from "../../db.js"
 import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../linear.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
-import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
-import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
@@ -373,14 +296,22 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         databaseUserId: user?.id ?? payload.currentMember.userId,
       })
 
-      await cancelOrganizationSubscriptions({ organizationId })
+      // Modules may refuse or prepare deletion before anything is deleted
+      // (billing cancels Stripe subscriptions here; a failure aborts).
+      const refusal = await coreHooks.runGuards("org.deletion.pre", { organizationId })
+      if (refusal) {
+        return c.json({ error: refusal.code, message: refusal.message }, 403)
+      }
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
       await db.transaction(async (tx) => {
         await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId)).for("update")
-        await deleteGatewayUsageForOrganization(tx, organizationId)
-        await deleteModelsAnalyticsForOrganization(tx, organizationId)
+
+        // Every module purges its organization-scoped rows (core/hooks/legacy
+        // until each module plan registers from its manifest).
+        await coreHooks.runTx("org.deletion.purge", { tx, organizationId })
+
         const memberRows = await tx
           .select({ id: MemberTable.id, userId: MemberTable.userId })
           .from(MemberTable)
@@ -413,162 +344,16 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           }
         }
 
-        const installLinkIds = (await tx
-          .select({ id: InstallLinkTable.id })
-          .from(InstallLinkTable)
-          .where(eq(InstallLinkTable.organizationId, organizationId)))
-          .map((row) => row.id)
-        if (installLinkIds.length > 0) {
-          await tx.delete(DesktopConnectGrantTable).where(inArray(DesktopConnectGrantTable.installLinkId, installLinkIds))
-        }
-
-        const workerIds = (await tx
-          .select({ id: WorkerTable.id })
-          .from(WorkerTable)
-          .where(eq(WorkerTable.org_id, organizationId)))
-          .map((row) => row.id)
-        if (workerIds.length > 0) {
-          await tx.delete(WorkerInstanceTable).where(inArray(WorkerInstanceTable.worker_id, workerIds))
-          await tx.delete(CloudRuntimeInstanceTable).where(inArray(CloudRuntimeInstanceTable.worker_id, workerIds))
-          await tx.delete(DaytonaSandboxTable).where(inArray(DaytonaSandboxTable.worker_id, workerIds))
-          await tx.delete(WorkerTokenTable).where(inArray(WorkerTokenTable.worker_id, workerIds))
-          await tx.delete(WorkerBundleTable).where(inArray(WorkerBundleTable.worker_id, workerIds))
-        }
-
-        const teamIds = (await tx
-          .select({ id: TeamTable.id })
-          .from(TeamTable)
-          .where(eq(TeamTable.organizationId, organizationId)))
-          .map((row) => row.id)
-        if (teamIds.length > 0) {
-          await tx.delete(TeamMemberTable).where(inArray(TeamMemberTable.teamId, teamIds))
-        }
-
-        const scimGroupIds = (await tx
-          .select({ id: ScimGroupTable.id })
-          .from(ScimGroupTable)
-          .where(eq(ScimGroupTable.organizationId, organizationId)))
-          .map((row) => row.id)
-        if (scimGroupIds.length > 0) {
-          await tx.delete(ScimGroupMemberTable).where(inArray(ScimGroupMemberTable.groupId, scimGroupIds))
-        }
-
-        const ledgerEntryIds = (await tx
-          .select({ id: InferenceUsageLedgerEntryTable.id })
-          .from(InferenceUsageLedgerEntryTable)
-          .where(eq(InferenceUsageLedgerEntryTable.organization_id, organizationId)))
-          .map((row) => row.id)
-        if (ledgerEntryIds.length > 0) {
-          await tx.delete(InferenceUsageLedgerBucketChargeTable).where(inArray(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, ledgerEntryIds))
-        }
-
-        const gatewayProviderIds = (await tx
-          .select({ id: GatewayProviderTable.id })
-          .from(GatewayProviderTable)
-          .where(eq(GatewayProviderTable.organization_id, organizationId)).for("update"))
-          .map((row) => row.id)
-        if (gatewayProviderIds.length > 0) {
-          await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
-          const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
-          if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
-          await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
-          await tx.delete(GatewayProviderCredentialTable).where(inArray(GatewayProviderCredentialTable.gateway_provider_id, gatewayProviderIds))
-          await tx.delete(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, gatewayProviderIds))
-          await tx.delete(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
-          await tx.delete(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, gatewayProviderIds))
-        }
-        await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.organization_id, organizationId))
-        // Account erasure remains distinct from provider deletion, which retains its history.
-        await tx.delete(GatewayRequestLogTable).where(eq(GatewayRequestLogTable.organization_id, organizationId))
-        await tx.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId))
-        await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
-        await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
-
-        const llmProviderIds = (await tx
-          .select({ id: LlmProviderTable.id })
-          .from(LlmProviderTable)
-          .where(eq(LlmProviderTable.organizationId, organizationId)))
-          .map((row) => row.id)
-        if (llmProviderIds.length > 0) {
-          await tx.delete(LlmProviderModelTable).where(inArray(LlmProviderModelTable.llmProviderId, llmProviderIds))
-          await tx.delete(LlmProviderAccessTable).where(inArray(LlmProviderAccessTable.llmProviderId, llmProviderIds))
-        }
-
         affectedSessions = await tx
           .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
           .from(AuthSessionTable)
           .where(eq(AuthSessionTable.activeOrganizationId, organizationId))
         await tx.update(AuthSessionTable).set({ activeOrganizationId: null }).where(eq(AuthSessionTable.activeOrganizationId, organizationId))
+        // Previously orphaned (W0-05): pending device logins and temp files bound to this organization.
+        await tx.delete(DeviceCodeTable).where(eq(DeviceCodeTable.organizationId, organizationId))
+        await tx.delete(TempFileTable).where(eq(TempFileTable.organization_id, organizationId))
 
-        await tx.delete(OrganizationBrandAssetTable).where(eq(OrganizationBrandAssetTable.organizationId, organizationId))
-        await tx.delete(WorkspaceClaimTable).where(eq(WorkspaceClaimTable.organizationId, organizationId))
-        await tx.delete(WorkspaceBootstrapTable).where(eq(WorkspaceBootstrapTable.organizationId, organizationId))
-        await tx.delete(InstallLinkTable).where(eq(InstallLinkTable.organizationId, organizationId))
         await tx.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.organizationId, organizationId))
-
-        await tx.delete(ScimProviderTable).where(eq(ScimProviderTable.organizationId, organizationId))
-        await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.organizationId, organizationId))
-        await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.organizationId, organizationId))
-        await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.organizationId, organizationId))
-        await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.organizationId, organizationId))
-
-        // Explicit owner-authorized organization erasure, not resource cleanup.
-        // No settlement is active for these pilot facts. Billing evidence needs
-        // a separate retention policy before commercial settlement is enabled.
-        await tx.select().from(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId)).for("update")
-        await tx.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId))
-        await tx.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId))
-        await tx.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId))
-        await tx.delete(AuditOperationTable).where(eq(AuditOperationTable.organization_id, organizationId))
-        await tx.delete(AuditUsageFactTable).where(eq(AuditUsageFactTable.organization_id, organizationId))
-        await tx.delete(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId))
-        await tx.delete(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId))
-        await tx.delete(WorkerTable).where(eq(WorkerTable.org_id, organizationId))
-        await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
-
-        await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))
-        await tx.delete(ScimUserTombstoneTable).where(eq(ScimUserTombstoneTable.organizationId, organizationId))
-        await tx.delete(ScimGroupTable).where(eq(ScimGroupTable.organizationId, organizationId))
-
-        await tx.delete(InferenceUsageLedgerEntryTable).where(eq(InferenceUsageLedgerEntryTable.organization_id, organizationId))
-        await tx.delete(InferenceKeyTable).where(eq(InferenceKeyTable.organization_id, organizationId))
-        await tx.delete(InferenceOrgLimitPolicyTable).where(eq(InferenceOrgLimitPolicyTable.organization_id, organizationId))
-        await tx.delete(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.organization_id, organizationId))
-        await tx.delete(InferenceOrgUpstreamProviderKeyTable).where(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId))
-
-        await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
-        await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
-
-        await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
-        await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
-
-        await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
-        await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))
-        await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.organizationId, organizationId))
-        await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
-        await tx.delete(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, organizationId))
-        await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, organizationId))
-
-        await tx.delete(LlmProviderTable).where(eq(LlmProviderTable.organizationId, organizationId))
-
-        await tx.delete(ConnectorSourceTombstoneTable).where(eq(ConnectorSourceTombstoneTable.organizationId, organizationId))
-        await tx.delete(ConnectorSourceBindingTable).where(eq(ConnectorSourceBindingTable.organizationId, organizationId))
-        await tx.delete(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.organizationId, organizationId))
-        await tx.delete(PluginConfigObjectTable).where(eq(PluginConfigObjectTable.organizationId, organizationId))
-        await tx.delete(ConfigObjectAccessGrantTable).where(eq(ConfigObjectAccessGrantTable.organizationId, organizationId))
-        await tx.delete(PluginAccessGrantTable).where(eq(PluginAccessGrantTable.organizationId, organizationId))
-        await tx.delete(MarketplaceAccessGrantTable).where(eq(MarketplaceAccessGrantTable.organizationId, organizationId))
-        await tx.delete(MarketplacePluginTable).where(eq(MarketplacePluginTable.organizationId, organizationId))
-        await tx.delete(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.organizationId, organizationId))
-        await tx.delete(ConnectorMappingTable).where(eq(ConnectorMappingTable.organizationId, organizationId))
-        await tx.delete(ConnectorTargetTable).where(eq(ConnectorTargetTable.organizationId, organizationId))
-        await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.organizationId, organizationId))
-        await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.organizationId, organizationId))
-        await tx.delete(ConnectorAccountTable).where(eq(ConnectorAccountTable.organizationId, organizationId))
-        await tx.delete(MarketplaceTable).where(eq(MarketplaceTable.organizationId, organizationId))
-        await tx.delete(PluginTable).where(eq(PluginTable.organizationId, organizationId))
-        await tx.delete(ConfigObjectTable).where(eq(ConfigObjectTable.organizationId, organizationId))
-
         await tx.delete(InvitationTable).where(eq(InvitationTable.organizationId, organizationId))
         await tx.delete(MemberTable).where(eq(MemberTable.organizationId, organizationId))
         await tx.delete(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
@@ -576,7 +361,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
       // Org deletion removes every member row; clear aggregate and per-user membership cache keys.
       await cache.org.deleteMembers(organizationId)
-      invalidateWebOriginApprovalCache()
+      await coreHooks.runPostCommit("org.deletion.post", { organizationId })
       await Promise.all(affectedSessions.flatMap((session) => [
         cache.auth.revokeSession(session.token),
         cache.auth.revokeSessionId(session.id),

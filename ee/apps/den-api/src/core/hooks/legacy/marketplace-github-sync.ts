@@ -1,5 +1,14 @@
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { ConnectorInstanceAccessGrantTable } from "@openwork-ee/den-db/schema"
+import {
+  ConnectorAccountTable,
+  ConnectorInstanceAccessGrantTable,
+  ConnectorInstanceTable,
+  ConnectorMappingTable,
+  ConnectorSourceBindingTable,
+  ConnectorSourceTombstoneTable,
+  ConnectorSyncEventTable,
+  ConnectorTargetTable,
+} from "@openwork-ee/den-db/schema"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
 
@@ -34,5 +43,23 @@ coreHooks.registerTx({
       .update(ConnectorInstanceAccessGrantTable)
       .set({ removedAt })
       .where(and(eq(ConnectorInstanceAccessGrantTable.teamId, teamId), isNull(ConnectorInstanceAccessGrantTable.removedAt)))
+  },
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/marketplace-github-sync/purge-organization-connectors",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 19,
+  handler: async ({ tx, organizationId }) => {
+    await tx.delete(ConnectorSourceTombstoneTable).where(eq(ConnectorSourceTombstoneTable.organizationId, organizationId))
+    await tx.delete(ConnectorSourceBindingTable).where(eq(ConnectorSourceBindingTable.organizationId, organizationId))
+    await tx.delete(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.organizationId, organizationId))
+    await tx.delete(ConnectorMappingTable).where(eq(ConnectorMappingTable.organizationId, organizationId))
+    await tx.delete(ConnectorTargetTable).where(eq(ConnectorTargetTable.organizationId, organizationId))
+    await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.organizationId, organizationId))
+    await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.organizationId, organizationId))
+    await tx.delete(ConnectorAccountTable).where(eq(ConnectorAccountTable.organizationId, organizationId))
   },
 })

@@ -1,5 +1,13 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { ScimGroupMemberTable, ScimSyncEventTable } from "@openwork-ee/den-db/schema"
+import {
+  ScimGroupMemberTable,
+  ScimGroupRoleGrantTable,
+  ScimGroupRoleTable,
+  ScimGroupTable,
+  ScimProviderTable,
+  ScimSyncEventTable,
+  ScimUserTombstoneTable,
+} from "@openwork-ee/den-db/schema"
 import { isScimManagedTeam } from "../../../scim-groups.js"
 import { coreHooks } from "../default-registry.js"
 import { CORE_HOOK_ORDER } from "../types.js"
@@ -44,5 +52,31 @@ coreHooks.registerTx({
   order: CORE_HOOK_ORDER.cleanup + 1,
   handler: async ({ tx, userId }) => {
     await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
+  },
+})
+
+coreHooks.registerTx({
+  point: "org.deletion.purge",
+  id: "legacy/enterprise-auth-scim/purge-organization-scim",
+  registrant: "legacy",
+  alwaysRun: "cleanup",
+  order: CORE_HOOK_ORDER.cleanup + 3,
+  handler: async ({ tx, organizationId }) => {
+    const scimGroupIds = (await tx
+      .select({ id: ScimGroupTable.id })
+      .from(ScimGroupTable)
+      .where(eq(ScimGroupTable.organizationId, organizationId)))
+      .map((row) => row.id)
+    if (scimGroupIds.length > 0) {
+      await tx.delete(ScimGroupMemberTable).where(inArray(ScimGroupMemberTable.groupId, scimGroupIds))
+      // Previously orphaned (W0-05): group role rows only carry the group id.
+      await tx.delete(ScimGroupRoleTable).where(inArray(ScimGroupRoleTable.groupId, scimGroupIds))
+    }
+    // Previously orphaned (W0-05).
+    await tx.delete(ScimGroupRoleGrantTable).where(eq(ScimGroupRoleGrantTable.organizationId, organizationId))
+    await tx.delete(ScimProviderTable).where(eq(ScimProviderTable.organizationId, organizationId))
+    await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.organizationId, organizationId))
+    await tx.delete(ScimUserTombstoneTable).where(eq(ScimUserTombstoneTable.organizationId, organizationId))
+    await tx.delete(ScimGroupTable).where(eq(ScimGroupTable.organizationId, organizationId))
   },
 })

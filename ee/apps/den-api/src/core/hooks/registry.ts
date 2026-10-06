@@ -51,6 +51,7 @@ function emptyGuardStore(): GuardStore {
     "invitation.createGuard": [],
     "invitation.cancelGuard": [],
     "team.mutationGuard": [],
+    "org.deletion.pre": [],
   }
 }
 
@@ -60,6 +61,7 @@ function emptyTxStore(): TxStore {
     "invitation.accepted": [],
     "team.membershipChanged": [],
     "team.deleting": [],
+    "org.deletion.purge": [],
     "user.deleting": [],
   }
 }
@@ -76,6 +78,7 @@ function emptyPostCommitStore(): PostCommitStore {
     "member.removed": [],
     "member.roleChanged": [],
     "org.created": [],
+    "org.deletion.post": [],
     "module.enabledForOrg": [],
   }
 }
