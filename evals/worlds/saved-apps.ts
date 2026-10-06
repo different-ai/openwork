@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { addInitScript, browserScript, type Surface } from "@openwork/cdp";
-import type { Seed } from "@openwork/env";
+import { queryDenDatabase, type Seed } from "@openwork/env";
 import type { MockMcpTool } from "@openwork/labs";
 import { go, runWorkflow, saveWorkflow, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
@@ -525,6 +525,18 @@ export async function savedAppCreation(seed: Seed) {
   return {
     app, web, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
     async ageAdminSession() {
+      if (den.placement?.kind === "local") {
+        const databaseUrl = den.database?.url;
+        if (!databaseUrl) throw new Error("Session ageing requires a testkit-owned scratch database");
+        const database = new URL(databaseUrl);
+        if (!["127.0.0.1", "localhost", "[::1]"].includes(database.hostname) || !database.pathname.startsWith("/openwork_eval_")) {
+          throw new Error("Refusing session ageing outside a disposable loopback testkit database");
+        }
+        await queryDenDatabase(databaseUrl,
+          "UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 180 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=?);",
+          [den.admin.email]);
+        return;
+      }
       if (den.placement?.kind !== "daytona") throw new Error("Session ageing requires the disposable Daytona database");
       const email = `CONVERT(0x${Buffer.from(den.admin.email).toString("hex")} USING utf8mb4)`;
       const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 180 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${email});`;

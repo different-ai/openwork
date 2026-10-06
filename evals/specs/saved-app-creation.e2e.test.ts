@@ -454,7 +454,7 @@ test("create, preview, save and reopen an app without changing already-open resu
           && Math.abs(size.height - before.height) <= 1 && Math.abs(size.frameWidth - before.frameWidth) <= 1
           && Math.abs(size.frameHeight - before.frameHeight) <= 1 });
       expect((await world.proxy.requestLog()).slice(requestCount).filter((request) => request.method === "GET"
-        && request.path.endsWith(detailPath) && request.faulted && request.status === 200)).toHaveLength(1);
+        && new URL(request.path, "http://fixture.invalid").pathname.endsWith(detailPath) && request.faulted && request.status === 200)).toHaveLength(1);
       expect((await readApp()).revision).toMatchObject({ id: revisionId });
       expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
       evidence.recordAssertionEvidence("Saved snapshot loading preserves measured dashboard geometry", JSON.stringify({ before, loading: tile.rect, restored,
@@ -791,7 +791,7 @@ test("create, preview, save and reopen an app without changing already-open resu
       await world.open("/dashboard");
       await user.reload();
       await user.see({ text: previewNotice }, { timeoutMs: 30_000 });
-      expect((await world.proxy.requestLog()).some((request) => request.path.endsWith(`/v1/apps/${appId}`) && request.faulted)).toBe(true);
+      expect((await world.proxy.requestLog()).some((request) => new URL(request.path, "http://fixture.invalid").pathname.endsWith(`/v1/apps/${appId}`) && request.faulted)).toBe(true);
       await user.click({ role: "button", label: "Update artifact" });
       const composer = await probe.eventually(() => probe.composer(), {
         within: 30_000, label: "existing app update prompt ready for review",
