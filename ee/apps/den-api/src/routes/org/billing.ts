@@ -27,16 +27,6 @@ const openWorkWebUnavailableSchema = z.object({
   message: z.string(),
 }).meta({ ref: "OpenWorkWebUnavailableError" })
 
-const retiredPolarBillingStatus = {
-  featureGateEnabled: false,
-  hasActivePlan: true,
-  checkoutRequired: false,
-  portalUrl: null,
-  price: null,
-  subscription: null,
-  invoices: [],
-}
-
 function openWorkWebUnavailableResponse(): { error: "openwork_web_not_available"; message: string } {
   return {
     error: "openwork_web_not_available",
@@ -169,9 +159,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
     }),
     orgRoleRoute(["admin"]),
     async (c) => {
-      const user = c.get("user")
       const payload = c.get("organizationContext")
-      const email = getRequiredUserEmail(user)
       const canManageBilling = organizationRoleValueSatisfies({
         roleValue: payload.currentMember.role,
         requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
@@ -182,12 +170,8 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         includePortalUrl: canManageBilling,
         returnUrl: billingReturnUrl(c),
       })
-      // Den web still reads `billing.polar` as the cloud-worker access summary
-      // (den-flow.ts getBillingSummary). Polar billing is retired, so this is
-      // the constant "no gate, access allowed" shape it always had in practice.
-      const polar = email ? retiredPolarBillingStatus : null
 
-      return c.json({ billing: { ...billing, polar } })
+      return c.json({ billing })
     },
   )
 
