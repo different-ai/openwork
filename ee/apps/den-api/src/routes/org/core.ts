@@ -180,7 +180,7 @@ const organizationContextResponseSchema = z.object({
     }),
   }).passthrough(),
   /**
-   * Effective on/off for every registry feature (packages/types/src/den/features.ts).
+   * Effective on/off for every registry feature (packages/features/src/registry.ts).
    * New clients read this; `capabilities` is frozen for published clients.
    * A key missing here means an older server: treat it as off.
    */

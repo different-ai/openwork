@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import type { createDenDb } from "@openwork-ee/den-db"
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationFeatures } from "@openwork-ee/den-db/organization-features"
-import { parseFeatureEnvironment } from "@openwork/types/den/features"
+import { parseFeatureEnvironment } from "@openwork/features"
 import { ModelsAnalyticsEventTable, ModelsAnalyticsSettingsTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db/schema"
 import { modelsAnalyticsEventSchema, type ModelsAnalyticsEvent } from "@openwork-ee/telemetry-contracts"
 

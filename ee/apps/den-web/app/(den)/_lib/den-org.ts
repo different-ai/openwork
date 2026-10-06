@@ -1,5 +1,5 @@
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
-import { mapFeatures, type FeatureMap } from "@openwork/types/den/features";
+import { mapFeatures, type FeatureMap } from "@openwork/features";
 
 export type DenOrgSummary = {
   id: string;
@@ -235,7 +235,7 @@ export type DenOrgContext = {
   authMethods: DenOrgAuthMethods;
   /** Frozen for published screens; new code reads `features` through orgFeatureEnabled(). */
   capabilities: DenOrgCapabilities;
-  /** Effective on/off per registry feature (packages/types/src/den/features.ts). Missing from older servers means off. */
+  /** Effective on/off per registry feature (packages/features/src/registry.ts). Missing from older servers means off. */
   features: FeatureMap;
   deploymentCapabilities: DeploymentCapabilities;
 };

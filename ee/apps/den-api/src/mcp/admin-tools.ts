@@ -9,7 +9,7 @@ import { env } from "../env.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
 import { setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
-import { featureIsAdjustable, featureKeySchema, resolveFeature } from "@openwork/types/den/features"
+import { featureIsAdjustable, featureKeySchema, resolveFeature } from "@openwork/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 
 /**
@@ -490,7 +490,7 @@ export function registerAdminMcpTools(server: McpServer) {
         "Admin write tool: turn one organization capability on or off (the same switches as the admin panel), e.g. capability='workbot'. enabled=null removes the override and restores the default.",
       inputSchema: z.object({
         organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
-        capability: featureKeySchema.describe("Feature to set (see packages/types/src/den/features.ts)"),
+        capability: featureKeySchema.describe("Feature to set (see packages/features/src/registry.ts)"),
         enabled: z.boolean().nullable().describe("true or false, or null to restore the default"),
       }),
     },

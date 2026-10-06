@@ -95,11 +95,6 @@
       "development": "./src/den/managed-models-policy.ts",
       "default": "./src/den/managed-models-policy.ts"
     },
-    "./den/features": {
-      "types": "./src/den/features.ts",
-      "development": "./src/den/features.ts",
-      "default": "./src/den/features.ts"
-    },
     "./den/deployment-capabilities": {
       "types": "./src/den/deployment-capabilities.ts",
       "development": "./src/den/deployment-capabilities.ts",

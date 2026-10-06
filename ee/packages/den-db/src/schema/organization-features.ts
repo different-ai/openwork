@@ -4,7 +4,7 @@ import { denTypeIdColumn } from "../columns"
 
 /**
  * Per-organization feature overrides. A row exists only when someone set an
- * override; no row means the registry default (packages/types/src/den/features.ts).
+ * override; no row means the registry default (packages/features/src/registry.ts).
  * Better Auth never writes this table, so organization creation cannot turn
  * features on.
  */

@@ -608,6 +608,9 @@ importers:
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../../packages/enterprise-mcp-client
+      '@openwork/features':
+        specifier: workspace:*
+        version: link:../../../packages/features
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../../packages/free-auto
@@ -805,6 +808,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork/features':
+        specifier: workspace:*
+        version: link:../../../packages/features
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types
@@ -1179,6 +1185,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../utils
+      '@openwork/features':
+        specifier: workspace:*
+        version: link:../../../packages/features
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types
@@ -1254,9 +1263,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../utils
-      '@openwork/types':
+      '@openwork/features':
         specifier: workspace:*
-        version: link:../../../packages/types
+        version: link:../../../packages/features
     devDependencies:
       '@types/node':
         specifier: ^20.11.30
@@ -1499,6 +1508,19 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/features:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

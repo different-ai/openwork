@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
-import { FEATURE_KEYS, FEATURES, mapFeatures, type FeatureKey } from "@openwork/types/den/features";
+import { FEATURE_KEYS, FEATURES, mapFeatures, type FeatureKey } from "@openwork/features";
 import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
 import { withStoredBearer } from "./admin/admin-request";
 
@@ -2763,7 +2763,7 @@ export function DenAdminPanel() {
 
                   <div className="mt-4 border-t border-slate-200 pt-4">
                     <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Features</p>
-                    {/* Generated from packages/types/src/den/features.ts; add features there, not here. */}
+                    {/* Generated from packages/features/src/registry.ts; add features there, not here. */}
                     <ul className="mt-2 grid gap-2">
                       {FEATURE_KEYS.filter((key) => org.features[key].source !== "unavailable").map((key) => {
                         const state = org.features[key];

@@ -301,7 +301,7 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
 
 ### Features
 
-OpenWork features are declared once, in `packages/types/src/den/features.ts`.
+OpenWork features are declared once, in `packages/features/src/registry.ts`.
 For each feature, that registry decides whether it exists on self-hosted
 installs and who controls it. Features that platform admins can turn on or off
 per organization appear under `config.features`:

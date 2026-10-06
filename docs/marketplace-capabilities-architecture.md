@@ -202,7 +202,7 @@ Scope note: these are `mcp:read`-class operations; nothing on this path writes; 
 Marketplace capability search/execute uses the same effective Connect rail check
 as External MCP connections: the `mcpConnections` feature, read with
 `getOrganizationFeatures(organizationId)` from `ee/apps/den-api/src/features.ts`
-and declared in `packages/types/src/den/features.ts`.
+and declared in `packages/features/src/registry.ts`.
 
 Connect is default-on, so local dev, self-hosted, evals, and hosted production
 get the feature immediately unless a platform admin turns it off for an

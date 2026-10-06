@@ -1,6 +1,6 @@
 name: Feature registry check
 
-# The feature registry (packages/types/src/den/features.ts) generates the Helm
+# The feature registry (packages/features/src/registry.ts) generates the Helm
 # chart's config.features block, values schema and README table. This job
 # fails when those are stale, when the chart renders DEN_FEATURE_* names that
 # den-api does not read, or when code adds a DEN_*_ENABLED switch or reads
@@ -10,7 +10,7 @@ name: Feature registry check
 on:
   pull_request:
     paths:
-      - "packages/types/src/den/features.ts"
+      - "packages/features/**"
       - "packaging/helm/openwork-ee/**"
       - "scripts/features-sync.mjs"
       - "ee/apps/den-api/src/**"
@@ -45,10 +45,13 @@ jobs:
           version: 11.4.0
 
       - name: Install the registry's dependencies
-        run: pnpm install --frozen-lockfile --filter "@openwork/types"
+        run: pnpm install --frozen-lockfile --filter "@openwork/features"
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+
+      - name: Test the resolver
+        run: pnpm --filter @openwork/features test
 
       - name: Check the feature registry
         run: pnpm features:check

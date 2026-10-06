@@ -19,7 +19,7 @@ config:
   # Which product this install is. Only OpenWork Cloud sets "cloud"; features
   # declared unavailable for self-hosted cannot be turned on here. Renders DEN_DEPLOYMENT.
   deployment: self_hosted
-  # BEGIN GENERATED features (pnpm features:sync; source: packages/types/src/den/features.ts)
+  # BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/registry.ts)
   # Per-feature switches for this deployment. Each key renders DEN_FEATURE_<KEY>.
   # Only features platform admins can change per organization appear here.
   #   ""      use the default below; platform admins can change it per organization in /admin

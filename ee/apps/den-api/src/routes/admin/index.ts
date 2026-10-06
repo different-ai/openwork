@@ -48,7 +48,7 @@ import {
   setOrganizationFeatureOverrides,
   type FeatureOverrideChanges,
 } from "@openwork-ee/den-db/organization-features"
-import { FEATURE_KEYS, featureIsAdjustable, mapFeatures, type FeatureOverrides } from "@openwork/types/den/features"
+import { FEATURE_KEYS, featureIsAdjustable, mapFeatures, type FeatureOverrides } from "@openwork/features"
 import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
 import { env } from "../../env.js"
@@ -108,7 +108,7 @@ const updateOrganizationDpaSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 }).strict()
 
-// Generated from the feature registry (packages/types/src/den/features.ts):
+// Generated from the feature registry (packages/features/src/registry.ts):
 // every registry key is accepted; unknown and retired keys are ignored.
 const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
@@ -1973,7 +1973,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Set an organization's capability overrides",
-      description: "Enables, disables or clears (null) per-organization feature overrides. Every key in the feature registry (packages/types/src/den/features.ts) is accepted; a feature that is fixed on this deployment (unavailable, off or on for everyone) returns 400, and unknown or retired keys are ignored. A deployment lock (DEN_FEATURE_*) outranks a stored override; featureStates shows the effective value and its source. The auditLogs feature neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true.",
+      description: "Enables, disables or clears (null) per-organization feature overrides. Every key in the feature registry (packages/features/src/registry.ts) is accepted; a feature that is fixed on this deployment (unavailable, off or on for everyone) returns 400, and unknown or retired keys are ignored. A deployment lock (DEN_FEATURE_*) outranks a stored override; featureStates shows the effective value and its source. The auditLogs feature neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true.",
       responses: {
         200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: adminOrganizationCapabilitiesSchema, featureStates: adminFeatureStatesSchema })),
         400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),

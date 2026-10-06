@@ -11,7 +11,10 @@ Nothing big ships ungated. The registry is the only place a feature is
 declared; the Helm chart, `/admin` toggles, API schemas and stored overrides
 are generated from it.
 
-Registry: `packages/types/src/den/features.ts`.
+Registry: `packages/features/src/registry.ts` in the `@openwork/features`
+package. That file is the only one you edit to declare a feature; the
+resolution rules live next to it in `resolve.ts` (tested in `resolve.test.ts`,
+run with `pnpm --filter @openwork/features test`).
 
 ## Does this need a flag?
 
@@ -105,4 +108,5 @@ Evals turn features on through the admin API:
 
 Name the feature and its two values under "How is this implemented?", e.g.
 "Behind `newThing` (cloud: platform, default off; self-hosted: off)."
-Run `pnpm features:check` before pushing.
+Run `pnpm features:check` before pushing. If you changed how features resolve
+(not just added an entry), add a case to `resolve.test.ts`.

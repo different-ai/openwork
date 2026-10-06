@@ -1,5 +1,5 @@
 import { readOrganizationFeatures, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
-import type { FeatureKey, FeatureMap } from "@openwork/types/den/features"
+import type { FeatureKey, FeatureMap } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -8,7 +8,7 @@ import type { OrganizationContextVariables } from "./middleware/organization-con
 /**
  * The only way den-api asks whether a feature is on for an organization.
  *
- * Features are declared in packages/types/src/den/features.ts (read
+ * Features are declared in packages/features/src/registry.ts (read
  * .opencode/skills/add-a-feature first). Never read organization metadata or
  * environment variables to decide whether a feature is on.
  */

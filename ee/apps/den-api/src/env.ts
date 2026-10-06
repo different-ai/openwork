@@ -9,7 +9,7 @@ import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { parseFeatureEnvironment } from "@openwork/types/den/features"
+import { parseFeatureEnvironment } from "@openwork/features"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -546,7 +546,7 @@ const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "fal
 // Which product this install is (DEN_DEPLOYMENT, default self_hosted so a
 // misconfigured customer install never picks up cloud-only features) and the
 // operator's feature locks (DEN_FEATURE_*, rendered from Helm config.features).
-// See packages/types/src/den/features.ts.
+// See packages/features/src/registry.ts.
 const featureEnvironment = parseFeatureEnvironment(process.env)
 const fatalFeatureProblems = featureEnvironment.problems.filter((problem) => problem.fatal)
 if (fatalFeatureProblems.length > 0) {

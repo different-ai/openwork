@@ -16,6 +16,7 @@ on:
       - "ee/apps/den-api/**"
       - "ee/packages/**"
       - "packages/types/**"
+      - "packages/features/**"
 
 permissions:
   contents: read

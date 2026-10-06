@@ -35,7 +35,7 @@ escalate any leak instead of rewriting history.
 * Prefer Tailwind, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod,
   Drizzle, Better-Auth. Reuse `@/components`; end users are non-technical.
 * New feature or a change users would notice? Flag first: declare it in
-  `packages/types/src/den/features.ts` before writing the code. Follow
+  `packages/features/src/registry.ts` before writing the code. Follow
   `.opencode/skills/add-a-feature`.
 * Any user-facing UI (desktop app, Den web, MCP Apps, artifact views) follows
   `DESIGN.md`: read it before designing, cite its rule ids in PRs, and attach

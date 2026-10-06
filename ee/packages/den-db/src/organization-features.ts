@@ -10,14 +10,14 @@ import {
   type FeatureMap,
   type FeatureOverrides,
   type ResolvedFeature,
-} from "@openwork/types/den/features"
+} from "@openwork/features"
 import type { createDenDb } from "./client"
 import { OrganizationTable } from "./schema/org"
 import { OrganizationFeatureTable } from "./schema/organization-features"
 
 /**
  * Storage for per-organization feature overrides. The registry and resolution
- * rules live in @openwork/types/den/features; this module only reads and writes
+ * rules live in @openwork/features; this module only reads and writes
  * the rows. Read features through here, never from organization metadata.
  */
 
