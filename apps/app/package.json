@@ -62,7 +62,7 @@
     "emojilib": "^4.0.3",
     "fuzzysort": "^3.1.0",
     "jsonc-parser": "^3.2.1",
-    "katex": "^0.18.1",
+    "katex": "^0.18.2",
     "lexical": "^0.35.0",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.1",
