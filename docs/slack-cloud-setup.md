@@ -4,7 +4,7 @@ Build and demo first; complete Slack Marketplace/RTS distribution approval befor
 
 ## Platform setup
 
-1. Deploy the branch and migrations through `0130_slack_cloud_installations.sql`, after the shared feature tables in `0129_organization_features.sql`. The deployment must be `DEN_DEPLOYMENT=cloud` and `DEN_ORG_MODE=multi_org`; self-hosted and single-org deployments do not expose the platform app.
+1. Deploy the branch and migrations through `0131_slack_cloud_installations.sql`, after the shared feature tables in `0129_organization_features.sql`. The deployment must be `DEN_DEPLOYMENT=cloud` and `DEN_ORG_MODE=multi_org`; self-hosted and single-org deployments do not expose the platform app.
 2. Configure one OpenWork-owned Slack app. Register the exact callback at the public **API** origin: `/v1/oauth-providers/slack/connect/callback`.
 3. Configure the user scope contract below. Set platform credentials through deployment secrets, never the customer Connections settings.
 4. In the existing **Admin → Overview → Organizations**, find the intended OpenWork organization and enable **Features → Slack search**. This is the registered `nativeSlack` feature, default-off. The organization's **OpenWork Connect** feature must also allow use.

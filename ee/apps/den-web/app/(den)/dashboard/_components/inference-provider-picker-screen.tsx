@@ -7,10 +7,11 @@ import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { isSupportedGatewayNpm } from "./inference-provider-request";
 import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProviderSummary } from "./llm-provider-data";
+import { LITELLM_DOC_URL, LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 
 /** Plain-words taglines for the providers most orgs reach for; anything else falls back to its model count. */
 const TAGLINES: Record<string, string> = {
@@ -41,7 +42,9 @@ export function orderCatalog<T extends { id: string; name: string }>(providers: 
 
 export function InferenceProviderPickerScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
-  const { orgId, orgSlug } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext } = useOrgDashboard();
+  // LiteLLM is in preview: offered only where a platform admin turned it on.
+  const liteLlmOffered = orgFeatureEnabled(orgContext, "litellm");
   const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -102,6 +105,18 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
               <button type="button" onClick={() => setShowAll(true)} data-testid="gateway-provider-catalog-more" className="w-full py-2.5 text-center text-[12px] font-medium text-gray-600 hover:bg-gray-50">
                 Show {hidden} more {hidden === 1 ? "provider" : "providers"}
               </button>
+            </li>
+          ) : null}
+          {liteLlmOffered && (!query.trim() || "litellm".includes(query.trim().toLowerCase())) ? (
+            <li className="border-t border-gray-100">
+              <Link href={getNewAiGatewayProviderRoute(orgSlug, LITELLM_PROVIDER_ID)} data-testid="gateway-provider-pick-litellm" aria-label="Add LiteLLM" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                <DenBrandMark name="LiteLLM" serviceUrl={LITELLM_DOC_URL} className="h-7 w-7 shrink-0 rounded-[7px]" imageClassName="h-3.5 w-3.5" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium text-gray-900">LiteLLM</span>
+                  <span className="block text-[12px] text-gray-500">Your own LiteLLM proxy, with one shared key or each person's key</span>
+                </span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" aria-hidden="true" />
+              </Link>
             </li>
           ) : null}
           {compatible && !visible.some((item) => item.id === compatible.id) ? (

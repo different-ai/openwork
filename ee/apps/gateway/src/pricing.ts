@@ -40,7 +40,8 @@ function readPrice(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-function readModelPrice(model: unknown): ModelPrice | null {
+/** Price from one models.dev-shaped model config (USD per 1M tokens), or null. */
+export function readModelPrice(model: unknown): ModelPrice | null {
   if (!isRecord(model) || !isRecord(model.cost)) return null
   const input = readPrice(model.cost.input)
   const output = readPrice(model.cost.output)
@@ -84,6 +85,14 @@ export function createPricingCatalog(raw: unknown): PricingCatalog {
       return prices.get(`${providerId}\u001f${modelId}`) ?? null
     },
   }
+}
+
+/**
+ * One model's price, for providers whose prices live on the synced model row
+ * (LiteLLM) rather than in the models.dev snapshot.
+ */
+export function fixedModelPricing(providerId: string, modelId: string, price: ModelPrice): PricingCatalog {
+  return { getModelPrice: (provider, model) => provider === providerId && model === modelId ? price : null }
 }
 
 let fileCatalog: PricingCatalog | null = null

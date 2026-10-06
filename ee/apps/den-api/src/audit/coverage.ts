@@ -43,6 +43,13 @@ export const providerBackgroundSteps = ["catalog.refresh"]
 export const providerUncoveredRoutes = [
   "DELETE /v1/inference-providers/:inferenceProviderId/oauth",
   "POST /v1/inference-providers/migrate-from-llm-provider",
+  // LiteLLM setup, sync and member key connection are not yet captured.
+  "POST /v1/inference-providers/litellm",
+  "POST /v1/inference-providers/:inferenceProviderId/litellm/sync",
+  "PATCH /v1/inference-providers/:inferenceProviderId/litellm",
+  "PUT /v1/inference-providers/:inferenceProviderId/litellm/member-key",
+  "POST /v1/inference-providers/oauth/browser-litellm-key",
+  "POST /v1/inference-providers/oauth/browser-litellm-check",
 ]
 export const auditReadCoveredRoutes = [
   { method: "GET", path: "/v1/audit/event-types", action: "event_types" },

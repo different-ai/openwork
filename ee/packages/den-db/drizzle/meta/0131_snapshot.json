@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "019209df-b556-42b4-94bc-2deabc14e637",
-  "prevId": "4a063f6b-ca91-4c0b-a2ae-fdc24e9714c3",
+  "id": "39922f94-c858-4ed4-8a88-66faaf46984e",
+  "prevId": "019209df-b556-42b4-94bc-2deabc14e637",
   "tables": {
     "account": {
       "name": "account",
@@ -12414,6 +12414,67 @@
           "name": "plugin_mcp_requirement_binding_id",
           "columns": [
             "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "slack_installation": {
+      "name": "slack_installation",
+      "columns": {
+        "client_id": {
+          "name": "client_id",
+          "type": "varchar(512)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "access_token": {
+          "name": "access_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "refresh_token": {
+          "name": "refresh_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "slack_installation_client_id_workspace_id_pk": {
+          "name": "slack_installation_client_id_workspace_id_pk",
+          "columns": [
+            "client_id",
+            "workspace_id"
           ]
         }
       },

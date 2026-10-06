@@ -36,6 +36,7 @@ config:
     slackAssistantHeadless: "" # default off · Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.
     headlessAutomations: ""    # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
     workbot: ""                # default off · Members can use Workbot. Needs the deployment's Workbot app.
+    litellm: ""                # default off · Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.
   # END GENERATED features
   tenancy:
     mode: single_org

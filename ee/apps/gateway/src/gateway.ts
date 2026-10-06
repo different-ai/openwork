@@ -8,6 +8,8 @@ import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
@@ -41,6 +43,8 @@ import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provi
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
 import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
 import { env } from "./env.js"
+import { respondBeforeUpstream } from "./early-response.js"
+import type { EarlyStreamProtocol } from "./early-response.js"
 import { createRequestLogRecorder } from "./request-log.js"
 import { checkGatewayUsage, type CheckGatewayUsage } from "./usage-limits.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
@@ -485,6 +489,24 @@ async function relayErrorResponse(upstream: Response, protocol: GatewayRequestPr
   } finally { lifetime.dispose() }
 }
 
+/** Streaming requests whose wire protocol is SSE can commit their response before the provider answers. */
+function earlyStreamProtocol(protocol: GatewayRequestProtocol, prepared: PreparedRequest): EarlyStreamProtocol | null {
+  if (!prepared.stream) return null
+  switch (protocol) {
+    case "openai_chat":
+    case "openai_responses":
+    case "anthropic_messages":
+      return protocol
+    // Without alt=sse Google streams a JSON array, which has no comment syntax.
+    case "google_generate_content":
+      return prepared.url.searchParams.get("alt") === "sse" ? protocol : null
+    // Bedrock streams binary AWS event frames; passthrough has no known framing.
+    case "bedrock_converse":
+    case "passthrough":
+      return null
+  }
+}
+
 function upstreamRequestId(headers: Headers) {
   return headers.get("x-request-id") ?? headers.get("request-id") ?? headers.get("x-goog-request-id") ?? headers.get("x-amzn-requestid")
 }
@@ -731,6 +753,9 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const headerModel = c.req.header(GATEWAY_REQUEST_MODEL_HEADER)
     const modelHint = parseGatewayModelAlias(headerModel) ? headerModel ?? null : null
     let gatewayUsage: import("@openwork-ee/den-db/gateway-usage-limits").GatewayUsageSnapshot | undefined
+    // LiteLLM: org keys are priced from the synced model row; per-user keys are not tracked.
+    let requestPricing: PricingCatalog | undefined
+    let spendTracking = true
     const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter: dependencies.reporter, now: dependencies.now })
     const startRecorder = (state: {
       protocol: GatewayRequestProtocol
@@ -767,6 +792,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         gatewayUsage,
         signal: request.signal,
         startedAt,
+        pricing: requestPricing,
+        spendTracking,
       })
     }
     const reject = (response: Response, errorCode: string, reason: string) => {
@@ -830,6 +857,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(403, selected.code, "No current grant authorizes this model and selection."), selected.code, "Gateway model access denied")
     }
     selection = selected.selection
+    if (isLiteLlmProviderId(provider.provider_id)) {
+      spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
+      const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    }
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
     if (resolved.family === "bedrock_mantle" && resolved.regionDerived) {
       // Mantle serves some models under /openai/v1; the path comes from the trusted catalog, never the request.
@@ -911,7 +943,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     if (auth.kind === "signer") prepared.url.host = auth.host
-    const usageRejection = await dependencies.checkUsage({
+    // Per-user LiteLLM keys are budgeted by LiteLLM, so they skip OpenWork admission and limits.
+    const usageRejection = !spendTracking ? null : await dependencies.checkUsage({
       organizationId: identity.organizationId,
       memberId: identity.orgMembershipId,
       requestId: openworkRequestId,
@@ -923,6 +956,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       upstreamOrigin: prepared.url.origin,
       upstreamPath: prepared.url.pathname,
       deferred: prepared.json?.background === true || prepared.json?.async === true || prepared.json?.deferred === true,
+      priced: requestPricing !== undefined,
     })
     startRecorder({
       protocol: resolved.protocol,
@@ -953,84 +987,105 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     const lifetime = upstreamLifetime(request.signal, env.upstreamTimeoutMs)
-    let upstream: Response
-    try {
-      validateInferenceUrl(prepared.url)
-      lifetime.signal.throwIfAborted()
-      upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
-    } catch {
-      lifetime.dispose()
-      console.error("[gateway] Failed to reach provider upstream", {
-        openworkRequestId,
-        organizationId: identity.organizationId,
-        inferenceProviderId: provider.id,
-        upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-      })
-      dependencies.reporter.handledError({
-        reason: "upstream_unreachable",
-        organizationId: identity.organizationId,
-        orgMembershipId: identity.orgMembershipId,
-        gatewayKeyId: identity.gatewayKeyId,
-        openworkRequestId,
-        route: c.req.path,
-        method,
-        headers: incomingHeaders,
-        incomingModel: prepared.requestedModel,
-        status: 502,
-        upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-      })
-      void recorder.finish({ status: 502, outcome: lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_unreachable", errorCode: lifetime.timedOut ? "upstream_timeout" : "upstream_unreachable" })
-      const response = gatewayError(502, "upstream_unreachable", "Failed to reach the inference provider upstream.", { provider_id: provider.id })
-      response.headers.set("x-openwork-request-id", openworkRequestId)
-      return response
-    }
+    const dispatch = async (): Promise<Response> => {
+      let upstream: Response
+      try {
+        validateInferenceUrl(prepared.url)
+        lifetime.signal.throwIfAborted()
+        upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+      } catch {
+        lifetime.dispose()
+        console.error("[gateway] Failed to reach provider upstream", {
+          openworkRequestId,
+          organizationId: identity.organizationId,
+          inferenceProviderId: provider.id,
+          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
+        })
+        dependencies.reporter.handledError({
+          reason: "upstream_unreachable",
+          organizationId: identity.organizationId,
+          orgMembershipId: identity.orgMembershipId,
+          gatewayKeyId: identity.gatewayKeyId,
+          openworkRequestId,
+          route: c.req.path,
+          method,
+          headers: incomingHeaders,
+          incomingModel: prepared.requestedModel,
+          status: 502,
+          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
+        })
+        void recorder.finish({ status: 502, outcome: lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_unreachable", errorCode: lifetime.timedOut ? "upstream_timeout" : "upstream_unreachable" })
+        const response = gatewayError(502, "upstream_unreachable", "Failed to reach the inference provider upstream.", { provider_id: provider.id })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        return response
+      }
 
-    if (!upstream.ok) {
-      console.error("[gateway] Upstream provider request failed", {
-        openworkRequestId,
-        organizationId: identity.organizationId,
-        inferenceProviderId: provider.id,
-        upstreamProviderId: provider.provider_id,
-        upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-        status: upstream.status,
-      })
-    }
+      if (!upstream.ok) {
+        console.error("[gateway] Upstream provider request failed", {
+          openworkRequestId,
+          organizationId: identity.organizationId,
+          inferenceProviderId: provider.id,
+          upstreamProviderId: provider.provider_id,
+          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
+          status: upstream.status,
+        })
+      }
 
-    if ((resolved.family === "google_vertex" || resolved.family === "google_vertex_anthropic") && (upstream.status === 401 || upstream.status === 403)) {
-      const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
-      const message = upstream.status === 401
-        ? selection.row.credentialSet.credential_mode === "member"
-          ? "Google rejected the provider credential. Sign in again; if the problem persists, contact your organization administrator."
-          : "Google rejected the provider credential. Ask your organization administrator to check provider authentication."
-        : "Google Cloud denied access. Ask your administrator to check project IAM and model access."
-      const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
-      response.headers.set("x-openwork-request-id", openworkRequestId)
-      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode })
-      lifetime.dispose()
-      await upstream.body?.cancel().catch(() => {})
-      return response
-    }
+      if ((resolved.family === "google_vertex" || resolved.family === "google_vertex_anthropic") && (upstream.status === 401 || upstream.status === 403)) {
+        const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
+        const message = upstream.status === 401
+          ? selection.row.credentialSet.credential_mode === "member"
+            ? "Google rejected the provider credential. Sign in again; if the problem persists, contact your organization administrator."
+            : "Google rejected the provider credential. Ask your organization administrator to check provider authentication."
+          : "Google Cloud denied access. Ask your administrator to check project IAM and model access."
+        const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return response
+      }
 
-    if (isAwsFamily(resolved.family) && (upstream.status === 401 || upstream.status === 403)) {
-      // AWS signature errors can echo the canonical request, including the
-      // session token header. Never relay them; keep a message both Bedrock SDKs read.
-      const errorType = upstream.headers.get("x-amzn-errortype")?.split(":")[0]
-      const denied = errorType === "AccessDeniedException" || (!errorType && upstream.status === 403)
-      const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
-      const message = denied
-        ? "AWS denied access to this Bedrock model. Ask your organization administrator to check the IAM policy and Bedrock model access in this region."
-        : "AWS rejected the Bedrock provider credential. Ask your organization administrator to check or replace the access keys."
-      const response = Response.json({ message, error: { message, type: "invalid_request_error", code: errorCode, provider_id: provider.id } }, { status: upstream.status })
-      response.headers.set("x-openwork-request-id", openworkRequestId)
-      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
-      lifetime.dispose()
-      await upstream.body?.cancel().catch(() => {})
-      return response
-    }
+      if (isAwsFamily(resolved.family) && (upstream.status === 401 || upstream.status === 403)) {
+        // AWS signature errors can echo the canonical request, including the
+        // session token header. Never relay them; keep a message both Bedrock SDKs read.
+        const errorType = upstream.headers.get("x-amzn-errortype")?.split(":")[0]
+        const denied = errorType === "AccessDeniedException" || (!errorType && upstream.status === 403)
+        const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+        const message = denied
+          ? "AWS denied access to this Bedrock model. Ask your organization administrator to check the IAM policy and Bedrock model access in this region."
+          : "AWS rejected the Bedrock provider credential. Ask your organization administrator to check or replace the access keys."
+        const response = Response.json({ message, error: { message, type: "invalid_request_error", code: errorCode, provider_id: provider.id } }, { status: upstream.status })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return response
+      }
 
-    const responseHeaders = relayHeaders(upstream, openworkRequestId)
-    if (!upstream.ok) return relayErrorResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
-    return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
+      const responseHeaders = relayHeaders(upstream, openworkRequestId)
+      if (!upstream.ok) return relayErrorResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
+      return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
+    }
+    const pending = dispatch()
+    const earlyProtocol = earlyStreamProtocol(resolved.protocol, prepared)
+    if (!earlyProtocol) return pending
+    return respondBeforeUpstream({
+      pending,
+      protocol: earlyProtocol,
+      commitAfterMs: env.responseStartMs,
+      heartbeatMs: env.responseHeartbeatMs,
+      headers: { "x-openwork-request-id": openworkRequestId },
+      onCommit() {
+        console.info("[gateway] Committed stream before upstream headers", {
+          openworkRequestId,
+          organizationId: identity.organizationId,
+          inferenceProviderId: provider.id,
+          upstreamProviderId: provider.provider_id,
+        })
+      },
+      onCancel: () => lifetime.abort(),
+    })
   }
 
   // Models keys fall through to the OpenWork Models handler registered after this one.

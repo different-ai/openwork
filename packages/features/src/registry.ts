@@ -123,6 +123,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  litellm: {
+    label: "AI Gateway: LiteLLM",
+    description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES
