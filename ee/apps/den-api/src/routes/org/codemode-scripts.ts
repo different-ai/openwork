@@ -36,7 +36,7 @@ import {
   listAccessibleWorkflows,
 } from "../../mcp/marketplace-capabilities.js"
 import { DEN_MCP_REQUESTED_SCOPES } from "../../mcp/scopes.js"
-import { PluginArchAuthorizationError } from "./plugin-system/access.js"
+import { PluginArchAuthorizationError } from "../../core/sharing/resource-access.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { codemodeCodeDigest } from "../../workflow-runs.js"
 import { getWorkflowLibraryDetail } from "../../workflow-library.js"

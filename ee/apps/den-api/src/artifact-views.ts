@@ -6,7 +6,7 @@ import { db } from "./db.js"
 import { appMcpServersEnabled } from "./mcp-app-rollout.js"
 import { getWorkflowAccess, getWorkflowDetail } from "./workflows.js"
 import { buildGeneratedArtifactView } from "./generated-artifact-view-builder.js"
-import type { PluginArchActorContext } from "./routes/org/plugin-system/access.js"
+import type { PluginArchActorContext } from "./core/sharing/resource-access.js"
 import { artifactViewResourceUri } from "./artifact-view-resource.js"
 
 /**

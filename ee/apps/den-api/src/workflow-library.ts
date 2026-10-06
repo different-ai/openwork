@@ -10,11 +10,8 @@ import { db } from "./db.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { getWorkflowDetail } from "./workflows.js"
 import { listArtifactViewsForScript } from "./artifact-views.js"
-import {
-  resolvePluginArchResourceRole,
-  type PluginArchActorContext,
-  type PluginArchRole,
-} from "./routes/org/plugin-system/access.js"
+import { resolvePluginArchResourceRole } from "./routes/org/plugin-system/access.js"
+import type { PluginArchActorContext, PluginArchRole } from "./core/sharing/resource-access.js"
 import {
   listMeEffectivePluginAccess,
   type MePluginAccessEdge,

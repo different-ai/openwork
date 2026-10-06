@@ -42,7 +42,8 @@ import { env } from "../env.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
 import { executeLiveArtifactWorkflow, getWorkflowDetail, getWorkflowSnapshot } from "../workflows.js"
 import { artifactFreshness } from "../workflow-artifacts.js"
-import { PluginArchAuthorizationError, requirePluginArchCapability } from "../routes/org/plugin-system/access.js"
+import { PluginArchAuthorizationError } from "../core/sharing/resource-access.js"
+import { requirePluginArchCapability } from "../routes/org/plugin-system/access.js"
 import {
   WORKFLOW_ARTIFACT_APP_SCHEMA_VERSION,
   workflowArtifactAppServerCapabilities,
@@ -79,7 +80,7 @@ import {
   registerAgentGeneratedArtifactViews,
   registerGeneratedArtifactResource,
 } from "./generated-artifact-views.js"
-import type { PluginArchActorContext } from "../routes/org/plugin-system/access.js"
+import type { PluginArchActorContext } from "../core/sharing/resource-access.js"
 import { parseArtifactViewResourceUri } from "../artifact-view-resource.js"
 import {
   listUsableExternalMcpConnections,

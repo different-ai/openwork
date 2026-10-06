@@ -29,7 +29,7 @@ import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets
 import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
 import { organizationBuildsMcpApps } from "../mcp-app-rollout.js"
-import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
+import { resolvePluginArchGrantRole } from "../core/sharing/resource-access.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
 import { type BuiltCodemodeTools } from "./codemode-tools.js"
