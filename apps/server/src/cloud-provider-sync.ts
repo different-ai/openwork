@@ -24,6 +24,7 @@ import {
 import type { ServerConfig } from "./types.js";
 import { openworkConfigPath } from "./workspace-files.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
+import { withProviderSettingsFromEnv } from "./provider-settings-from-env.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -762,7 +763,7 @@ function prepareMaterialization(
     materialized.push({
       provider,
       runtimeProviderId: runtimeProviderId(provider),
-      config: buildProviderConfig(provider),
+      config: withProviderSettingsFromEnv(buildProviderConfig(provider), envEntries),
       envEntries,
     });
   }
