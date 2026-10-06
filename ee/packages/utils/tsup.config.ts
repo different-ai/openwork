@@ -13,7 +13,6 @@ export default defineConfig({
     "inference-egress": "src/inference-egress.ts",
     "inference-credentials": "src/inference-credentials.ts",
     "bedrock-mantle-catalog": "src/bedrock-mantle-catalog.ts",
-    "ai-sdk-env-settings": "src/ai-sdk-env-settings.ts",
     "litellm-catalog": "src/litellm-catalog.ts",
     observability: "src/observability.ts",
     typeid: "src/typeid.ts",
