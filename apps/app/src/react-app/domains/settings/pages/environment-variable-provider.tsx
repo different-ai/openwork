@@ -40,7 +40,6 @@ function validateKey(key: string): string | null {
 
 type UseEnvironmentVariableListOptions = {
   client: OpenworkServerClient | null;
-  isRemoteWorkspace: boolean;
   runtimeKey?: string | null;
 };
 
@@ -52,13 +51,13 @@ export function useEnvironmentVariableList(options: UseEnvironmentVariableListOp
   return useQuery({
     queryKey: environmentUserEnvQueryKey(options.runtimeKey),
     queryFn: async () => {
-      if (!options.client || options.isRemoteWorkspace) {
+      if (!options.client) {
         return { items: [] };
       }
 
       return options.client.listUserEnv();
     },
-    enabled: options.client !== null && !options.isRemoteWorkspace,
+    enabled: options.client !== null,
     refetchOnWindowFocus: false,
   });
 }

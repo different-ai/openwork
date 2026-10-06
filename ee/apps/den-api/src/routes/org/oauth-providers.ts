@@ -239,8 +239,10 @@ export async function beginNativeProviderConnect(input: OrgIds & {
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.credentialProviderId,
-    // Slack's confidential flow has no PKCE. Bind the pending attempt to its
-    // signed state instead, so an older callback cannot finish a newer start.
+    // Slack's confidential flow has no PKCE. This fingerprints server-minted,
+    // HMAC-signed state with a cryptographic UUID nonce, not a human password.
+    // SHA-256 binds the pending attempt; the callback verifies HMAC/expiry and
+    // consumes the matching digest on successful completion, rejecting stale starts.
     pendingCodeVerifier: input.provider.providerId === "slack" ? createHash("sha256").update(state).digest("hex") : verifier,
   })
   return { authorizeUrl }

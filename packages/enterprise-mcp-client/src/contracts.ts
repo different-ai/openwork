@@ -215,7 +215,7 @@ export type EnterpriseMcpDiagnosticSink = (event: EnterpriseMcpDiagnosticEvent) 
 
 export type EnterpriseMcpAuthorization =
   | { type: "none" }
-  | { type: "api-key"; token: string }
+  | { type: "api-key"; token: string; scheme?: "bearer" | "token" }
   | {
     type: "oauth"
     persistence: EnterpriseMcpOAuthPersistence

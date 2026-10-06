@@ -10,7 +10,6 @@ export type BootPhase =
 
 export type StartupBranch =
   | "firstRunNoWorkspace"
-  | "remoteWorkspace"
   | "localAttachExisting"
   | "localHostStart"
   | "serverPreference"

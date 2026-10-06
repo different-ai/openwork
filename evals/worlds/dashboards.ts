@@ -2,8 +2,8 @@ import type { Seed } from "@openwork/env";
 import { isRecord, records } from "./library.ts";
 
 /**
- * Org capabilities such as org-managed Dashboards and building your own Apps
- * are default-off per organization. Worlds switch the ones they need on through
+ * Org capabilities such as org-managed Dashboards are default-off per
+ * organization. Worlds switch the ones they need on through
  * the platform-admin route the /admin panel uses; the seeded org admin is the
  * platform admin.
  */

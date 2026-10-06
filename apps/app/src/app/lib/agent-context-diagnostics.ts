@@ -14,14 +14,6 @@ import type { DenExternalMcpConnection } from "./den";
 const SAFE_CONNECTION_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const MAX_ORGANIZATION_CONNECTION_OBSERVATIONS = 200;
 
-export function isAgentContextDiagnosticsWorkspaceAllowed(workspace: {
-  workspaceType: "local" | "remote";
-  remoteType?: "openwork" | "opencode" | null;
-} | null): boolean {
-  if (!workspace) return false;
-  return workspace.workspaceType === "local" || workspace.remoteType === "openwork";
-}
-
 function summarizeOrganizationConnection(
   connection: DenExternalMcpConnection,
 ): AgentContextOrganizationConnectionSummary | null {
@@ -106,20 +98,7 @@ export function resolveOrganizationConnectionsProbe(input: {
 export function collectAgentContextDiagnosticObservations(input: {
   organizationConnections: DenExternalMcpConnection[];
   organizationConnectionsProbe: AgentContextOrganizationConnectionsProbe;
-  workspaceType: "local" | "remote";
 }): AgentContextDiagnosticsRequest {
-  if (input.workspaceType === "remote") {
-    return {
-      organizationConnectionsProbe: {
-        status: "skipped",
-        code: "remote_workspace_privacy",
-        totalCount: 0,
-        truncated: false,
-      },
-      organizationConnections: [],
-    };
-  }
-
   const observation = input.organizationConnectionsProbe.status === "observed"
     ? summarizeOrganizationConnectionObservation(input.organizationConnections)
     : { rows: [], totalCount: 0, truncated: false };

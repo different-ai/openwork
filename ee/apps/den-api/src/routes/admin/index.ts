@@ -24,14 +24,13 @@ import {
   OrganizationTable,
   OrgSubscriptionTable,
   ScimSyncEventTable,
-  TelemetryEventTable,
+  GatewayRequestLogTable,
   WorkerTable,
   AdminAllowlistTable,
   AuditEventTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError, readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
-import { freeInferenceRolloutEnabled, withFreeInferenceRollout } from "@openwork/types/den/inference"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -99,13 +98,6 @@ const updateOrganizationOpenWorkWebAccessSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 })
 
-const updateOrganizationFreeAutoSchema = z.object({ enabled: z.boolean().nullable() }).strict()
-const adminFreeAutoSchema = z.object({ enabled: z.boolean(), globallyEnabled: z.boolean(), rolloutAllOrganizations: z.boolean() })
-
-function readAdminFreeAuto(metadata: unknown) {
-  return { enabled: freeInferenceRolloutEnabled(metadata, env.inferenceFree), globallyEnabled: env.inferenceFree.enabled, rolloutAllOrganizations: env.inferenceFree.rolloutAllOrganizations }
-}
-
 const updateOrganizationDpaSchema = z.object({
   dpaSigned: z.boolean(),
   reason: z.string().trim().min(3).max(500),
@@ -118,7 +110,6 @@ const updateOrganizationCapabilitiesSchema = z.object({
     modelsAnalytics: z.boolean().nullable().optional(),
     auditLogs: z.boolean().nullable().optional(),
     orgManagedDashboards: z.boolean().nullable().optional(),
-    appMcpServers: z.boolean().nullable().optional(),
     slackAssistant: z.boolean().nullable().optional(),
     slackAssistantHeadless: z.boolean().nullable().optional(),
     headlessAutomations: z.boolean().nullable().optional(),
@@ -136,7 +127,6 @@ const adminOrganizationCapabilitiesSchema = z.object({
   modelsAnalytics: z.boolean(),
   auditLogs: z.boolean(),
   orgManagedDashboards: z.boolean(),
-  appMcpServers: z.boolean(),
   slackAssistant: z.boolean(),
   slackAssistantHeadless: z.boolean(),
   headlessAutomations: z.boolean(),
@@ -215,7 +205,7 @@ const adminOverviewResponseSchema = z.object({
   admins: z.array(z.object({}).passthrough()),
   summary: adminSummarySchema,
   users: z.array(z.object({}).passthrough()),
-  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema, freeAuto: adminFreeAutoSchema }).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
   userPage: adminPageInfoSchema,
   organizationPage: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
@@ -229,7 +219,7 @@ const adminUsersPageResponseSchema = z.object({
 }).meta({ ref: "AdminUsersPageResponse" })
 
 const adminOrganizationsPageResponseSchema = z.object({
-  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema, freeAuto: adminFreeAutoSchema }).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
   page: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
 }).meta({ ref: "AdminOrganizationsPageResponse" })
@@ -318,7 +308,6 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
     auditLogs: normalizeOrganizationCapabilities(metadata).auditLogs,
     orgManagedDashboards: normalizeOrganizationCapabilities(metadata).orgManagedDashboards,
-    appMcpServers: normalizeOrganizationCapabilities(metadata).appMcpServers,
     slackAssistant: normalizeOrganizationCapabilities(metadata).slackAssistant,
     slackAssistantHeadless: normalizeOrganizationCapabilities(metadata).slackAssistantHeadless,
     headlessAutomations: normalizeOrganizationCapabilities(metadata).headlessAutomations,
@@ -357,11 +346,11 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
   const capabilities: Record<string, unknown> = {}
 
   for (const [key, value] of Object.entries(raw)) {
-    // "workflows", "codemodeScripts", "remoteMcpApps", and "cloud" are retired
-    // rollout keys: those features are now always on (Cloud is entitled by
-    // OpenWork Web access instead), so stale stored overrides stay managed
-    // (dropped on the next capabilities write) instead of passing through as
-    // unmanaged metadata.
+    // "workflows", "codemodeScripts", "remoteMcpApps", "appMcpServers", and
+    // "cloud" are retired rollout keys: those features are now always on (Cloud
+    // is entitled by OpenWork Web access instead), so stale stored overrides
+    // stay managed (dropped on the next capabilities write) instead of passing
+    // through as unmanaged metadata.
     if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "headlessAutomations" && key !== "workbot" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
@@ -487,7 +476,6 @@ type AdminOrganizationRow = {
   billableSeatCount: number
   capabilities: ReturnType<typeof readAdminVisibleOrganizationCapabilities>
   openworkWebAccess: AdminOpenWorkWebAccess
-  freeAuto: ReturnType<typeof readAdminFreeAuto>
 }
 
 type AdminOpenWorkWebSubscription = Pick<
@@ -668,9 +656,9 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
   const userIds = users.map((user) => user.id)
   const activityWindowStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
   const sessionDayExpr = sql<string>`date_format(${AuthSessionTable.createdAt}, '%Y-%m-%d')`
-  const telemetryDayExpr = sql<string>`date_format(${TelemetryEventTable.event_timestamp}, '%Y-%m-%d')`
+  const gatewayDayExpr = sql<string>`date_format(${GatewayRequestLogTable.started_at}, '%Y-%m-%d')`
 
-  const [workerStatsRows, sessionStatsRows, accountRows, orgMembershipRows, sessionDayRows, telemetryDayRows, taskDayRows, inviteStatsRows] = await Promise.all([
+  const [workerStatsRows, sessionStatsRows, accountRows, orgMembershipRows, sessionDayRows, gatewayDayRows, inviteStatsRows] = await Promise.all([
     db
       .select({
         userId: WorkerTable.created_by_user_id,
@@ -718,25 +706,13 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
     db
       .select({
         userId: MemberTable.userId,
-        day: telemetryDayExpr,
-        lastEventAt: sql<Date | null>`max(${TelemetryEventTable.event_timestamp})`,
+        day: gatewayDayExpr,
+        lastEventAt: sql<Date | null>`max(${GatewayRequestLogTable.started_at})`,
       })
-      .from(TelemetryEventTable)
-      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
-      .where(and(inArray(MemberTable.userId, userIds), gte(TelemetryEventTable.event_timestamp, activityWindowStart)))
-      .groupBy(MemberTable.userId, telemetryDayExpr)
-      .catch(() => []),
-    db
-      .select({ userId: MemberTable.userId, day: telemetryDayExpr })
-      .from(TelemetryEventTable)
-      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
-      .where(and(
-        inArray(MemberTable.userId, userIds),
-        gte(TelemetryEventTable.event_timestamp, activityWindowStart),
-        inArray(TelemetryEventTable.event_type, ["task.started", "task.completed", "task.failed"]),
-        isNotNull(TelemetryEventTable.session_id),
-      ))
-      .groupBy(MemberTable.userId, telemetryDayExpr)
+      .from(GatewayRequestLogTable)
+      .innerJoin(MemberTable, eq(GatewayRequestLogTable.org_membership_id, MemberTable.id))
+      .where(and(inArray(MemberTable.userId, userIds), gte(GatewayRequestLogTable.started_at, activityWindowStart)))
+      .groupBy(MemberTable.userId, gatewayDayExpr)
       .catch(() => []),
     db
       .select({
@@ -806,12 +782,12 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
     memberships.sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  type ActivityStats = { days: Set<string>; lastTelemetryAt: number | null }
+  type ActivityStats = { days: Set<string>; lastGatewayAt: number | null }
   const activityByUser = new Map<UserId, ActivityStats>()
   const getActivity = (userId: UserId): ActivityStats => {
     let stats = activityByUser.get(userId)
     if (!stats) {
-      stats = { days: new Set(), lastTelemetryAt: null }
+      stats = { days: new Set(), lastGatewayAt: null }
       activityByUser.set(userId, stats)
     }
     return stats
@@ -821,7 +797,7 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
       getActivity(row.userId).days.add(row.day)
     }
   }
-  for (const row of telemetryDayRows) {
+  for (const row of gatewayDayRows) {
     if (!row.userId) {
       continue
     }
@@ -830,13 +806,8 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
       stats.days.add(row.day)
     }
     const eventTime = toTimestamp(row.lastEventAt)
-    if (eventTime !== null && (stats.lastTelemetryAt === null || eventTime > stats.lastTelemetryAt)) {
-      stats.lastTelemetryAt = eventTime
-    }
-  }
-  for (const row of taskDayRows) {
-    if (row.userId && row.day) {
-      getActivity(row.userId).days.add(row.day)
+    if (eventTime !== null && (stats.lastGatewayAt === null || eventTime > stats.lastGatewayAt)) {
+      stats.lastGatewayAt = eventTime
     }
   }
 
@@ -853,8 +824,8 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
     const activity = activityByUser.get(entry.id)
     const activeDayCount = activity ? activity.days.size : 0
     const lastSeenTime = toTimestamp(sessionStats.lastSeenAt)
-    const lastTelemetryAt = activity ? activity.lastTelemetryAt : null
-    const lastActiveTime = lastTelemetryAt === null ? lastSeenTime : lastSeenTime === null ? lastTelemetryAt : Math.max(lastSeenTime, lastTelemetryAt)
+    const lastGatewayAt = activity ? activity.lastGatewayAt : null
+    const lastActiveTime = lastGatewayAt === null ? lastSeenTime : lastSeenTime === null ? lastGatewayAt : Math.max(lastSeenTime, lastGatewayAt)
     const inviteStats = inviteStatsByUser.get(entry.id)
     const signupTime = toTimestamp(entry.createdAt)
     const firstInviteTime = toTimestamp(inviteStats ? inviteStats.firstInviteAt : null)
@@ -1005,7 +976,6 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       freeSeatCount: seatCounts.free,
       seatsFreeAdditional: seatCounts.additionalFree,
       billableSeatCount: seatCounts.chargeable,
-      freeAuto: readAdminFreeAuto(metadata),
       capabilities: readAdminVisibleOrganizationCapabilities(metadata),
       openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null),
     }
@@ -1051,10 +1021,10 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
   const recent7dStart = new Date(now - 7 * 24 * 60 * 60 * 1000)
   const recent30dStart = new Date(now - 30 * 24 * 60 * 60 * 1000)
   const sessionDayExpr = sql<string>`date_format(${AuthSessionTable.createdAt}, '%Y-%m-%d')`
-  const telemetryDayExpr = sql<string>`date_format(${TelemetryEventTable.event_timestamp}, '%Y-%m-%d')`
+  const gatewayDayExpr = sql<string>`date_format(${GatewayRequestLogTable.started_at}, '%Y-%m-%d')`
   const signupDayExpr = sql<string>`date_format(${AuthUserTable.createdAt}, '%Y-%m-%d')`
 
-  const [userSummaryRows, organizationTotal, adminRows, workerRows, sessionDayRows, telemetryDayRows, taskDayRows, signupRows, inviteRows] = await Promise.all([
+  const [userSummaryRows, organizationTotal, adminRows, workerRows, sessionDayRows, gatewayDayRows, signupRows, inviteRows] = await Promise.all([
     db
       .select({
         totalUsers: sql<number>`count(*)`,
@@ -1079,23 +1049,11 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
       .where(gte(AuthSessionTable.createdAt, activityWindowStart))
       .groupBy(AuthSessionTable.userId, sessionDayExpr),
     db
-      .select({ userId: MemberTable.userId, day: telemetryDayExpr })
-      .from(TelemetryEventTable)
-      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
-      .where(and(isNotNull(MemberTable.userId), gte(TelemetryEventTable.event_timestamp, activityWindowStart)))
-      .groupBy(MemberTable.userId, telemetryDayExpr)
-      .catch(() => []),
-    db
-      .select({ userId: MemberTable.userId, day: telemetryDayExpr })
-      .from(TelemetryEventTable)
-      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
-      .where(and(
-        isNotNull(MemberTable.userId),
-        gte(TelemetryEventTable.event_timestamp, activityWindowStart),
-        inArray(TelemetryEventTable.event_type, ["task.started", "task.completed", "task.failed"]),
-        isNotNull(TelemetryEventTable.session_id),
-      ))
-      .groupBy(MemberTable.userId, telemetryDayExpr)
+      .select({ userId: MemberTable.userId, day: gatewayDayExpr })
+      .from(GatewayRequestLogTable)
+      .innerJoin(MemberTable, eq(GatewayRequestLogTable.org_membership_id, MemberTable.id))
+      .where(and(isNotNull(MemberTable.userId), gte(GatewayRequestLogTable.started_at, activityWindowStart)))
+      .groupBy(MemberTable.userId, gatewayDayExpr)
       .catch(() => []),
     db
       .select({ day: signupDayExpr, signups: sql<number>`count(*)` })
@@ -1147,18 +1105,12 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
     rememberActivityDay(row.userId, row.day)
     markDay(activeUsersByDay, row.day, row.userId)
   }
-  for (const row of telemetryDayRows) {
+  for (const row of gatewayDayRows) {
     if (!row.userId || !row.day) {
       continue
     }
     rememberActivityDay(row.userId, row.day)
     markDay(activeUsersByDay, row.day, row.userId)
-  }
-  for (const row of taskDayRows) {
-    if (!row.userId || !row.day) {
-      continue
-    }
-    rememberActivityDay(row.userId, row.day)
     markDay(realActiveUsersByDay, row.day, row.userId)
   }
 
@@ -1816,51 +1768,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   )
 
   app.patch(
-    "/v1/admin/organizations/:organizationId/free-auto",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Set an organization's free Auto rollout",
-      description: "Allowlisted platform administrators only. Sets the organization rollout override; null restores the deployment default. Default rollout is off. Does not override the global kill switch, DPA, billing eligibility, desktop policy or allowance. Atomically preserves unrelated metadata and records the actor and previous state.",
-      responses: {
-        200: jsonResponse("Free Auto rollout updated.", z.object({ ok: z.literal(true), organization: z.object({ id: denTypeIdSchema("organization"), freeAuto: adminFreeAutoSchema }) })),
-        400: jsonResponse("Invalid rollout or organization identifier.", adminRequestErrorSchema),
-        ...adminRouteErrors,
-        404: jsonResponse("Organization not found.", notFoundSchema),
-        503: jsonResponse("Organization metadata could not be read.", z.object({ error: z.literal("managed_models_policy_unavailable"), message: z.string() })),
-      },
-    }),
-    adminRoute(),
-    jsonValidator(updateOrganizationFreeAutoSchema),
-    async (c) => {
-      const body = c.req.valid("json")
-      const organizationId = c.req.param("organizationId")
-      if (!isOrganizationId(organizationId)) return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
-      const actorUserId = c.get("user")?.id
-      if (!actorUserId) return c.json({ error: "unauthorized" }, 401)
-      const result = await db.transaction(async (tx) => {
-        const [organization] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
-          .where(eq(OrganizationTable.id, organizationId)).limit(1).for("update")
-        if (!organization) return "not_found"
-        let metadata: Record<string, unknown>
-        try { metadata = readOrganizationMetadata(organization.metadata) } catch { return "policy_unavailable" }
-        const next = withFreeInferenceRollout(metadata, body.enabled)
-        const auditEvent = buildOrganizationAuditEvent({ organizationId, actorUserId, action: ORGANIZATION_AUDIT_ACTIONS.freeAutoRolloutUpdated,
-          payload: { previousEnabled: freeInferenceRolloutEnabled(metadata, env.inferenceFree), enabled: body.enabled } })
-        await tx.update(OrganizationTable).set({ metadata: next }).where(eq(OrganizationTable.id, organizationId))
-        await tx.insert(AuditEventTable).values(auditEvent)
-        return { auditEvent, freeAuto: readAdminFreeAuto(next) }
-      })
-      if (result === "not_found") return c.json({ error: "not_found", message: "Organization not found." }, 404)
-      if (result === "policy_unavailable") {
-        const error = new ManagedModelsPolicyError("managed_models_policy_unavailable")
-        return c.json({ error: error.code, message: error.message }, error.status)
-      }
-      logOrganizationAuditEvent(result.auditEvent)
-      return c.json({ ok: true, organization: { id: organizationId, freeAuto: result.freeAuto } })
-    },
-  )
-
-  app.patch(
     "/v1/admin/organizations/:organizationId/dpa",
     describeRoute({
       tags: ["Admin"],
@@ -2083,7 +1990,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Set an organization's capability overrides",
-      description: "Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs, orgManagedDashboards and appMcpServers overrides. Audit logs, org-managed Dashboards and appMcpServers (building your own Apps as MCP servers) require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
+      description: "Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs and orgManagedDashboards overrides. Audit logs and org-managed Dashboards require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
       responses: {
         200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: adminOrganizationCapabilitiesSchema })),
         400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
@@ -2144,10 +2051,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const orgManagedDashboards = body.data.capabilities.orgManagedDashboards
         if (orgManagedDashboards === null) delete capabilities.orgManagedDashboards
         else if (orgManagedDashboards !== undefined) capabilities.orgManagedDashboards = orgManagedDashboards
-
-        const appMcpServers = body.data.capabilities.appMcpServers
-        if (appMcpServers === null) delete capabilities.appMcpServers
-        else if (appMcpServers !== undefined) capabilities.appMcpServers = appMcpServers
 
         const slackAssistant = body.data.capabilities.slackAssistant
         if (slackAssistant === null) delete capabilities.slackAssistant

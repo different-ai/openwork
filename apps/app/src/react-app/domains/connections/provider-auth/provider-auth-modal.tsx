@@ -68,7 +68,6 @@ export type ProviderAuthModalProps = {
   submitting: boolean;
   error: string | null;
   preferredProviderId?: string | null;
-  workerType?: "local" | "remote";
   providers: ProviderAuthProvider[];
   connectedProviderIds: string[];
   /** Listed by the engine but without the person's own key (built-in Zen): offered under "Available to add". */
@@ -92,9 +91,6 @@ export type ProviderAuthModalProps = {
 };
 
 export default function ProviderAuthModal(props: ProviderAuthModalProps) {
-  const workerType = props.workerType === "remote" ? "remote" : "local";
-  const isRemoteWorker = workerType === "remote";
-
   const [view, setView] = useState<
     "list" | "method" | "api" | "oauth-code" | "oauth-auto"
   >("list");
@@ -196,7 +192,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           }
           if (!isOpenAiProvider(id, provider?.name)) return true;
           if (method.type !== "oauth") return true;
-          if (isRemoteWorker) return isOpenAiHeadlessMethod(method);
           return !isOpenAiHeadlessMethod(method);
         });
         if (entryMethods.length === 0) return [];
@@ -211,7 +206,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       .sort(compareProviders);
 
     return nextEntries.filter((entry) => entry.id !== OPENWORK_MODELS_PROVIDER_ID && entry.id !== "openwork-free");
-  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.gatewayProviderIds, props.keylessProviderIds, props.providers]);
+  }, [props.authMethods, props.connectedProviderIds, props.gatewayProviderIds, props.keylessProviderIds, props.providers]);
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.id === selectedProviderId) ?? null,
@@ -664,9 +659,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const methodDescription = (entry: ProviderAuthEntry, method: ProviderAuthMethod) => {
     const label = methodLabel(method).toLowerCase();
     if (isOpenAiProvider(entry.id, entry.name) && (label.includes("headless") || label.includes("device"))) {
-      return isRemoteWorker
-        ? "Use OpenAI's device flow for remote workers, where the browser callback may not resolve on your local machine."
-        : "Use OpenAI's device flow when the local browser callback is unreliable.";
+      return "Use OpenAI's device flow when the local browser callback is unreliable.";
     }
     if (method.type === "oauth") {
       return "Continue in the browser and let OpenWork finish the connection automatically.";

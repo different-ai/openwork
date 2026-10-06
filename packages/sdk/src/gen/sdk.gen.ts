@@ -227,6 +227,10 @@ import type {
   GetV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses,
   GetV1CapabilitiesMicrosoft365TeamsChatsErrors,
   GetV1CapabilitiesMicrosoft365TeamsChatsResponses,
+  GetV1CapabilitiesSlackSearchErrors,
+  GetV1CapabilitiesSlackSearchResponses,
+  GetV1CapabilitiesSlackThreadsErrors,
+  GetV1CapabilitiesSlackThreadsResponses,
   GetV1CloudGatewayResolveErrors,
   GetV1CloudGatewayResolveResponses,
   GetV1CloudInstanceErrors,
@@ -397,6 +401,8 @@ import type {
   GetV1McpConnectionsPresetsErrors,
   GetV1McpConnectionsPresetsResponses,
   GetV1McpConnectionsResponses,
+  GetV1McpConnectionsSlackConnectStartErrors,
+  GetV1McpConnectionsSlackConnectStartResponses,
   GetV1MeDashboardsErrors,
   GetV1MeDashboardsResponses,
   GetV1MeDesktopConfigErrors,
@@ -458,20 +464,12 @@ import type {
   GetV1TeamsByTeamIdPluginAccessErrors,
   GetV1TeamsByTeamIdPluginAccessResponses,
   GetV1TeamsByTeamIdResponses,
-  GetV1TelemetryAdoptionErrors,
-  GetV1TelemetryAdoptionResponses,
-  GetV1TelemetryAnalyticsErrors,
-  GetV1TelemetryAnalyticsResponses,
-  GetV1TelemetryDimensionsErrors,
-  GetV1TelemetryDimensionsResponses,
   GetV1WorkersByIdErrors,
   GetV1WorkersByIdResponses,
   GetV1WorkersByIdRuntimeErrors,
   GetV1WorkersByIdRuntimeResponses,
   GetV1WorkersErrors,
   GetV1WorkersResponses,
-  GetV1WorkflowRunsErrors,
-  GetV1WorkflowRunsResponses,
   GetV1WorkflowsByConfigObjectIdErrors,
   GetV1WorkflowsByConfigObjectIdResponses,
   GetV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdErrors,
@@ -531,8 +529,6 @@ import type {
   PatchApiAuthScimV2UsersByUserIdResponses,
   PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
   PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
-  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
-  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
   PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
@@ -709,8 +705,6 @@ import type {
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses,
   PostV1GatewayUsageLimitResetRequestsErrors,
   PostV1GatewayUsageLimitResetRequestsResponses,
-  PostV1InferenceAnalyticsEventsErrors,
-  PostV1InferenceAnalyticsEventsResponses,
   PostV1InferenceAnalyticsLangfuseConnectErrors,
   PostV1InferenceAnalyticsLangfuseConnectResponses,
   PostV1InferenceAnalyticsLangfuseTestErrors,
@@ -845,8 +839,6 @@ import type {
   PostV1SsoVerifyDomainResponses,
   PostV1TeamsErrors,
   PostV1TeamsResponses,
-  PostV1TelemetryIngestErrors,
-  PostV1TelemetryIngestResponses,
   PostV1WebhooksConnectorsGithubErrors,
   PostV1WebhooksConnectorsGithubResponses,
   PostV1WorkersByIdActivityHeartbeatErrors,
@@ -1183,45 +1175,6 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Set an organization's free Auto rollout
-   *
-   * Allowlisted platform administrators only. Sets the organization rollout override; null restores the deployment default. Default rollout is off. Does not override the global kill switch, DPA, billing eligibility, desktop policy or allowance. Atomically preserves unrelated metadata and records the actor and previous state.
-   */
-  public patchV1AdminOrganizationsByOrganizationIdFreeAuto<ThrowOnError extends boolean = false>(
-    parameters: {
-      organizationId: string;
-      enabled: boolean | null;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "organizationId" },
-            { in: "body", key: "enabled" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).patch<
-      PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
-      PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
-      ThrowOnError
-    >({
-      url: "/v1/admin/organizations/{organizationId}/free-auto",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
    * Record an organization DPA decision
    *
    * Allowlisted platform administrators only. Atomically updates the reserved metadata flag and records the authenticated actor and reason in the audit trail.
@@ -1311,7 +1264,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Set an organization's capability overrides
    *
-   * Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs, orgManagedDashboards and appMcpServers overrides. Audit logs, org-managed Dashboards and appMcpServers (building your own Apps as MCP servers) require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.
+   * Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs and orgManagedDashboards overrides. Audit logs and org-managed Dashboards require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.
    */
   public putV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3303,36 +3256,6 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * List Workflow runs
-   *
-   * Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
-   */
-  public getV1WorkflowRuns<ThrowOnError extends boolean = false>(
-    parameters?: {
-      cursor?: string;
-      limit?: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "cursor" },
-            { in: "query", key: "limit" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).get<GetV1WorkflowRunsResponses, GetV1WorkflowRunsErrors, ThrowOnError>({
-      url: "/v1/workflow-runs",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
    * List accessible Workflows
    *
    * Lists every Workflow the calling member can reach through Plugin or direct grants, each with the Plugin it executes under, its latest immutable version id, declared inputSchema and outputSchema, and the capabilities it calls. Workflows whose latest version cannot be parsed are omitted. Use the returned configObjectVersionId to run an exact version.
@@ -4560,7 +4483,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get my free Auto credential
    *
-   * Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_enrolled (the organization is not in the rollout), free_not_offered (the organization turned the free starter model off) or not_eligible.
+   * Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_offered (the organization turned the free starter model off) or not_eligible.
    */
   public postV1InferenceFreeCredential<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<
@@ -4654,65 +4577,6 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).patch<PatchV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
       url: "/v1/inference/analytics/settings",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * Report task analytics events for the calling member's OpenWork Models calls
-   *
-   * Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.
-   */
-  public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
-    parameters: {
-      events: Array<{
-        id: string;
-        type:
-          | "task.started"
-          | "task.completed"
-          | "task.failed"
-          | "task.cancelled"
-          | "tool.executed"
-          | "skill.loaded"
-          | "model.call";
-        timestamp: string;
-        sessionId: string;
-        taskId: string;
-        callId?: string;
-        durationMs?: number;
-        status?: "completed" | "failed" | "cancelled";
-        model?: string;
-        provider?: string;
-        inputTokens?: number;
-        outputTokens?: number;
-        cacheReadTokens?: number;
-        cacheWriteTokens?: number;
-        costUsd?: number;
-        usageComplete?: boolean;
-        tool?: string;
-        skill?: string;
-        skillVersion?: string;
-        mcp?: string;
-        metadata?: {
-          [key: string]: string | number | boolean;
-        };
-      }>;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
-    return (options?.client ?? this.client).post<
-      PostV1InferenceAnalyticsEventsResponses,
-      PostV1InferenceAnalyticsEventsErrors,
-      ThrowOnError
-    >({
-      url: "/v1/inference/analytics/events",
       ...options,
       ...params,
       headers: {
@@ -7823,7 +7687,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Begin connecting the calling member's account for a provider
    *
-   * Returns an authorize URL to redirect the member's browser to. Requires the org to have already saved an OAuth client for this provider.
+   * Returns an authorize URL to redirect the member's browser to, using the provider's platform-managed app or a saved organization OAuth client.
    */
   public getV1OauthProvidersByProviderIdConnectStart<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7841,6 +7705,21 @@ export class DenClient extends HeyApiClient {
       ...options,
       ...params,
     });
+  }
+
+  /**
+   * Begin connecting the calling member to Slack
+   *
+   * Native-provider twin of the external MCP connect/start route: returns an authorize URL for the browser, using the OAuth client the org saved for this provider.
+   */
+  public getV1McpConnectionsSlackConnectStart<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<
+      GetV1McpConnectionsSlackConnectStartResponses,
+      GetV1McpConnectionsSlackConnectStartErrors,
+      ThrowOnError
+    >({ url: "/v1/mcp-connections/slack/connect/start", ...options });
   }
 
   /**
@@ -9843,6 +9722,82 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Read a Slack thread excerpt with source links as the calling member
+   *
+   * Read one bounded page of a Slack thread using channelId and ts from search. Slack enforces this member's access and the conversation's history permission. Always report this as an excerpt, include source links, and surface hasMore, nextCursor, historyLimited, and truncation. No background paging or history import.
+   */
+  public getV1CapabilitiesSlackThreads<ThrowOnError extends boolean = false>(
+    parameters: {
+      channelId: string;
+      ts: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "channelId" },
+            { in: "query", key: "ts" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1CapabilitiesSlackThreadsResponses,
+      GetV1CapabilitiesSlackThreadsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/slack/threads",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Search Slack messages with source links as the calling member
+   *
+   * Read-only live Slack RTS lookup using only this member's connected Slack account. One bounded page, no file search, legacy fallback, or complete-thread claim. Omitted conversationTypes searches only granted categories; explicit ungranted categories return missing_permission. Surface scope omissions, truncation, and source links in the answer.
+   */
+  public getV1CapabilitiesSlackSearch<ThrowOnError extends boolean = false>(
+    parameters: {
+      query: string;
+      conversationTypes?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "query" },
+            { in: "query", key: "conversationTypes" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1CapabilitiesSlackSearchResponses,
+      GetV1CapabilitiesSlackSearchErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/slack/search",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
    * Discover external MCP connection requirements
    *
    * Side-effect-free requirements discovery for any organization member, through the same guarded fetch as connection setup. It performs no client registration, credential write, or connection creation.
@@ -9956,7 +9911,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List External MCP Connections
    *
-   * scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.
+   * scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. A saved native account may be included with policyBlocked=true for account management and disconnection only; it is not a callable capability. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.
    */
   public getV1McpConnections<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -10002,6 +9957,7 @@ export class DenClient extends HeyApiClient {
             credentialMode?: "shared" | "per_member";
             exposeDirectly?: boolean;
             apiKey?: string;
+            apiKeyAuthScheme?: "bearer" | "token";
             oauthClient?: {
               clientId: string;
               clientSecret?: string;
@@ -10303,6 +10259,7 @@ export class DenClient extends HeyApiClient {
       credentialMode: "shared" | "per_member";
       exposeDirectly?: boolean;
       apiKey?: string;
+      apiKeyAuthScheme?: "bearer" | "token";
       oauthClient?: {
         clientId: string;
         clientSecret?: string;
@@ -10327,6 +10284,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "credentialMode" },
             { in: "body", key: "exposeDirectly" },
             { in: "body", key: "apiKey" },
+            { in: "body", key: "apiKeyAuthScheme" },
             { in: "body", key: "oauthClient" },
             { in: "body", key: "authorizationServerIssuer" },
             { in: "body", key: "requestedScopes" },
@@ -14691,118 +14649,5 @@ export class DenClient extends HeyApiClient {
       unknown,
       ThrowOnError
     >({ url: "/mcp/admin/.well-known/oauth-protected-resource", ...options });
-  }
-
-  /**
-   * Ingest telemetry events
-   *
-   * Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.
-   */
-  public postV1TelemetryIngest<ThrowOnError extends boolean = false>(
-    parameters: {
-      events: Array<{
-        type: string;
-        timestamp: string;
-        source?: string;
-        sessionId?: string;
-        durationMs?: number;
-        success?: boolean;
-        dimensions?: Array<{
-          type: string;
-          value?: string;
-          label: string;
-          metadata?: {
-            [key: string]: unknown;
-          };
-        }>;
-      }>;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
-    return (options?.client ?? this.client).post<
-      PostV1TelemetryIngestResponses,
-      PostV1TelemetryIngestErrors,
-      ThrowOnError
-    >({
-      url: "/v1/telemetry/ingest",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * List telemetry dimension values
-   *
-   * Returns unique analytics dimension values for the active organization, such as project labels for the project selector.
-   */
-  public getV1TelemetryDimensions<ThrowOnError extends boolean = false>(
-    parameters: {
-      type: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "type" }] }]);
-    return (options?.client ?? this.client).get<
-      GetV1TelemetryDimensionsResponses,
-      GetV1TelemetryDimensionsErrors,
-      ThrowOnError
-    >({
-      url: "/v1/telemetry/dimensions",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Get adoption metrics
-   *
-   * Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.
-   */
-  public getV1TelemetryAdoption<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<
-      GetV1TelemetryAdoptionResponses,
-      GetV1TelemetryAdoptionErrors,
-      ThrowOnError
-    >({ url: "/v1/telemetry/adoption", ...options });
-  }
-
-  /**
-   * Get usage analytics
-   *
-   * Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks.
-   */
-  public getV1TelemetryAnalytics<ThrowOnError extends boolean = false>(
-    parameters?: {
-      dimensionType?: string;
-      dimensionValue?: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "dimensionType" },
-            { in: "query", key: "dimensionValue" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).get<
-      GetV1TelemetryAnalyticsResponses,
-      GetV1TelemetryAnalyticsErrors,
-      ThrowOnError
-    >({
-      url: "/v1/telemetry/analytics",
-      ...options,
-      ...params,
-    });
   }
 }

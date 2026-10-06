@@ -39,6 +39,7 @@ import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
 import { EngineMigrationOverlay } from "./engine-migration";
+import { MemberApiKeyDialog } from "../domains/connections/member-api-key-dialog";
 import { AppMenuProvider } from "./app-menu";
 import {
   OpenworkControlProvider,
@@ -565,6 +566,7 @@ export function AppRoot() {
                   <LoadingOverlay />
                   <CloudWorkspaceOverlay />
                   <EngineMigrationOverlay />
+                  <MemberApiKeyDialog />
                 </CloudWorkspaceStatusProvider>
               </OpenWorkWebAccessGate>
             </DenSigninGate>

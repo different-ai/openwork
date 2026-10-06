@@ -7,30 +7,36 @@ import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute } f
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import { useConnectorSetup } from "./connector-setup";
-import { ApiKeyFields, OAuthAppFields } from "./connector-setup-fields";
+import { ApiKeyFields, ApiKeySchemeAdvanced, OAuthAppFields } from "./connector-setup-fields";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
 import { ConfirmDialog } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { useSaveConnectionAccess } from "./item-sharing";
-import { type ExternalMcpCredentialMode, useUpdateMcpConnection } from "./mcp-connections-data";
+import { DEFAULT_API_KEY_AUTH_SCHEME, type ExternalMcpApiKeyAuthScheme, type ExternalMcpCredentialMode, useUpdateMcpConnection } from "./mcp-connections-data";
+import { usesMemberApiKey } from "./member-api-key";
 import { SetupChecks } from "./setup-checks";
 import { WhoCanUseIt } from "./who-can-use-it";
 
-function SignInChoice({ name, value, onChange, disabled, sharedDescription }: {
+function SignInChoice({ name, value, onChange, disabled, kind = "oauth", sharedDescription }: {
   name: string;
   value: ExternalMcpCredentialMode;
   onChange: (value: ExternalMcpCredentialMode) => void;
   disabled: boolean;
+  kind?: "oauth" | "api_key";
   sharedDescription?: string;
 }) {
   const options: { value: ExternalMcpCredentialMode; title: string; description: string }[] = [
-    { value: "per_member", title: "Each person signs in", description: `Everyone uses their own ${name} account.` },
-    { value: "shared", title: "One account for everyone", description: sharedDescription ?? `Everyone uses one ${name} account you sign in with.` },
+    kind === "api_key"
+      ? { value: "per_member", title: "Each person adds a key", description: `One ${name} connection; each person adds their own key.` }
+      : { value: "per_member", title: "Each person signs in", description: `Everyone uses their own ${name} account.` },
+    kind === "api_key"
+      ? { value: "shared", title: "One key for everyone", description: sharedDescription ?? `Everyone uses one ${name} API key.` }
+      : { value: "shared", title: "One account for everyone", description: sharedDescription ?? `Everyone uses one ${name} account you sign in with.` },
   ];
   return (
-    <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="How people sign in">
+    <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="How people connect">
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -69,6 +75,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const saveAccess = useSaveConnectionAccess();
   const viewerId = orgContext?.currentMember.id ?? null;
   const [mode, setMode] = useState<ExternalMcpCredentialMode | null>(null);
+  const [apiKeyAuthScheme, setApiKeyAuthScheme] = useState<ExternalMcpApiKeyAuthScheme>(DEFAULT_API_KEY_AUTH_SCHEME);
   const [draft, setDraft] = useState<AccessDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +112,8 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const connection = setup.connection;
   const signsIn = connection ? connection.authType === "oauth" : true;
   const usesKey = connection?.authType === "apikey";
-  const chosenMode: ExternalMcpCredentialMode = mode ?? connection?.credentialMode ?? "per_member";
+  const usesIndividualKeys = Boolean(connection && usesMemberApiKey(connection));
+  const chosenMode: ExternalMcpCredentialMode = mode ?? connection?.credentialMode ?? (setup.method === "api_key" ? "shared" : "per_member");
   const access: AccessDraft = draft ?? (connection?.access
     ? { orgWide: connection.access.orgWide, memberIds: connection.access.memberIds, teamIds: connection.access.teamIds }
     : { orgWide: false, memberIds: viewerId ? [viewerId] : [], teamIds: [] });
@@ -123,7 +131,20 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       return {
         ...check,
         body: setup.method === "api_key"
-          ? <ApiKeyFields name={name} saving={setup.saving} error={setup.saveError} onSave={(apiKey) => void setup.saveApiKey(apiKey)} />
+          ? (
+            <div className="flex flex-col gap-3">
+              <SignInChoice name={name} value={chosenMode} onChange={setMode} disabled={setup.saving} kind="api_key" />
+              <ApiKeySchemeAdvanced value={apiKeyAuthScheme} onChange={setApiKeyAuthScheme} disabled={setup.saving} testId="connector-setup-api-key-auth-scheme" />
+              {chosenMode === "shared" ? (
+                <ApiKeyFields name={name} saving={setup.saving} error={setup.saveError} onSave={(apiKey) => void setup.saveApiKey(apiKey, apiKeyAuthScheme)} />
+              ) : (
+                <div className="flex flex-col items-start gap-2">
+                  <DenButton size="sm" loading={setup.saving} onClick={() => void setup.savePerMemberApiKeys(apiKeyAuthScheme)}>Use individual keys</DenButton>
+                  {setup.saveError ? <p className="text-[12px] text-red-600" role="alert">{setup.saveError}</p> : null}
+                </div>
+              )}
+            </div>
+          )
           : <OAuthAppFields secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />,
       };
     }
@@ -159,7 +180,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       const connectionId = connection.id;
       toast({
         title: `${name} is ready`,
-        description: reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far.",
+        description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
       router.push(getMcpConnectionsRoute(orgSlug));
@@ -191,17 +212,19 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={`${name} passed all ${checks.length} checks`}
+        title={usesIndividualKeys ? `${name} is ready` : `${name} passed all ${checks.length} checks`}
       />
-      {signsIn ? (
+      {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">
-          <SectionTitle title="How people sign in" />
-          <SignInChoice name={name} value={chosenMode} onChange={setMode} disabled={busy} />
-        </section>
-      ) : usesKey ? (
-        <section className="flex flex-col gap-2.5">
-          <SectionTitle title="How people sign in" meta="A key cannot sign people in one by one" />
-          <SignInChoice name={name} value="shared" onChange={setMode} disabled sharedDescription={`Everyone uses the ${name} key you added.`} />
+          <SectionTitle title="How people connect" />
+          <SignInChoice
+            name={name}
+            value={chosenMode}
+            onChange={setMode}
+            disabled={busy || usesKey}
+            kind={usesKey ? "api_key" : "oauth"}
+            sharedDescription={usesKey ? `Everyone uses the ${name} API key you added.` : undefined}
+          />
         </section>
       ) : null}
       <section className="flex flex-col gap-2.5">

@@ -235,7 +235,6 @@ describe("archiving a working session: the warning goes back through the request
       baseUrl: engine.baseUrl,
       token: "",
       workspaceId: "ws",
-      isRemote: false,
       client: createOpenworkServerClient({ baseUrl: engine.baseUrl }),
       mountedBaseUrl: engine.baseUrl,
       opencodeBaseUrl: engine.baseUrl,

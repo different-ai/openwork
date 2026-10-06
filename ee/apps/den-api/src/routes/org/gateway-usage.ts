@@ -187,7 +187,10 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   const rejectedUnreportedRequestsRollup = sql<number | null>`coalesce(${rollup.uncountable_rejected_count}, ${legacyErrorMissing})`
   const rawDimensions = dimensions(raw, raw.started_at)
   const rollupDimensions = dimensions(rollup, rollup.bucket_start)
-  const sources = db.select({
+  // A CTE, not a derived table: series and options both read these sources.
+  // Its UNION/GROUP BY prevents merging, so MySQL materializes it once instead
+  // of scanning raw logs and rollups again for each reference.
+  const sources = db.$with("usage_sources").as(db.select({
     ...rawDimensions,
     requestCount: sql<string>`count(*)`.as("request_count"),
     successfulUnreportedRequests: sql<string | null>`sum(case when ${raw.outcome} = 'ok' and ${raw.total_tokens} is null then 1 else 0 end)`.as("uncountable_ok"),
@@ -219,7 +222,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     eq(rollup.organization_id, organizationId), eq(rollup.route, "org_provider"), inArray(rollup.granularity, ["hour", "day"]),
     sql`${rollup.bucket_start} >= from_unixtime(${fromSeconds}) and ${rollup.bucket_start} < from_unixtime(${endSeconds})`,
     query.memberId === undefined ? undefined : sql`${rollup.org_membership_id} = ${query.memberId}`,
-  )).groupBy(rollupDimensions.date, rollupDimensions.seriesId, rollupDimensions.filterId)).as("usage_sources")
+  )).groupBy(rollupDimensions.date, rollupDimensions.seriesId, rollupDimensions.filterId)))
 
   const groupedUsage = db.select({
     date: sources.date, seriesId: sources.seriesId,
@@ -287,8 +290,11 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     buckets: sql<z.infer<typeof bucketsSchema>>`json_array()`.as("buckets"),
     label: sql<string | null>`null`.as("option_label"),
   }).from(sources).where(isNotNull(sources.filterId)).groupBy(sources.filterId).limit(MAX_OPTIONS + 1)).as("usage_options")
-  const rows = await db.select({ kind: seriesRows.kind, id: seriesRows.id, buckets: seriesRows.buckets, label: seriesRows.label }).from(seriesRows)
+  const rowsQuery = db.select({ kind: seriesRows.kind, id: seriesRows.id, buckets: seriesRows.buckets, label: seriesRows.label }).from(seriesRows)
     .unionAll(db.select({ kind: optionRows.kind, id: optionRows.id, buckets: optionRows.buckets, label: optionRows.label }).from(optionRows))
+    .as("usage_rows")
+  // WITH must scope the whole union, so wrap it rather than prefixing one side.
+  const rows = await db.with(sources).select({ kind: rowsQuery.kind, id: rowsQuery.id, buckets: rowsQuery.buckets, label: rowsQuery.label }).from(rowsQuery)
   const series = rows.filter((row) => row.kind === "series")
   const optionIdentities = rows.filter((row) => row.kind === "option")
   checkCardinality(series.length, MAX_SERIES)

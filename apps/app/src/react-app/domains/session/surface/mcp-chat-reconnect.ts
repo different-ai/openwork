@@ -129,6 +129,7 @@ export async function authenticateChatConnection(input: {
   isCurrent: () => boolean
   listConnections: () => Promise<DenExternalMcpConnection[]>
   startConnect: () => Promise<DenMcpConnectionConnectStart>
+  connectPersonalKey?: () => Promise<boolean>
   openUrl: (url: string) => Promise<void>
   onProgress: (progress: { phase: "opening" } | { phase: "authorization_opened"; authorizeUrl: string }) => void
 }): Promise<"connected"> {
@@ -140,6 +141,13 @@ export async function authenticateChatConnection(input: {
   assertCurrent()
   const connection = connections.find(entry => entry.id === input.connectionId)
   if (connection?.policyBlocked) throw new Error(connection.policyMessage ?? "An administrator controls access to this connection.")
+  if (connection?.authType === "apikey" && connection.credentialMode === "per_member" && input.connectPersonalKey) {
+    input.onProgress({ phase: "opening" })
+    const connected = await input.connectPersonalKey()
+    assertCurrent()
+    if (!connected) throw new Error("Credential connection was not confirmed. Check its status before trying again.")
+    return "connected"
+  }
   if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
     throw new Error(`${input.connectionName} is no longer available as your reconnectable account.`)
   }

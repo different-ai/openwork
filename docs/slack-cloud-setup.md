@@ -4,7 +4,7 @@ Build and demo first; complete Slack Marketplace/RTS distribution approval befor
 
 ## Platform setup
 
-1. Deploy the branch and migration `0124_slack_cloud_installations.sql` to a controlled Cloud demo environment. `DEN_ORG_MODE` must be `multi_org`; single-org enterprise hosting does not expose the platform app.
+1. Deploy the branch and migration `0129_slack_cloud_installations.sql` to a controlled Cloud demo environment. `DEN_ORG_MODE` must be `multi_org`; single-org enterprise hosting does not expose the platform app.
 2. Configure one OpenWork-owned Slack app. Register the exact callback at the public **API** origin: `/v1/oauth-providers/slack/connect/callback`.
 3. Configure the user scope contract below. Set platform credentials through deployment secrets, never the customer Connections settings.
 4. Enable `DEN_SLACK_ENABLED` only on the intended demo/release deployment and ensure organization Connect policy allows use. This flag is default-off. It makes native Slack available to all organizations on that Cloud deployment; it is not a per-workspace eligibility check.

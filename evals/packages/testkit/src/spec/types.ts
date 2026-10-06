@@ -1,5 +1,5 @@
 import type { DenSession, DenFetchResult, FieldTypingOptions } from "@openwork/behaviors";
-import type { BrowserEvaluation, Surface, Target } from "@openwork/cdp";
+import type { BrowserEvaluation, Surface, Target, Viewport } from "@openwork/cdp";
 import type {
   MockHandle,
   Place,
@@ -44,6 +44,7 @@ export interface User {
   see(target: Target, options?: SeeOptions): Promise<void>;
   notSee(target: Target, options?: { timeoutMs?: number }): Promise<void>;
   reload(): Promise<void>;
+  resizeViewport(viewport: Viewport): Promise<void>;
   navigate(url: string): Promise<void>;
   screenshot(): Promise<ScreenshotArtifact>;
   /**
@@ -68,7 +69,23 @@ export interface Agent {
   on(surface: Surface): Agent;
 }
 
+export interface CredentialInputState {
+  dialogPresent: boolean;
+  dialogExcludedFromCapture: boolean;
+  inputExcludedFromCapture: boolean;
+  inputType: string | null;
+  autoComplete: string | null;
+  empty: boolean;
+  inputContainsSecret: boolean;
+  bodyContainsSecret: boolean;
+  urlContainsSecret: boolean;
+  historyContainsSecret: boolean;
+  storageContainsSecret: boolean;
+  consoleContainsSecret: boolean;
+}
+
 export interface Probe {
+  credentialInputState(selector: string, candidate?: string): Promise<CredentialInputState>;
   /** Applied CSS-to-DIP page zoom from Chromium, not the stored zoom preference. */
   zoom(): Promise<number>;
   browserState(): Promise<import("@openwork/behaviors").BrowserState>;

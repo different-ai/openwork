@@ -19,7 +19,7 @@ type LocalWorkspaceLike = {
   name?: string | null;
   displayNameResolved?: string | null;
   path?: string | null;
-  workspaceType?: "local" | "remote" | string | null;
+  workspaceType?: string | null;
 };
 
 type EnsureDesktopLocalOpenworkOptions = {
@@ -58,8 +58,7 @@ export function openworkServerSettingsChanged(
   return previous.urlOverride !== next.urlOverride
     || previous.portOverride !== next.portOverride
     || previous.token !== next.token
-    || previous.hostToken !== next.hostToken
-    || (previous.remoteAccessEnabled === true) !== (next.remoteAccessEnabled === true);
+    || previous.hostToken !== next.hostToken;
 }
 
 /**
@@ -161,7 +160,6 @@ export async function ensureDesktopLocalOpenworkConnection(
       await engineStart(workspaceRoot, {
         runtime: "direct",
         workspacePaths,
-        openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
       });
       startedEngine = true;
     }
@@ -180,7 +178,6 @@ export async function ensureDesktopLocalOpenworkConnection(
       token: info.ownerToken?.trim() || info.clientToken?.trim() || undefined,
       hostToken: info.hostToken?.trim() || undefined,
       portOverride: info.port ?? undefined,
-      remoteAccessEnabled: info.remoteAccessEnabled === true,
     });
     if (startedEngine || openworkServerSettingsChanged(previousSettings, nextSettings)) {
       emitOpenworkSettingsChanged();

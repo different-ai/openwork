@@ -88,7 +88,7 @@ const SENSITIVE_TEXT_PAIR = /((?:token|secret|password|assertion|code|key|author
 const SENSITIVE_QUOTED_TEXT_PAIR = /(["'][\w-]*(?:token|secret|password|assertion|code|key|authorization)[\w-]*["']\s*:\s*["'])[^"']*(["'])/gi
 const JWT_CREDENTIAL = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}/g
 const SLACK_CREDENTIAL = /\bxox[a-z]-[A-Za-z0-9-]+|\bxoxe(?:-\d)?-[A-Za-z0-9-]+/gi
-const BEARER_CREDENTIAL = /(\bBearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi
+const AUTHORIZATION_CREDENTIAL = /(\b(?:Bearer|Token)\s+)[\x21-\x7e]+/gi
 const GITHUB_CREDENTIAL = /\bgh[pousr]_[A-Za-z0-9]{20,}/gi
 const LONG_OPAQUE_CREDENTIAL = /[A-Za-z0-9_~+/=-]{40,}/g
 const PROVIDER_RESPONSE_STRING_FIELDS = ["error_description", "error_uri", "message"]
@@ -219,11 +219,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function redactSensitiveString(value: string): string {
   return value
+    .replace(AUTHORIZATION_CREDENTIAL, "$1[redacted]")
     .replace(SENSITIVE_QUOTED_TEXT_PAIR, "$1[redacted]$2")
     .replace(SENSITIVE_TEXT_PAIR, "$1[redacted]")
     .replace(JWT_CREDENTIAL, "[redacted]")
     .replace(SLACK_CREDENTIAL, "[redacted]")
-    .replace(BEARER_CREDENTIAL, "$1[redacted]")
     .replace(GITHUB_CREDENTIAL, "[redacted]")
     .replace(LONG_OPAQUE_CREDENTIAL, "[redacted]")
 }
@@ -595,7 +595,7 @@ function serializedContentPayloadBytes(content: unknown[] | null): number {
 }
 
 function sanitizedProviderTextExcerpt(text: string): string | undefined {
-  const sanitized = text
+  const sanitized = redactSensitiveString(text)
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
     .replace(/\s+/g, " ")
     .trim()

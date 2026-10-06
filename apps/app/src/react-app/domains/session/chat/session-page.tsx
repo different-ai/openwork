@@ -25,7 +25,6 @@ import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../../../app/types";
-import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { toast } from "@/components/ui/sonner";
@@ -70,7 +69,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { SessionEmptyHero } from "./session-empty-hero";
 import type { NewTaskComposerContext, NewTaskComposerHandoff } from "./new-task-composer";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
@@ -178,11 +176,8 @@ export type SessionPageSidebarProps = {
     handoff?: NewTaskComposerHandoff,
   ) => Promise<void>;
   onOpenRenameWorkspace: (workspaceId: string) => void;
-  onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
-  onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onEditWorkspaceConnection: (workspaceId: string) => void;
+  onRetryWorkspace: (workspaceId: string) => Promise<unknown> | void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
   automationsActive?: boolean;
@@ -264,7 +259,6 @@ export type SessionPageProps = {
   history?: SessionPageHistoryControls | null;
   todos: TodoItem[];
   sessionLoadingById: (sessionId: string | null) => boolean;
-  shareWorkspaceModal?: ShareWorkspaceModalProps | null;
   providerAuthModal?: ProviderAuthModalProps | null;
   activePermission?: PendingPermission | null;
   activePermissionSourceTitle?: string | null;
@@ -713,7 +707,7 @@ export function SessionPage(props: SessionPageProps) {
     const reportOpenError = (error: unknown) => {
       toast.error(error instanceof Error ? error.message : "Could not open this file.");
     };
-    const canOpenLocally = runtime.workspaceType !== "remote" && isElectronRuntime();
+    const canOpenLocally = isElectronRuntime();
     const openLocalFile = (fileTarget: OpenTarget) => {
       // Files outside the workspace are revealed, never launched; see nativeFileAction.
       // The desktop re-checks the resolved file on disk before launching anything.
@@ -734,7 +728,6 @@ export function SessionPage(props: SessionPageProps) {
     };
 
     // A person's explicit native open is not a workspace preview request.
-    // Keep remote files on the server path; never open their paths on this device.
     if (canOpenLocally && options?.external) {
       openLocalFile(target);
       return;
@@ -743,22 +736,7 @@ export function SessionPage(props: SessionPageProps) {
     const openFileTarget = (fileTarget: OpenTarget) => {
       if (!isCollectibleArtifactTarget(fileTarget)) {
         if (isOpenableFileTarget(fileTarget)) {
-          if (runtime.workspaceType === "remote" && runtime.client && runtime.runtimeWorkspaceId) {
-            void runtime.client.downloadWorkspaceFile(runtime.runtimeWorkspaceId, fileTarget.value)
-              .then((result) => {
-                const url = URL.createObjectURL(new Blob([result.data], {
-                  type: result.contentType ?? "application/octet-stream",
-                }));
-                const anchor = document.createElement("a");
-                anchor.href = url;
-                anchor.download = fileTarget.name;
-                anchor.click();
-                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-              })
-              .catch(reportOpenError);
-          } else if (canOpenLocally) {
-            openLocalFile(fileTarget);
-          }
+          if (canOpenLocally) openLocalFile(fileTarget);
         }
         return;
       }
@@ -1037,7 +1015,7 @@ export function SessionPage(props: SessionPageProps) {
   // Derive the main-pane error from the same data the sidebar uses so the two
   // panes can never disagree. We check (in priority order):
   // 1. selectedWorkspaceError (errorsByWorkspaceId[selectedWorkspaceId])
-  // 2. workspaceConnectionStateById[selectedWorkspaceId].message (covers test/recover paths)
+  // 2. workspaceConnectionStateById[selectedWorkspaceId].message
   // 3. group.error from workspaceSessionGroups (the same source the sidebar reads)
   const selectedWorkspaceConnectionMessage = (() => {
     const state = props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId];
@@ -1056,10 +1034,7 @@ export function SessionPage(props: SessionPageProps) {
     selectedWorkspaceGroupError ||
     "";
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
-  const selectedWorkspaceErrorTitle =
-    props.selectedWorkspaceDisplay.workspaceType === "remote"
-      ? "Remote workspace unavailable"
-      : "OpenCode unavailable";
+  const selectedWorkspaceErrorTitle = "OpenCode unavailable";
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
@@ -1145,9 +1120,6 @@ export function SessionPage(props: SessionPageProps) {
     !hasMainContentTakeover &&
     !showWorkspaceSetupEmptyState &&
     !canRenderReactSurface;
-  const selectedWorkspaceIsRemote = props.workspaces.some(
-    (workspace) => workspace.id === props.selectedWorkspaceId && workspace.workspaceType === "remote",
-  );
   const findButtonSessionId = props.selectedSessionId;
   const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
@@ -1365,7 +1337,6 @@ export function SessionPage(props: SessionPageProps) {
       client={props.openworkServerClient}
       workspaceId={props.runtimeWorkspaceId}
       workspaceRoot={props.selectedWorkspaceRoot}
-      isRemoteWorkspace={props.surface?.isRemoteWorkspace ?? false}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
     />
@@ -1423,11 +1394,7 @@ export function SessionPage(props: SessionPageProps) {
             setCreateGroupOpen(true);
           }}
           onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
-          onShareWorkspace={props.sidebar.onShareWorkspace}
           onRevealWorkspace={props.sidebar.onRevealWorkspace}
-          onRecoverWorkspace={props.sidebar.onRecoverWorkspace}
-          onTestWorkspaceConnection={props.sidebar.onTestWorkspaceConnection}
-          onEditWorkspaceConnection={props.sidebar.onEditWorkspaceConnection}
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
           onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
           onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
@@ -1478,6 +1445,7 @@ export function SessionPage(props: SessionPageProps) {
             className={cn(
               "window-titlebar flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
               props.mainContentHeaderActionsRef ? "min-h-13" : "lg:pr-1",
+              props.primarySurface !== "flat" && "lg:border-b-0",
               (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
             )}
           >
@@ -1734,29 +1702,18 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
 
               {!hasMainContentTakeover && showDelayedSessionLoadingState ? (
-                selectedWorkspaceIsRemote ? (
-                  // Cloud workers sync over the network all the time; the full
-                  // loading pane reads as "something is wrong". Keep it to a
-                  // quiet text shimmer.
-                  <div className="px-6 py-16 text-center" role="status" aria-live="polite">
-                    <span className="ow-text-shimmer text-[12px] leading-5">
+                <div className="px-6 py-16">
+                  <div
+                    className="mx-auto flex max-w-[320px] flex-col items-center gap-3 text-center"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <OwDotTicker size="md" />
+                    <div className="text-[12px] leading-5 text-dls-secondary">
                       {t("session.loading_detail")}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="px-6 py-16">
-                    <div
-                      className="mx-auto flex max-w-[320px] flex-col items-center gap-3 text-center"
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <OwDotTicker size="md" />
-                      <div className="text-[12px] leading-5 text-dls-secondary">
-                        {t("session.loading_detail")}
-                      </div>
                     </div>
                   </div>
-                )
+                </div>
               ) : null}
 
               {!props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface ? (
@@ -1902,7 +1859,7 @@ export function SessionPage(props: SessionPageProps) {
                                 workspaceTitle={splitPaneRuntime.workspaceTitle}
                                 message={splitPaneRuntime.message}
                                 onRetry={() => void Promise.resolve(
-                                  props.sidebar.onTestWorkspaceConnection(splitPaneRuntime.workspaceId),
+                                  props.sidebar.onRetryWorkspace(splitPaneRuntime.workspaceId),
                                 )}
                                 onClose={closeSecondaryWorkbenchPane}
                               />
@@ -1938,32 +1895,7 @@ export function SessionPage(props: SessionPageProps) {
                     <div className="px-6 py-16">
                       <TaskRecovery title={selectedWorkspaceErrorTitle}
                         technicalDetails={selectedWorkspaceErrorMessage}
-                        onRetry={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
-                        actions={<>
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
-                          >
-                            {t("workspace_list.test_connection")}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={() => props.sidebar.onEditWorkspaceConnection(props.selectedWorkspaceId)}
-                          >
-                            {t("workspace_list.edit_connection")}
-                          </Button>
-                          {props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId]?.status === "error" ? (
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() => void Promise.resolve(props.sidebar.onRecoverWorkspace(props.selectedWorkspaceId))}
-                            >
-                              {t("workspace_list.recover")}
-                            </Button>
-                          ) : null}
-                        </>} />
+                        onRetry={() => void Promise.resolve(props.sidebar.onRetryWorkspace(props.selectedWorkspaceId))} />
                     </div>
                   ) : props.selectedSessionId ? (
                     <div className="px-6 py-16 text-center text-sm text-dls-secondary">
@@ -1995,7 +1927,6 @@ export function SessionPage(props: SessionPageProps) {
                 <ResizablePanel defaultSize="280px" minSize="160px" maxSize="55%" className="min-h-0">
                   <TerminalDock
                     workspaceRoot={props.selectedWorkspaceRoot}
-                    isRemoteWorkspace={props.selectedWorkspaceDisplay.workspaceType === "remote"}
                     onClose={() => props.onTerminalOpenChange?.(false)}
                   />
                 </ResizablePanel>
@@ -2132,7 +2063,6 @@ export function SessionPage(props: SessionPageProps) {
         </DialogContent>
       </Dialog>
 
-      {props.shareWorkspaceModal ? <ShareWorkspaceModal {...props.shareWorkspaceModal} /> : null}
 
       {/* Cloud provider notifications are now handled globally by CloudProvidersToast in app-root.tsx */}
     </div>

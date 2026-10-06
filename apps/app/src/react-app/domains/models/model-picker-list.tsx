@@ -132,8 +132,8 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const retained = retainedSelection && modelRefKey(retainedSelection.model) === modelRefKey(current)
     && !options.some((option) => modelRefKey(option) === modelRefKey(current) && !option.disabled) ? retainedSelection : undefined;
   const retainedCopy = retained ? retainedModelCopy(retained.reason) : null;
-  const retainedVisible = retained && (!query.trim() || `${retained.title ?? "Saved model"} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
-  const retainedName = retained ? (isAutoModel(retained.model) ? "Auto" : retained.title || "Saved model") : "";
+  const retainedName = retained ? (isAutoModel(retained.model) ? "Auto" : retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }) : "Saved model") : "";
+  const retainedVisible = retained && (!query.trim() || `${retainedName} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
   const retainedState = retained && isAutoModel(retained.model) && autoRow && autoRow.state !== "ready" ? autoPickerCopy(autoRow.state, false, undefined, autoRow.code, autoRow.resetsAt).subtitle : retainedCopy?.subtitle;
   const retainedSubtitle = [retained && !isAutoModel(retained.model) ? retained.description?.trim() : null, retainedState].filter(Boolean).join(" · ");
   // A saved model that was pinned stays where the person pinned it, at the top of Pinned.

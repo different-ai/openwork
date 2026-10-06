@@ -30,6 +30,9 @@ const assets = {
   "refresh.mjs": new URL("./refresh.mjs", import.meta.url),
   "resume.mjs": new URL("./resume.mjs", import.meta.url),
   "runtime.mjs": new URL("./runtime.mjs", import.meta.url),
+  "workbot-health.mjs": new URL("./workbot-health.mjs", import.meta.url),
+  "workbot-refresh.mjs": new URL("./workbot-refresh.mjs", import.meta.url),
+  "workbot-runtime.mjs": new URL("./workbot-runtime.mjs", import.meta.url),
 };
 
 export type ControllerAsset = keyof typeof assets;

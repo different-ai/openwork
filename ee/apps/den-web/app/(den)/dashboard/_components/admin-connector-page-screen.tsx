@@ -140,7 +140,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
   const [saving, setSaving] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(Boolean(connection.setupRequired) || Boolean(connection.issuerReviewRequired)
     || (connection.oauthClientRequired === true && connection.oauthClientConfigured !== true)
-    || (connection.authType === "apikey" && !connection.connected));
+    || (connection.authType === "apikey" && connection.credentialMode === "shared" && !connection.connected));
   const [error, setError] = useState<string | null>(null);
   const connectionId = connection.id;
   const name = connection.name;

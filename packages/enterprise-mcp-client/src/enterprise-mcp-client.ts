@@ -93,13 +93,17 @@ type Session = {
 
 function requestInit(authorization: EnterpriseMcpAuthorization): RequestInit | undefined {
   if (authorization.type !== "api-key") return undefined
-  return { headers: { authorization: `Bearer ${authorization.token}` } }
+  return { headers: { authorization: `${authorization.scheme === "token" ? "Token" : "Bearer"} ${authorization.token}` } }
 }
 
 function validateConnection(connection: EnterpriseMcpConnection): URL {
   const parsed = connectionSchema.parse({ id: connection.id, serverUrl: connection.serverUrl })
   if (connection.authorization.type === "api-key" && !connection.authorization.token.trim()) {
     throw new Error("An API key connection requires a non-empty token.")
+  }
+  if (connection.authorization.type === "api-key" && connection.authorization.scheme !== undefined
+    && connection.authorization.scheme !== "bearer" && connection.authorization.scheme !== "token") {
+    throw new Error("An API key connection requires a supported Authorization scheme.")
   }
   const url = new URL(parsed.serverUrl)
   if (url.protocol !== "https:" && url.protocol !== "http:") {

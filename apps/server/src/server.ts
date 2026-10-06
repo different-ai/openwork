@@ -945,7 +945,7 @@ export async function startServer(
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined });
           const response = await sendWithOwnershipProof(ownership,
             () => taskRecovery ? taskRecovery.forward(workspace, "v1", mount.restPath, request, send) : send());
-          if (response.ok && workspace.workspaceType !== "remote" && engineV2Preview.status().chatRouting
+          if (response.ok && engineV2Preview.status().chatRouting
             && ["PUT", "DELETE"].includes(request.method)
             && /^\/opencode\/auth\/[^/]+$/.test(mount.restPath)) {
             // The ordinary local-provider form writes v1's credential store.
@@ -1734,7 +1734,7 @@ export function createWorkspaceOpencodeClient(
   workspace: WorkspaceInfo,
   options?: { boundedDiagnosticsReads?: boolean; sessionId?: string },
 ) {
-  const poolRoute = workspace.workspaceType === "remote" || !options?.sessionId
+  const poolRoute = !options?.sessionId
     ? null
     : enginePoolForConfig(config)?.routeRequest("GET", `/session/${encodeURIComponent(options.sessionId)}`) ?? null;
   const connection = poolRoute
@@ -1815,7 +1815,7 @@ export async function proxyOpencodeRequest(input: {
   if (method !== "GET" && method !== "HEAD") {
     ensureWritable(input.config);
   }
-  const pool = workspace?.workspaceType === "remote" ? null : enginePoolForConfig(input.config);
+  const pool = enginePoolForConfig(input.config);
   const route = pool?.routeRequest(method, proxyPath) ?? null;
   const baseUrl = route?.target.baseUrl ??
     (workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "");
@@ -1857,7 +1857,7 @@ export async function proxyOpencodeRequest(input: {
     // An open engine event stream means this workspace is visible somewhere in
     // the UI; hold its instance so the idle reaper leaves it alone until the
     // stream's client goes away.
-    const releaseStreamHold = workspace && workspace.workspaceType !== "remote" && directory
+    const releaseStreamHold = workspace && directory
       ? engineInstanceReaperForConfig(input.config)?.holdStream({
           directory,
           workspaceId: workspace.id,
@@ -2764,13 +2764,6 @@ function createRoutes(
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceForInspection(config, ctx.params.id);
-    if (workspace.workspaceType === "remote") {
-      throw new ApiError(
-        400,
-        "agent_diagnostics_workspace_unsupported",
-        "Agent diagnostics must run on the OpenWork server that owns a local workspace",
-      );
-    }
     // Reserve before consuming untrusted bytes and hold the reservation through
     // report completion. The cooldown remains charged for invalid, oversized,
     // timed-out, and otherwise unsuccessful attempts.
@@ -2926,7 +2919,7 @@ function createRoutes(
         action: "removed",
       });
     }
-    if (removed.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
+    if (removed.files.some((file) => file.objectType === "skill")) {
       await engineV2Preview.settleWorkspaceSkills(workspace.path);
     }
 
@@ -2939,7 +2932,7 @@ function createRoutes(
     if (engineV2Preview.status().chatRouting) {
       return { ...state, supported: false, reason: "Workspace run modes are unavailable while OpenCode v2 chat routing is enabled." };
     }
-    if (workspace.workspaceType === "remote" || resolve(resolveOpencodeDirectory(workspace) ?? workspace.path) !== resolve(workspace.path)) {
+    if (resolve(resolveOpencodeDirectory(workspace) ?? workspace.path) !== resolve(workspace.path)) {
       return { ...state, supported: false, reason: "Workspace run modes require an engine using this local workspace directory." };
     }
     return state;
@@ -3728,7 +3721,7 @@ function createRoutes(
     });
     // The next v2 turn should see a skill OpenWork just wrote; the engine's
     // own watcher normally catches up within ~200 ms.
-    if (workspace.workspaceType !== "remote") await engineV2Preview.settleWorkspaceSkills(workspace.path);
+    await engineV2Preview.settleWorkspaceSkills(workspace.path);
     return jsonResponse({ name, path: result.path, description: description ?? "", scope: "project" });
   });
 
@@ -3762,7 +3755,7 @@ function createRoutes(
       action: "removed",
       path: result.path,
     });
-    if (workspace.workspaceType !== "remote") await engineV2Preview.settleWorkspaceSkills(workspace.path);
+    await engineV2Preview.settleWorkspaceSkills(workspace.path);
     return jsonResponse({ ok: true, name, path: result.path });
   });
 
@@ -4361,15 +4354,9 @@ function createRoutes(
 
 async function resolveWorkspaceForInspection(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
   const workspaceId = id.trim();
-  const aliasWorkspaceId = workspaceId.startsWith("rem_") ? workspaceId.slice("rem_".length) : "";
-  const workspace =
-    config.workspaces.find((entry) => entry.id === workspaceId) ??
-    (aliasWorkspaceId ? config.workspaces.find((entry) => entry.id === aliasWorkspaceId) : undefined);
+  const workspace = config.workspaces.find((entry) => entry.id === workspaceId);
   if (!workspace) {
     throw new ApiError(404, "workspace_not_found", "Workspace not found");
-  }
-  if (workspace.workspaceType === "remote") {
-    return { ...workspace };
   }
   const resolvedWorkspace = resolve(workspace.path);
   const authorized = await isAuthorizedRoot(resolvedWorkspace, config.authorizedRoots);
@@ -4381,10 +4368,7 @@ async function resolveWorkspaceForInspection(config: ServerConfig, id: string): 
 
 async function resolveWorkspaceWithoutBootstrap(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
   const workspaceId = id.trim();
-  const aliasWorkspaceId = workspaceId.startsWith("rem_") ? workspaceId.slice("rem_".length) : "";
-  const configuredWorkspace =
-    config.workspaces.find((entry) => entry.id === workspaceId) ??
-    (aliasWorkspaceId ? config.workspaces.find((entry) => entry.id === aliasWorkspaceId) : undefined);
+  const configuredWorkspace = config.workspaces.find((entry) => entry.id === workspaceId);
   if (!configuredWorkspace) {
     throw new ApiError(404, "workspace_not_found", "Workspace not found");
   }
@@ -4697,7 +4681,7 @@ async function readOpenworkConfigForWorkspace(
   }
   const legacy = await readOpenworkConfigForStatus(workspace.path);
   if (Object.keys(legacy.data).length === 0) {
-    if (workspace.workspaceType !== "remote" && workspace.path.trim()) {
+    if (workspace.path.trim()) {
       return seedOpenworkWorkspaceConfigIfEmpty(
         config,
         workspace.id,
@@ -5036,7 +5020,6 @@ async function disposeIdleEngineInstance(
  * from the request that triggered it.
  */
 function touchEngineWorkspaceInstance(config: ServerConfig, workspace: WorkspaceInfo, engineBaseUrl: string): void {
-  if (workspace.workspaceType === "remote") return;
   const reaper = engineInstanceReaperForConfig(config);
   if (!reaper) return;
   const directory = resolveOpencodeDirectory(workspace);
@@ -5141,7 +5124,7 @@ async function reloadOpencodeEngineInPlace(
   // The reload rebuilt this directory's instance and the post-refresh sync
   // below re-attaches its runtime state, so any pending post-eviction mark is
   // satisfied here rather than by the next request.
-  if (directory && workspace.workspaceType !== "remote") {
+  if (directory) {
     engineInstanceReaperForConfig(config)?.noteUsed({ directory, workspaceId: workspace.id, engineBaseUrl: baseUrl });
   }
 

@@ -254,8 +254,8 @@ function defaultOpenworkConfig(targetDir, preset = "starter") {
 }
 
 export async function exportWorkspaceConfig({ workspace, outputPath }) {
-  if (!workspace?.path || workspace.workspaceType === "remote") {
-    throw new Error("Workspace export is only supported for local workspaces");
+  if (!workspace?.path) {
+    throw new Error("Workspace export requires a local workspace path");
   }
   const workspaceRoot = workspace.path;
   if (!(await pathExists(workspaceRoot))) {

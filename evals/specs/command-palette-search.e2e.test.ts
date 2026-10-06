@@ -73,6 +73,16 @@ test("command palette searches settings by alias, navigates, records recents, an
     ]);
     await user.press("Enter");
     await user.see({ placeholder: "Search models…" });
+    // The model's only name is its gateway id: the list and the composer show a readable name instead.
+    const shownNames = [
+      ...(await probe.dom('[data-command-palette-item^="model:"] [data-slot="model-provider-mark"] + div > div:first-child')).elements,
+      ...(await probe.dom('[data-command-palette-item^="model:"] [data-slot="command-item-detail"]')).elements,
+    ].map((element) => element.text);
+    evidence.recordAssertionEvidence("Models list names, never the gateway id", shownNames.join(" | "),
+      shownNames.length > 0 && shownNames.every((text) => !text.includes(world.longModelId)));
+    expect(shownNames.length).toBeGreaterThan(0);
+    for (const text of shownNames) expect(text).not.toContain(world.longModelId);
+    expect(initialComposer.selectedModelLabel).not.toContain(world.longModelId);
     await user.press("Escape");
     await user.see(paletteInput);
     await user.press("Escape");

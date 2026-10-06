@@ -422,13 +422,9 @@ function createOpenworkServerState() {
     // Sticky ports and persisted tokens make the connection details identical
     // across restarts, so clients need this to observe a new server lifetime.
     generation: null,
-    remoteAccessEnabled: false,
     host: null,
     port: null,
     baseUrl: null,
-    connectUrl: null,
-    mdnsUrl: null,
-    lanUrl: null,
     clientToken: null,
     ownerToken: null,
     hostToken: null,
@@ -446,13 +442,9 @@ export function snapshotOpenworkServerState(state) {
   return {
     running,
     generation: typeof state.generation === "number" ? state.generation : null,
-    remoteAccessEnabled: state.remoteAccessEnabled,
     host: state.host,
     port: state.port,
     baseUrl: state.baseUrl,
-    connectUrl: state.connectUrl,
-    mdnsUrl: state.mdnsUrl,
-    lanUrl: state.lanUrl,
     clientToken: state.clientToken,
     ownerToken: state.ownerToken,
     hostToken: state.hostToken,
@@ -473,22 +465,18 @@ export function snapshotOpenworkServerState(state) {
  * so a request for a different workspace retargets the running runtime
  * instead of restarting it. A restart here would abort every in-flight run,
  * including sessions still working in the workspace being left. Only an
- * explicit forceRestart or a host rebind (remote access change) gives up the
- * running server.
+ * explicit forceRestart gives up the running server.
  */
 export function resolveOpenworkServerReuse({
   forceRestart,
   inProcess,
   lifecycleState,
-  remoteAccessEnabled,
-  requestedRemoteAccess,
   currentProjectDir,
   requestedProjectDir,
   platform,
 }) {
   if (forceRestart === true) return { reuse: false, retarget: false };
   if (inProcess !== true || lifecycleState !== "healthy") return { reuse: false, retarget: false };
-  if (remoteAccessEnabled !== (requestedRemoteAccess === true)) return { reuse: false, retarget: false };
   const retarget =
     normalizeWorkspaceKey(currentProjectDir, platform) !== normalizeWorkspaceKey(requestedProjectDir, platform);
   return { reuse: true, retarget };
@@ -549,30 +537,6 @@ async function readJsonFile(targetPath, fallback) {
   } catch {
     return fallback;
   }
-}
-
-function selectLanAddress() {
-  const interfaces = os.networkInterfaces();
-  for (const entries of Object.values(interfaces)) {
-    for (const entry of entries ?? []) {
-      if (entry && entry.family === "IPv4" && entry.internal === false) {
-        return entry.address;
-      }
-    }
-  }
-  return null;
-}
-
-function buildConnectUrls(port) {
-  const hostname = os.hostname().trim();
-  const mdnsUrl = hostname ? `http://${hostname.replace(/\.local$/i, "")}.local:${port}` : null;
-  const lan = selectLanAddress();
-  const lanUrl = lan ? `http://${lan}:${port}` : null;
-  return {
-    connectUrl: lanUrl ?? mdnsUrl,
-    mdnsUrl,
-    lanUrl,
-  };
 }
 
 function targetTriple() {
@@ -1875,7 +1839,7 @@ export function createRuntimeManager({
     }
     await stopChild(openworkServerState);
 
-    const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
+    const host = "127.0.0.1";
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
     openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
@@ -1959,17 +1923,11 @@ export function createRuntimeManager({
     openworkServerState.inProcess = true;
     openworkServerGenerationCounter += 1;
     openworkServerState.generation = openworkServerGenerationCounter;
-    openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
     openworkServerState.host = host;
     openworkServerState.port = boundPort;
     openworkServerState.baseUrl = baseUrl;
     openworkServerState.clientToken = tokens.clientToken;
     openworkServerState.hostToken = tokens.hostToken;
-
-    const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(boundPort) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
-    openworkServerState.connectUrl = connectUrls.connectUrl;
-    openworkServerState.mdnsUrl = connectUrls.mdnsUrl;
-    openworkServerState.lanUrl = connectUrls.lanUrl;
 
     // No health check needed -- startServer() resolves only after the listener is bound.
     let workspaceList = null;
@@ -2055,7 +2013,6 @@ export function createRuntimeManager({
         opencodeBaseUrl: engineState.baseUrl,
         opencodeUsername: engineState.opencodeUsername,
         opencodePassword: engineState.opencodePassword,
-        remoteAccessEnabled: options.remoteAccessEnabled,
         manageOpencode: options.manageOpencode === true,
         opencodeBinPath: options.opencodeBinPath,
       });
@@ -2110,8 +2067,6 @@ export function createRuntimeManager({
       forceRestart: options.forceRestart,
       inProcess: openworkServerState.inProcess,
       lifecycleState,
-      remoteAccessEnabled: openworkServerState.remoteAccessEnabled,
-      requestedRemoteAccess: options.openworkRemoteAccess,
       currentProjectDir: engineState.projectDir,
       requestedProjectDir: safeProjectDir,
       platform: workspacePlatform,
@@ -2168,7 +2123,6 @@ export function createRuntimeManager({
       await ensureOpenwork({
         projectDir: safeProjectDir,
         workspacePaths,
-        remoteAccessEnabled: options.openworkRemoteAccess === true,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
       });
@@ -2193,14 +2147,10 @@ export function createRuntimeManager({
     if (!projectDir) {
       throw new Error("OpenCode is not configured for a local workspace");
     }
-    const openworkRemoteAccess = typeof options.openworkRemoteAccess === "boolean"
-      ? options.openworkRemoteAccess
-      : openworkServerState.remoteAccessEnabled;
     return engineStart(projectDir, {
       runtime: engineState.runtime,
       workspacePaths: [projectDir],
       opencodeEnableExa: options.opencodeEnableExa,
-      openworkRemoteAccess,
       forceRestart: true,
     });
   }
@@ -2237,7 +2187,6 @@ export function createRuntimeManager({
       opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
       opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
       opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
-      remoteAccessEnabled: options.remoteAccessEnabled === true,
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });

@@ -75,8 +75,6 @@ export type NewTaskComposerContext = {
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
   searchFiles: (query: string) => Promise<string[]>;
-  isRemoteWorkspace: boolean;
-  isSandboxWorkspace: boolean;
   onOpenSettingsSection?: (section: ComposerSettingsSection) => void;
 };
 
@@ -571,9 +569,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       pastedText={pastedText}
       onExpandPastedText={handleExpandPastedText}
       onRemovePastedText={handleRemovePastedText}
-      isRemoteWorkspace={context?.isRemoteWorkspace ?? false}
-      isSandboxWorkspace={context?.isSandboxWorkspace ?? false}
-      onUploadInboxFiles={null}
       // The hero owns its own page padding, so the composer must fill the hero column and line up with the suggestion cards.
       flush={props.flush ?? true}
       draftScopeKey={context?.draftOwnerKey || `new-task:${workspaceId ?? "chat-first"}`}

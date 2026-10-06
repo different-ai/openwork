@@ -17,15 +17,15 @@ export function client(): Freestyle {
   return new Freestyle({ apiKey, fetch });
 }
 
-export type PreviewWorld = "app-web" | "acme-web" | "desktop";
+export type PreviewWorld = "app-web" | "acme-web" | "desktop" | "workbot";
 export function previewWorld(value: unknown): PreviewWorld {
-  if (value === "app-web" || value === "acme-web" || value === "desktop") return value;
+  if (value === "app-web" || value === "acme-web" || value === "desktop" || value === "workbot") return value;
   throw new Error("Unsupported preview world.");
 }
 
 export function snapshotSlug(sha: string, world: PreviewWorld = "app-web"): string {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
-  return `openwork-${previewWorld(world)}-${world === "app-web" ? "v6" : "v7"}-${sha}`;
+  return `openwork-${previewWorld(world)}-${world === "app-web" ? "v6" : world === "workbot" ? "v1" : "v7"}-${sha}`;
 }
 
 export function isMissing(error: unknown): boolean {
@@ -140,8 +140,10 @@ export async function launchPreview(
   const minutes = input.lifetimeMinutes ?? 120;
   if (!Number.isInteger(minutes) || minutes < 10 || minutes > 1430) throw new Error("Preview lifetime must be 10–1430 minutes.");
   const launchId = randomUUID().replaceAll("-", "");
-  const domain = `${world === "desktop" ? "desktop" : "ow"}-${launchId}.preview.openwork.software`;
-  const origins = world === "acme-web" ? {
+  const domain = `${world === "desktop" ? "desktop" : world === "workbot" ? "den" : "ow"}-${launchId}.preview.openwork.software`;
+  // Workbot is one app on its own host that signs people in through Den's; Den's API answers on Den's host.
+  const workbotOrigin = `https://workbot-${launchId}.preview.openwork.software`;
+  const origins = world === "workbot" ? { den: `https://${domain}`, workbot: workbotOrigin } : world === "acme-web" ? {
     app: `https://${domain}`, den: `https://den-${launchId}.preview.openwork.software`, api: `https://api-${launchId}.preview.openwork.software`,
     engine: `https://engine-${launchId}.preview.openwork.software`, gateway: `https://gateway-${launchId}.preview.openwork.software`,
     desktop: `https://desktop-${launchId}.preview.openwork.software`,
@@ -160,7 +162,7 @@ export async function launchPreview(
   let stage = "assign-access";
   try {
     const expiresAt = new Date(Date.parse(data.createdAt) + minutes * 60_000).toISOString();
-    await vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token, expiresAt, origins, ...(world === "acme-web" ? { templateOrigins } : {}) }), { mode: 0o600 });
+    await vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token, expiresAt, origins, ...(world === "acme-web" || world === "workbot" ? { templateOrigins } : {}) }), { mode: 0o600 });
     let outputs: PreviewOutputs = {};
     if (world === "acme-web") {
       // Den's demo session lasts 7 days; snapshots last at most 7 days and
@@ -187,7 +189,15 @@ export async function launchPreview(
       }
       outputs.previewCookie = { value: `__Host-openwork-preview=${token}`, secret: true, group: "Developer access", note: "Cookie header for requests to this VM's private service URLs" };
     }
-    const url = `https://${domain}/__openwork_launch?token=${token}`;
+    if (world === "workbot") {
+      stage = "read-outputs";
+      outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
+      if (!origins) throw new Error("Missing private service origins");
+      outputs.denWeb = { value: `${origins.den}/__openwork_launch?token=${token}`, secret: true, group: "Services", note: "Ready · Den only" };
+      outputs.previewCookie = { value: `__Host-openwork-preview=${token}`, secret: true, group: "Developer access", note: "Cookie header for requests to this VM's private service URLs" };
+    }
+    // Workbot's one link authorizes Den first, then lands on Workbot, so signing in crosses both hosts.
+    const url = `https://${domain}/__openwork_launch?token=${token}${world === "workbot" ? "&then=workbot" : ""}`;
     if (world === "desktop") {
       stage = "desktop-ready";
       if ((await vm.fs.readTextFile("/opt/openwork-preview/source-sha")).trim() !== input.gitSha
@@ -206,6 +216,10 @@ export async function launchPreview(
     }
     stage = "public-access";
     await waitForPublicAccess(url, probe, delay, world);
+    if (world === "workbot") {
+      stage = "service-routes";
+      await waitForServiceRoutes({ workbot: workbotOrigin }, token, probe);
+    }
     if (world === "acme-web" && origins) {
       stage = "service-routes";
       // The app hostname was checked above; every other linked service must route too.

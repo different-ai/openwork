@@ -8,7 +8,6 @@ import {
   OrgSubscriptionTable,
 } from "@openwork-ee/den-db/schema"
 import {
-  freeInferenceRolloutEnabled,
   freeInferenceWindow,
   inferenceSubscribed,
   inferenceSubscriptionLive,
@@ -41,7 +40,6 @@ const organizationSchema = usageSchema.extend({
   id: z.string(),
   name: z.string(),
   slug: z.string().nullable(),
-  enrolled: z.boolean().describe("Whether the organization's members are offered free Auto by the rollout."),
   subscribed: z.boolean().describe("Pays for OpenWork Models, so its members use paid Models rather than free Auto."),
   memberCount: z.number().int().nonnegative(),
   activePeople: z.number().int().nonnegative(),
@@ -54,7 +52,6 @@ export const freeAutoUsageResponseSchema = z.object({
   range: z.object({ days: z.number().int(), from: z.string().datetime(), to: z.string().datetime(), timezone: z.literal("UTC") }),
   settings: z.object({
     membersEnabled: z.boolean(),
-    rolloutAllOrganizations: z.boolean(),
     weeklyLimitMicroUsd: z.number().int().nonnegative(),
   }),
   totals: usageSchema.extend({ activePeople: z.number().int().nonnegative(), activeOrganizations: z.number().int().nonnegative() }),
@@ -181,14 +178,10 @@ export async function readFreeAutoUsage(input: { days: number; now?: Date }): Pr
   }
 
   const usageByOrganization = new Map(perOrganization.map((row) => [row.organizationId as string, row]))
-  // Enrolled organizations are listed even before their first request, so a quiet pilot is visible.
-  const enrolledIds = await db.select({ id: OrganizationTable.id }).from(OrganizationTable)
-    .where(sql`json_extract(${OrganizationTable.metadata}, '$.inferenceFree.rolloutEnabled') = true`)
   const ranked = [...perOrganization]
     .map((row) => ({ id: row.organizationId as string, costMicroUsd: microUsd(number(row.amount)), requests: number(row.requests) }))
     .sort((a, b) => b.costMicroUsd - a.costMicroUsd || b.requests - a.requests || a.id.localeCompare(b.id))
-  const listedIds = [...new Set([...ranked.map((row) => row.id), ...enrolledIds.map((row) => row.id as string)])]
-    .slice(0, FREE_AUTO_USAGE_ORGANIZATION_LIMIT)
+  const listedIds = ranked.map((row) => row.id).slice(0, FREE_AUTO_USAGE_ORGANIZATION_LIMIT)
   const listed = new Set(listedIds)
 
   const [organizations, memberCounts, liveSubscriptions] = listedIds.length ? await Promise.all([
@@ -208,7 +201,6 @@ export async function readFreeAutoUsage(input: { days: number; now?: Date }): Pr
     const row = usageByOrganization.get(id)
     return {
       id, name: organization.name, slug: organization.slug ?? null,
-      enrolled: freeInferenceRolloutEnabled(organization.metadata, env.inferenceFree),
       subscribed: inferenceSubscribed(organization.metadata) || paying.has(id),
       memberCount: memberCountById.get(id) ?? 0,
       activePeople: row ? number(row.activePeople) : 0,
@@ -234,7 +226,6 @@ export async function readFreeAutoUsage(input: { days: number; now?: Date }): Pr
     range: { days: input.days, from: from.toISOString(), to: now.toISOString(), timezone: "UTC" },
     settings: {
       membersEnabled: env.inferenceFree.enabled,
-      rolloutAllOrganizations: env.inferenceFree.rolloutAllOrganizations,
       weeklyLimitMicroUsd: microUsd(env.inferenceFree.weeklyLimitAmount),
     },
     totals,

@@ -19,7 +19,7 @@ import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-co
 import { AutoAccessFooter, openAutoProviderSettings } from "@/react-app/domains/cloud/auto-access-ui";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { openComposerModelPickerEvent } from "@/app/lib/inference-access";
-import { isAutoModel, nonDefaultModelSummary, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
+import { isAutoModel, modelTitle, nonDefaultModelSummary, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store";
 
 interface ModelSelectProps {
@@ -112,7 +112,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   }}>
     <PopoverTrigger type="button" disabled={disabled} aria-label="Change model"
       className="inline-flex h-9 min-w-0 items-center gap-1.5 px-2.5 text-sm text-muted-foreground hover:text-foreground focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-      <span className="max-w-56 truncate">{hideValue ? "Select model" : isAutoModel(value) ? "Auto" : catalog.currentOption?.title || "Select model"}{!hideValue && summary ? ` · ${summary}` : ""}{!hideValue && fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null}</span><ChevronDown className="size-3" />
+      <span className="max-w-56 truncate">{hideValue ? "Select model" : isAutoModel(value) ? "Auto" : catalog.currentOption ? modelTitle(catalog.currentOption) : "Select model"}{!hideValue && summary ? ` · ${summary}` : ""}{!hideValue && fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null}</span><ChevronDown className="size-3" />
     </PopoverTrigger>
     <PopoverContent ref={popupRef} tabIndex={-1} align="start" initialFocus={() => isMobile || focusAlternative ? popupRef.current : searchInputRef.current} data-testid="composer-model-picker" className="flex max-h-[min(var(--available-height),36rem)] w-90 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0">
       {effort && selected ? <div data-slot="model-thinking-submenu" className="overflow-y-auto p-2">

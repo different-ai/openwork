@@ -20,6 +20,9 @@ import {
 import type { MarketplacePluginCloudReadinessConnection } from "./marketplace-data";
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
 import { marketplaceConnectionNeedsAdminSetup, marketplaceConnectionSetupTarget } from "./mcp-connection-setup";
+import { personalApiKeyStatus, personalApiKeyStatusLabel, usesMemberApiKey } from "./member-api-key";
+import { ItemMenu } from "./item-list";
+import { MemberApiKeyDialog, type MemberApiKeyTarget } from "./member-api-key-dialog";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
   canDisconnectMyConnectionAccount,
@@ -54,6 +57,7 @@ export function YourConnectionsScreen() {
   const authorization = useMcpAccountAuthorization();
   const disconnectProvider = useDisconnectMyProviderAccount();
   const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
+  const [apiKeyTarget, setApiKeyTarget] = useState<MemberApiKeyTarget | null>(null);
   const [rowError, setRowError] = useState<{ connectionId: string; message: string } | null>(null);
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
   const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
@@ -79,6 +83,15 @@ export function YourConnectionsScreen() {
         message: disconnectError instanceof Error ? disconnectError.message : "Failed to disconnect account.",
       });
     }
+  }
+
+  function handleConnect(connection: ExternalMcpConnection) {
+    if (connection.policyBlocked) return;
+    if (usesMemberApiKey(connection)) {
+      setApiKeyTarget({ id: connection.id, name: connection.name, replacing: personalApiKeyStatus(connection) !== "missing" });
+      return;
+    }
+    void authorization.connect(connection.id);
   }
 
   return (
@@ -127,7 +140,7 @@ export function YourConnectionsScreen() {
                     ? authorization.error.message
                     : null
               }
-              onConnect={() => void authorization.connect(connection.id)}
+              onConnect={() => handleConnect(connection)}
               onDisconnect={() => void handleDisconnectMyAccount(connection)}
               toolTesterRoute={getToolTesterRoute(orgSlug)}
             />;
@@ -141,6 +154,11 @@ export function YourConnectionsScreen() {
           setSetupTarget(null);
           void refetch();
         }}
+      />
+      <MemberApiKeyDialog
+        target={apiKeyTarget}
+        onClose={() => setApiKeyTarget(null)}
+        onSaved={() => void refetch()}
       />
     </DashboardPageTemplate>
   );
@@ -182,15 +200,18 @@ function YourConnectionRow({
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const { orgContext } = useOrgDashboard();
   const isPerMember = connection.credentialMode === "per_member";
+  const apiKeyStatus = personalApiKeyStatus(connection);
   const needsAdminRecovery = !connection.policyBlocked && !needsAdminSetup
     && connection.needsReconnect === true
     && connection.reconnectActionOwner === "organization_admin";
   const needsReconnect = !connection.policyBlocked && !needsAdminSetup
     && !needsAdminRecovery
-    && connection.needsReconnect === true;
+    && (connection.needsReconnect === true || apiKeyStatus === "reconnect_required");
   const needsMyConnect = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
   const needsAdminConnect = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = (connection.policyBlocked || !needsAdminSetup) && canDisconnectMyConnectionAccount(connection);
+  // A saved personal key keeps one visible action (Replace key); removal lives in the row menu.
+  const keyInMenu = canDisconnect && apiKeyStatus !== null && apiKeyStatus !== "missing";
   const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
   const canTestTools = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && isAdmin
     && !isNativeProvider && connection.connectedForMe && !needsReconnect;
@@ -228,14 +249,18 @@ function YourConnectionRow({
               ) : needsReconnect ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   <AlertTriangle className="h-3 w-3" />
-                  Reconnect required
+                  {apiKeyStatus === "reconnect_required" ? personalApiKeyStatusLabel(apiKeyStatus) : "Reconnect required"}
+                </span>
+              ) : apiKeyStatus === "saved_unverified" ? (
+                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                  {personalApiKeyStatusLabel(apiKeyStatus)}
                 </span>
               ) : limitedAccess ? (
                 <DenBadge>Connected with limited access</DenBadge>
               ) : connection.connectedForMe ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   <Check className="h-3 w-3" />
-                  {isPerMember ? "Connected as you" : "Org account connected"}
+                  {apiKeyStatus === "ready" ? personalApiKeyStatusLabel(apiKeyStatus) : isPerMember ? "Connected as you" : "Org account connected"}
                 </span>
               ) : polling ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
@@ -244,7 +269,7 @@ function YourConnectionRow({
                 </span>
               ) : needsMyConnect ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                  Connect your account
+                  {apiKeyStatus === "missing" ? personalApiKeyStatusLabel(apiKeyStatus) : "Connect your account"}
                 </span>
               ) : needsAdminConnect ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
@@ -311,15 +336,31 @@ function YourConnectionRow({
               <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
             </Link>
           ) : null}
-          {canDisconnect ? (
+          {canDisconnect && !keyInMenu ? (
             <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect} data-testid={`disconnect-my-mcp-account-${connection.id}`}>
               Disconnect
             </DenButton>
           ) : null}
+          {!connection.policyBlocked && !needsReconnect && (apiKeyStatus === "saved_unverified" || apiKeyStatus === "ready") ? (
+            <DenButton variant="secondary" size="sm" loading={connecting} onClick={onConnect} data-testid={`replace-my-mcp-key-${connection.id}`}>
+              Replace key
+            </DenButton>
+          ) : null}
           {needsReconnect || limitedAccess || needsMyConnect || needsAdminConnect ? (
             <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect} data-testid={`connect-my-mcp-account-${connection.id}`}>
-              {needsReconnect || limitedAccess ? "Reconnect" : "Connect"}
+              {apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : needsReconnect || limitedAccess ? "Reconnect" : "Connect"}
             </DenButton>
+          ) : null}
+          {keyInMenu ? (
+            <ItemMenu
+              label={`More for ${connection.name}`}
+              entries={[{
+                label: "Remove key",
+                destructive: true,
+                onSelect: onDisconnect,
+                confirm: { title: `Remove your ${connection.name} key?`, description: "You can add a key again at any time.", action: "Remove key" },
+              }]}
+            />
           ) : null}
         </div>
       </div>

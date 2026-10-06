@@ -12,7 +12,8 @@ const html = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "
   .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const duration = (value) => value === null ? "unavailable" : `${(value / 1000).toFixed(1)}s`;
 
-// Display data only. No GitHub writes, merge decisions, or comment history.
+// Display data only. No GitHub writes; warden-clearance.mjs decides approval
+// from this receipt and comments on the PR with the security findings file.
 export function buildReport(raw, metadata, now = Date.now()) {
   const identityMatches = raw?.version === "1" && raw.event === "pull_request" &&
     raw.repository?.fullName === metadata.repository && raw.pullRequest?.number === metadata.pr &&
@@ -87,7 +88,7 @@ export function renderSummary(report, raw) {
     ? `${report.findings_count} finding(s)` : "incomplete";
   const lines = [
     `Warden security: **${label}** · ${duration(report.timing.analysis_ms)} analysis · ${duration(report.timing.review_to_summary_ms)} through summary.`,
-    "", "Merge approval stays with the OpenWork admin team.", "",
+    "", "Warden Clearance approves when this review is complete with no high or medium security findings and no confidentiality findings.", "",
     "<details><summary>Review details and timing</summary>", "",
     "| Review | Result | Findings | Duration |", "| --- | --- | --- | --- |",
     ...report.skills.map((skill) => `| ${skill.name} | ${skill.status} | ${skill.findings_count ?? "unknown"} | ${duration(skill.duration_ms)} |`),
@@ -113,6 +114,32 @@ export function renderSummary(report, raw) {
   return lines.join("\n");
 }
 
+// Security findings for the Warden Clearance PR comment, bound to this run.
+// Confidentiality findings are never included: their text may name the very
+// outside identity the rule protects. Null when the security review is incomplete.
+export function securityFindings(report, raw) {
+  const security = report.skills.find((skill) => skill.name === "diff-security-review");
+  if (security.status !== "complete") return null;
+  const findings = raw.skills.find((skill) => skill.name === security.name).findings;
+  return {
+    schema_version: 1,
+    repository: report.repository,
+    pr: report.pr,
+    head_sha: report.head_sha,
+    run_id: report.run_id,
+    run_attempt: report.run_attempt,
+    total: findings.length,
+    findings: findings.slice(0, 20).map((finding) => ({
+      severity: finding.severity,
+      title: finding.title.slice(0, 300),
+      description: finding.description.slice(0, 2000),
+      path: typeof finding.location?.path === "string" ? finding.location.path.slice(0, 240) : null,
+      line: Number.isSafeInteger(finding.location?.startLine) && finding.location.startLine > 0
+        ? finding.location.startLine : null,
+    })),
+  };
+}
+
 export async function main(env = process.env) {
   let raw = null;
   try { raw = JSON.parse(await readFile(env.FINDINGS_FILE, "utf8")); }
@@ -129,6 +156,8 @@ export async function main(env = process.env) {
     analysisStarted: Number(env.ANALYSIS_STARTED),
   });
   await writeFile(env.REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  const findings = env.FINDINGS_REPORT_PATH ? securityFindings(report, raw) : null;
+  if (findings) await writeFile(env.FINDINGS_REPORT_PATH, `${JSON.stringify(findings, null, 2)}\n`);
   await appendFile(env.GITHUB_STEP_SUMMARY, renderSummary(report, raw));
   // Findings remain visible in the summary. Operational failure is explicit.
   if (!report.review_complete) process.exitCode = 1;

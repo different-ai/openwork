@@ -1,0 +1,1 @@
+ALTER TABLE `external_mcp_connection` ADD `api_key_auth_scheme` enum('bearer','token') DEFAULT 'bearer' NOT NULL;

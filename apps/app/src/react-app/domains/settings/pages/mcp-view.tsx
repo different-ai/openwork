@@ -180,7 +180,6 @@ const getSkillHiddenId = (skill: SkillItem) => `skill:${skill.name}`;
 export type McpViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
   /** Composer slash commands to render in Library. */
@@ -991,7 +990,7 @@ export function McpView(props: McpViewProps) {
     const nextId = configRequestId.current + 1;
     configRequestId.current = nextId;
     const readConfig = props.readConfigFile;
-    const canReadDesktopConfig = !props.isRemoteWorkspace && isDesktopRuntime();
+    const canReadDesktopConfig = isDesktopRuntime();
 
     if (!readConfig && !canReadDesktopConfig) {
       dispatchLocal({ type: "configUnavailable" });
@@ -1029,7 +1028,7 @@ export function McpView(props: McpViewProps) {
         });
       }
     })();
-  }, [props.isRemoteWorkspace, props.readConfigFile, props.selectedWorkspaceRoot]);
+  }, [props.readConfigFile, props.selectedWorkspaceRoot]);
 
   const activeConfig = configScope === "project" ? projectConfig : globalConfig;
 
@@ -1039,7 +1038,6 @@ export function McpView(props: McpViewProps) {
 
   const canRevealConfig =
     isDesktopRuntime() &&
-    !props.isRemoteWorkspace &&
     !revealBusy &&
     !(configScope === "project" && !props.selectedWorkspaceRoot.trim()) &&
     Boolean(activeConfig?.exists);
@@ -1157,9 +1155,7 @@ export function McpView(props: McpViewProps) {
     try {
       const resolved = props.readConfigFile
         ? await props.readConfigFile(configScope)
-        : !props.isRemoteWorkspace
-        ? await readOpencodeConfig(configScope, root)
-        : null;
+        : await readOpencodeConfig(configScope, root);
       const configFile = resolved as OpencodeConfigFile | null;
       if (!configFile) {
         throw new Error(t("mcp.config_load_failed"));
@@ -1536,7 +1532,8 @@ export function McpView(props: McpViewProps) {
             taxonomy="connection"
             connected={ready}
             connectedLabel={orgMcpConnectionActionLabel(connection)}
-            disconnectedLabel={connection.policyBlocked ? "Blocked" : undefined}
+            savedKeyOnly={connection.authType === "apikey" && connection.credentialMode === "per_member"}
+            disconnectedLabel={connection.policyBlocked ? "Blocked" : connection.authType === "apikey" && connection.credentialMode === "per_member" ? t("extensions.detail_no_key") : undefined}
             disabledReason={policyReason}
             uninstallAvailable={connection.policyBlocked ? canDisconnect : undefined}
             connecting={connectingBusy || disconnectingBusy}
@@ -1552,14 +1549,14 @@ export function McpView(props: McpViewProps) {
               },
               {
                 label: t("extensions.detail_fact_whose_account"),
-                value: connection.credentialMode === "shared" ? t("extensions.detail_account_org") : t("extensions.detail_account_yours"),
+                value: connection.credentialMode === "shared" ? t("extensions.detail_account_org") : connection.authType === "apikey" ? t("extensions.detail_account_your_key") : t("extensions.detail_account_yours"),
               },
               ...(addedBy?.kind === "person" && addedBy.sharedByName
                 ? [{ label: t("extensions.detail_fact_added_by"), value: addedBy.sharedByName }]
                 : []),
             ]}
             connectLabel={orgMcpConnectionActionLabel(connection)}
-            reconnectLabel={t("mcp.org_connection_reconnect_action")}
+            reconnectLabel={connection.authType === "apikey" && connection.credentialMode === "per_member" ? "Replace key" : t("mcp.org_connection_reconnect_action")}
             onConnect={!ready && canAuthorize && props.connectOrgMcp ? () => props.connectOrgMcp?.(connection.id) : undefined}
             onReconnect={ready && canAuthorize && props.reconnectOrgMcp ? () => props.reconnectOrgMcp?.(connection.id) : undefined}
             onUninstall={canDisconnect && props.disconnectOrgMcp ? () => props.disconnectOrgMcp?.(connection.id) : undefined}
@@ -2156,7 +2153,6 @@ export function McpView(props: McpViewProps) {
         onClose={() => setAddMcpModalOpen(false)}
         onAdd={props.connectMcp}
         busy={props.busy}
-        isRemoteWorkspace={props.isRemoteWorkspace}
       />
 
       <LibraryDeleteDialog

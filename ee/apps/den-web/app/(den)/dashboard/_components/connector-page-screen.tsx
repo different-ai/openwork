@@ -19,6 +19,8 @@ import { DetailRows, ItemMenu, removeEntry, ItemPanel, LinkButton } from "./item
 import { ConnectorLogo } from "./item-logo";
 import { libraryQueryKeys, useLibrary } from "./library-data";
 import { isOwnedByViewer, libraryItemDescription, receivedStatus } from "./library-view";
+import { personalApiKeyStatus, personalApiKeyStatusLabel } from "./member-api-key";
+import { MemberApiKeyDialog } from "./member-api-key-dialog";
 import {
   type ExternalMcpTool,
   isNativeProviderConnectionId,
@@ -100,6 +102,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   const item = library.data?.find((entry) => entry.type === "connection" && entry.id === connectionId) ?? null;
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
   const native = Boolean(connection && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey));
+  const apiKeyStatus = connection ? personalApiKeyStatus(connection) : null;
   const tools = useMcpConnectionTools(connectionId, signedIn && !native);
   const viewerId = orgContext?.currentMember.id ?? null;
   const mine = !connection?.policyBlocked && (Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set())));
@@ -149,7 +152,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
               size="md"
               label={`More for ${name}`}
               entries={[
-                ...(!connection.policyBlocked && connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: "Sign out", onSelect: () => void signOut() }] : []),
+                ...(!connection.policyBlocked && connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: apiKeyStatus ? "Remove key" : "Sign out", onSelect: () => void signOut() }] : []),
                 ...(mine ? [removeEntry(name, remove)] : []),
               ]}
             />
@@ -176,10 +179,18 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
           rows={[
             { label: "Who can use it", value: who },
             ...(connection.authType === "none" ? [] : [{
-              label: "Signed in as",
-              value: signedIn || connection.policyBlocked
+              label: connection.authType === "apikey" ? "Key" : "Signed in as",
+              value: connection.policyBlocked
                 ? connectorAccountLabel(connection) ?? "You"
-                : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{connection.needsReconnect ? "Reconnect" : "Sign in"}</DenButton>,
+                : apiKeyStatus === "saved_unverified" || apiKeyStatus === "ready"
+                  ? personalApiKeyStatusLabel(apiKeyStatus)
+                  : apiKeyStatus === "missing" || apiKeyStatus === "reconnect_required"
+                    ? <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{apiKeyStatus === "reconnect_required" ? "Replace key" : "Add key"}</DenButton>
+                    : signedIn
+                      ? connection.authType === "apikey" ? "Organization key ready" : connectorAccountLabel(connection) ?? "You"
+                      : connection.authType === "apikey"
+                        ? "Ask an admin to replace the organization key"
+                        : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{connection.needsReconnect ? "Reconnect" : "Sign in"}</DenButton>,
             }]),
             ...(connection.policyBlocked ? [{ label: "Access", value: <ConnectionPolicyStatus message={connection.policyMessage} /> }] : []),
             ...(limitedAccess ? [{ label: "Access", value: (
@@ -193,6 +204,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
         />
         {signIn.failure?.id === connectionId ? <p role="alert">{signIn.failure.message}</p> : null}
       </section>
+      <MemberApiKeyDialog target={signIn.apiKeyTarget} onClose={signIn.closeApiKey} />
     </ItemPage>
   );
 }

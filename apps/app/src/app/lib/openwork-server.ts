@@ -14,7 +14,7 @@ import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
-import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics, desktopUploadMultipart, electronLocalPathForFile } from "./desktop";
+import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics } from "./desktop";
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
@@ -356,7 +356,6 @@ export type OpenworkServerSettings = {
   portOverride?: number;
   token?: string;
   hostToken?: string;
-  remoteAccessEnabled?: boolean;
 };
 
 // The shared WorkspaceWire contract now carries the opencode block; keep the
@@ -1105,7 +1104,8 @@ const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
 const STORAGE_HOST_AUTH_KEY = "openwork.server.hostToken";
-const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
+// Remote access was removed; writes clear the key older builds persisted.
+const LEGACY_STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 type OpenworkBootstrap = {
   token?: string;
@@ -1210,13 +1210,11 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
     const hostToken = window.localStorage.getItem(STORAGE_HOST_AUTH_KEY) ?? undefined;
-    const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
       portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
       token: token?.trim() || undefined,
       hostToken: hostToken?.trim() || undefined,
-      remoteAccessEnabled: remoteAccessRaw === "1",
     };
   } catch {
     return {};
@@ -1230,7 +1228,6 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
     const hostToken = next.hostToken?.trim() || undefined;
-    const remoteAccessEnabled = next.remoteAccessEnabled === true;
 
     if (urlOverride) {
       window.localStorage.setItem(STORAGE_URL_OVERRIDE, urlOverride);
@@ -1256,11 +1253,7 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
     }
 
-    if (remoteAccessEnabled) {
-      window.localStorage.setItem(STORAGE_REMOTE_ACCESS, "1");
-    } else {
-      window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
-    }
+    window.localStorage.removeItem(LEGACY_STORAGE_REMOTE_ACCESS);
 
     return readOpenworkServerSettings();
   } catch {
@@ -1356,7 +1349,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
     window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
-    window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
+    window.localStorage.removeItem(LEGACY_STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore
   }
@@ -1414,15 +1407,6 @@ const OPENWORK_STREAM_URL_RE = /\/events(\b|\?)|\/event-stream\b|\/stream\b/;
 
 function isStreamUrl(url: string): boolean {
   return OPENWORK_STREAM_URL_RE.test(url);
-}
-
-function isLoopbackUrl(url: string): boolean {
-  try {
-    const hostname = new URL(url).hostname;
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
-  } catch {
-    return false;
-  }
 }
 
 const resolveFetch = (url?: string) => {
@@ -1750,26 +1734,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-        timeoutMs: timeouts.activateWorkspace,
-      }),
-    createRemoteWorkspace: (payload: {
-      baseUrl: string;
-      openworkHostUrl?: string | null;
-      openworkToken?: string | null;
-      openworkWorkspaceId?: string | null;
-      openworkWorkspaceName?: string | null;
-      displayName?: string | null;
-      directory?: string | null;
-      remoteType?: "openwork" | "opencode";
-      sandboxBackend?: string | null;
-      sandboxRunId?: string | null;
-      sandboxContainerName?: string | null;
-    }) =>
-      requestJson<WorkspaceList>(baseUrl, "/workspaces/remote", {
         token,
         hostToken,
         method: "POST",
@@ -2295,39 +2259,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
-    uploadInboxPrefersOriginalFile: (file: File) =>
-      isDesktopRuntime() && !isLoopbackUrl(baseUrl) && electronLocalPathForFile(file) !== null,
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
       if (!id) throw new Error("workspaceId is required");
       if (!file) throw new Error("file is required");
       const uploadPath = `/workspace/${encodeURIComponent(id)}/inbox`;
-      let result: { ok: boolean; status: number; text: string };
-      if (isDesktopRuntime() && !isLoopbackUrl(baseUrl) && electronLocalPathForFile(file) !== null) {
-        const response = await desktopUploadMultipart(file, {
-          url: `${baseUrl}${uploadPath}`,
-          method: "POST",
-          headers: buildAuthHeaders(token, hostToken),
-          fields: options?.path?.trim() ? { path: options.path.trim() } : undefined,
-          timeoutMs: timeouts.binary,
-        });
-        result = {
-          ok: response.status >= 200 && response.status < 300,
-          status: response.status,
-          text: response.body,
-        };
-      } else {
-        const form = new FormData();
-        form.append("file", file);
-        if (options?.path?.trim()) form.append("path", options.path.trim());
-        result = await requestMultipartRaw(baseUrl, uploadPath, {
-          token,
-          hostToken,
-          method: "POST",
-          body: form,
-          timeoutMs: timeouts.binary,
-        });
-      }
+      const form = new FormData();
+      form.append("file", file);
+      if (options?.path?.trim()) form.append("path", options.path.trim());
+      const result = await requestMultipartRaw(baseUrl, uploadPath, {
+        token,
+        hostToken,
+        method: "POST",
+        body: form,
+        timeoutMs: timeouts.binary,
+      });
 
       if (!result.ok) {
         let message = result.text.trim();

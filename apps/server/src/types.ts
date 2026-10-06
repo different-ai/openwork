@@ -1,8 +1,6 @@
 import type { WorkspaceWire } from "@openwork/types/workspace";
 
-export type WorkspaceType = "local" | "remote";
-
-export type RemoteType = "opencode" | "openwork";
+export type WorkspaceType = "local";
 
 export type ApprovalMode = "manual" | "auto";
 
@@ -20,14 +18,9 @@ export interface WorkspaceConfig {
   name?: string;
   preset?: string;
   workspaceType?: WorkspaceType;
-  remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;
   displayName?: string;
-  openworkHostUrl?: string;
-  openworkToken?: string;
-  openworkWorkspaceId?: string;
-  openworkWorkspaceName?: string;
   sandboxBackend?: string;
   sandboxRunId?: string;
   sandboxContainerName?: string;
@@ -41,14 +34,9 @@ export interface WorkspaceInfo {
   path: string;
   preset: string;
   workspaceType: WorkspaceType;
-  remoteType?: RemoteType;
   baseUrl?: string;
   directory?: string;
   displayName?: string;
-  openworkHostUrl?: string;
-  openworkToken?: string;
-  openworkWorkspaceId?: string;
-  openworkWorkspaceName?: string;
   sandboxBackend?: string;
   sandboxRunId?: string;
   sandboxContainerName?: string;

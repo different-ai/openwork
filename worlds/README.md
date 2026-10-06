@@ -23,6 +23,7 @@ dev, or demo work. Names follow `<lifecycle>-<surface>`:
 | `preview-full` | Den plus a desktop wired to it, seeded with `fresh`, `team`, `restricted`, or `workspace`. |
 | `preview-app-web` | The web app plus the server it needs (local, private Daytona URL, Freestyle). |
 | `acme-web` | The seeded Acme demo stack: Den, AI Gateway, and the web app. |
+| `preview-workbot` | Workbot with Den sign-in and the headless runner: the seeded Acme org, Workbot turned on. |
 | `dev-app-web` | Your working tree as the local server plus web app (`pnpm dev:headless-web`). |
 | `live-desktop`, `live-app-web` | Source desktop or web app on your installed production state. |
 
@@ -143,7 +144,7 @@ Note: most of `evals/worlds/` contains test fixtures with a different lifecycle
 - Review-app PR launches still use the Freestyle snapshot/VM API directly;
   `world up preview-app-web --place freestyle` uses the same provider path, but
   the review service does not call the local world CLI. Freestyle snapshot
-  kinds keep their build names (`app-web`, `acme-web`, `desktop`).
+  kinds keep their build names (`app-web`, `acme-web`, `desktop`, `workbot`).
 - Daytona Windows published desktop previews use an owned, private VM, verify
   the installer digest, launch in the interactive user session, and check the
   private viewer and CDP. They do not run source builds or seed Den identity.

@@ -376,6 +376,7 @@ export type DenOrgLlmProvider = {
 };
 
 export type DenExternalMcpConnection = {
+  credentialHealth?: "unknown" | "ready" | "reconnect_required";
   id: string;
   name: string;
   url: string;
@@ -2176,6 +2177,8 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
 
   return {
     id: value.id,
+    ...(value.credentialHealth === "unknown" || value.credentialHealth === "ready" || value.credentialHealth === "reconnect_required"
+      ? { credentialHealth: value.credentialHealth } : {}),
     name: value.name,
     url: value.url,
     authType: value.authType,
@@ -3545,6 +3548,14 @@ export function createDenClient(options: {
         baseUrls,
         `/v1/oauth-providers/${encodeURIComponent(providerId)}/disconnect`,
         { method: "POST", token, organizationId: orgId },
+      );
+    },
+
+    async setMyMcpCredential(orgId: string, connectionId: string, apiKey: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/my-credential`,
+        { method: "PUT", token, organizationId: orgId, body: { apiKey } },
       );
     },
 

@@ -122,7 +122,6 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "audit.ts": { ...auditReadCoverage, operationKinds: [...auditReadCoverage.operationKinds, ...auditCaptureCoverage.operationKinds], actions: [...auditReadCoverage.actions, ...auditCaptureCoverage.actions], categories: [...auditReadCoverage.categories, ...auditCaptureCoverage.categories], capturePolicy: `${auditReadCoverage.capturePolicy} ${auditCaptureCoverage.capturePolicy}`, snapshotPolicy: `${auditReadCoverage.snapshotPolicy} ${auditCaptureCoverage.snapshotPolicy}`, emitter: `${auditReadCoverage.emitter}; ${auditCaptureCoverage.emitter}`, failurePolicy: `${auditReadCoverage.failurePolicy} ${auditCaptureCoverage.failurePolicy}`, limitations: `${auditReadCoverage.limitations} ${auditCaptureCoverage.limitations}` },
   "billing.ts": uncovered("Organization billing and checkout are not operation-audited; no audit billing product is introduced."),
   "brand-assets.ts": uncovered("Branding uploads and downloads."),
-  "codemode-runs.ts": uncovered("Workflow run receipts and reads."),
   "codemode-scripts.ts": uncovered("Workflow authoring, testing, saving and execution."),
   "core.ts": uncovered("Organization settings and lifecycle."),
   "dashboards.ts": uncovered("Dashboard mutations and reads."),
@@ -165,7 +164,7 @@ export const otherAuditSurfaces: readonly Readonly<{ location: string; surface: 
   { location: "ee/apps/den-api/scripts/audit-pilot.ts", surface: "cli", coverage: pilotPolicyCoverage },
   { location: "ee/apps/den-api/src/routes/admin", surface: "route", coverage: { ...uncovered("Some platform-admin actions retain legacy events; remaining actions uncovered, not migrated to operation capture."), status: "legacy_only", emitter: "src/audit-events.ts:buildOrganizationAuditEvent" } },
   ...[
-    "auth", "automations", "bootstrap", "cloud", "dev", "me", "telemetry", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
+    "auth", "automations", "bootstrap", "cloud", "dev", "me", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
   ].map((name) => ({ location: `ee/apps/den-api/src/routes/${name}`, surface: "route", coverage: uncovered("No operation-audit implementation for this route surface; existing logging/receipts do not establish coverage.") } satisfies { location: string; surface: "route"; coverage: AuditCoverageDeclaration })),
   { location: "ee/apps/den-api/src/routes/mcp", surface: "mcp", coverage: uncovered("MCP transport, invocation, delegation and observed external effects not captured. A downstream covered provider mutation does not imply MCP invocation coverage.") },
   { location: "ee/apps/den-api/src/mcp", surface: "mcp", coverage: uncovered("Capability search/execution and external MCP tools/apps are not operation-audited.") },

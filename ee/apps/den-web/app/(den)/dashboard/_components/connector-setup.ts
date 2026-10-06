@@ -6,10 +6,14 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectorAccountLabel, connectorAccountReady } from "./connector-detail";
 import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
+import { credentialModeForAuth, personalApiKeyStatus, usesMemberApiKey } from "./member-api-key";
 import { resolveMcpAuthorizationPollOutcome } from "./mcp-account-authorization-state";
 import { openMcpAuthorizationTab, safeMcpAuthorizationUrl, showMcpAuthorizationFailure } from "./mcp-authorization-url";
 import {
+  apiKeyAuthSchemeInput,
+  DEFAULT_API_KEY_AUTH_SCHEME,
   type CreateMcpConnectionInput,
+  type ExternalMcpApiKeyAuthScheme,
   type ExternalMcpConnection,
   type ExternalMcpPreset,
   type ExternalMcpTool,
@@ -107,7 +111,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const findDone = discovery !== null && discovery.status !== "unreachable" && discovery.status !== "unsupported";
   const method: ConnectorSignInMethod | null = findDone && discovery ? connectorSignInMethod(discovery, target?.preset) : null;
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
-  const tools = useMcpConnectionTools(connectionId ?? "", signedIn);
+  const apiKeyConfigured = connection?.authType === "apikey";
+  const usesIndividualKeys = Boolean(connection && usesMemberApiKey(connection));
+  const tools = useMcpConnectionTools(connectionId ?? "", signedIn && !usesIndividualKeys);
 
   useEffect(() => {
     // A deep link can resolve the catalog entry before the organization loads.
@@ -126,14 +132,18 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   }, []);
   useEffect(() => stopPolling, [stopPolling]);
 
-  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType" | "apiKey" | "oauthClient">) => {
+  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType"> & Partial<Pick<CreateMcpConnectionInput, "apiKey" | "apiKeyAuthScheme" | "credentialMode" | "oauthClient">>) => {
     if (!target || !orgContext) throw new Error("Your organization is still loading. Try again in a moment.");
     const created = await createConnection.mutateAsync({
       name: target.name,
       url: target.url,
       authType: auth.authType,
-      credentialMode: auth.authType === "oauth" ? "per_member" : "shared",
+      credentialMode: credentialModeForAuth(
+        auth.authType,
+        auth.credentialMode ?? (auth.authType === "oauth" ? "per_member" : "shared"),
+      ),
       ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      ...apiKeyAuthSchemeInput(auth.authType, auth.apiKeyAuthScheme ?? DEFAULT_API_KEY_AUTH_SCHEME),
       ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
       ...(auth.authType === "oauth" ? oauthRequestFields(discovery) : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
@@ -155,7 +165,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   }, [method, connectionId, createForMe]);
 
   /** Step two for a server that takes a key: the admin's key is shared by everyone who gets it. */
-  const saveApiKey = useCallback(async (apiKey: string) => {
+  const saveApiKey = useCallback(async (apiKey: string, apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme) => {
     const key = apiKey.trim();
     if (!key) {
       setSaveError("Paste the key first.");
@@ -164,9 +174,22 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     setSaving(true);
     setSaveError(null);
     try {
-      await createForMe({ authType: "apikey", apiKey: key });
+      await createForMe({ authType: "apikey", credentialMode: "shared", apiKey: key, apiKeyAuthScheme });
     } catch (error) {
       setSaveError(errorMessage(error, "The key did not save."));
+    } finally {
+      setSaving(false);
+    }
+  }, [createForMe]);
+
+  /** Creates one organization connection; every granted member supplies their own key later. */
+  const savePerMemberApiKeys = useCallback(async (apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme) => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await createForMe({ authType: "apikey", credentialMode: "per_member", apiKeyAuthScheme });
+    } catch {
+      setSaveError("The connection did not save. Try again.");
     } finally {
       setSaving(false);
     }
@@ -265,7 +288,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const blocked = needsAdminInput && mode === "member" && !connection;
   const methodFailed = method === "unsupported";
   const methodDone = method === "none" || method === "sign_in" || adminInputSaved;
-  const usesKey = method === "api_key" || connection?.authType === "apikey";
+  const usesKey = method === "api_key" || apiKeyConfigured;
   const canSignIn = !signedIn && signIn.kind !== "waiting" && (method === "sign_in" || (method === "oauth_app" && connection !== null));
   const toolList = tools.data?.tools ?? [];
 
@@ -274,7 +297,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     if (method === "none") return "No sign-in needed.";
     if (method === "sign_in") return `You sign in with your own ${name} account.`;
     if (method === "api_key") {
-      if (adminInputSaved) return "Key added. Everyone uses it.";
+      if (adminInputSaved) return usesIndividualKeys ? "Individual keys enabled." : "Key added. Everyone uses it.";
       return mode === "member" ? `An admin adds the key for ${name}.` : `${name} needs a key.`;
     }
     if (method === "oauth_app") {
@@ -287,11 +310,12 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const signInDescription = (() => {
     if (signedIn) {
       if (connection?.authType === "none") return "Nothing to sign in to.";
-      if (connection?.authType === "apikey") return "Uses the key you added.";
+      if (connection?.authType === "apikey") return usesIndividualKeys ? "Each person can now add their own key in My Library." : "Uses the key you added.";
       const account = connection ? connectorAccountLabel(connection) : null;
       if (connection?.nativeProviderKey === "slack") return "You are signed in to Slack.";
       return account ? `As ${account}.` : "You are signed in.";
     }
+    if (usesIndividualKeys) return "Each person adds their own key.";
     if (signIn.kind === "failed") return signIn.message;
     if (signIn.kind === "waiting") return `${name} opened in a new tab. Come back here when you are done.`;
     if (canSignIn) return `${name} opens in a new tab. Come back here when you are done.`;
@@ -314,11 +338,15 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     },
     {
       id: "sign-in",
-      title: signedIn
+      title: usesIndividualKeys
+        ? "Individual keys enabled"
+        : signedIn
         ? usesKey ? `Connected to ${name}` : `Signed in to ${name}`
         : usesKey ? `Connect to ${name}` : `Sign in to ${name}`,
       description: signInDescription,
-      status: signedIn
+      status: usesIndividualKeys
+        ? "done"
+        : signedIn
         ? "done"
         : signIn.kind === "failed" ? "failed"
           : signIn.kind === "waiting" || (usesKey && connection) || (method === "none" && !connection) ? "running"
@@ -326,11 +354,13 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     },
     {
       id: "tools",
-      title: "Has things your AI can do",
-      description: tools.error
+      title: usesIndividualKeys ? "Ready for first use" : "Has things your AI can do",
+      description: usesIndividualKeys
+        ? "Tools appear after each person adds a working key."
+        : tools.error
         ? "OpenWork could not read what it can do. Try again later."
         : tools.data ? toolsSentence(toolList) : signedIn ? "Reading them now." : usesKey ? "They show up once the key works." : "They show up after you sign in.",
-      status: tools.error ? "failed" : tools.data ? "done" : signedIn ? "running" : "waiting",
+      status: usesIndividualKeys ? "done" : tools.error ? "failed" : tools.data ? "done" : signedIn ? "running" : "waiting",
     },
   ];
 
@@ -351,6 +381,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     saving,
     saveError,
     saveApiKey,
+    savePerMemberApiKeys,
     saveOAuthApp,
     canSignIn,
     signingIn: signIn.kind === "waiting",
@@ -363,8 +394,10 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
 export function useMemberSignIn() {
   const queryClient = useQueryClient();
   const startOAuth = useStartMcpConnectionOAuth();
+  const usable = useMcpConnections("usable");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
+  const [apiKeyTarget, setApiKeyTarget] = useState<{ id: string; name: string } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => {
     if (timer.current) clearInterval(timer.current);
@@ -375,8 +408,24 @@ export function useMemberSignIn() {
     queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
   ]);
 
-  async function signIn(item: { id: string; name: string; policyBlocked?: boolean }) {
-    if (item.policyBlocked) return;
+  async function signIn(item: {
+    id: string;
+    name: string;
+    authType?: ExternalMcpConnection["authType"];
+    credentialMode?: ExternalMcpConnection["credentialMode"];
+    policyBlocked?: boolean;
+  }) {
+    const connection = usable.data?.find((entry) => entry.id === item.id);
+    if (item.policyBlocked || connection?.policyBlocked) return;
+    const authType = item.authType ?? connection?.authType;
+    const credentialMode = item.credentialMode ?? connection?.credentialMode;
+    if (authType === "apikey" && credentialMode === "per_member") {
+      if (timer.current) clearInterval(timer.current);
+      setPendingId(null);
+      setFailure(null);
+      setApiKeyTarget({ id: item.id, name: item.name });
+      return;
+    }
     if (timer.current) clearInterval(timer.current);
     setPendingId(item.id);
     setFailure(null);
@@ -413,5 +462,17 @@ export function useMemberSignIn() {
     }
   }
 
-  return { signIn, pendingId, failure };
+  function apiKeyStatus(connectionId: string) {
+    const connection = usable.data?.find((entry) => entry.id === connectionId);
+    return connection ? personalApiKeyStatus(connection) : null;
+  }
+
+  return {
+    apiKeyStatus,
+    apiKeyTarget,
+    closeApiKey: () => setApiKeyTarget(null),
+    failure,
+    pendingId,
+    signIn,
+  };
 }

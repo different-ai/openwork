@@ -9,6 +9,7 @@ type McpCredentialInputProps = Omit<
 > & {
   kind: "identifier" | "secret";
   name: string;
+  autoComplete?: "off" | "new-password";
 };
 
 /**
@@ -18,13 +19,14 @@ type McpCredentialInputProps = Omit<
  */
 export function McpCredentialInput({
   kind,
+  autoComplete,
   ...props
 }: McpCredentialInputProps) {
   return (
     <DenInput
       {...props}
       type={kind === "secret" ? "password" : "text"}
-      autoComplete={kind === "secret" ? "new-password" : "off"}
+      autoComplete={autoComplete ?? (kind === "secret" ? "new-password" : "off")}
       autoCapitalize="none"
       autoCorrect="off"
       spellCheck={false}

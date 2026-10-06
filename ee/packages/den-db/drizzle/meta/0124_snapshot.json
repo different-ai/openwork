@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "5fab2a39-7b34-4ad9-8c10-a573764641c0",
+  "id": "0408e453-8792-4e62-acfa-bce37132932b",
   "prevId": "45722e8e-506a-4ce3-b813-a6e63b146db8",
   "tables": {
     "account": {
@@ -109,11 +109,11 @@
           ],
           "isUnique": false
         },
-        "account_account_id_provider_id": {
-          "name": "account_account_id_provider_id",
+        "account_provider_id_account_id": {
+          "name": "account_provider_id_account_id",
           "columns": [
-            "`account_id`(191)",
-            "`provider_id`(191)"
+            "`provider_id`(191)",
+            "`account_id`(191)"
           ],
           "isUnique": false
         }
@@ -12131,67 +12131,6 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "slack_installation": {
-      "name": "slack_installation",
-      "columns": {
-        "client_id": {
-          "name": "client_id",
-          "type": "varchar(512)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workspace_id": {
-          "name": "workspace_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "access_token": {
-          "name": "access_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "refresh_token": {
-          "name": "refresh_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "slack_installation_client_id_workspace_id_pk": {
-          "name": "slack_installation_client_id_workspace_id_pk",
-          "columns": [
-            "client_id",
-            "workspace_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
     "llm_provider_access": {
       "name": "llm_provider_access",
       "columns": {
@@ -17847,12 +17786,12 @@
   "internal": {
     "tables": {},
     "indexes": {
-      "account_account_id_provider_id": {
+      "account_provider_id_account_id": {
         "columns": {
-          "`account_id`(191)": {
+          "`provider_id`(191)": {
             "isExpression": true
           },
-          "`provider_id`(191)": {
+          "`account_id`(191)": {
             "isExpression": true
           }
         }
