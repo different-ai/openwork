@@ -16,7 +16,7 @@ import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
 import { assertOrganizationManagedModelsAllowed } from "./organization-metadata.js"
 import { appLogger } from "./observability/logger.js"
-import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"
+import { isOpenWorkWebAvailable, readOpenWorkWebDeployment } from "./openwork-web-availability.js"
 import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess } from "./openwork-web-access.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -74,15 +74,15 @@ function requireSeatPriceId() {
   return env.stripe.seatPriceId
 }
 
-function requireOpenWorkWebPriceId() {
+async function requireOpenWorkWebPriceId() {
   const priceId = env.stripe.openworkWebPriceId
-  if (!isOpenWorkWebAvailable() || !priceId) {
+  if (!(await isOpenWorkWebAvailable()) || !priceId) {
     throw new Error("stripe_openwork_web_not_available")
   }
   return priceId
 }
 
-function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubscriptionType) {
+async function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubscriptionType): Promise<string> {
   switch (subscriptionType) {
     case INFERENCE_SUBSCRIPTION_TYPE:
       return requireInferencePriceId()
@@ -934,7 +934,7 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   if (input.subscriptionType === INFERENCE_SUBSCRIPTION_TYPE) {
     await assertOrganizationManagedModelsAllowed(input.organizationId)
   }
-  const priceId = requirePriceIdForSubscriptionType(input.subscriptionType)
+  const priceId = await requirePriceIdForSubscriptionType(input.subscriptionType)
   const openworkProduct = input.subscriptionType === SEAT_SUBSCRIPTION_TYPE
     ? "openwork_seats"
     : input.subscriptionType === WEB_SUBSCRIPTION_TYPE
@@ -1092,22 +1092,23 @@ function serializeOpenWorkWebSubscription(row: Awaited<ReturnType<typeof findWeb
 }
 
 async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
-  const [row, memberCount, complimentaryAccess] = await Promise.all([
+  const [row, memberCount, complimentaryAccess, web] = await Promise.all([
     findWebSubscriptionByOrg(organizationId),
     joinedMemberCount(organizationId),
     organizationOpenWorkWebComplimentaryAccess(organizationId),
+    readOpenWorkWebDeployment(),
   ])
   const billing = calculateOpenWorkWebBilling({ joinedMemberCount: memberCount })
   const hasEligibleSubscription = isEligibleOpenWorkWebSubscriptionRow(row)
   const access = resolveOpenWorkWebAccess({
-    deploymentAvailable: isOpenWorkWebAvailable(),
+    deploymentAvailable: web.offered,
     hasEligibleSubscription,
-    complimentaryAccess,
+    complimentaryAccess: web.exists && complimentaryAccess,
   })
   return {
     row,
     summary: {
-      configured: isOpenWorkWebAvailable()
+      configured: web.offered
         && Boolean(env.stripe.secretKey && env.stripe.openworkWebPriceId),
       unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
       currency: OPENWORK_WEB_CURRENCY,
@@ -1124,14 +1125,15 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
 }
 
 export async function getOpenWorkWebAccess(organizationId: OrgId) {
-  const [row, complimentaryAccess] = await Promise.all([
+  const [row, complimentaryAccess, web] = await Promise.all([
     findWebSubscriptionByOrg(organizationId),
     organizationOpenWorkWebComplimentaryAccess(organizationId),
+    readOpenWorkWebDeployment(),
   ])
   return resolveOpenWorkWebAccess({
-    deploymentAvailable: isOpenWorkWebAvailable(),
+    deploymentAvailable: web.offered,
     hasEligibleSubscription: isEligibleOpenWorkWebSubscriptionRow(row),
-    complimentaryAccess,
+    complimentaryAccess: web.exists && complimentaryAccess,
   })
 }
 

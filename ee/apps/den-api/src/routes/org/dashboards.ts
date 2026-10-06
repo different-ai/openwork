@@ -26,7 +26,7 @@ import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, 
 import type { MemberTeamSummary } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema } from "./shared.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { announceDeprecation, organizationFeatureEnabled } from "../../features.js"
 
 /**
  * Organization-managed Dashboards: an org-owned, ordered list of MCP App
@@ -266,14 +266,16 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "List dashboards",
-      description: "Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Lists every dashboard in the organization, ordered by name, with its ordered MCP App elements. Workspace owners and admins only; members read the dashboards granted to them through GET /v1/me/dashboards.",
       responses: {
         200: jsonResponse("Dashboards returned successfully.", dashboardListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can list dashboards.", forbiddenSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     async (c) => {
@@ -291,8 +293,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "Create dashboard",
-      description: "Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server or by an App built in OpenWork (from GET /v1/mcp-apps). An App's element always points at the App's current revision. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Creates an organization-owned dashboard: a named, ordered list of up to 50 MCP App elements, each pointing at a ui:// resource served by a connected MCP server or by an App built in OpenWork (from GET /v1/mcp-apps). An App's element always points at the App's current revision. Nobody sees the dashboard until access is granted through POST /v1/dashboards/{dashboardId}/access.",
       responses: {
         201: jsonResponse("Dashboard created successfully.", dashboardResponseSchema),
         400: jsonResponse("The dashboard request was invalid.", invalidRequestSchema),
@@ -300,6 +303,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         403: jsonResponse("Only workspace owners and admins can create dashboards.", forbiddenSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     jsonValidator(dashboardCreateSchema),
@@ -327,8 +331,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards/:dashboardId",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "Get dashboard",
-      description: "Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Returns one dashboard with its ordered MCP App elements. Deleted dashboards answer 404.",
       responses: {
         200: jsonResponse("Dashboard returned successfully.", dashboardResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -336,6 +341,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
@@ -355,8 +361,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards/:dashboardId",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "Update dashboard",
-      description: "Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Partially updates a dashboard. Send name, elements, or both; when elements is present it replaces the whole ordered element list.",
       responses: {
         200: jsonResponse("Dashboard updated successfully.", dashboardResponseSchema),
         400: jsonResponse("The dashboard request was invalid.", invalidRequestSchema),
@@ -365,6 +372,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
@@ -397,8 +405,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards/:dashboardId",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "Delete dashboard",
-      description: "Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Soft-deletes the dashboard so it disappears from admin lists and from every member's granted dashboards. Its access grants are kept but stop applying; there is no restore.",
       responses: {
         204: emptyResponse("Dashboard deleted successfully."),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -406,6 +415,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
@@ -428,8 +438,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards/:dashboardId/access",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "List dashboard access grants",
-      description: "Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Lists every access grant on the dashboard, oldest first, including revoked grants (removedAt set). Each grant targets exactly one member, one team, or the whole organization.",
       responses: {
         200: jsonResponse("Dashboard access grants returned successfully.", dashboardAccessListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -437,6 +448,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
@@ -463,8 +475,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards/:dashboardId/access",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "Grant dashboard access",
-      description: "Assigns a dashboard to one member, one team, or the whole organization — the same subject model connector assignment grants use. Regranting a revoked subject reactivates the existing grant.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Assigns a dashboard to one member, one team, or the whole organization — the same subject model connector assignment grants use. Regranting a revoked subject reactivates the existing grant.",
       responses: {
         201: jsonResponse("Dashboard access granted successfully.", dashboardAccessResponseSchema),
         400: jsonResponse("The grant request was invalid.", invalidRequestSchema),
@@ -473,6 +486,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard, member, or team was not found.", notFoundSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
@@ -549,8 +563,9 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/dashboards/:dashboardId/access/:grantId",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "Revoke dashboard access",
-      description: "Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Revokes one access grant by setting removedAt; the grant row is kept so regranting the same subject reactivates it. Revoking an already revoked grant answers 204 again.",
       responses: {
         204: emptyResponse("Dashboard access revoked successfully."),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -558,6 +573,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard or grant was not found.", notFoundSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgRoleRoute(["admin"]),
     requireOrgManagedDashboards,
     paramValidator(dashboardGrantParamsSchema),
@@ -596,13 +612,15 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     "/v1/me/dashboards",
     describeRoute({
       tags: ["Dashboards"],
+      deprecated: true,
       summary: "List dashboards granted to the current member",
-      description: "Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.",
+      description: "Deprecated: organization-managed dashboards are removed from the OpenWork API on 2026-10-20. Returns the dashboards the signed-in member can see: granted directly, through one of their teams, or org-wide, deduplicated and ordered by name. The desktop MCP Apps dashboard renders these as read-only tiles.",
       responses: {
         200: jsonResponse("Granted dashboards returned successfully.", meDashboardListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
       },
     }),
+    announceDeprecation("orgManagedDashboards"),
     orgMemberRoute(),
     resolveMemberTeamsMiddleware,
     async (c) => {

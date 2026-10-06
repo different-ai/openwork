@@ -9,10 +9,11 @@
         "deployment": {
           "type": "string",
           "enum": [
+            "",
             "cloud",
             "self_hosted"
           ],
-          "description": "Which product this install is. Only OpenWork Cloud sets \"cloud\". Renders DEN_DEPLOYMENT."
+          "description": "Which product this install is. Empty infers it from tenancy.mode (multi_org means cloud). Renders DEN_DEPLOYMENT."
         },
         "features": {
           "type": "object",
@@ -66,7 +67,7 @@
                 true,
                 false
               ],
-              "description": "Dashboards: Organization admins publish dashboards to members in Den and the desktop app. Renders DEN_FEATURE_ORG_MANAGED_DASHBOARDS."
+              "description": "Organization-managed dashboards: Organization admins publish dashboards to members in Den and the desktop app. Renders DEN_FEATURE_ORG_MANAGED_DASHBOARDS."
             },
             "slackAssistant": {
               "enum": [
@@ -97,6 +98,56 @@
                 false
               ],
               "description": "Cloud Automations: headless runtime: Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. Renders DEN_FEATURE_HEADLESS_AUTOMATIONS."
+            },
+            "dashboard": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Dashboard: Members see the Dashboard in the desktop app. Renders DEN_FEATURE_DASHBOARD."
+            },
+            "automations": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Automations: Members can create and run Automations from the desktop app. Renders DEN_FEATURE_AUTOMATIONS."
+            },
+            "openworkWeb": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenWork Web: Organizations can use OpenWork Web, an OpenWork computer in the browser. Complimentary grants and subscriptions still decide access. Renders DEN_FEATURE_OPENWORK_WEB."
+            },
+            "appMcpServers": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Apps built in OpenWork: Members can build Apps that are served as their own MCP servers. Needs OpenWork Connect; older Workflow-bound views become read-only. Renders DEN_FEATURE_APP_MCP_SERVERS."
+            },
+            "generatedArtifactViews": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Generated artifact views: Agents can save custom views for Workflow results. Turn on only after desktops that can show them are released. Renders DEN_FEATURE_GENERATED_ARTIFACT_VIEWS."
             },
             "workbot": {
               "enum": [

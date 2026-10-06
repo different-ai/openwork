@@ -68,7 +68,7 @@ import { env } from "../../env.js"
 import type { AuthContextVariables } from "../../session.js"
 import { buildOrganizationAuditEvent, logOrganizationAuditEvent, ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess, setOpenWorkWebComplimentaryAccess } from "../../openwork-web-access.js"
-import { isOpenWorkWebAvailable } from "../../openwork-web-availability.js"
+import { openWorkWebDeployment, readOpenWorkWebDeployment, type OpenWorkWebDeployment } from "../../openwork-web-availability.js"
 import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, isEligibleOpenWorkWebSubscriptionStatus, isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkWebSubscription, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
 import { buildAdminPageInfo, normalizeAdminPageRequest, sanitizeAdminSearchForLike, type AdminPageRequest } from "./scale-performance.js"
 
@@ -166,6 +166,7 @@ const adminFeatureSchema = z.object({
   enabled: z.boolean(),
   killed: z.boolean(),
   lock: z.boolean().nullable(),
+  deprecated: z.object({ announced: z.string(), removeBy: z.string(), note: z.string() }).nullable(),
 }).meta({ ref: "AdminFeature" })
 
 const updateFeatureRolloutSchema = z.object({
@@ -364,14 +365,16 @@ function readAdminFeature(key: FeatureKey, rollouts: FeatureRollouts): z.infer<t
     enabled,
     killed,
     lock: env.features.locks[key] ?? null,
+    deprecated: definition.deprecated ?? null,
   }
 }
 
 function readAdminOpenWorkWebAccess(
   metadata: Record<string, unknown> | string | null | undefined,
   subscription: AdminOpenWorkWebSubscription | null,
+  web: OpenWorkWebDeployment,
 ) {
-  const complimentaryAccess = hasOpenWorkWebComplimentaryAccess(metadata)
+  const complimentaryAccess = web.exists && hasOpenWorkWebComplimentaryAccess(metadata)
   const hasEligibleSubscription = Boolean(
     subscription
     && isEligibleOpenWorkWebSubscriptionStatus(subscription.status)
@@ -380,7 +383,7 @@ function readAdminOpenWorkWebAccess(
     && subscription.payment_failed !== true,
   )
   const access = resolveOpenWorkWebAccess({
-    deploymentAvailable: isOpenWorkWebAvailable(),
+    deploymentAvailable: web.offered,
     hasEligibleSubscription,
     complimentaryAccess,
   })
@@ -1015,7 +1018,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       billableSeatCount: seatCounts.chargeable,
       capabilities: readAdminVisibleOrganizationCapabilities(described),
       featureStates: readAdminFeatureStates(described),
-      openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null),
+      openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null, openWorkWebDeployment(featureRollouts)),
     }
   })
 }
@@ -1982,7 +1985,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         ok: true,
         organization: {
           id: organizationId,
-          openworkWebAccess: readAdminOpenWorkWebAccess(result.metadata, result.webSubscription),
+          openworkWebAccess: readAdminOpenWorkWebAccess(result.metadata, result.webSubscription, await readOpenWorkWebDeployment()),
         },
       })
     },

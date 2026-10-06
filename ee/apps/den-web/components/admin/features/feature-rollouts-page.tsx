@@ -25,6 +25,7 @@ type AdminFeature = {
   enabled: boolean;
   killed: boolean;
   lock: boolean | null;
+  deprecated: { removeBy: string; note: string } | null;
 };
 
 type FeaturesReport = { deployment: "cloud" | "self_hosted"; features: AdminFeature[] };
@@ -47,6 +48,9 @@ function parseFeature(value: unknown): AdminFeature | null {
     enabled: value.enabled === true,
     killed: value.killed === true,
     lock: typeof value.lock === "boolean" ? value.lock : null,
+    deprecated: isRecord(value.deprecated) && typeof value.deprecated.removeBy === "string"
+      ? { removeBy: value.deprecated.removeBy, note: typeof value.deprecated.note === "string" ? value.deprecated.note : "" }
+      : null,
   };
 }
 
@@ -86,6 +90,12 @@ function FeatureRow({ feature, onChange }: { feature: AdminFeature; onChange: (n
   }, [feature.key, onChange]);
 
   const controlsDisabled = !feature.available || saving;
+  // A deployment lock decides; show its value and keep the switch visible but locked (DESIGN.md P4).
+  const locked = feature.lock !== null;
+  const shownEnabled = feature.lock ?? feature.enabled;
+  const removalDate = feature.deprecated
+    ? new Date(`${feature.deprecated.removeBy}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+    : null;
 
   return (
     <li data-testid={`admin-feature-${feature.key}`} className="flex flex-col gap-3 border-t border-gray-100 py-4 first:border-t-0 sm:flex-row sm:items-center">
@@ -93,6 +103,11 @@ function FeatureRow({ feature, onChange }: { feature: AdminFeature; onChange: (n
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-[14px] font-medium text-gray-900" title={feature.description}>{feature.label}</p>
           {feature.deployments.length === 1 ? <DenBadge>{feature.deployments[0] === "cloud" ? "Cloud only" : "Self-hosted only"}</DenBadge> : null}
+          {feature.deprecated ? (
+            <span title={feature.deprecated.note}>
+              <DenBadge tone="warning">Removing on {removalDate}</DenBadge>
+            </span>
+          ) : null}
         </div>
         <p data-testid={`admin-feature-state-${feature.key}`} className={`mt-1 text-[13px] ${feature.killed ? "text-red-700" : "text-gray-500"}`}>
           {rolloutState(feature)}
@@ -102,8 +117,8 @@ function FeatureRow({ feature, onChange }: { feature: AdminFeature; onChange: (n
       <div className="flex shrink-0 items-center gap-3">
         <DenSegmented
           aria-label={`${feature.label} for everyone`}
-          options={ON_OFF.map((option) => ({ ...option, disabled: controlsDisabled }))}
-          value={feature.enabled ? "on" : "off"}
+          options={ON_OFF.map((option) => ({ ...option, disabled: controlsDisabled || locked }))}
+          value={shownEnabled ? "on" : "off"}
           onChange={(value) => {
             const enabled = value === "on";
             if (enabled !== feature.enabled) void save({ enabled });

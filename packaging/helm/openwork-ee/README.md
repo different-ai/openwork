@@ -323,8 +323,11 @@ Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
 of self-hosted installs have no key, so they can't be turned on here. A key
 that isn't listed below fails `helm install` through `values.schema.json`.
 
-`config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
-OpenWork Cloud. Don't change it on a customer install.
+`config.deployment` (`DEN_DEPLOYMENT`) says which product this install is.
+Left empty, den-api infers it from `config.tenancy.mode`: `multi_org` means
+OpenWork Cloud, `single_org` means self-hosted. A multi-organization
+self-hosted install must set `config.deployment: self_hosted`, so features
+that exist only on OpenWork Cloud (such as OpenWork Web) stay unavailable.
 
 <!-- BEGIN GENERATED features (pnpm features:sync) -->
 | `config.features.*` | Environment variable | Default | What it does |
@@ -337,104 +340,65 @@ OpenWork Cloud. Don't change it on a customer install.
 | `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
 | `slackAssistantHeadless` | `DEN_FEATURE_SLACK_ASSISTANT_HEADLESS` | default off | Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. |
 | `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
+| `dashboard` | `DEN_FEATURE_DASHBOARD` | default off | Members see the Dashboard in the desktop app. |
+| `automations` | `DEN_FEATURE_AUTOMATIONS` | default off | Members can create and run Automations from the desktop app. |
+| `openworkWeb` | `DEN_FEATURE_OPENWORK_WEB` | default off (cloud only) | Organizations can use OpenWork Web, an OpenWork computer in the browser. Complimentary grants and subscriptions still decide access. |
+| `appMcpServers` | `DEN_FEATURE_APP_MCP_SERVERS` | default on | Members can build Apps that are served as their own MCP servers. Needs OpenWork Connect; older Workflow-bound views become read-only. |
+| `generatedArtifactViews` | `DEN_FEATURE_GENERATED_ARTIFACT_VIEWS` | default off | Agents can save custom views for Workflow results. Turn on only after desktops that can show them are released. |
 | `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
 <!-- END GENERATED features -->
 
 The table and the `config.features` block are generated: run `pnpm features:sync`
 after changing the registry.
 
-### Automations rollout
+### Automations
 
-The Helm chart advertises Automations as unavailable by default for self-hosted
-and customer-managed deployments. Availability and server shutdown are
-separate so a Den upgrade cannot remove routes beneath an older published
-Desktop:
-
-| `automationsEnabled` | `automationsRuntimeEnabled` | Behavior |
-| --- | --- | --- |
-| `"false"` | `"true"` | New Desktops hide Automations; legacy routes and scheduling remain available during the upgrade window. |
-| `"false"` | `"false"` | Automations are hard-disabled: routes, MCP resources, and scheduler startup are omitted. |
-| `"true"` | `"true"` | Automations are available and execute normally. |
-| `"true"` | `"false"` | The runtime shutdown wins and Desktop receives `automationsEnabled: false`. |
-
-Set both values explicitly when the deployment is ready to run Automations:
+Automations are a feature (`config.features.automations`), off by default on
+self-hosted installs. Turn them on in `/admin` › Features, or lock them:
 
 ```yaml
 config:
-  public:
-    automationsEnabled: "true"
-    automationsRuntimeEnabled: "true"
+  features:
+    automations: "true"
 ```
 
-These render `DEN_AUTOMATIONS_ENABLED=true` and
-`DEN_AUTOMATIONS_RUNTIME_ENABLED=true` for Den. An entirely unconfigured Den
-keeps availability fail-closed while preserving the legacy runtime. When using
-raw environment variables, an explicit `DEN_AUTOMATIONS_ENABLED` value also
-becomes the runtime default: `false` is therefore a complete shutdown unless
-`DEN_AUTOMATIONS_RUNTIME_ENABLED=true` explicitly selects mixed-version
-compatibility. The chart always renders both values to make that choice
-unambiguous. Hosted OpenWork Cloud explicitly enables availability.
+`config.public.automationsRuntimeEnabled` is separate: it is a compatibility
+switch for whether Automation routes, the desktop runner channel and the
+scheduler exist at all. Keep it `"true"` while any connected Desktop is older
+than v0.18.35, because those Desktops do not check whether Automations are on.
+Desktop v0.18.35 and newer read `automationsEnabled` from
+`/v1/me/desktop-config`, which is true only when the runtime is on and the
+feature is on for the member's organization. Set the runtime to `"false"` only
+after every Desktop is v0.18.35 or newer, to remove Automations completely.
 
-Desktop v0.18.35 and newer consume the value from `/v1/me/desktop-config`, hide
-the Automation surface, and do not register a runner unless the value is
-explicitly true. Older clients predate that contract, so the runtime flag must
-remain true while they are in use even when availability is false.
+### Dashboard
 
-For an existing deployment, stage the upgrade so independently released Den
-and Desktop versions never observe an unintended flag state:
+The desktop Dashboard is a feature (`config.features.dashboard`), off by
+default. Desktop reads `dashboardEnabled` from `/v1/me/desktop-config` and
+hides the sidebar entry and route unless it is `true`.
 
-1. Keep `config.public.automationsRuntimeEnabled: "true"` while any connected
-   Desktop is older than v0.18.35.
-2. Upgrade Den. Legacy Desktops retain their existing routes and scheduling;
-   compatible Desktops honor `automationsEnabled` from desktop config.
-3. Roll out Desktop v0.18.35 or newer to the whole deployment.
-4. To keep Automations, set both values to true. To disable them, set both
-   values to false only after the Desktop rollout is complete.
+Organization-managed dashboards (`orgManagedDashboards`, where organization
+admins publish dashboards to members) are deprecated and removed from the
+OpenWork API on 2026-10-20. Their routes already return `Deprecation` and
+`Sunset` headers.
 
-New installations with no legacy Desktop clients can hard-disable Automations
-immediately by setting both values to false.
+### OpenWork Web
 
-### Dashboards rollout
+OpenWork Web exists only on OpenWork Cloud (`config.features.openworkWeb`).
+On a self-hosted install it is unavailable whatever the values say. On Cloud,
+platform admins offer it in `/admin`; a subscription or a complimentary grant
+still decides whether an organization can use it, and purchasing also needs
+`STRIPE_SECRET_KEY` and `STRIPE_OPENWORK_WEB_PRICE_ID`.
 
-The organization-managed Dashboard is unavailable by default. Enable it for a
-self-hosted or customer-managed deployment with:
+### Deprecated `config.public.*Enabled` keys
 
-```yaml
-config:
-  public:
-    dashboardsEnabled: "true"
-```
-
-The chart renders this value as `DEN_DASHBOARDS_ENABLED`. Raw environment-based
-deployments can set the same variable directly. Hosted environments use that
-same flag, so Dashboard availability does not depend on a per-device preference.
-Desktop reads `dashboardEnabled` from `/v1/me/desktop-config` and hides both the
-sidebar entry and route unless the server explicitly returns `true`.
-
-### OpenWork Web rollout
-
-OpenWork Web is unavailable by default for self-hosted and customer-managed
-deployments. OpenWork Cloud enables it in its deployment values with:
-
-```yaml
-config:
-  public:
-    openworkWebEnabled: "true"
-```
-
-The chart renders this value as `DEN_OPENWORK_WEB_ENABLED`. A raw environment
-deployment can set the same variable directly. Missing, blank, false, or an
-unrecognized value fails closed: Den omits Web from its advertised
-capabilities, the sidebar and Billing offer stay hidden, and Web billing routes
-return the deployment-unavailable response. Availability is deployment-wide;
-it does not depend on organization mode, Stripe-variable presence, or mutable
-organization metadata.
-
-Enabling the flag advertises the hosted product. The deployment must also
-configure `STRIPE_SECRET_KEY` and `STRIPE_OPENWORK_WEB_PRICE_ID` before the
-purchase action becomes available. This separate billing-readiness check keeps
-a partially configured hosted rollout visible but non-purchasable instead of
-mistaking secrets for an availability signal.
+`config.public.automationsEnabled`, `dashboardsEnabled`, `openworkWebEnabled`,
+`appMcpServersEnabled` and `generatedArtifactViewsEnabled` still render their
+old `DEN_*_ENABLED` variables until 2026-11-30. den-api treats each one as an
+operator lock only when it differs from the feature's default, and logs a
+deprecation warning. Move to `config.features.<key>` (`dashboard`,
+`automations`, `openworkWeb`, `appMcpServers`, `generatedArtifactViews`); the
+new key wins when both are set.
 
 Provider-specific starter guides:
 

@@ -517,36 +517,26 @@ const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && 
   ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
   : null
 
-// Generated custom views require the matching desktop MCP Apps host release.
-// Keep the Den capability fail-closed so a Den deployment cannot advertise
-// bridge-dependent resources to older published desktop builds.
-const generatedArtifactViewsEnabled =
-  (parsed.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? "false").trim().toLowerCase() === "true"
+// Generated artifact views, Apps as MCP servers, Automations availability, the
+// desktop Dashboard and OpenWork Web are features now (packages/features); their
+// old DEN_*_ENABLED variables are read there as deprecated operator locks.
 
-// Apps built through Connect are served as their own MCP servers, and older
-// Workflow-bound views become read-only. On by default, including when set
-// empty; false, 0, off, or no (or any other value) restores the previous
-// behavior: no App servers, writable Workflow-bound views.
-const appMcpServersEnabled = parseBooleanFlag(optionalString(parsed.DEN_APP_MCP_SERVERS_ENABLED) ?? "true")
-
-// Desktop availability stays fail-closed, while an entirely unconfigured
-// server preserves the published-client runtime. An explicit availability
-// value also supplies the runtime default, so DEN_AUTOMATIONS_ENABLED=false is
-// a complete shutdown unless a mixed-version deployment explicitly keeps the
-// compatibility runtime on. A disabled runtime always forces availability off.
+// Compatibility, not a feature: whether Automation routes, the runner channel
+// and the scheduler exist at all, kept on while older desktops that do not
+// check the automations feature are in use. An unconfigured server keeps the
+// runtime; an explicit DEN_AUTOMATIONS_ENABLED also supplies its default, so
+// DEN_AUTOMATIONS_ENABLED=false is a complete shutdown unless
+// DEN_AUTOMATIONS_RUNTIME_ENABLED=true keeps mixed-version compatibility.
+// A disabled runtime always reports the automations feature as off to desktops.
 const automationsRuntimeEnabled = parseBooleanFlag(
   parsed.DEN_AUTOMATIONS_RUNTIME_ENABLED
     ?? parsed.DEN_AUTOMATIONS_ENABLED
     ?? "true",
 )
-const automationsEnabled = automationsRuntimeEnabled
-  && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "false")
-const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "false")
 
-// Which product this install is (DEN_DEPLOYMENT, default self_hosted so a
-// misconfigured customer install never picks up cloud-only features) and the
-// operator's feature locks (DEN_FEATURE_*, rendered from Helm config.features).
-// See packages/features/src/registry.ts.
+// Which product this install is (DEN_DEPLOYMENT; when unset, multi_org means
+// cloud and anything else self_hosted) and the operator's feature locks
+// (DEN_FEATURE_*, rendered from Helm config.features). See packages/features.
 const featureEnvironment = parseFeatureEnvironment(process.env)
 const fatalFeatureProblems = featureEnvironment.problems.filter((problem) => problem.fatal)
 if (fatalFeatureProblems.length > 0) {
@@ -560,7 +550,6 @@ for (const problem of featureEnvironment.problems) {
 // of den-api makes den-api's own headers duplicates, which browsers reject.
 // The allowlist still feeds proxy-trust decisions; only header emission stops.
 const corsHandledByEdge = parseBooleanFlag(parsed.DEN_CORS_HANDLED_BY_EDGE ?? "false")
-const openworkWebEnabled = parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const port = Number(parsed.PORT ?? "8790")
@@ -699,8 +688,6 @@ export const env = {
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,
   connectLink,
-  generatedArtifactViewsEnabled,
-  appMcpServersEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
   // Lifecycle reminder emails (claim reminder, team nudge). Off unless
   // LIFECYCLE_EMAILS_ENABLED=1 so self-hosted deployments opt in explicitly.
@@ -824,7 +811,6 @@ export const env = {
     optionalString(parsed.WORKER_ACTIVITY_BASE_URL) ??
     betterAuthUrl,
   automations: {
-    enabled: automationsEnabled,
     runtimeEnabled: automationsRuntimeEnabled,
     pollIntervalMs: automationTuning(parsed.DEN_AUTOMATIONS_POLL_INTERVAL_MS, 15_000),
     batchSize: automationTuning(parsed.DEN_AUTOMATIONS_BATCH_SIZE, 25),
@@ -841,13 +827,11 @@ export const env = {
     // Runs never stay claimable past their own next occurrence.
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
-  dashboardsEnabled,
   features: { deployment: featureEnvironment.deployment, locks: featureEnvironment.locks },
   auditCaptureEnabled: parsed.DEN_AUDIT_CAPTURE_ENABLED === "true",
   auditVisibilityEnabled: parsed.DEN_AUDIT_VISIBILITY_ENABLED === "true",
   auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",
   corsHandledByEdge,
-  openworkWebEnabled,
   inferenceFree: readFreeInferenceConfig(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   // Keep known public Models destinations even when Gateway management is off.

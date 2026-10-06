@@ -16,7 +16,7 @@ import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSum
 import type { AuthContextVariables } from "../../session.js"
 import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { getOrganizationFeatures } from "../../features.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -367,6 +367,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const organization = c.get("organizationContext").organization
       const currentMember = c.get("organizationContext").currentMember
       const metadata = normalizeOrganizationMetadata(organization.metadata).metadata
+      const features = await getOrganizationFeatures(organization.id)
       const desktopPolicy = await calculateDesktopPolicyForOrgMember({
         organizationId: organization.id,
         orgMemberId: currentMember.id,
@@ -374,9 +375,10 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
 
       return c.json({
         ...desktopPolicy,
-        automationsEnabled: env.automations.enabled,
-        dashboardEnabled: env.dashboardsEnabled,
-        connectEnabled: await organizationFeatureEnabled(organization.id, "mcpConnections"),
+        // The runtime is a compatibility switch: without it there is nothing to run.
+        automationsEnabled: env.automations.runtimeEnabled && features.automations,
+        dashboardEnabled: features.dashboard,
+        connectEnabled: features.mcpConnections,
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),

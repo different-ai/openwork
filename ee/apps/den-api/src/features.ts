@@ -1,5 +1,5 @@
 import { readFeatures, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
-import type { FeatureKey, FeatureMap } from "@openwork/features"
+import { featureDefinition, type FeatureKey, type FeatureMap } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -45,5 +45,20 @@ export function requireFeature(key: FeatureKey): MiddlewareHandler<{ Variables: 
     const enabled = await organizationFeatureEnabled(payload.organization.id, key)
     if (!enabled) return c.json({ error: "feature_disabled", feature: key }, 404)
     await next()
+  }
+}
+
+/**
+ * For routes of a deprecated feature (registry `deprecated`): every response
+ * carries `Deprecation` (RFC 9745) and `Sunset` (RFC 8594) headers, so clients
+ * and their logs see the removal date. Put it first, before auth.
+ */
+export function announceDeprecation(key: FeatureKey): MiddlewareHandler {
+  const deprecated = featureDefinition(key).deprecated
+  return async (c, next) => {
+    await next()
+    if (!deprecated) return
+    c.header("Deprecation", `@${Math.floor(Date.parse(`${deprecated.announced}T00:00:00Z`) / 1000)}`)
+    c.header("Sunset", new Date(`${deprecated.removeBy}T00:00:00Z`).toUTCString())
   }
 }

@@ -79,8 +79,8 @@ function renderSchema() {
         properties: {
           deployment: {
             type: "string",
-            enum: ["cloud", "self_hosted"],
-            description: "Which product this install is. Only OpenWork Cloud sets \"cloud\". Renders DEN_DEPLOYMENT.",
+            enum: ["", "cloud", "self_hosted"],
+            description: "Which product this install is. Empty infers it from tenancy.mode (multi_org means cloud). Renders DEN_DEPLOYMENT.",
           },
           features: {
             type: "object",
@@ -152,8 +152,12 @@ if (check) {
       continue
     }
     if (definition.deployments.length === 0) problems.push(`Feature "${key}" must exist on at least one deployment.`)
+    if (definition.deprecated && now.toISOString().slice(0, 10) > definition.deprecated.removeBy) {
+      problems.push(`Feature "${key}" was due for removal on ${definition.deprecated.removeBy}. Delete the entry, its routes and its UI (${definition.deprecated.note}).`)
+      continue
+    }
     const ageMonths = (now.getUTCFullYear() - Number(since[1])) * 12 + (now.getUTCMonth() + 1 - Number(since[2]))
-    if (!definition.permanent && ageMonths > 6) {
+    if (!definition.permanent && !definition.deprecated && ageMonths > 6) {
       problems.push(`Feature "${key}" has been a rollout since ${definition.since}. Finish it and delete the flag and its checks, or mark it permanent: true if the switch is part of the product (see .opencode/skills/add-a-feature).`)
     }
   }
@@ -184,7 +188,7 @@ if (check) {
     for (const name of renderedNames) {
       if (!helmKeys.some((key) => featureLockEnvName(key) === name)) problems.push(`Helm renders ${name}, which den-api does not read.`)
     }
-    if (!/^\s+DEN_DEPLOYMENT: "self_hosted"$/m.test(rendered)) problems.push("Helm must render DEN_DEPLOYMENT, defaulting to self_hosted.")
+    if (/^\s+DEN_DEPLOYMENT:/m.test(rendered)) problems.push("Helm must not render DEN_DEPLOYMENT unless config.deployment is set (empty means inferred).")
   } else if (!helmAvailable) {
     console.warn("[features] helm is not installed; skipped the chart render check.")
   }

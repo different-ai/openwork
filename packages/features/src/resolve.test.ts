@@ -47,7 +47,7 @@ test("mapFeatures and the key schema cover exactly the registry", () => {
   assert.deepEqual(Object.keys(mapFeatures(() => 0)).sort(), [...FEATURE_KEYS].sort())
   for (const key of FEATURE_KEYS) assert.equal(featureKeySchema.parse(key), key)
   assert.equal(featureKeySchema.safeParse("notAFeature").success, false)
-  assert.equal(featureKeySchema.safeParse("appMcpServers").success, false)
+  assert.equal(featureKeySchema.safeParse("workflows").success, false)
   assert.deepEqual(Object.keys(resolveFeatures(base)).sort(), [...FEATURE_KEYS].sort())
 })
 
@@ -77,4 +77,28 @@ test("environment: self_hosted by default, strict values, unknown keys warn", ()
 
   const fatal = parseFeatureEnvironment({ DEN_DEPLOYMENT: "prod", DEN_FEATURE_WORKBOT: "yes" })
   assert.deepEqual(fatal.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_DEPLOYMENT", true], ["DEN_FEATURE_WORKBOT", true]])
+})
+
+test("deployment: explicit wins; unset means cloud only for multi-organization installs", () => {
+  assert.equal(parseFeatureEnvironment({ DEN_ORG_MODE: "multi_org" }).deployment, "cloud")
+  assert.equal(parseFeatureEnvironment({ DEN_ORG_MODE: "single_org" }).deployment, "self_hosted")
+  assert.equal(parseFeatureEnvironment({ DEN_ORG_MODE: "multi_org", DEN_DEPLOYMENT: "self_hosted" }).deployment, "self_hosted")
+})
+
+test("legacy switches lock only when they differ from the registry default", () => {
+  // The chart renders the old defaults; they must not freeze /admin.
+  assert.deepEqual(parseFeatureEnvironment({ DEN_DASHBOARDS_ENABLED: "false", DEN_APP_MCP_SERVERS_ENABLED: "true" }).locks, {})
+  const parsed = parseFeatureEnvironment({ DEN_DASHBOARDS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "false", DEN_AUTOMATIONS_ENABLED: "1" })
+  assert.deepEqual(parsed.locks, { dashboard: true, appMcpServers: false, automations: true })
+  assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("deprecated")))
+  // The new variable wins over the legacy one.
+  assert.deepEqual(parseFeatureEnvironment({ DEN_DASHBOARDS_ENABLED: "true", DEN_FEATURE_DASHBOARD: "false" }).locks, { dashboard: false })
+})
+
+test("OpenWork Web is cloud only, even when the legacy switch says otherwise", () => {
+  const selfHosted = parseFeatureEnvironment({ DEN_OPENWORK_WEB_ENABLED: "true" })
+  assert.deepEqual(selfHosted.locks, {})
+  assert.equal(resolveFeature("openworkWeb", { ...selfHosted, rollouts: { openworkWeb: { enabled: true, killed: false } }, overrides: { openworkWeb: true } }).source, "unavailable")
+  const cloud = parseFeatureEnvironment({ DEN_ORG_MODE: "multi_org", DEN_OPENWORK_WEB_ENABLED: "true" })
+  assert.deepEqual(cloud.locks, { openworkWeb: true })
 })

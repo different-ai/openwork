@@ -16,9 +16,11 @@ config:
   openworkDevMode: "0"
   # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
   denApiNodeOptions: ""
-  # Which product this install is. Only OpenWork Cloud sets "cloud"; features
-  # declared unavailable for self-hosted cannot be turned on here. Renders DEN_DEPLOYMENT.
-  deployment: self_hosted
+  # Which product this install is: "cloud" (OpenWork Cloud only) or "self_hosted".
+  # Empty: inferred from tenancy.mode (multi_org means cloud, single_org self_hosted).
+  # Set "self_hosted" explicitly for a multi-organization self-hosted install.
+  # Features that are not part of this deployment cannot be turned on. Renders DEN_DEPLOYMENT.
+  deployment: ""
   # BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/registry.ts)
   # Operator locks for this install. Each key renders DEN_FEATURE_<KEY>.
   #   ""      follow /admin: on or off for everyone, plus per-organization overrides
@@ -34,6 +36,11 @@ config:
     slackAssistant: ""         # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
     slackAssistantHeadless: "" # default off · Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.
     headlessAutomations: ""    # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
+    dashboard: ""              # default off · Members see the Dashboard in the desktop app.
+    automations: ""            # default off · Members can create and run Automations from the desktop app.
+    openworkWeb: ""            # default off (cloud only) · Organizations can use OpenWork Web, an OpenWork computer in the browser. Complimentary grants and subscriptions still decide access.
+    appMcpServers: ""          # default on · Members can build Apps that are served as their own MCP servers. Needs OpenWork Connect; older Workflow-bound views become read-only.
+    generatedArtifactViews: "" # default off · Agents can save custom views for Workflow results. Turn on only after desktops that can show them are released.
     workbot: ""                # default off · Members can use Workbot. Needs the deployment's Workbot app.
   # END GENERATED features
   tenancy:
@@ -79,18 +86,17 @@ config:
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: ""
-    # Self-hosted Automations are opt-in. Hosted OpenWork Cloud enables them.
+    # Deprecated until 2026-11-30: use config.features.automations, .dashboard,
+    # .openworkWeb (cloud only), .generatedArtifactViews and .appMcpServers.
+    # These still lock a feature only when they differ from its default.
     automationsEnabled: "false"
-    # Self-hosted Dashboards are opt-in. Hosted environments use the same Den flag.
     dashboardsEnabled: "false"
-    # OpenWork Web is hosted-only by default. OpenWork Cloud enables it explicitly.
     openworkWebEnabled: "false"
-    # Preserve the Den runtime for published legacy Desktops during upgrades.
-    # Set false only after every Desktop is v0.18.35+ to hard-disable Automations.
-    automationsRuntimeEnabled: "true"
-    # Enable only after compatible Desktop MCP Apps hosts are deployed.
     generatedArtifactViewsEnabled: "false"
     appMcpServersEnabled: "true"
+    # Compatibility, not a feature: keep Automation routes and the scheduler for
+    # Desktops older than v0.18.35. Set false only after every Desktop is newer.
+    automationsRuntimeEnabled: "true"
     connectLinkMode: exchange
     connectLinkKeyId: ""
     openworkAppConnectUrl: ""
