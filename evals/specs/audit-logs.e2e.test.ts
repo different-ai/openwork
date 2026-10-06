@@ -176,7 +176,7 @@ test("a flagged owner records and filters audit history by default while an unfl
     const expectations = [
       { action: "organization.api_key.created", kind: "organization.api_key", scope: world.auditedApiKeyId, count: 1 },
       { action: "organization.web_origin.approved", kind: "organization.web_origin", scope: world.auditedWebOriginId, count: 1 },
-      { action: "organization.member.role_updated", kind: "organization.member", scope: world.teammateMemberId, count: 2 },
+      { action: "organization.member.role_updated", kind: "organization.member", scope: world.promotedMemberId, count: 1 },
     ];
     const found: string[] = [];
     for (const expected of expectations) {

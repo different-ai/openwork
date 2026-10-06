@@ -119,16 +119,15 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   const context = await seed.api(den.admin, "/v1/org", { headers: orgHeaders(orgId) });
   const members = record(context.body).members;
   if (!Array.isArray(members)) throw new Error("Expected organization members");
-  const teammateMemberId = identifier(members.map(record).find((member) => record(member.user).email === teammate.email)?.id);
-  for (const role of ["admin", "member"]) {
-    const updated = await seed.api(den.admin, `/v1/members/${encodeURIComponent(teammateMemberId)}/role`, { method: "POST", headers: orgHeaders(orgId), body: JSON.stringify({ role }) });
-    if (!updated.response.ok) throw new Error(`Audited role change to ${role} failed: ${updated.response.status}`);
-  }
+  // Promote, never demote: a demotion revokes the member's live sessions.
+  const promotedMemberId = identifier(members.map(record).find((member) => record(member.user).email === unflaggedOwner.email)?.id);
+  const promoted = await seed.api(den.admin, `/v1/members/${encodeURIComponent(promotedMemberId)}/role`, { method: "POST", headers: orgHeaders(orgId), body: JSON.stringify({ role: "admin" }) });
+  if (!promoted.response.ok) throw new Error(`Audited role change failed: ${promoted.response.status}`);
   const unflaggedKey = await seed.api(unflaggedOwner, "/v1/api-keys", { method: "POST", headers: orgHeaders(unflaggedOrgId), body: JSON.stringify({ name: "Unaudited witness" }) });
   if (unflaggedKey.response.status !== 201) throw new Error(`Unflagged API key setup failed: ${unflaggedKey.response.status}`);
   const viewport = { width: 1440, height: 1100 };
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: teammate, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const unflaggedWeb = await seed.web({ den, signedInAs: unflaggedOwner, startPath: "/dashboard", headless: true, viewport });
-  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateMemberId, orgId, providerId, auditedApiKeyId, auditedWebOriginId, originalCredential, replacementCredential, viewport };
+  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, promotedMemberId, orgId, providerId, auditedApiKeyId, auditedWebOriginId, originalCredential, replacementCredential, viewport };
 }
