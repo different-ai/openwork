@@ -499,6 +499,8 @@ import type {
   ListGmailDraftsResponses,
   ListGmailLabelsErrors,
   ListGmailLabelsResponses,
+  ListWorkbotConnectionsErrors,
+  ListWorkbotConnectionsResponses,
   Microsoft365CalendarCancelBody,
   Microsoft365CalendarDeleteBody,
   Microsoft365CalendarEventBody,
@@ -14091,6 +14093,19 @@ export class DenClient extends HeyApiClient {
       url: "/v1/workbot/session",
       ...options,
     });
+  }
+
+  /**
+   * The everyday apps the person can connect for Workbot
+   *
+   * For the Workbot app only. The Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account.
+   */
+  public listWorkbotConnections<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      ListWorkbotConnectionsResponses,
+      ListWorkbotConnectionsErrors,
+      ThrowOnError
+    >({ url: "/v1/workbot/connections", ...options });
   }
 
   /**

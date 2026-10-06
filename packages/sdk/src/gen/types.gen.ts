@@ -26950,6 +26950,39 @@ export type GetWorkbotSessionResponses = {
 
 export type GetWorkbotSessionResponse = GetWorkbotSessionResponses[keyof GetWorkbotSessionResponses];
 
+export type ListWorkbotConnectionsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/connections";
+};
+
+export type ListWorkbotConnectionsErrors = {
+  /**
+   * The token is missing, expired or revoked, or the membership ended.
+   */
+  401: UnauthorizedError;
+};
+
+export type ListWorkbotConnectionsError = ListWorkbotConnectionsErrors[keyof ListWorkbotConnectionsErrors];
+
+export type ListWorkbotConnectionsResponses = {
+  /**
+   * The connections.
+   */
+  200: {
+    connections: Array<{
+      id: string;
+      name: string;
+      app: "gmail" | "slack" | "microsoft";
+      ready: boolean;
+      connectUrl: string | null;
+    }>;
+  };
+};
+
+export type ListWorkbotConnectionsResponse = ListWorkbotConnectionsResponses[keyof ListWorkbotConnectionsResponses];
+
 export type CreateWorkbotRunTokenData = {
   body: {
     ttlMs?: number;
