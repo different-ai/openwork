@@ -234,8 +234,8 @@ test("create, preview, save and reopen an app without changing already-open resu
   const view = record(drafts[0]);
   const appId = field(view, "id");
   const revealPersonalTileControls = async () => {
-    // Hover the visible tile before locating its hover-only options button.
-    await user.hover({ testId: `dashboard-artifact-${appId}` });
+    // Hover host chrome outside the iframe after the loading overlay clears.
+    await user.hover({ testId: `dashboard-artifact-status-${appId}` });
     await user.see({ role: "button", label: "Artifact options for Team briefing" });
   };
   if (!Array.isArray(view.revisions) || !view.revisions[0]) throw new Error("The conversation draft has no revision.");
