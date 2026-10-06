@@ -106,9 +106,29 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   // Provider setup predates the grant; browser/API traffic initializes the real
   // default policy and records access events before the user's provider save.
   await seedAuditDatabase(den, "UPDATE organization SET metadata = JSON_SET(JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.capabilities', COALESCE(JSON_EXTRACT(metadata, '$.capabilities'), JSON_OBJECT())), '$.capabilities.auditLogs', CAST('true' AS JSON)) WHERE id = ?", [orgId]);
+  // Privileged Core actions taken after the release flag: the Core AuditSink
+  // records them under their stable action strings. The unflagged organization
+  // takes the same action and must leave no audit record.
+  const orgHeaders = (id: string) => ({ "x-openwork-org-id": id });
+  const apiKey = await seed.api(den.admin, "/v1/api-keys", { method: "POST", headers: orgHeaders(orgId), body: JSON.stringify({ name: "Audit sink witness" }) });
+  if (apiKey.response.status !== 201) throw new Error(`Audited API key setup failed: ${apiKey.response.status}`);
+  const auditedApiKeyId = identifier(record(record(apiKey.body).apiKey).id);
+  const webOrigin = await seed.api(den.admin, "/v1/org/web-origins", { method: "POST", headers: orgHeaders(orgId), body: JSON.stringify({ origin: "https://audit-witness.example.test" }) });
+  if (webOrigin.response.status !== 201) throw new Error(`Audited web origin setup failed: ${webOrigin.response.status}`);
+  const auditedWebOriginId = identifier(record(webOrigin.body).id);
+  const context = await seed.api(den.admin, "/v1/org", { headers: orgHeaders(orgId) });
+  const members = record(context.body).members;
+  if (!Array.isArray(members)) throw new Error("Expected organization members");
+  const teammateMemberId = identifier(members.map(record).find((member) => record(member.user).email === teammate.email)?.id);
+  for (const role of ["admin", "member"]) {
+    const updated = await seed.api(den.admin, `/v1/members/${encodeURIComponent(teammateMemberId)}/role`, { method: "POST", headers: orgHeaders(orgId), body: JSON.stringify({ role }) });
+    if (!updated.response.ok) throw new Error(`Audited role change to ${role} failed: ${updated.response.status}`);
+  }
+  const unflaggedKey = await seed.api(unflaggedOwner, "/v1/api-keys", { method: "POST", headers: orgHeaders(unflaggedOrgId), body: JSON.stringify({ name: "Unaudited witness" }) });
+  if (unflaggedKey.response.status !== 201) throw new Error(`Unflagged API key setup failed: ${unflaggedKey.response.status}`);
   const viewport = { width: 1440, height: 1100 };
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: teammate, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const unflaggedWeb = await seed.web({ den, signedInAs: unflaggedOwner, startPath: "/dashboard", headless: true, viewport });
-  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, orgId, providerId, originalCredential, replacementCredential, viewport };
+  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateMemberId, orgId, providerId, auditedApiKeyId, auditedWebOriginId, originalCredential, replacementCredential, viewport };
 }

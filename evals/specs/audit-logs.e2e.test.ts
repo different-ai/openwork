@@ -172,6 +172,38 @@ test("a flagged owner records and filters audit history by default while an unfl
     await filterProviderHistory();
   });
 
+  await step("before: privileged Core actions are in history under their stable action strings", async () => {
+    const expectations = [
+      { action: "organization.api_key.created", kind: "organization.api_key", scope: world.auditedApiKeyId, count: 1 },
+      { action: "organization.web_origin.approved", kind: "organization.web_origin", scope: world.auditedWebOriginId, count: 1 },
+      { action: "organization.member.role_updated", kind: "organization.member", scope: world.teammateMemberId, count: 2 },
+    ];
+    const found: string[] = [];
+    for (const expected of expectations) {
+      const response = await probe.api(world.den.admin, `${operationsPath}&action=${encodeURIComponent(expected.action)}`);
+      expect(response.response.status).toBe(200);
+      const history = auditOperationsResponseSchema.parse(response.body);
+      expect(history.operations).toHaveLength(expected.count);
+      for (const operation of history.operations) {
+        expect(operation).toMatchObject({ kind: expected.kind, scope: expected.scope, action: expected.action, origin: "api", initiatingActor: { type: "user" } });
+        const eventsResponse = await probe.api(world.den.admin, `/v1/audit/operations/${encodeURIComponent(operation.id)}/events?limit=50`);
+        expect(eventsResponse.response.status).toBe(200);
+        const timeline = auditEventsResponseSchema.parse(eventsResponse.body);
+        expect(timeline.events).toHaveLength(1);
+        expect(timeline.events[0]).toMatchObject({ action: expected.action, category: "security", outcome: "succeeded", actor: { type: "user", memberId: expect.any(String) } });
+        expect(timeline.events[0]?.changes?.changedFields.length).toBeGreaterThan(0);
+      }
+      found.push(`${expected.action}: ${history.operations.length}`);
+    }
+    await selectEventType("Organization api key created");
+    await owner.click({ role: "button", label: "Apply filters" });
+    await historySettled();
+    await owner.see({ role: "button", label: "View changes for Organization api key created" }, { timeoutMs: 30_000 });
+    evidence.recordAssertionEvidence("Core security actions reach the operation store", `Operations by stable action: ${found.join("; ")}. Each has its own operation kind, the resource as scope, API origin and one security event by a member actor.`, found.length === expectations.length);
+    await owner.screenshot();
+    await filterProviderHistory();
+  });
+
   await step("the owner sees dates, event type and Search IDs without opening More filters", async () => {
     await owner.see({ label: "From (local time)" });
     await owner.see({ label: "To (local time)" });
