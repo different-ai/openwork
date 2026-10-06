@@ -841,6 +841,13 @@ async function createSecondWorkspaceViaUi(app: Surface, firstWorkspaceId: string
     browserScript((value) => (Boolean(document.querySelector<HTMLElement>(value))), [`[data-sidebar-workspace-id="${workspaceId}"]`]),
     "second workspace visible in sidebar",
   );
+  // Persistence changes before workspace creation finishes refreshing the
+  // registry and navigating. Do not use A's still-editable composer as B's.
+  await pollExpression(app, browserScript((workspaceId) => {
+    const route = `#/workspace/${encodeURIComponent(workspaceId)}/session`;
+    return window.location.hash.replace(/\/$/, "") === route
+      && !document.querySelector<HTMLElement>("[data-session-surface-id]");
+  }, [workspaceId]), "second workspace New task route");
   await waitForComposerReady(app, "second workspace composer ready");
   return workspaceId;
 }
