@@ -118,7 +118,7 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
     const result = await publish({ pr: identity.pr, testRunDirs, gaps: [], automatic: true, replaceAutomatic: true,
       presentation: "native", title: `PR #${identity.pr} change proof` });
     log(result.posted ? result.urls.report : "PR proof review unchanged.");
-    // Advisory design notes for the PR's Design review check; never a reason to fail publication.
+    // Advisory design notes for the Evidence preview check; never a reason to fail publication.
     const design = await designDigest(testRunDirs).catch(() => undefined);
     return design ? { ...result, design } : result;
   } finally {

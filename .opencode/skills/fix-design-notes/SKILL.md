@@ -1,22 +1,23 @@
 ---
 name: fix-design-notes
-description: Design review check is neutral, design notes on a PR, "worth fixing", layout.split-row, OW-LIST, a reviewer says the UI looks off. Use to read what the design review found on a PR's screenshots, fix it in code, and prove the note is gone.
+description: Design notes on a PR, "Design review (advisory)" in the evidence check, "worth fixing", layout.split-row, OW-LIST, a reviewer says the UI looks off. Use to read what the design review found on a PR's screenshots, fix it in code, and prove the note is gone.
 ---
 
 # Skill: Fix design notes
 
-Every PR that records evidence screenshots gets an advisory **Design review**
-check. It never blocks a merge, but a note marked *Worth fixing* is a defect a
-careful designer would send back. Fix it, or say in the PR why the screen is
-right.
+Every PR that records evidence screenshots gets an advisory design review. Its
+notes ride in the **Evidence preview** check, next to the evidence they are
+about: one summary line, and the notes as the check's text. They never change
+the evidence verdict, but a note marked *Worth fixing* is a defect a careful
+designer would send back. Fix it, or say in the PR why the screen is right.
 
 ## Read the notes
 
 ```bash
-gh pr checks <pr>                                    # "Design review  neutral" = there are notes
 sha=$(gh pr view <pr> --json headRefOid --jq .headRefOid)
-gh api "repos/{owner}/{repo}/commits/$sha/check-runs?check_name=Design%20review" \
-  --jq '.check_runs[0].output.text'
+check() { gh api "repos/{owner}/{repo}/commits/$sha/check-runs?check_name=Evidence%20preview" --jq ".check_runs[0].output.$1"; }
+check summary   # ends with "Design review (advisory): 3 notes, 1 worth fixing." or "no notes."
+check text      # the notes, then the same notes as JSON
 ```
 
 Each note gives:
@@ -28,7 +29,8 @@ Each note gives:
 | Where in the code | grep for the hook (`[data-library-row="…"]` → `data-library-row`) or the class list to find the component |
 | Reproduce | the command that re-records the screenshots and reviews them locally |
 
-The JSON block at the end of the check has the same notes for scripts.
+The JSON block at the end of the check text has the same notes for scripts. The
+screenshots themselves are in the review report the check links to.
 
 ## Reproduce, fix, verify
 
@@ -42,8 +44,8 @@ The JSON block at the end of the check has the same notes for scripts.
 4. Re-run the same command. The note must be gone and no new *Worth fixing*
    note may appear. Look at the screenshot yourself: a passing rule is not a
    good screen.
-5. Push. CI re-runs the review; the check turns green (`No design notes`) or
-   lists only what you decided to keep.
+5. Push. CI re-runs the review; the evidence check's summary says
+   `Design review (advisory): no notes.` or lists only what you decided to keep.
 
 ## When the screen is right
 

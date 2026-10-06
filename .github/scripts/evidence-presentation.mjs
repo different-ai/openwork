@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { updatePreviewCard } from "./evidence-preview-card.mjs";
-import { upsertDesignCheck, validateDesignDigest } from "./design-review-check.mjs";
+import { renderDesignNotes, validateDesignDigest } from "./design-notes.mjs";
 
 const checkName = "Evidence preview";
 const validId = value => Number.isSafeInteger(value) && value > 0;
@@ -66,6 +66,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
   let detailsUrl = logUrl;
   let summary = `Commit [\`${sha}\`](https://github.com/${repo}/commit/${sha}) · [Run ${source.id}, attempt ${source.run_attempt}](${logUrl})\n\nEvidence is being prepared for this commit. Earlier reports do not verify this revision.`;
   let reportUrl;
+  let designNotes;
   if (phase === "complete") {
     if (source.status !== "completed") throw new Error("Producer is not complete");
     status = "completed";
@@ -84,6 +85,13 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
       conclusion = evidence.verdict === "Passed" && source.conclusion === "success" ? "success" : "failure";
       title = `Published · ${sha.slice(0, 7)} · ${source.conclusion === "success" ? evidence.verdict : "Source run failed"}`;
       summary = `Commit [\`${sha}\`](https://github.com/${repo}/commit/${sha}) · Published ${new Date().toISOString()}\n\n${evidence.passedTests}/${evidence.tests} selected tests · ${evidence.passedAssertions}/${evidence.assertions} assertions passed.\n\n[Open evidence and launch your own sandbox](${reportUrl}) · [Source run](${logUrl})\n\nSelected evidence only; this is not human approval or a claim that all required verification passed.`;
+      // Advisory design notes ride along in this same check: a summary line, and
+      // the notes as the check's text. They never change the conclusion above.
+      const digest = validateDesignDigest(receipt.design);
+      if (digest) {
+        designNotes = renderDesignNotes(digest);
+        summary += `\n\n${designNotes.line}`;
+      }
     } else if (receipt?.state === "skipped" && receipt.noEvidence === true && source.conclusion === "success") {
       conclusion = "neutral";
       title = "No change-specific evidence selected";
@@ -99,7 +107,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     status = "queued";
     title = "Evidence queued";
   }
-  const output = { title, summary };
+  const output = { title, summary, ...(designNotes?.text ? { text: designNotes.text } : {}) };
   if (!await current()) return { skipped: true };
   if (!check) check = await api(`${root}/check-runs`, "POST", { name: checkName, head_sha: sha, external_id: externalId, status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });
   else await api(`${root}/check-runs/${check.id}`, "PATCH", { status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });
@@ -111,15 +119,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     state: status !== "completed" ? "pending" : ["success", "neutral"].includes(conclusion) ? "success" : "failure",
     description: title.slice(0, 140), target_url: detailsUrl,
   });
-  // Advisory design notes get their own check, readable with `gh pr checks` and
-  // the checks API. It never changes the evidence verdict, and its failure never
-  // fails this presentation.
-  let design;
-  const digest = phase === "complete" && reportUrl ? validateDesignDigest(receipt?.design) : undefined;
-  if (digest && await current()) {
-    design = await upsertDesignCheck({ repo, sha, runId: source.id, runAttempt: source.run_attempt, detailsUrl: reportUrl, digest }, api).catch(() => undefined);
-  }
-  await updatePreviewCard({ repo, pr: stub.number, sha, status, conclusion, title, reportUrl, logUrl, reviewUrl, design }, api, current);
+  await updatePreviewCard({ repo, pr: stub.number, sha, status, conclusion, title, reportUrl, logUrl, reviewUrl }, api, current);
   if (!reportUrl || !await current()) return { checkId: check.id };
   // Each publication is immutable and tied to the tested SHA. Do not let a
   // late deployment automatically deactivate a newer commit's preview.

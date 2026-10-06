@@ -1,11 +1,11 @@
-// The PR's "Design review" check: where agents (and people) read what the
-// advisory design review found, without the private review app.
+// Advisory design notes inside the Evidence preview check: where agents (and
+// people) read what the design review found, without the private review app.
+// One publication, one check; the images stay in the report.
 //
 // Notes quote on-screen text, which a PR author controls, and model output.
 // Nothing in them may become a link, an image, a mention or HTML here: every
 // artifact-derived string is validated, capped, and rendered inert.
 
-export const designCheckName = "Design review";
 const MAX_NOTES = 60;
 const MAX_TEXT = 60_000;
 
@@ -58,17 +58,18 @@ function reproduce(spec) {
     : "pnpm --dir evals design:review -- --test-run latest --json";
 }
 
-export function renderDesignCheck({ sha, digest }) {
-  const worthFixing = digest.notes.filter(note => note.severity === "medium").length;
+/**
+ * One summary line for the evidence check, and (when there are notes) the
+ * text body listing each note: what is wrong, where in the code, how to
+ * reproduce it, and the same notes as JSON.
+ */
+export function renderDesignNotes(digest) {
   const count = digest.notes.length;
-  const conclusion = count === 0 ? "success" : "neutral";
-  const title = count === 0
-    ? "No design notes"
-    : `${count} design ${count === 1 ? "note" : "notes"}${worthFixing ? `, ${worthFixing} worth fixing` : ""}`;
-  const summary = [
-    `Advisory review of every evidence screenshot on \`${sha.slice(0, 7)}\` (${digest.reviewed} ${digest.reviewed === 1 ? "run" : "runs"}): measured layout rules plus DESIGN.md and the OpenWork Design rubric. It never blocks a merge.`,
-    count === 0 ? "Nothing to fix." : "Fix the notes worth fixing, or say in the PR why the screen is right. Each note says where to look in the code and how to reproduce it.",
-  ].join("\n\n");
+  const worthFixing = digest.notes.filter(note => note.severity === "medium").length;
+  const line = count === 0
+    ? "Design review (advisory): no notes."
+    : `Design review (advisory): ${count} ${count === 1 ? "note" : "notes"}${worthFixing ? `, ${worthFixing} worth fixing` : ""}. Each is listed below with where to look in the code and how to reproduce it.`;
+  if (count === 0) return { line };
   const blocks = digest.notes.map((note, index) => {
     const where = [...note.anchors.map(code), ...note.classes.map(value => `class ${code(value)}`)];
     return [
@@ -82,27 +83,12 @@ export function renderDesignCheck({ sha, digest }) {
   });
   const json = JSON.stringify(digest.notes.map(note => ({ ...note, reproduce: reproduce(note.spec) })), null, 2).replaceAll("`", "'");
   let body = [
+    "## Design notes (advisory)",
+    "Fix the notes worth fixing, or say in the PR why the screen is right. They never change the evidence verdict.",
     ...blocks,
     ...(digest.truncated ? [`Only the first ${MAX_NOTES} notes are listed.`] : []),
     `<details><summary>Notes as JSON</summary>\n\n\`\`\`json\n${json}\n\`\`\`\n\n</details>`,
   ].join("\n\n");
   if (body.length > MAX_TEXT) body = `${blocks.join("\n\n").slice(0, MAX_TEXT - 200)}\n\nList truncated; run the reproduce command for every note.`;
-  return { conclusion, title, summary, text: count === 0 ? undefined : body, worthFixing, count };
-}
-
-/** Creates or updates this run's Design review check; never touches another run's. */
-export async function upsertDesignCheck({ repo, sha, runId, runAttempt, detailsUrl, digest }, api) {
-  const root = `repos/${repo}`;
-  const externalId = `design:${runId}:${runAttempt}`;
-  const checks = await api(`${root}/commits/${sha}/check-runs?check_name=${encodeURIComponent(designCheckName)}&filter=all&per_page=100`);
-  if (!Array.isArray(checks.check_runs) || checks.total_count > 100) throw new Error("Incomplete design review checks");
-  const existing = checks.check_runs.find(item => item.name === designCheckName && item.external_id === externalId && item.app?.slug === "github-actions");
-  const rendered = renderDesignCheck({ sha, digest });
-  const output = { title: rendered.title, summary: rendered.summary, ...(rendered.text ? { text: rendered.text } : {}) };
-  const body = { status: "completed", conclusion: rendered.conclusion, completed_at: new Date().toISOString(), details_url: detailsUrl, output };
-  const check = existing
-    ? await api(`${root}/check-runs/${existing.id}`, "PATCH", body)
-    : await api(`${root}/check-runs`, "POST", { name: designCheckName, head_sha: sha, external_id: externalId, ...body });
-  const id = existing?.id ?? check?.id;
-  return Number.isSafeInteger(id) && id > 0 ? { id, count: rendered.count, worthFixing: rendered.worthFixing } : undefined;
+  return { line, text: body };
 }

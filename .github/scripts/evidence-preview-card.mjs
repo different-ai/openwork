@@ -20,7 +20,7 @@ export function previousPreview(body, reviewUrl) {
   } catch { return undefined; }
 }
 
-export function renderPreviewCard({ repo, sha, status, conclusion, title, reportUrl, logUrl, previous, design, now = new Date().toISOString() }) {
+export function renderPreviewCard({ repo, sha, status, conclusion, title, reportUrl, logUrl, previous, now = new Date().toISOString() }) {
   const commit = `[\`${sha.slice(0, 7)}\`](https://github.com/${repo}/commit/${sha})`;
   const ready = Boolean(reportUrl);
   const label = ready ? (conclusion === "success" ? "🟢 Ready · evidence passed" : "🔴 Ready · evidence needs attention")
@@ -32,11 +32,6 @@ export function renderPreviewCard({ repo, sha, status, conclusion, title, report
   const lines = [cardMarker, "### OpenWork evidence", "", "| Status | Commit | Preview | Updated |", "| --- | --- | --- | --- |",
     `| ${label} | ${commit} | ${preview} | ${updated} |`, ""];
   if (ready) lines.push(`[Run details](${logUrl}) · Open the preview to inspect evidence and sandbox options.`);
-  if (ready && Number.isSafeInteger(design?.id) && design.id > 0 && Number.isSafeInteger(design.count)) {
-    lines.push("", design.count === 0
-      ? `Design review: no notes · [Details](https://github.com/${repo}/runs/${design.id})`
-      : `Design review: ${design.count} ${design.count === 1 ? "note" : "notes"}${design.worthFixing ? `, ${design.worthFixing} worth fixing` : ""} · [Read the notes](https://github.com/${repo}/runs/${design.id})`);
-  }
   else {
     lines.push(status === "completed" ? title : "A preview for this commit is being prepared.");
     if (previous) lines.push("", `**Previous evidence — out of date:** [Open report for \`${previous.sha.slice(0, 7)}\`](${previous.url}). It does not verify the current run.`);

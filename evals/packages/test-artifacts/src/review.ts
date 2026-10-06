@@ -36,7 +36,7 @@ async function readDesignNotes(directory: string, gitSha: string): Promise<Recor
   }
 }
 
-/** One design note as the PR's Design review check shows it: the note plus where it was found. */
+/** One design note as the PR's Evidence preview check lists it: the note plus where it was found. */
 export interface DesignDigestNote extends ReviewDesignNote {
   spec: string | null;
   step: string;
