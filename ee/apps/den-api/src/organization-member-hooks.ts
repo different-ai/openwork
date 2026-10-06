@@ -1,31 +1,12 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { cache } from "./cache.js"
+import { coreHooks } from "./core/hooks/index.js"
 import { db } from "./db.js"
-import { syncInferenceAfterMemberChange } from "./inference.js"
-import { syncInferenceSubscriptionQuantityAfterMemberChange, syncSeatSubscriptionQuantityAfterMemberChange, syncWebSubscriptionQuantityAfterMemberChange } from "./stripe-billing.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
-
-export type OrganizationMemberChange = "added" | "removed"
-
-type OrganizationMemberChangeHookInput = {
-  organizationId: OrgId
-  memberId: MemberId
-  memberCount: number
-  change: OrganizationMemberChange
-}
-
-type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
-
-const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
-  syncInferenceAfterMemberChange,
-  syncSeatSubscriptionQuantityAfterMemberChange,
-  syncInferenceSubscriptionQuantityAfterMemberChange,
-  syncWebSubscriptionQuantityAfterMemberChange,
-]
 
 async function countOrganizationMembers(organizationId: OrgId) {
   const [row] = await db
@@ -35,15 +16,30 @@ async function countOrganizationMembers(organizationId: OrgId) {
   return Math.max(0, Number(row?.count ?? 0))
 }
 
+// Den invitation create, invitation acceptance and member removal dispatch
+// `member.added` / `member.removed` through here. Module reactions are
+// registered on the Core hook registry (core/hooks/legacy until each module
+// plan moves them).
 export async function runPostOrganizationMemberChangeHooks(input: {
   organizationId: OrgId
   memberId: MemberId
-  change: OrganizationMemberChange
-}) {
+} & ({ change: "added"; source: "invitation" | "acceptance" } | { change: "removed" })) {
   // Member add/remove changes both list rendering and membership auth decisions.
   await cache.org.deleteMembers(input.organizationId)
   const memberCount = await countOrganizationMembers(input.organizationId)
-  for (const hook of organizationMemberChangeHooks) {
-    await hook({ ...input, memberCount })
+  if (input.change === "added") {
+    await coreHooks.runPostCommit("member.added", {
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      source: input.source,
+      memberCount,
+    })
+    return
   }
+  await coreHooks.runPostCommit("member.removed", {
+    organizationId: input.organizationId,
+    memberId: input.memberId,
+    memberCount,
+    source: "removal",
+  })
 }

@@ -7,7 +7,8 @@ import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
 import { invitationBillingUrl } from "../../agent-links.js"
-import { invitationHasAdminTeam, withOrganizationTeamMutation } from "../../organization-team-roles.js"
+import { withOrganizationTeamMutation } from "../../organization-team-roles.js"
+import { coreHooks, type CoreHookRejection } from "../../core/hooks/index.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
@@ -24,6 +25,23 @@ const inviteMemberSchema = z.object({
   role: z.string().trim().min(1).max(64),
 })
 const logger = appLogger.child({ component: "invitations" })
+
+type SuperAdminDenied = Extract<ReturnType<typeof ensureOrganizationSuperAdmin>, { ok: false }>["response"]
+
+// Lets invitation guards demand a super-admin actor while the route keeps
+// today's exact 403 body (including the fresh-session variant).
+function superAdminCheck(c: Parameters<typeof ensureOrganizationSuperAdmin>[0]) {
+  const denied: { response?: SuperAdminDenied } = {}
+  return {
+    denied,
+    require: (message: string): CoreHookRejection | null => {
+      const permission = ensureOrganizationSuperAdmin(c, message)
+      if (permission.ok) return null
+      denied.response = permission.response
+      return { code: permission.response.error, status: 403, message }
+    },
+  }
+}
 
 const invitationResponseSchema = z.object({
   invitationId: denTypeIdSchema("invitation"),
@@ -177,10 +195,14 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       }
 
       if (existingInvitation) {
-        if (await invitationHasAdminTeam(tx, existingInvitation)) {
-          const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage invitations with Admin team access.")
-          if (!permission.ok) return { status: "team_forbidden" as const, response: permission.response }
-        }
+        const superAdmin = superAdminCheck(c)
+        const rejection = await coreHooks.runGuards("invitation.createGuard", {
+          tx,
+          organizationId: payload.organization.id,
+          invitation: existingInvitation,
+          requireSuperAdmin: superAdmin.require,
+        })
+        if (rejection) return { status: "team_forbidden" as const, response: superAdmin.denied.response ?? { error: rejection.code, message: rejection.message } }
         const refreshRole = validateInvitationRefreshRole({
           existingRole: existingInvitation.role,
           availableRoles,
@@ -315,7 +337,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
     } = invitationWrite
 
     if (createdOrgMemberId) {
-      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added" })
+      await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: createdOrgMemberId, change: "added", source: "invitation" })
     }
 
     await recordOrganizationAuditEvent({
@@ -430,10 +452,14 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       if (invitation.status !== "pending") {
         return { status: "not_pending" as const, invitation }
       }
-      if (await invitationHasAdminTeam(tx, invitation)) {
-        const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can cancel invitations with Admin team access.")
-        if (!permission.ok) return { status: "team_forbidden" as const, response: permission.response }
-      }
+      const superAdmin = superAdminCheck(c)
+      const rejection = await coreHooks.runGuards("invitation.cancelGuard", {
+        tx,
+        organizationId: payload.organization.id,
+        invitation,
+        requireSuperAdmin: superAdmin.require,
+      })
+      if (rejection) return { status: "team_forbidden" as const, response: superAdmin.denied.response ?? { error: rejection.code, message: rejection.message } }
 
       const invitedMemberRows = await tx
         .select({ id: MemberTable.id })

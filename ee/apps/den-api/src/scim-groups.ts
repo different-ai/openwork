@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { invalidateTeamInferenceOAuth } from "./llm/inference-provider-lifecycle.js"
+import { coreHooks } from "./core/hooks/index.js"
 import {
   AuthUserTable,
   MemberTable,
@@ -304,7 +304,7 @@ async function detachOwnedTeamMembership(tx: TeamMutationTransaction, provider: 
   if (normalizeMappingMode(provider.groupMappingMode) === "create_teams" && member.teamMemberId) {
     const [membership] = await tx.select({ teamId: TeamMemberTable.teamId }).from(TeamMemberTable)
       .where(eq(TeamMemberTable.id, member.teamMemberId))
-    if (membership) await invalidateTeamInferenceOAuth(tx, membership.teamId)
+    if (membership) await coreHooks.runTx("team.membershipChanged", { tx, organizationId: provider.organizationId, teamId: membership.teamId })
     await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.id, member.teamMemberId))
   }
 }
