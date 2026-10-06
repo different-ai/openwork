@@ -41,9 +41,9 @@ function faultTimes(value) {
   return value;
 }
 
-function takeRule(path) {
+function takeRule(path, method) {
   for (const rule of rules) {
-    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix)) continue;
+    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix) || (rule.method !== undefined && rule.method !== method)) continue;
     rule.remaining -= 1;
     return rule;
   }
@@ -137,9 +137,9 @@ async function control(incoming, response, path) {
       const body = await readJson(incoming);
       const remaining = faultTimes(body.times);
       if (body.kind === "status") {
-        rules.push({ kind: "status", pathPrefix: body.pathPrefix, statusCode: body.statusCode, body: body.body, remaining });
+        rules.push({ kind: "status", pathPrefix: body.pathPrefix, statusCode: body.statusCode, body: body.body, remaining, method: body.method?.toUpperCase() });
       } else if (body.kind === "latency") {
-        rules.push({ kind: "latency", pathPrefix: body.pathPrefix, delayMs: body.delayMs, remaining });
+        rules.push({ kind: "latency", pathPrefix: body.pathPrefix, delayMs: body.delayMs, remaining, method: body.method?.toUpperCase() });
       } else {
         throw new Error("Unknown fault kind.");
       }
@@ -160,7 +160,7 @@ const server = createServer((incoming, response) => {
       await control(incoming, response, path);
       return;
     }
-    const rule = takeRule(path);
+    const rule = takeRule(path, incoming.method ?? "GET");
     if (rule?.kind === "status") {
       const body = JSON.stringify(rule.body ?? { error: "Injected HTTP " + rule.statusCode });
       requests.push({ method: incoming.method ?? "GET", path, status: rule.statusCode, faulted: true, at: Date.now() });

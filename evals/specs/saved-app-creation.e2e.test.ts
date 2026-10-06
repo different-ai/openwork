@@ -313,8 +313,8 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("only offer sharing for personal artifacts when the server supports it", async () => {
     const items = record((await probe.api(world.den.admin, "/v1/apps")).body).items;
     for (const body of [{ enabled: true, items }, { enabled: true, sharingEnabled: false, items }]) {
-      await world.proxy.faults.status("/v1/apps", 200, { times: 100, body });
-      await world.proxy.faults.status("/api/den/v1/apps", 200, { times: 100, body });
+      await world.proxy.faults.status("/v1/apps", 200, { times: 100, body, method: "GET" });
+      await world.proxy.faults.status("/api/den/v1/apps", 200, { times: 100, body, method: "GET" });
       await world.open("/dashboard");
       await user.reload();
       await user.see({ role: "button", label: "Add to dashboard" });
@@ -435,8 +435,9 @@ test("create, preview, save and reopen an app without changing already-open resu
     const detailPath = `/v1/apps/${appId}`;
     const requestCount = (await world.proxy.requestLog()).length;
     try {
-      await world.proxy.faults.latency(detailPath, 15_000, { times: 1 });
-      await world.proxy.faults.latency(`/api/den${detailPath}`, 15_000, { times: 1 });
+      // Keep the loading witness below the Den client's 12-second deadline.
+      await world.proxy.faults.latency(detailPath, 8_000, { times: 1, method: "GET" });
+      await world.proxy.faults.latency(`/api/den${detailPath}`, 8_000, { times: 1, method: "GET" });
       await user.reload();
       await user.see({ text: "Loading artifact…" }, { timeoutMs: 30_000 });
       const loading = await probe.dom(tileSelector);
@@ -453,8 +454,10 @@ test("create, preview, save and reopen an app without changing already-open resu
         until: (size) => size.viewportWidth === before.viewportWidth && Math.abs(size.width - before.width) <= 1
           && Math.abs(size.height - before.height) <= 1 && Math.abs(size.frameWidth - before.frameWidth) <= 1
           && Math.abs(size.frameHeight - before.frameHeight) <= 1 });
-      expect((await world.proxy.requestLog()).slice(requestCount).filter((request) => request.method === "GET"
-        && new URL(request.path, "http://fixture.invalid").pathname.endsWith(detailPath) && request.faulted && request.status === 200)).toHaveLength(1);
+      const reloadRequests = (await world.proxy.requestLog()).slice(requestCount);
+      expect(reloadRequests.filter((request) => request.method === "GET"
+        && new URL(request.path, "http://fixture.invalid").pathname.endsWith(detailPath) && request.faulted && request.status === 200),
+      JSON.stringify(reloadRequests.filter((request) => new URL(request.path, "http://fixture.invalid").pathname.endsWith(detailPath)))).toHaveLength(1);
       expect((await readApp()).revision).toMatchObject({ id: revisionId });
       expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
       evidence.recordAssertionEvidence("Saved snapshot loading preserves measured dashboard geometry", JSON.stringify({ before, loading: tile.rect, restored,
@@ -786,8 +789,8 @@ test("create, preview, save and reopen an app without changing already-open resu
     const previewNotice = "The workflow’s results have changed. Ask OpenWork to update this app to match.";
     const body = { ...saved, html: null, payload: null, previewNotice };
     try {
-      await world.proxy.faults.status(`/v1/apps/${appId}`, 200, { times: 100, body });
-      await world.proxy.faults.status(`/api/den/v1/apps/${appId}`, 200, { times: 100, body });
+      await world.proxy.faults.status(`/v1/apps/${appId}`, 200, { times: 100, body, method: "GET" });
+      await world.proxy.faults.status(`/api/den/v1/apps/${appId}`, 200, { times: 100, body, method: "GET" });
       await world.open("/dashboard");
       await user.reload();
       await user.see({ text: previewNotice }, { timeoutMs: 30_000 });
