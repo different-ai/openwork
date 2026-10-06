@@ -72,7 +72,7 @@ export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClo
         <button
           type="button"
           onClick={() => void downloadWorkbotFile(file)}
-          className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+          className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           <Download size={14} strokeWidth={1.75} aria-hidden />
           Download
@@ -81,7 +81,7 @@ export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClo
           type="button"
           onClick={onClose}
           aria-label="Close preview"
-          className="grid size-8 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+          className="grid size-8 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           <X size={15} strokeWidth={1.75} aria-hidden />
         </button>
@@ -120,7 +120,7 @@ function NoPreview({ file, reason }: { file: WorkbotAttachment; reason?: string 
       <button
         type="button"
         onClick={() => void downloadWorkbotFile(file)}
-        className="rounded-full bg-[var(--wb-ink)] px-4 py-2 text-[13px] font-medium text-[var(--wb-on-ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+        className="rounded-full bg-[var(--wb-ink)] px-4 py-2 text-[13px] font-medium text-[var(--wb-on-ink)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
       >
         Download
       </button>

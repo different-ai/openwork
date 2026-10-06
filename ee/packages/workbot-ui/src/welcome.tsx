@@ -123,7 +123,7 @@ function ConnectStep(props: {
                   type="button"
                   onClick={() => props.onConnect(connection)}
                   disabled={!connection.connectUrl}
-                  className="h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-[box-shadow,background-color] duration-150 ease-out hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+                  className="h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-[box-shadow,background-color] duration-150 ease-out hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
                 >
                   Connect
                 </button>
@@ -141,7 +141,7 @@ function ConnectStep(props: {
             <button
               type="button"
               onClick={props.onContinue}
-              className="h-8 rounded-full px-3 text-[13px] text-[var(--wb-muted)] transition-colors duration-150 hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+              className="h-8 rounded-full px-3 text-[13px] text-[var(--wb-muted)] transition-colors duration-150 hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
             >
               Skip for now
             </button>
@@ -170,7 +170,7 @@ function PrimaryButton({ onClick, disabled, children }: { onClick: () => void; d
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="h-11 min-w-[168px] rounded-full bg-[var(--wb-ink)] px-6 text-[14px] font-medium text-[var(--wb-on-ink)] shadow-[0_6px_16px_-8px_#01162780] transition-[transform,opacity] duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+      className="h-11 min-w-[168px] rounded-full bg-[var(--wb-ink)] px-6 text-[14px] font-medium text-[var(--wb-on-ink)] shadow-[0_6px_16px_-8px_#01162780] transition-[transform,opacity] duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
     >
       {children}
     </button>

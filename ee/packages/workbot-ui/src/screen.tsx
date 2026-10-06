@@ -172,7 +172,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     return (
       <Centered>
         <p className="text-[14px] text-[var(--wb-text)]">Couldn&apos;t load your conversation.</p>
-        <button type="button" onClick={() => void thread.refetch()} className="mt-3 rounded-full px-3 py-1.5 text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]">
+        <button type="button" onClick={() => void thread.refetch()} className="mt-3 rounded-full px-3 py-1.5 text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
           Try again
         </button>
       </Centered>
@@ -381,7 +381,7 @@ function WorkbotHeader({ name, organizationName, userName, files }: { name: stri
         <a
           href={workbotHost().homeHref}
           aria-label="Your dashboard"
-          className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[11px] font-semibold tracking-[0.02em] text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+          className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[11px] font-semibold tracking-[0.02em] text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-85 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           {initials(userName)}
         </a>
@@ -468,7 +468,7 @@ function FirstOpen(props: { name: string; organizationName: string; firstName: s
               <button
                 type="button"
                 onClick={() => props.onSuggestion(suggestion.text)}
-                className="flex h-[34px] items-center gap-2 rounded-full bg-[var(--wb-surface)] pl-3 pr-3.5 text-[13px] leading-4 text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+                className="flex h-[34px] items-center gap-2 rounded-full bg-[var(--wb-surface)] pl-3 pr-3.5 text-[13px] leading-4 text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
               >
                 {suggestion.app ? <AppMark name={suggestion.app} size={13} /> : null}
                 {suggestion.text}
@@ -571,7 +571,7 @@ function Conversation(props: {
                 props.onLoadEarlier();
               }}
               disabled={props.loadingEarlier}
-              className="mx-auto mb-6 rounded-full px-3 py-1 text-[12px] font-medium text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+              className="mx-auto mb-6 rounded-full px-3 py-1 text-[12px] font-medium text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
             >
               {props.loadingEarlier ? "Loading earlier messages" : "Show earlier messages"}
             </button>
@@ -653,7 +653,7 @@ function UserBubble({ text, muted = false, reaction = null }: { text: string; mu
 }
 
 const iconButton =
-  "grid size-7 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)] disabled:opacity-40";
+  "grid size-7 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:opacity-40";
 
 /**
  * One of the person's own messages, which they can change: Edit and Delete appear beside it on hover or focus
@@ -723,7 +723,7 @@ function OwnMessage(props: {
                 setDraft(turn.text);
                 setMode("idle");
               }}
-              className="h-8 rounded-full px-3 text-[13px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+              className="h-8 rounded-full px-3 text-[13px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
             >
               Cancel
             </button>
@@ -731,7 +731,7 @@ function OwnMessage(props: {
               type="button"
               onClick={save}
               disabled={!draft.trim()}
-              className="h-8 rounded-full bg-[var(--wb-ink)] px-3.5 text-[13px] font-medium text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+              className="h-8 rounded-full bg-[var(--wb-ink)] px-3.5 text-[13px] font-medium text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-40 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
             >
               Send
             </button>
@@ -762,7 +762,7 @@ function OwnMessage(props: {
           <button
             type="button"
             onClick={() => setMode("idle")}
-            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
           >
             Cancel
           </button>
@@ -773,7 +773,7 @@ function OwnMessage(props: {
               setError(null);
               props.onDelete(turn, setError);
             }}
-            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-danger)] transition-colors duration-150 hover:bg-[#c4302b14] focus-visible:outline-2 focus-visible:outline-[var(--wb-danger)]"
+            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-danger)] transition-colors duration-150 hover:bg-[#c4302b14] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
           >
             Delete
           </button>
@@ -1234,7 +1234,7 @@ function TurnView(props: {
               <button
                 type="button"
                 onClick={() => props.onSuggestion(text)}
-                className="flex h-[34px] items-center rounded-full bg-[var(--wb-surface)] px-3.5 text-[13px] leading-4 text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+                className="flex h-[34px] items-center rounded-full bg-[var(--wb-surface)] px-3.5 text-[13px] leading-4 text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
               >
                 {text}
               </button>
@@ -1313,7 +1313,7 @@ function WorkCard(props: {
           type="button"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
-          className="flex w-full items-center gap-3 rounded-[14px] py-2.5 pl-2.5 pr-3 outline-none focus-visible:shadow-[0_0_0_2px_var(--wb-ink)]"
+          className="flex w-full items-center gap-3 rounded-[14px] py-2.5 pl-2.5 pr-3 outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           {body}
         </button>
@@ -1359,7 +1359,7 @@ function TaskCard({ task }: { task: WorkbotTask }) {
             type="button"
             disabled={stopping}
             onClick={() => stop.mutate(task.id)}
-            className="h-7 shrink-0 rounded-full px-3 text-[12px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+            className="h-7 shrink-0 rounded-full px-3 text-[12px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
           >
             {stopping ? "Stopping" : "Stop"}
           </button>
@@ -1412,7 +1412,7 @@ function OutputFiles({ files }: { files: WorkbotAttachment[] }) {
           key={file.id}
           type="button"
           onClick={() => open(file)}
-          className="flex min-w-0 max-w-full items-center gap-3 rounded-[14px] bg-[var(--wb-surface)] py-2 pl-2 pr-4 text-left shadow-[var(--wb-card-shadow)] transition-shadow duration-150 ease-out hover:shadow-[var(--wb-card-shadow-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)] sm:max-w-[320px]"
+          className="flex min-w-0 max-w-full items-center gap-3 rounded-[14px] bg-[var(--wb-surface)] py-2 pl-2 pr-4 text-left shadow-[var(--wb-card-shadow)] transition-shadow duration-150 ease-out hover:shadow-[var(--wb-card-shadow-hover)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] sm:max-w-[320px]"
         >
           {isImage(file.mediaType) ? <ImageThumb id={file.id} className="size-9 shrink-0 rounded-[8px] outline outline-1 -outline-offset-1 outline-black/10" /> : <FileBadge name={file.name} mediaType={file.mediaType} />}
           <span className="flex min-w-0 flex-col">
@@ -1500,7 +1500,7 @@ function Composer(props: {
           aria-label={showStop ? "Stop" : "Send"}
           aria-keyshortcuts={showStop ? "Escape" : "Enter"}
           title={showStop ? "Stop (esc)" : "Send (⏎)"}
-          className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[var(--wb-bg)] transition-colors duration-150 disabled:bg-[var(--wb-disabled)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+          className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[var(--wb-bg)] transition-colors duration-150 disabled:bg-[var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           {showStop ? <span aria-hidden className="h-2.75 w-2.75 rounded-[2.5px] bg-[var(--wb-bg)]" /> : <ArrowUp size={16} strokeWidth={2.25} aria-hidden />}
         </button>

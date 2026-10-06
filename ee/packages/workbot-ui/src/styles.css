@@ -30,6 +30,8 @@
   --wb-panel-shadow: 0 0 0 1px #0116270d, 0 12px 32px -12px #01162724, 0 2px 6px -2px #0116270f;
   --wb-page-shadow: 0 0 0 1px #0116270f, 0 6px 16px -8px #0116271f;
   --wb-user-bubble: #eef1f4;
+  /* Keyboard focus: a soft halo with a faint edge, the same on every control (Den's input focus, in Workbot's ink). */
+  --wb-focus: 0 0 0 1px #01162733, 0 0 0 4px #01162712;
   --wb-card-shadow-hover: 0 0 0 1px #01162714, 0 4px 12px -4px #0116271f;
   /* Workbot's computer glyph: a soft blue screen; its lines brighten while it works. */
   --wb-computer-screen: #e6f4fe;
