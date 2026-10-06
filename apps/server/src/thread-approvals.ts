@@ -107,13 +107,6 @@ export async function rememberThreadApproval(
   });
 }
 
-export async function forgetThreadApprovals(config: ServerConfig, workspaceId: string, sessionId: string): Promise<void> {
-  const stored = await threadApprovalStore.get(config, workspaceId);
-  if (!stored?.sessions[sessionId]) return;
-  const { [sessionId]: _removed, ...sessions } = stored.sessions;
-  await threadApprovalStore.set(config, workspaceId, { sessions });
-}
-
 interface PendingAsk {
   directory: string;
   sessionId: string;

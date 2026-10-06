@@ -12,7 +12,7 @@ const html = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "
   .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const duration = (value) => value === null ? "unavailable" : `${(value / 1000).toFixed(1)}s`;
 
-// Display data only. No GitHub writes, merge decisions, or comment history.
+// Display data only. No GitHub writes; warden-clearance.mjs decides approval from this receipt.
 export function buildReport(raw, metadata, now = Date.now()) {
   const identityMatches = raw?.version === "1" && raw.event === "pull_request" &&
     raw.repository?.fullName === metadata.repository && raw.pullRequest?.number === metadata.pr &&
@@ -87,7 +87,7 @@ export function renderSummary(report, raw) {
     ? `${report.findings_count} finding(s)` : "incomplete";
   const lines = [
     `Warden security: **${label}** · ${duration(report.timing.analysis_ms)} analysis · ${duration(report.timing.review_to_summary_ms)} through summary.`,
-    "", "Merge approval stays with the OpenWork admin team.", "",
+    "", "Warden Clearance approves when this review is complete with no high or medium security findings and no confidentiality findings.", "",
     "<details><summary>Review details and timing</summary>", "",
     "| Review | Result | Findings | Duration |", "| --- | --- | --- | --- |",
     ...report.skills.map((skill) => `| ${skill.name} | ${skill.status} | ${skill.findings_count ?? "unknown"} | ${duration(skill.duration_ms)} |`),

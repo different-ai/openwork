@@ -43,6 +43,7 @@ import { useMemberSignIn } from "./connector-setup";
 import { matchesModelQuery } from "./library-models";
 import { useLibraryModels, useModelSignIn } from "./library-models-data";
 import { LibraryModelRow } from "./library-models-ui";
+import { MemberApiKeyDialog } from "./member-api-key-dialog";
 import { usePluginAccess } from "./plugin-access-data";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
@@ -105,11 +106,14 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
     : receivedStatus(item.edges);
 
   const needsSignIn = item.type === "connection" && item.state === "needs_signin";
+  const apiKeyStatus = item.type === "connection" ? signIn.apiKeyStatus(item.id) : null;
   const action = needsSignIn && item.type === "connection" ? (
     item.transport === "native" ? (
       <DenButton variant="secondary" size="xs" href={`${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`}>Sign in</DenButton>
     ) : (
-      <DenButton variant="secondary" size="xs" loading={signIn.pendingId === item.id} onClick={() => void signIn.signIn(item)}>Sign in</DenButton>
+      <DenButton variant="secondary" size="xs" loading={signIn.pendingId === item.id} onClick={() => void signIn.signIn(item)}>
+        {apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : "Sign in"}
+      </DenButton>
     )
   ) : (
     <ItemMenu
@@ -326,6 +330,7 @@ function LibraryContent() {
       ) : null}
 
       <LibraryAddDialog open={addOpen} onOpenChange={setAddOpen} hrefFor={hrefFor} />
+      <MemberApiKeyDialog target={signIn.apiKeyTarget} onClose={signIn.closeApiKey} />
     </ItemPage>
   );
 }

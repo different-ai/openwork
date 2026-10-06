@@ -268,7 +268,6 @@ async function handleMcpAppServerRequestUntimed(input: {
     redirectUriBase: resolvePublicOrigin(context.req.raw, env.apiPublicUrl),
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationMetadata: organization[0]?.metadata,
-    mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
   })
   const access = { organizationId, member, enabled: capabilityContext.externalMcpConnectionsEnabled, requestScope: {} }
   let definition: McpAppServerDefinition

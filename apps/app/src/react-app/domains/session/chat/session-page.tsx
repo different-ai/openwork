@@ -624,7 +624,7 @@ export function SessionPage(props: SessionPageProps) {
   }, [setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
 
   // When the agent calls a built-in browser tool, the main process opens
-  // the WebContentsView and sends panel-opened; when hide_browser is called
+  // the WebContentsView and sends panel-opened; when the panel is dismissed
   // it sends panel-closed. Without this listener the React UI never knows
   // the panel opened and doesn't render the unified panel chrome.
   useEffect(() => {
@@ -698,7 +698,7 @@ export function SessionPage(props: SessionPageProps) {
         }
         const ownerSessionId = sourceSessionId ?? props.selectedSessionId ?? null;
         const openLink = window.__OPENWORK_ELECTRON__?.browser?.openLink;
-        if (!options?.auto && openLink) {
+        if (openLink) {
           openLink(url, ownerSessionId);
           return;
         }
@@ -713,7 +713,7 @@ export function SessionPage(props: SessionPageProps) {
     const reportOpenError = (error: unknown) => {
       toast.error(error instanceof Error ? error.message : "Could not open this file.");
     };
-    const canOpenLocally = runtime.workspaceType !== "remote" && isElectronRuntime() && !options?.auto;
+    const canOpenLocally = runtime.workspaceType !== "remote" && isElectronRuntime();
     const openLocalFile = (fileTarget: OpenTarget) => {
       // Files outside the workspace are revealed, never launched; see nativeFileAction.
       // The desktop re-checks the resolved file on disk before launching anything.
@@ -765,7 +765,6 @@ export function SessionPage(props: SessionPageProps) {
 
       const sessionId = sourceSessionId ?? props.selectedSessionId;
       if (!sessionId) return;
-      if (options?.auto && activePanelTab?.id === fileTarget.id) return;
       openTab(sessionId, {
         id: fileTarget.id,
         type: "artifact",
@@ -793,7 +792,7 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     openFileTarget(target);
-  }, [activePanelTab?.id, browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,
@@ -823,7 +822,7 @@ export function SessionPage(props: SessionPageProps) {
     requiresArgs: true,
     args: [
       { name: "url", type: "string", required: true, description: "The website URL to open." },
-      { name: "provider", type: "string", description: "Browser provider. Use builtin or auto. External is reserved for future support." },
+      { name: "provider", type: "string", description: "Browser provider. Use builtin or auto." },
     ],
     previewArgs: { url: "https://example.com", provider: "builtin" },
     disabled: !isElectronRuntime(),
@@ -1479,6 +1478,7 @@ export function SessionPage(props: SessionPageProps) {
             className={cn(
               "window-titlebar flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
               props.mainContentHeaderActionsRef ? "min-h-13" : "lg:pr-1",
+              props.primarySurface !== "flat" && "lg:border-b-0",
               (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
             )}
           >

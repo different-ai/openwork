@@ -59,7 +59,10 @@ export const AuthAccountTable = mysqlTable(
   },
   (table) => [
     index("account_user_id").on(table.userId),
-    index("account_account_id_provider_id").on(sql`${table.accountId}(191)`, sql`${table.providerId}(191)`),
+    // provider_id leads so provider-only lookups (Better Auth SCIM user list,
+    // SSO linked-account checks) can seek instead of scanning the table. The
+    // OAuth lookup filters on both columns, so it still uses the full index.
+    index("account_provider_id_account_id").on(sql`${table.providerId}(191)`, sql`${table.accountId}(191)`),
   ],
 )
 

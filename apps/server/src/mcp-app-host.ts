@@ -42,7 +42,6 @@ async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspac
 
 const MCP_APP_EXTENSION = "io.modelcontextprotocol/ui";
 const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
-const MCP_PROTOCOL_VERSION = "2025-06-18";
 const MAX_TOOL_PAGES = 32;
 const MAX_TOOLS = 2_048;
 const MAX_RESOURCE_BYTES = 768 * 1024;
@@ -1121,12 +1120,6 @@ export async function callMcpAppTool(input: {
     return { ...sanitized, hostAction: intent.data };
   });
 }
-
-export const mcpAppHostProtocol = {
-  extension: MCP_APP_EXTENSION,
-  mimeType: MCP_APP_MIME_TYPE,
-  protocolVersion: MCP_PROTOCOL_VERSION,
-};
 
 // Opt-in numeric profiling only; never emit request payloads or identities.
 if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {

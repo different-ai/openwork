@@ -3,11 +3,13 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { memberApiKeyFailureMessage } from "./member-api-key";
 import {
   type ExternalMcpDiagnostic,
   parseExternalMcpDiagnostic,
 } from "./mcp-tool-error-attribution";
 import type { McpAuthorizationDebugDetails } from "./mcp-authorization-url";
+import { libraryQueryKeys } from "./library-data";
 
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 
@@ -24,7 +26,17 @@ function requireOrgId(orgId: string | null) {
 
 export type ExternalMcpAuthType = "oauth" | "apikey" | "none";
 export type ExternalMcpCredentialMode = "shared" | "per_member";
+export type ExternalMcpApiKeyAuthScheme = "bearer" | "token";
 export type ExternalMcpConnectionScope = "usable" | "manageable";
+
+export const DEFAULT_API_KEY_AUTH_SCHEME: ExternalMcpApiKeyAuthScheme = "bearer";
+
+export function apiKeyAuthSchemeInput(
+  authType: ExternalMcpAuthType,
+  apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme,
+): { apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme } {
+  return authType === "apikey" ? { apiKeyAuthScheme } : {};
+}
 
 export type ExternalMcpAccessSummary = {
   orgWide: boolean;
@@ -43,6 +55,7 @@ export type ExternalMcpConnection = {
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
+  apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme;
   /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: boolean;
   connected: boolean;
@@ -353,6 +366,7 @@ export function useUpdateMcpConnectionToolPolicy(connectionId: string) {
 const RUN_TOOL_REQUEST_TIMEOUT_MS = 160000;
 
 export function useRunMcpConnectionTool(connectionId: string) {
+  const queryClient = useQueryClient();
   const { orgId } = useOrgDashboard();
   return useMutation({
     mutationFn: async (input: { toolName: string; arguments: Record<string, unknown> }): Promise<ExternalMcpToolRun> => {
@@ -398,6 +412,10 @@ export function useRunMcpConnectionTool(connectionId: string) {
         inspection: parseToolCallInspection(payload.inspection),
       };
     },
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+      queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
+    ]),
   });
 }
 
@@ -652,6 +670,7 @@ export type CreateMcpConnectionInput = {
   credentialMode: ExternalMcpCredentialMode;
   exposeDirectly?: boolean;
   apiKey?: string;
+  apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme;
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
@@ -680,6 +699,7 @@ export type UpdateMcpConnectionInput = {
   credentialMode: ExternalMcpCredentialMode;
   exposeDirectly: boolean;
   apiKey?: string;
+  apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme;
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
@@ -942,6 +962,32 @@ export function useStartMcpConnectionOAuth() {
       }
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };
     },
+  });
+}
+
+/**
+ * Saves the caller's own key on a per-member API-key connection. gcTime 0 and
+ * the dialog's reset() drop the key from mutation state once the form closes.
+ */
+export function useSaveMyMcpCredential() {
+  const queryClient = useQueryClient();
+  const { orgId } = useOrgDashboard();
+
+  return useMutation({
+    gcTime: 0,
+    mutationFn: async (input: { connectionId: string; apiKey: string }): Promise<void> => {
+      const response = await requestJson(
+        `/v1/mcp-connections/${encodeURIComponent(input.connectionId)}/my-credential`,
+        { method: "PUT", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify({ apiKey: input.apiKey }) },
+        15000,
+      ).then(({ response }) => response, () => null);
+      // Never surface server text: a provider or proxy may echo the submitted key.
+      if (!response?.ok) throw new Error(memberApiKeyFailureMessage(response?.status));
+    },
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+      queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
+    ]),
   });
 }
 

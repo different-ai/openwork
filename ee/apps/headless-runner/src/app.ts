@@ -20,6 +20,8 @@ const createSessionBody = z
     files: z.boolean().optional(),
     /** Give this conversation a Linux computer (needs HEADLESS_COMPUTER). Off unless asked for. */
     computer: z.boolean().optional(),
+    /** Let the model react to the person's message with one emoji (the `react` tool). Off unless asked for. */
+    reactions: z.boolean().optional(),
   })
   .strict()
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)

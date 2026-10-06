@@ -14,7 +14,11 @@ const common = {
 };
 const appSource = fileURLToPath(new URL("../apps/app/src/", import.meta.url));
 const appResolve = {
-  alias: [{ find: /^@\//, replacement: appSource }],
+  alias: [
+    { find: /^@\//, replacement: appSource },
+    { find: /^react$/, replacement: fileURLToPath(new URL("../apps/app/node_modules/react/index.js", import.meta.url)) },
+    { find: /^react-dom\/client$/, replacement: fileURLToPath(new URL("../apps/app/node_modules/react-dom/client.js", import.meta.url)) },
+  ],
 };
 
 const attachedDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());

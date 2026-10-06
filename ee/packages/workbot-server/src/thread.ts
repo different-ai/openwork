@@ -2,9 +2,11 @@ import type { RunnerMessage, RunnerSnapshot, RunnerTurn } from "@openwork-ee/hea
 
 /**
  * Workbot is one conversation per person. The runner keeps the transcript;
- * this module turns it into what the person sees: their message, then the
- * answer as it happened (text, and quiet step lines between), in order.
- * Tool names, models and raw errors never reach the page.
+ * this module turns it into what the person sees: their message (with
+ * Workbot's emoji reaction, if it reacted), then its answer as it happened.
+ * Work behind the answer is told the way a colleague would say it, and only
+ * while it happens: "Searching Slack", "Using my computer". Tool names,
+ * notes to self, models and raw errors never reach the page.
  */
 
 /** Runner message ids for Workbot turns are the page's own ids with this prefix. */
@@ -13,11 +15,16 @@ export const WORKBOT_MESSAGE_PREFIX = "wb_"
 export type WorkbotTurnStatus = "queued" | "working" | "done" | "failed" | "stopped"
 /** A file in the conversation; `updatedAt` changes when Workbot revises it in place. */
 export type WorkbotAttachment = { id: string; name: string; mediaType: string; size: number; updatedAt?: number }
+/**
+ * Something Workbot did that a colleague would mention while doing it: work in one of the person's apps, or on its
+ * own computer. The page shows only the one in progress; finished work speaks through the answer.
+ */
 export type WorkbotStep = {
+  /** What it is doing, as a colleague would say it: "Searching Slack", "Using my computer". */
   label: string
-  /** What the leading slot shows: a connected app's logo, a file, or Workbot's computer. */
-  icon: "app" | "file" | "dot" | "computer"
-  status: "running" | "done" | "error"
+  /** What the leading slot shows: the connected app's logo, or Workbot's computer. */
+  icon: "app" | "computer"
+  status: "running" | "done"
   /** The connected app it used, when known (for its logo). */
   app: string | null
   startedAt: number | null
@@ -37,6 +44,8 @@ export type WorkbotTurn = {
   attachments: WorkbotAttachment[]
   /** Files Workbot made for the person while answering, oldest first, to open from the answer. */
   outputs: WorkbotAttachment[]
+  /** The one emoji Workbot reacted to this message with, as a colleague does in chat. */
+  reaction: string | null
   /** Text and steps in the order they happened. */
   parts: WorkbotPart[]
   /**
@@ -73,21 +82,29 @@ const APPS: Array<[RegExp, string]> = [
   [/jira|confluence|atlassian/i, "Atlassian"],
 ]
 
-/** What it did in a connected app, in the person's words: "Searching Slack", then "Searched Slack" (DESIGN C4). */
-const APP_ACTIONS: Array<[RegExp, (app: string) => [string, string]]> = [
-  [/search|find|query|lookup/, (app) => [`Searching ${app}`, `Searched ${app}`]],
-  [/draft/, (app) => [`Drafting in ${app}`, `Drafted in ${app}`]],
-  [/send|post|reply|chat_?message|message/, (app) => [`Sending with ${app}`, `Sent with ${app}`]],
-  [/create|add|insert|schedule/, (app) => [`Adding to ${app}`, `Added to ${app}`]],
-  [/update|edit|patch|move|rename/, (app) => [`Updating ${app}`, `Updated ${app}`]],
-  [/delete|remove|archive|trash/, (app) => [`Removing from ${app}`, `Removed from ${app}`]],
-  [/list|get|read|fetch|retrieve|view|show|events|history/, (app) => [`Checking ${app}`, `Checked ${app}`]],
+/** What it is doing in a connected app, as a colleague would say it (DESIGN C4). */
+const APP_ACTIONS: Array<[RegExp, (app: string) => string]> = [
+  [/search|find|query|lookup/, (app) => `Searching ${app}`],
+  [/draft/, (app) => `Drafting in ${app}`],
+  [/send|post|reply|chat_?message|message/, (app) => `Sending in ${app}`],
+  [/create|add|insert|schedule/, (app) => `Adding to ${app}`],
+  [/update|edit|patch|move|rename/, (app) => `Updating ${app}`],
+  [/delete|remove|archive|trash/, (app) => `Removing from ${app}`],
+  [/list|get|read|fetch|retrieve|view|show|events|history/, (app) => `Checking ${app}`],
 ]
 
-function appActionLabel(app: string, capability: string, running: boolean) {
+function appActionLabel(app: string, capability: string) {
   const action = capability.split(/[:/]/).pop()?.toLowerCase() ?? ""
-  const [present, past] = APP_ACTIONS.find(([pattern]) => pattern.test(action))?.[1](app) ?? [`Using ${app}`, `Used ${app}`]
-  return running ? present : past
+  return APP_ACTIONS.find(([pattern]) => pattern.test(action))?.[1](app) ?? `Looking in ${app}`
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+
+/** The emoji of a `react` call, if it is exactly one (the runner checks too; the page never shows anything else). */
+function reactionOf(input: Record<string, unknown>): string | null {
+  const emoji = typeof input.emoji === "string" ? input.emoji.trim() : ""
+  if (!emoji || emoji.length > 32 || [...graphemes.segment(emoji)].length !== 1) return null
+  return /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(emoji) ? emoji : null
 }
 
 function appOf(name: string, input: Record<string, unknown>): string | null {
@@ -95,45 +112,15 @@ function appOf(name: string, input: Record<string, unknown>): string | null {
   return APPS.find(([pattern]) => pattern.test(target))?.[1] ?? null
 }
 
-/** A kept file's name and when it was saved, to label steps that open it. */
+/** The conversation's kept files, so the ones Workbot made show under the answer that made them. */
 export type FileNames = ReadonlyMap<string, { name: string; createdAt: number; updatedAt?: number; mediaType?: string; size?: number; source?: "user" | "agent" }>
-
-function dayWord(at: number, now: number) {
-  const days = Math.floor((new Date(now).setHours(0, 0, 0, 0) - new Date(at).setHours(0, 0, 0, 0)) / 86_400_000)
-  if (days <= 0) return "today"
-  if (days === 1) return "yesterday"
-  if (days < 7) return new Date(at).toLocaleDateString("en-US", { weekday: "long" })
-  return new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
-}
-
-/**
- * What a person sees of a step, in a coworker's terms, or null to leave it out. A step shows only when it maps to
- * something they know: an app they connected (labelled from its logo elsewhere), their files, setting up a
- * schedule, or a note for later. Lookups, internal names and housekeeping never show (DESIGN C3, T2).
- */
-function workbotStepLabel(name: string, input: Record<string, unknown>, files: FileNames, at: number): string | null {
-  const path = typeof input.path === "string" ? input.path : null
-  if (name === "open_file") {
-    const file = typeof input.id === "string" ? files.get(input.id) : undefined
-    if (!file) return "Opened a file"
-    const day = dayWord(file.createdAt, at)
-    return day === "today" ? `Opened ${file.name}` : `Opened ${file.name} from ${day}`
-  }
-  if (name === "save_file") {
-    const named = typeof input.name === "string" && input.name.trim() ? input.name.trim() : path?.split("/").pop()
-    return named ? `Saved ${named} to your files` : "Saved a file to your files"
-  }
-  if (path?.startsWith("memory/") && (name === "write_file" || name === "edit_file")) return "Made a note for later"
-  if (name === "execute_capability" && typeof input.name === "string" && /createCloudAutomation$/i.test(input.name)) return "Setting up the schedule"
-  return null
-}
 
 const COMPUTER_TOOLS: ReadonlySet<string> = new Set(["bash", "look"])
 
 /**
- * Work on Workbot's computer reads as one quiet step, however many commands it took: the person sees that it
- * used its computer and for how long, never commands, retries or failures it recovered from (DESIGN C3, T2).
- * What it is doing, in its own words, travels in `updates`; the page shows the newest one under the step.
+ * Work on Workbot's computer reads as one step, however many commands it took: the person sees that it is using
+ * its computer, never commands, retries or failures it recovered from (DESIGN C3, T2). What it is doing, in its
+ * own words, travels in `updates`; the page shows the newest one under the step.
  */
 function addComputerStep(parts: WorkbotPart[], input: Record<string, unknown>, result: RunnerMessage | undefined, at: number | null) {
   const running = result === undefined
@@ -141,7 +128,7 @@ function addComputerStep(parts: WorkbotPart[], input: Record<string, unknown>, r
   const last = parts.at(-1)
   const previous = last?.kind === "steps" ? last.steps.at(-1) : undefined
   const step: WorkbotStep =
-    previous?.icon === "computer" ? previous : { label: "", icon: "computer", status: "done", app: null, startedAt: at, finishedAt: null, updates: [] }
+    previous?.icon === "computer" ? previous : { label: "Using my computer", icon: "computer", status: "done", app: null, startedAt: at, finishedAt: null, updates: [] }
   if (doing && step.updates.at(-1) !== doing) step.updates.push(doing)
   // The time it actually worked: a command cut off by a restart or a sleeping laptop says nothing about the work.
   const before = workedMs.get(step) ?? 0
@@ -150,7 +137,6 @@ function addComputerStep(parts: WorkbotPart[], input: Record<string, unknown>, r
   const worked = before + (took <= LONGEST_COMMAND_MS ? took : 0)
   workedMs.set(step, worked)
   step.status = running ? "running" : "done"
-  step.label = running ? "Using my computer" : "Used my computer"
   // Duration is shown as finishedAt − startedAt, and a running step counts up from startedAt.
   if (running) {
     step.startedAt = at === null ? step.startedAt : at - before
@@ -215,6 +201,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     const results = new Map(messages.flatMap((message) => (message.role === "tool" ? [[message.callId, message] as const] : [])))
 
     const parts: WorkbotPart[] = []
+    let reaction: string | null = null
     let modelSteps = 0
     for (const message of messages) {
       if (message.role !== "assistant") continue
@@ -226,20 +213,25 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
         else parts.push({ kind: "text", text })
       }
       for (const call of message.toolCalls) {
+        if (call.name === "react") {
+          const result = results.get(call.id)
+          const emoji = reactionOf(call.input)
+          if (emoji && !(result?.role === "tool" && result.isError)) reaction = emoji
+          continue
+        }
         if (COMPUTER_TOOLS.has(call.name)) {
           addComputerStep(parts, call.input, results.get(call.id), message.createdAt ?? null)
           continue
         }
-        const result = results.get(call.id)
+        // Only work in a connected app is worth a line ("Searching Slack"); lookups, notes to self and files stay
+        // out of sight: files it made show as cards under the answer.
         const app = call.name === "execute_capability" ? appOf(call.name, call.input) : null
-        const status = result === undefined ? "running" : result.role === "tool" && result.isError ? "error" : "done"
-        // Work in a connected app reads as that app ("Searched Slack"); anything else only if a person knows it.
-        const label = app ? appActionLabel(app, String(call.input.name ?? ""), status === "running") : workbotStepLabel(call.name, call.input, files, message.createdAt ?? Date.now())
-        if (!label) continue
+        if (!app) continue
+        const result = results.get(call.id)
         const step: WorkbotStep = {
-          label,
-          icon: app ? "app" : call.name === "open_file" || call.name === "save_file" ? "file" : "dot",
-          status,
+          label: appActionLabel(app, String(call.input.name ?? "")),
+          icon: "app",
+          status: result === undefined ? "running" : "done",
           app,
           startedAt: message.createdAt ?? null,
           finishedAt: result?.createdAt ?? null,
@@ -261,6 +253,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       status,
       attachments: user.attachments ?? [],
       outputs: outputsOf(files, turn.createdAt ?? null, working ? null : (turn.updatedAt ?? null)),
+      reaction,
       parts,
       modelSteps,
       error: status === "failed" ? friendlyError(turn.error) : null,

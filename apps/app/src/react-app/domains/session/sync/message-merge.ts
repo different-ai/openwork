@@ -167,12 +167,6 @@ export function upsertMessageByChronology(messages: UIMessage[], message: UIMess
   return result;
 }
 
-export function messageListContainsAll(container: UIMessage[], required: UIMessage[]) {
-  if (required.length === 0) return true;
-  const ids = new Set(container.map((message) => message.id));
-  return required.every((message) => ids.has(message.id));
-}
-
 export function mergeSnapshotAndLiveMessages(
   snapshotMessages: UIMessage[],
   liveMessages: UIMessage[],

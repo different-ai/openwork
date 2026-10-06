@@ -93,8 +93,8 @@ export function buildCommandPaletteModelItems(
     return {
       id: `model:${option.providerID}:${option.modelID}`,
       title: modelTitle(option),
-      detail: isAutoModel(option) ? modelSubtitle(option)
-        : [provider, option.modelID, option.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · "),
+      // The same line the composer picker shows: the provider, never the model id.
+      detail: modelSubtitle(option),
       meta: isSameModel(current, option) ? "Current" : undefined,
       searchText: `${modelTitle(option)} ${modelSubtitle(option)} ${option.title} ${provider} ${option.providerID} ${option.modelID}`,
       option,

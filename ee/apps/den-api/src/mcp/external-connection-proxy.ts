@@ -17,9 +17,11 @@ import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import {
   getExternalMcpConnection,
+  externalMcpConnectionReadyForMember,
   memberCanUseExternalMcpConnection,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
+import { usesMemberApiKey } from "../capability-sources/member-api-key.js"
 import {
   callExternalMcpToolRaw,
   describeExternalMcpServer,
@@ -468,7 +470,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       userId: principal.userId,
       organizationId,
     })
-    if (!member) throw new McpError(ErrorCode.InvalidRequest, "The MCP connection is not available.")
+    if (!member) return c.json({ error: "connection_not_available" }, 403)
 
     const connection = await getExternalMcpConnection({ organizationId, connectionId })
     const allowed = connection && await memberCanUseExternalMcpConnection({
@@ -476,7 +478,11 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       orgMembershipId: member.orgMembershipId,
       teamIds: member.teamIds,
     })
-    if (!connection || !allowed) throw new McpError(ErrorCode.InvalidRequest, "The MCP connection is not available.")
+    if (!connection || !allowed) return c.json({ error: "connection_not_available" }, 403)
+    if (usesMemberApiKey(connection)
+      && !await externalMcpConnectionReadyForMember(connection, member.orgMembershipId)) {
+      return c.json({ error: "connection_not_available", message: "Connect your personal API key in Your Connections." }, 403)
+    }
 
     // The direct provider catalog is a member-facing MCP surface, so it obeys
     // the same organization flag as the member-facing connection list.
@@ -510,7 +516,7 @@ async function memberFacingMcpConnectionsEnabledForOrganization(
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
-  return memberFacingMcpConnectionsEnabled(rows[0]?.metadata, { gatingEnabled: env.mcpConnectionsGatingEnabled })
+  return memberFacingMcpConnectionsEnabled(rows[0]?.metadata)
 }
 
 export const STANDARD_MCP_APP_EXTENSION = {

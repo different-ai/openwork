@@ -269,9 +269,3 @@ export function useIsEnvironmentVariableChangesPending() {
 
   return isPendingChanges;
 }
-
-export function useEnvironmentVariableAvailability() {
-  const { canModify, canApplyChanges } = useEnvironmentVariableContext();
-
-  return { canModify, canApplyChanges };
-}

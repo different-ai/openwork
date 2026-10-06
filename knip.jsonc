@@ -1,0 +1,104 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  // Run with `bash scripts/find-unused.sh` (wraps `pnpm dlx knip@5 --config knip.jsonc`).
+  // knip 5.88: the github-actions plugin throws ERR_INVALID_ARG_TYPE in bash-parser, and the
+  // bun plugin scandir()s the file arguments of `bun test a.ts b.ts`, so both are disabled.
+  "github-actions": false,
+  "bun": false,
+  "ignore": [
+    // Separate pnpm workspace (evals/pnpm-workspace.yaml); run knip from evals/ for it.
+    "evals/**",
+    "scenarios/**",
+    // Mintlify content without a package.json.
+    "packages/docs/**",
+    // Local scratch directories.
+    "manga/**",
+    "tmp/**",
+    "reports/**",
+    "services/**",
+    "deals/**",
+    "demo/**",
+    "design/**",
+    "pr/**",
+    "prds/**",
+    // Build output and generated files.
+    "**/dist/**",
+    "**/dist-electron/**",
+    "**/.next/**",
+    "**/out/**",
+    "**/.turbo/**",
+    "**/coverage/**",
+    "**/.build/**",
+    "**/target/**",
+    "**/*.bun-build",
+    "**/*.d.mts",
+    "apps/desktop/electron/generated/**",
+    "apps/desktop/.electron-runtime/**",
+    "apps/desktop/resources/**",
+    "apps/desktop/server/**",
+    "packaging/docker/workspace/**",
+    ".opencode/node_modules/**",
+    ".opencode/openwork/**",
+    ".warden/**",
+    "infra/**/.terraform/**"
+  ],
+  "ignoreDependencies": [
+    // Loaded through an obfuscated require in apps/desktop/electron/main.mjs.
+    "node-pty",
+    // Packaging and security pins (#3742, #4220).
+    "ajv-formats",
+    "htmlparser2",
+    // Used as binaries or by string (Vercel ignoreCommand, api-lint, den-api build, Vite, email dev).
+    "turbo",
+    "@stoplight/spectral-cli",
+    "@sentry/cli",
+    "babel-plugin-react-compiler",
+    "@react-email/ui"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/**/*.{mjs,ts,mts}",
+        ".github/scripts/**/*.mjs",
+        ".opencode/skills/*/scripts/*.{mjs,js}",
+        "worlds/*.ts",
+        "packaging/**/*.mjs",
+        "ee/apps/den-worker-runtime/scripts/*.mjs"
+      ],
+      "project": ["**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx}"]
+    },
+    "apps/*": {
+      "entry": ["{index,cli,main}.{js,mjs,ts,tsx}", "src/{index,cli,main}.{js,mjs,ts,tsx}", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "packages/*": {
+      "entry": ["{index,cli,main}.{js,mjs,ts,tsx}", "src/{index,cli,main}.{js,mjs,ts,tsx}", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "ee/apps/*": {
+      "entry": ["{index,cli,main}.{js,mjs,ts,tsx}", "src/{index,cli,main}.{js,mjs,ts,tsx}", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "ee/packages/*": {
+      "entry": ["{index,cli,main}.{js,mjs,ts,tsx}", "src/{index,cli,main}.{js,mjs,ts,tsx}", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "apps/server": {
+      "entry": ["src/cli.ts", "src/opencode-plugins/*.ts", "scripts/*.mjs", "**/*.test.ts"]
+    },
+    "apps/desktop": {
+      "entry": ["electron/main.mjs", "electron/*preload*.{mjs,cjs}", "electron/nuke-worker.mjs", "scripts/*.{mjs,cjs}", "**/*.test.{mjs,cjs}"]
+    },
+    "packages/mcp-apps": {
+      "entry": ["src/connection-action.tsx", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "packages/email": {
+      "entry": ["src/index.ts", "emails/*.tsx", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "packages/world": {
+      "entry": ["src/index.ts", "bin/*.mjs", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "ee/packages/den-db": {
+      "entry": ["src/index.ts", "scripts/*.{ts,mjs}", "**/*.{test,spec}.{js,cjs,mjs,ts,tsx}"]
+    },
+    "ee/packages/den-admin-mcp": {
+      "entry": ["index.mjs", "scripts/*.mjs"]
+    }
+  }
+}

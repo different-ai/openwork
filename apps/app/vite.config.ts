@@ -74,29 +74,6 @@ const buildSha = firstNonEmpty([
 ]) ?? readLocalGitSha();
 const shortBuildSha = buildSha ? buildSha.slice(0, 7) : "";
 
-// Load the Tauri → Electron migration-release fragment if present. Written
-// by scripts/migration/01-cut-migration-release.mjs for the specific
-// release commit; absent otherwise so every other build has the migration
-// prompt dormant. Pre-parsed here so Vite's define/import.meta.env picks
-// up the keys without a custom plugin.
-function loadMigrationReleaseEnv(): Record<string, string> {
-  const fragmentPath = resolve(appRoot, ".env.migration-release");
-  if (!existsSync(fragmentPath)) return {};
-  const out: Record<string, string> = {};
-  const raw = readFileSync(fragmentPath, "utf8");
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.search("=");
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (!key.startsWith("VITE_")) continue;
-    out[key] = trimmed.slice(eq + 1).trim();
-  }
-  return out;
-}
-const migrationReleaseEnv = loadMigrationReleaseEnv();
-
 // Electron packaged builds load index.html via `file://`, so asset URLs
 // must be relative. Tauri serves via its own protocol so absolute paths
 // work there. Gate on an env var the electron build script sets.
@@ -121,12 +98,6 @@ export default defineConfig(({ command, isPreview }) => {
     base: isElectronPackagedBuild ? "./" : "/",
     ...(process.env.OPENWORK_VITE_CACHE_DIR ? { cacheDir: process.env.OPENWORK_VITE_CACHE_DIR } : {}),
     define: {
-      ...Object.fromEntries(
-        Object.entries(migrationReleaseEnv).map(([k, v]) => [
-          `import.meta.env.${k}`,
-          JSON.stringify(v),
-        ]),
-      ),
       "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
       "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
     },
@@ -163,7 +134,6 @@ export default defineConfig(({ command, isPreview }) => {
       rollupOptions: {
         input: {
           app: resolve(appRoot, "index.html"),
-          overlay: resolve(appRoot, "overlay.html"),
         },
       },
     },

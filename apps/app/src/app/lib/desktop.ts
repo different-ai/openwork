@@ -38,8 +38,6 @@ import type {
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
-  DesktopBinaryDownloadInput,
-  DesktopBinaryDownloadResult,
   DesktopFetchResult,
   DesktopMultipartUploadInput,
   EvalRelaunchResult,
@@ -181,7 +179,7 @@ declare global {
         hide?: (options?: { preserveShortcutFocus?: boolean }) => Promise<void>;
         openUrl?: (
           url: string,
-          provider?: "auto" | "builtin" | "external",
+          provider?: "auto" | "builtin",
           options?: { sessionId?: string | null },
         ) => Promise<OpenBrowserUrlResult>;
         setVisibleSession?: (sessionId: string | null) => Promise<string | null>;
@@ -400,18 +398,6 @@ export async function desktopUploadMultipart(
   );
 }
 
-export async function desktopDownloadBinary(
-  input: Omit<DesktopBinaryDownloadInput, "transferId">,
-  signal?: AbortSignal,
-): Promise<DesktopBinaryDownloadResult> {
-  const transferId = desktopTransferId();
-  return runCancellableDesktopTransfer(
-    transferId,
-    signal,
-    () => invokeElectronHelper("__downloadBinary", { ...input, transferId }),
-  );
-}
-
 type DesktopFetchMainOptions = {
   timeoutMs?: number;
   agentContextDiagnosticsDeadlineAtMs?: number;
@@ -578,10 +564,6 @@ export async function revealDesktopItemInDir(target: string): Promise<void> {
   }
 }
 
-export async function getDesktopFileIcon(target: string, size?: "small" | "normal" | "large"): Promise<string | null> {
-  return invokeElectronHelper("__getFileIcon", target, size);
-}
-
 export async function applyBrandAppName(appName: string | null): Promise<string> {
   const result = await invokeElectronHelper("__applyBrandAppName", appName);
   return result.appName;
@@ -689,16 +671,9 @@ const {
   workspaceCreate,
   workspaceCreateRemote,
   workspaceUpdateRemote,
-  workspaceUpdateDisplayName,
   workspaceForget,
-  workspaceAddAuthorizedRoot,
-  workspaceExportConfig,
-  workspaceImportConfig,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
-  opencodeCommandList,
-  opencodeCommandWrite,
-  opencodeCommandDelete,
   engineStop,
   engineRestart,
   appBuildInfo,
@@ -710,16 +685,12 @@ const {
   connectLinkAccept,
   nukeOpenworkAndOpencodeConfigPreview,
   nukeOpenworkAndOpencodeConfigAndExit,
-  sandboxCleanupOpenworkContainers,
   openworkServerInfo,
   openworkServerRestart,
   runtimeBootstrap,
   engineInfo,
-  engineDoctor,
   pickDirectory,
   pickFile,
-  saveFile,
-  engineInstall,
   desktopNotificationShow,
   importSkill,
   installSkillTemplate,
@@ -731,9 +702,7 @@ const {
   readOpencodeConfig,
   writeOpencodeConfig,
   resetOpenworkState,
-  resetOpencodeCache,
   opencodeMcpAuth,
-  setWindowDecorations,
 } = desktopBridge;
 
 export {
@@ -744,16 +713,9 @@ export {
   workspaceCreate,
   workspaceCreateRemote,
   workspaceUpdateRemote,
-  workspaceUpdateDisplayName,
   workspaceForget,
-  workspaceAddAuthorizedRoot,
-  workspaceExportConfig,
-  workspaceImportConfig,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
-  opencodeCommandList,
-  opencodeCommandWrite,
-  opencodeCommandDelete,
   engineStop,
   engineRestart,
   appBuildInfo,
@@ -765,16 +727,12 @@ export {
   connectLinkAccept,
   nukeOpenworkAndOpencodeConfigPreview,
   nukeOpenworkAndOpencodeConfigAndExit,
-  sandboxCleanupOpenworkContainers,
   openworkServerInfo,
   openworkServerRestart,
   runtimeBootstrap,
   engineInfo,
-  engineDoctor,
   pickDirectory,
   pickFile,
-  saveFile,
-  engineInstall,
   desktopNotificationShow,
   importSkill,
   installSkillTemplate,
@@ -786,7 +744,5 @@ export {
   readOpencodeConfig,
   writeOpencodeConfig,
   resetOpenworkState,
-  resetOpencodeCache,
   opencodeMcpAuth,
-  setWindowDecorations,
 };

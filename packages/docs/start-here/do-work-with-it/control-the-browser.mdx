@@ -5,13 +5,13 @@ description: "How to use OpenWork to automate the built-in browser"
 
 Use the built-in OpenWork Browser for websites.
 
-OpenWork can open pages, click, fill forms, read page content, and take screenshots inside that browser. If you connect to a remote OpenWork server, the browser runs on that remote worker.
+OpenWork can open pages, click, fill forms, read page content, and take screenshots inside that browser. The browser runs in the OpenWork desktop app; cloud workers and OpenWork Web do not have one.
 
 Today, the supported path is the first-party `OpenWork Browser` extension.
 
 ## Requirements
 
-- Use the desktop app or a remote worker that exposes the OpenWork Browser.
+- Use the OpenWork desktop app.
 - Keep `OpenWork Browser` enabled in `Settings > Library`.
 
 Then go back to the session view and ask OpenWork to open a website.
@@ -26,7 +26,7 @@ Choose **Take over** at any time to pause browser operations and revoke the gran
 
 Website tools (WebMCP) still require separate approval to run, and their results stay local until you choose **Share result**. Browser control does not grant access to your regular Chrome profile or other conversations' tabs.
 
-In the desktop browser toolbar, **Suspend** frees a tab's memory after a warning. This is manual, not a page snapshot: form input, scroll position, and page history are lost. **Reload** or selecting the suspended tab opens its saved URL again. Tabs opened or restored for browser work stay protected until `browser.release_tab` declares all running and queued work complete. Release does not suspend or invalidate the current target; there is no automatic reclamation. For later work, `browser.restore_tab` checks conversation ownership and returns a fresh protected handle to use.
+Tabs opened or restored for browser work stay protected until `browser.release_tab` declares all running and queued work complete. Release does not suspend or invalidate the current target; there is no automatic reclamation. For later work, `browser.restore_tab` checks conversation ownership and returns a fresh protected handle to use.
 
 ## Keyboard shortcuts
 

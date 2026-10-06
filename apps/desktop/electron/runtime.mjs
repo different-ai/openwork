@@ -1760,57 +1760,6 @@ export function createRuntimeManager({
     };
   }
 
-  function engineDoctor(options = {}) {
-    const resolved = resolveOpencodeBinary(options?.opencodeBinPath);
-    if (!resolved?.path) {
-      return {
-        found: false,
-        inPath: false,
-        resolvedPath: null,
-        resolvedSource: null,
-        version: null,
-        supportsServe: false,
-        notes: ["OpenCode binary not found in bundled sidecars or PATH."],
-        serveHelpStatus: null,
-        serveHelpStdout: null,
-        serveHelpStderr: null,
-      };
-    }
-
-    const versionResult = spawnSync(resolved.path, ["--version"], { encoding: "utf8" });
-    const helpResult = spawnSync(resolved.path, ["serve", "--help"], { encoding: "utf8" });
-    const notes = [`Using ${resolved.source}: ${resolved.path}`];
-    if (versionResult.status !== 0) {
-      notes.push("OpenCode version probe failed.");
-    }
-    if (helpResult.status !== 0) {
-      notes.push("OpenCode serve --help probe failed.");
-    }
-
-    return {
-      found: true,
-      inPath: resolved.source === "path",
-      resolvedPath: resolved.path,
-      resolvedSource: resolved.source,
-      version: versionResult.stdout?.trim() || versionResult.stderr?.trim() || null,
-      supportsServe: helpResult.status === 0,
-      notes,
-      serveHelpStatus: typeof helpResult.status === "number" ? helpResult.status : null,
-      serveHelpStdout: helpResult.stdout?.trim() || null,
-      serveHelpStderr: helpResult.stderr?.trim() || null,
-    };
-  }
-
-  async function pinnedOpencodeInstallCommand() {
-    const constantsPath = path.resolve(desktopRoot, "../../constants.json");
-    const payload = JSON.parse(await readFile(constantsPath, "utf8"));
-    const version = String(payload?.opencodeVersion ?? "").trim().replace(/^v/, "");
-    if (!version) {
-      throw new Error("constants.json is missing opencodeVersion");
-    }
-    return `curl -fsSL https://opencode.ai/install | bash -s -- --version ${version} --no-modify-path`;
-  }
-
   function killProcessId(pid, signal = "SIGTERM") {
     if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return;
     try {
@@ -2300,31 +2249,6 @@ export function createRuntimeManager({
     return info;
   }
 
-  async function engineInstall() {
-    if (process.platform === "win32") {
-      return {
-        ok: false,
-        status: -1,
-        stdout: "",
-        stderr:
-          "Guided install is not supported on Windows yet. Install the OpenWork-pinned OpenCode version manually, then restart OpenWork.",
-      };
-    }
-
-    const installDir = path.join(app.getPath("home"), ".opencode", "bin");
-    const command = await pinnedOpencodeInstallCommand();
-    const result = await runShellCommand("bash", ["-lc", command], {
-      env: { ...(await buildChildEnv()), OPENCODE_INSTALL_DIR: installDir },
-      timeoutMs: 180_000,
-    });
-    return {
-      ok: result.status === 0,
-      status: result.status,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    };
-  }
-
   async function opencodeMcpAuth(projectDir, serverName) {
     const safeProjectDir = String(projectDir ?? "").trim();
     const safeServerName = String(serverName ?? "").trim();
@@ -2385,8 +2309,6 @@ export function createRuntimeManager({
     dispose: () => withRuntimeLifecycle(() => stopAllRuntimeChildren()),
     runtimeStatus,
     engineInfo,
-    engineDoctor,
-    engineInstall,
     openworkServerInfo,
     openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
     opencodeMcpAuth,

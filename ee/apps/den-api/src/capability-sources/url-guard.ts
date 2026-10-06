@@ -288,6 +288,12 @@ function createRedirectSafeFetch(
       if (!REDIRECT_STATUSES.has(response.status) || !location) {
         return normalizeResponseRealm(response)
       }
+      // A caller binding a credential to one exact destination can opt out of
+      // redirects. The manual SSRF loop must not override that stricter policy.
+      if (init?.redirect === "error") {
+        await response.body?.cancel()
+        throw new Error("MCP outbound request refused a redirect.")
+      }
       if (redirectCount >= MAX_GUARDED_REDIRECTS) {
         await response.body?.cancel()
         throw new Error("MCP outbound request exceeded the guarded redirect limit.")

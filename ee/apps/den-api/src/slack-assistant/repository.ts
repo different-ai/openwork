@@ -224,7 +224,7 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
       capabilityEnabled: organizationHasCapability(organization.metadata, "slackAssistant"),
       enabled: installation.enabled,
       individualAccounts: true,
-      mcpEnabled: memberFacingMcpConnectionsEnabled(organization.metadata, { gatingEnabled: true }),
+      mcpEnabled: memberFacingMcpConnectionsEnabled(organization.metadata),
       webAccess: runtime === "headless" || access.hasAccess,
       activeMember: true,
       granted,

@@ -11,10 +11,12 @@ export type ExternalMcpOAuthStateIdentitySource = {
   url: string
   authType: ExternalMcpAuthType
   credentialMode: ExternalMcpCredentialMode
+  apiKeyAuthScheme?: "bearer" | "token"
 }
 
 type NonSecretExternalMcpOAuthStateIdentity =
   | readonly [url: string, authType: ExternalMcpAuthType, credentialMode: ExternalMcpCredentialMode]
+  | readonly [url: string, authType: "apikey", credentialMode: ExternalMcpCredentialMode, apiKeyAuthScheme: "bearer" | "token"]
   | readonly [nativeProviderId: string, url: string, authType: ExternalMcpAuthType, credentialMode: ExternalMcpCredentialMode]
 
 export function normalizeExternalMcpIdentityUrl(value: string): string {
@@ -39,6 +41,7 @@ function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): 
   if (source.kind === "native_provider") {
     return [source.id, url, authType, credentialMode]
   }
+  if (authType === "apikey") return [url, authType, credentialMode, source.apiKeyAuthScheme === "token" ? "token" : "bearer"]
   return [url, authType, credentialMode]
 }
 

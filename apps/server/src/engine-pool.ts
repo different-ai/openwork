@@ -258,10 +258,6 @@ export function isEngineConnectionFailure(error: unknown): boolean {
   return false;
 }
 
-export function isConnectionRefusedClassError(error: unknown): boolean {
-  return isEngineConnectionFailure(error);
-}
-
 function isRoutableGeneration(
   generation: Generation,
 ): generation is Generation & { status: "primary" | "draining" } {

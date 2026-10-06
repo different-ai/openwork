@@ -19,9 +19,6 @@ export const OLLAMA_PROVIDER_CONFIG = {
   defaultModelId: "qwen2.5-coder:7b",
 };
 
-export const OPENAI_IMAGE_EXTENSION_ID = "openai-image-generation";
-export const OPENAI_IMAGE_MODEL = "gpt-image-2";
-
 function readProperty(value: unknown, key: string) {
   if (typeof value !== "object" || value === null) return undefined;
   return Object.getOwnPropertyDescriptor(value, key)?.value;

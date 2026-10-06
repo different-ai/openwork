@@ -9,8 +9,8 @@ const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => wo
 
 const stepSchema = z.object({
   label: z.string(),
-  icon: z.enum(["app", "file", "dot", "computer"]),
-  status: z.enum(["running", "done", "error"]),
+  icon: z.enum(["app", "computer"]),
+  status: z.enum(["running", "done"]),
   app: z.string().nullable(),
   startedAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
@@ -31,6 +31,8 @@ const turnSchema = z.object({
   attachments: z.array(z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number(), updatedAt: z.number().optional() })),
   /** Files Workbot made or revised while answering, to open from the answer. `updatedAt` moves with each revision. */
   outputs: z.array(z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number(), updatedAt: z.number().optional() })).default([]),
+  /** The emoji Workbot reacted to the message with, shown on the person's bubble. */
+  reaction: z.string().nullable().default(null),
   parts: z.array(partSchema),
   modelSteps: z.number(),
   error: z.string().nullable(),

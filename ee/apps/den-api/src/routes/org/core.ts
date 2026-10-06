@@ -732,18 +732,14 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           orgManagedDashboards: organizationManagedDashboardsEnabled(payload.organization.metadata),
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
-          mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
-            gatingEnabled: env.mcpConnectionsGatingEnabled,
-          }),
+          mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata),
           // Building your own Apps is per-organization and default-off:
           // platform admins enable metadata.capabilities.appMcpServers in /admin.
           appMcpServers: appMcpServersEnabled(payload.organization.metadata),
           // Workflows/Code Mode are enabled for every organization; the field
           // remains for published clients that still read it.
           workflows: true,
-          installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
-            gatingEnabled: env.installLinksGatingEnabled,
-          }),
+          installLinks: organizationInstallLinksEnabled(payload.organization.metadata),
           // Effective offer: the deployment switch enables Web generally,
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.

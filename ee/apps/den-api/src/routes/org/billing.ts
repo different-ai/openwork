@@ -2,7 +2,6 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
 import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -27,6 +26,16 @@ const openWorkWebUnavailableSchema = z.object({
   error: z.literal("openwork_web_not_available"),
   message: z.string(),
 }).meta({ ref: "OpenWorkWebUnavailableError" })
+
+const retiredPolarBillingStatus = {
+  featureGateEnabled: false,
+  hasActivePlan: true,
+  checkoutRequired: false,
+  portalUrl: null,
+  price: null,
+  subscription: null,
+  invoices: [],
+}
 
 function openWorkWebUnavailableResponse(): { error: "openwork_web_not_available"; message: string } {
   return {
@@ -173,16 +182,10 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         includePortalUrl: canManageBilling,
         returnUrl: billingReturnUrl(c),
       })
-      const polar = email
-        ? await getCloudWorkerBillingStatus({
-            userId: user.id,
-            email,
-            name: user.name ?? email,
-          }, {
-            includePortalUrl: canManageBilling,
-            includeInvoices: false,
-          }).catch(() => null)
-        : null
+      // Den web still reads `billing.polar` as the cloud-worker access summary
+      // (den-flow.ts getBillingSummary). Polar billing is retired, so this is
+      // the constant "no gate, access allowed" shape it always had in practice.
+      const polar = email ? retiredPolarBillingStatus : null
 
       return c.json({ billing: { ...billing, polar } })
     },

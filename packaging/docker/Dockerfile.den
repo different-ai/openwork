@@ -38,6 +38,7 @@ COPY evals/packages/cdp/package.json /app/evals/packages/cdp/package.json
 COPY evals/packages/labs/package.json /app/evals/packages/labs/package.json
 COPY evals/packages/matchers/package.json /app/evals/packages/matchers/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
+COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protocol/package.json
 COPY ee/packages/cloud-runtime/package.json /app/ee/packages/cloud-runtime/package.json
 COPY ee/packages/cloud-runtime-daytona/package.json /app/ee/packages/cloud-runtime-daytona/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
@@ -60,6 +61,7 @@ COPY packages/mcp-apps /app/packages/mcp-apps
 COPY packages/paths /app/packages/paths
 COPY packages/browser-tabs /app/packages/browser-tabs
 COPY ee/packages/utils /app/ee/packages/utils
+COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
 COPY ee/packages/cloud-runtime /app/ee/packages/cloud-runtime
 COPY ee/packages/cloud-runtime-daytona /app/ee/packages/cloud-runtime-daytona
 COPY ee/packages/den-db /app/ee/packages/den-db

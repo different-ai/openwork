@@ -1533,6 +1533,8 @@ export function McpView(props: McpViewProps) {
             taxonomy="connection"
             connected={ready}
             connectedLabel={orgMcpConnectionActionLabel(connection)}
+            savedKeyOnly={connection.authType === "apikey" && connection.credentialMode === "per_member"}
+            disconnectedLabel={connection.authType === "apikey" && connection.credentialMode === "per_member" ? t("extensions.detail_no_key") : undefined}
             connecting={connectingBusy || disconnectingBusy}
             connectingLabel={disconnectingBusy ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_waiting_browser")}
             beta
@@ -1546,14 +1548,14 @@ export function McpView(props: McpViewProps) {
               },
               {
                 label: t("extensions.detail_fact_whose_account"),
-                value: connection.credentialMode === "shared" ? t("extensions.detail_account_org") : t("extensions.detail_account_yours"),
+                value: connection.credentialMode === "shared" ? t("extensions.detail_account_org") : connection.authType === "apikey" ? t("extensions.detail_account_your_key") : t("extensions.detail_account_yours"),
               },
               ...(addedBy?.kind === "person" && addedBy.sharedByName
                 ? [{ label: t("extensions.detail_fact_added_by"), value: addedBy.sharedByName }]
                 : []),
             ]}
             connectLabel={orgMcpConnectionActionLabel(connection)}
-            reconnectLabel={t("mcp.org_connection_reconnect_action")}
+            reconnectLabel={connection.authType === "apikey" && connection.credentialMode === "per_member" ? "Replace key" : t("mcp.org_connection_reconnect_action")}
             onConnect={!ready && canAuthorize && props.connectOrgMcp ? () => props.connectOrgMcp?.(connection.id) : undefined}
             onReconnect={ready && canAuthorize && props.reconnectOrgMcp ? () => props.reconnectOrgMcp?.(connection.id) : undefined}
             onUninstall={canDisconnect && props.disconnectOrgMcp ? () => props.disconnectOrgMcp?.(connection.id) : undefined}

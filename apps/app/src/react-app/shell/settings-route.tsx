@@ -216,8 +216,6 @@ import {
 import { resolveEngineRootEndpoint } from "@/app/lib/workspace-endpoint";
 import {
   buildLocalProviderConfig,
-  OPENAI_IMAGE_EXTENSION_ID,
-  OPENAI_IMAGE_MODEL,
   type LocalProviderInstallInput,
 } from "@/react-app/domains/settings/openai-image-extension";
 import {
@@ -569,13 +567,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [localProviderBusy, setLocalProviderBusy] = useState(false);
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
-  const [imageExtensionBusy, setImageExtensionBusy] = useState(false);
-  const [imageExtensionStatus, setImageExtensionStatus] = useState<string | null>(null);
-  const [imageExtensionError, setImageExtensionError] = useState<string | null>(null);
   const [extensionStateVersion, setExtensionStateVersion] = useState(0);
-  const [imageGenerationBusy, setImageGenerationBusy] = useState(false);
-  const [imageGenerationStatus, setImageGenerationStatus] = useState<string | null>(null);
-  const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
   const [userEnvKeys, setUserEnvKeys] = useState<string[]>([]);
   const [cloudMcpHealthResult, setCloudMcpHealthResult] = useState<{
     workspaceId: string;
@@ -1293,79 +1285,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return () => { cancelled = true; };
   }, [openworkClient]);
 
-  const installOpenAiImageExtension = useCallback(async (apiKey: string) => {
-    const resolvedApiKey = apiKey.trim();
-    if (!openworkClient) {
-      setImageExtensionError("OpenWork server is not connected.");
-      return;
-    }
-    if (!resolvedApiKey) {
-      setImageExtensionError("OpenAI API key is required.");
-      return;
-    }
-
-    setImageExtensionBusy(true);
-    setImageExtensionStatus(null);
-    setImageExtensionError(null);
-    try {
-      await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
-      setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
-      setImageExtensionStatus("Saved OPENAI_API_KEY. Agents can use OpenWork extension actions for image generation.");
-    } catch (error) {
-      setImageExtensionError(describeRouteError(error));
-    } finally {
-      setImageExtensionBusy(false);
-    }
-  }, [openworkClient]);
-
-  const generateOpenAiTestImage = useCallback(async (input: { apiKey: string; prompt: string }) => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
-    const workspaceId = runtimeWorkspaceId?.trim() ?? "";
-    const apiKey = input.apiKey.trim();
-    const prompt = input.prompt.trim();
-    if (!client || !workspaceId) {
-      setImageGenerationError("OpenWork server is not connected for this workspace.");
-      return;
-    }
-    if (!apiKey) {
-      setImageGenerationError("OpenAI API key is required.");
-      return;
-    }
-    if (!prompt) {
-      setImageGenerationError("Prompt is required.");
-      return;
-    }
-
-    setImageGenerationBusy(true);
-    setImageGenerationStatus(null);
-    setImageGenerationError(null);
-    try {
-      if (openworkClient) {
-        await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: apiKey }]);
-        setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
-      }
-      const response = await client.callExtensionAction({
-        extensionId: OPENAI_IMAGE_EXTENSION_ID,
-        action: "image_generate",
-        args: { prompt },
-        context: { directory: selectedWorkspaceRoot || undefined },
-      });
-      if (!response.ok) {
-        setImageGenerationError(response.message);
-        return;
-      }
-      const result = response.result;
-      const path = typeof result === "object" && result !== null && "path" in result && typeof result.path === "string"
-        ? result.path
-        : "an artifact";
-      setImageGenerationStatus(`Generated ${path} with ${OPENAI_IMAGE_MODEL}.`);
-    } catch (error) {
-      setImageGenerationError(describeRouteError(error));
-    } finally {
-      setImageGenerationBusy(false);
-    }
-  }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
-
   const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
@@ -2033,19 +1952,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const mcpConfigured = new Set(connectionsSnapshot.mcpServers.map((s) => s.name));
     const connectedProviders = new Set(providerConnectedIds);
     const configuredEnvKeys = new Set(userEnvKeys);
-    const loadedPlugins = new Set<string>();
-    // Browser plugin detection: check if any configured plugin matches the chrome-devtools name.
-    // For now, treat it as loaded if the plugin is in the MCP/plugin list — this will
-    // be refined when we add a real plugin-loaded signal from the engine.
-    const browserPluginConfigured = connectionsSnapshot.mcpServers.some(
-      (s) => s.name === "opencode-chrome-devtools" || s.config.command?.some((c: string) => c.includes("chrome-devtools")),
-    );
-    if (browserPluginConfigured) loadedPlugins.add("opencode-chrome-devtools");
 
     return {
       mcpStatuses: connectionsSnapshot.mcpStatuses,
       mcpConfigured,
-      loadedPlugins,
       connectedProviders,
       configuredEnvKeys,
       // Toggle state reader for extensions with defaultEnabled / explicit toggle.
@@ -2077,16 +1987,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     hostOpenworkServerClient: openworkClient,
     enablementContext,
     restartLocalServer: restartExtensionLocalServer,
-    providers,
-    providerConnectedIds,
-    userEnvKeys,
-    imageExtension: {
-      busy: imageExtensionBusy || imageGenerationBusy,
-      status: imageExtensionStatus ?? imageGenerationStatus,
-      error: imageExtensionError ?? imageGenerationError,
-      onInstall: installOpenAiImageExtension,
-      onTestGenerate: generateOpenAiTestImage,
-    },
     localProvider: {
       busy: localProviderBusy,
       status: localProviderStatus,

@@ -221,12 +221,3 @@ export const useNotificationStore = create<NotificationStore>()(
     },
   ),
 );
-
-export function useUnreadNotificationCount(): number {
-  return useNotificationStore((state) =>
-    state.notifications.reduce(
-      (total, notification) => total + (notification.readAt === null ? 1 : 0),
-      0,
-    ),
-  );
-}

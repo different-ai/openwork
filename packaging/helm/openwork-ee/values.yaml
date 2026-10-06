@@ -59,7 +59,6 @@ config:
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: ""
-    installLinksGatingEnabled: "false"
     # Self-hosted Automations are opt-in. Hosted OpenWork Cloud enables them.
     automationsEnabled: "false"
     # Self-hosted Dashboards are opt-in. Hosted environments use the same Den flag.
@@ -117,13 +116,6 @@ config:
     createTimeoutSeconds: ""
     deleteTimeoutSeconds: ""
     healthcheckTimeoutMs: ""
-  polar:
-    featureGateEnabled: "false"
-    apiBase: ""
-    productId: ""
-    benefitId: ""
-    successUrl: ""
-    returnUrl: ""
   inference:
     openRouterWorkspaceId: ""
     stripeInferencePriceId: ""
@@ -187,7 +179,6 @@ secret:
     betterAuthSecret: BETTER_AUTH_SECRET
     denDbEncryptionKey: DEN_DB_ENCRYPTION_KEY
     daytonaApiKey: DAYTONA_API_KEY
-    polarAccessToken: POLAR_ACCESS_TOKEN
     openRouterManagementApiKey: OPENROUTER_MANAGEMENT_API_KEY
     inferenceAdminToken: INFERENCE_ADMIN_TOKEN
     inferenceWebhookSecret: INFERENCE_WEBHOOK_SECRET
@@ -211,7 +202,6 @@ secret:
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
     denDbEncryptionKey: CHANGE_ME_32_CHARS_MINIMUM_DB_ENCRYPTION
     daytonaApiKey: ""
-    polarAccessToken: ""
     openRouterManagementApiKey: ""
     inferenceAdminToken: ""
     inferenceWebhookSecret: ""

@@ -92,8 +92,17 @@ them, from the repo root; never print a value.
 - `preview-app-web`: configurable source web app plus the isolated server it
   needs, locally or on an owned private Daytona sandbox. This is not Den's web
   UI and not the Cloud-off `seed.appWeb` test fixture. No Den or activation is seeded.
-- Freestyle supports `preview-app-web`, `acme-web`, and `preview-desktop`
-  (signed-out `fresh` only); `preview-den` and `preview-full` do not run there.
+- `preview-workbot`: **Workbot with what it runs on**: the seeded Acme Den
+  (sign in as alex@acme.test), the headless runner and the Workbot app, with
+  Workbot and headless Automations turned on. The model is the deterministic
+  Acme upstream and the runner's computer is off, so no paid or Freestyle key
+  enters the world. Local, Daytona (Den sandbox plus one private sandbox for
+  the runner and Workbot) and Freestyle (`--source ref:dev`); every placement
+  signs in through Den and gets a runner answer before reporting ready. On
+  Freestyle, open the `workbotUrl` link: it authorizes Den and Workbot together.
+- Freestyle supports `preview-app-web`, `acme-web`, `preview-workbot`, and
+  `preview-desktop` (signed-out `fresh` only); `preview-den` and `preview-full`
+  do not run there.
 
 To turn on an app setting such as the v2 engine, export it and select it with
 `--env` **before** `--`; desktop previews on local and Daytona pass selected keys

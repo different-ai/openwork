@@ -72,14 +72,6 @@ export function automationModelOptions(
   })
 }
 
-export function automationProviderCatalog(
-  providers: readonly ProviderListItem[] | undefined,
-): AutomationProviderCatalog {
-  const catalog: AutomationProviderCatalog = {}
-  for (const provider of providers ?? []) catalog[provider.id] = { ...(provider.models ?? {}) }
-  return catalog
-}
-
 export function findAutomationModelOption(
   options: readonly AutomationModelOption[],
   model: Pick<AutomationModel, "providerId" | "modelId">,

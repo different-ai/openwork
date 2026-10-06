@@ -13,6 +13,7 @@ export type ToolErrorAttribution = {
 }
 
 export type ChatToolReconnectAction = {
+  credentialKind?: "personal_key";
   connectionId: string
   connectionName: string
   label: string
@@ -124,8 +125,21 @@ export function reconnectActionFromChatToolResult(
   options?: ChatConnectionTargetOptions,
 ): ChatToolReconnectAction | null {
   const target = chatConnectionTarget(toolName, result, input, options)
-  if (!target?.memberOAuth) return null
-  return reconnectActionFromConnection(target.connection)
+  if (!target) return null
+  if (target.memberPersonalKey) {
+    const { connection } = target
+    // Personal keys use credential enrollment, never the host's OAuth gate.
+    if (connection.actor !== "member" || connection.action?.surface !== "openwork_your_connections"
+      || connection.action.type !== "update_credentials"
+      || (connection.state !== "needs_connection" && connection.state !== "reauth_required")) return null
+    return {
+      connectionId: connection.connectionId,
+      connectionName: connection.connectionName,
+      label: connection.state === "reauth_required" ? "Replace key" : "Add key",
+      credentialKind: "personal_key",
+    }
+  }
+  return target.memberOAuth ? reconnectActionFromConnection(target.connection) : null
 }
 
 /** A host-validated member connection uses the same OAuth action as a tool result. */

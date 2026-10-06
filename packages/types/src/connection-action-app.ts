@@ -91,6 +91,7 @@ export function connectionResultRecord(value: unknown): Record<string, unknown> 
 export function connectionTargetFromResult(result: unknown): {
   connection: ConnectionActionPayload
   memberOAuth: boolean
+  memberPersonalKey: boolean
 } | null {
   const parsed = connectionResultRecord(result)
   if (!parsed) return null
@@ -141,7 +142,7 @@ export function connectionTargetFromResult(result: unknown): {
   const targetId = target?.connectionId
   if (targetId && Array.isArray(parsed.matches) && parsed.matches.some(match => record(match)
     && typeof match.connectionId === "string" && match.connectionId !== targetId)) return null
-  return target ? { connection: target, memberOAuth } : null
+  return target ? { connection: target, memberOAuth, memberPersonalKey: authType === "apikey" && credentialMode === "per_member" } : null
 }
 
 export function isMemberConnectionDecision(connection: ConnectionActionPayload): boolean {

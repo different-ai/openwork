@@ -155,14 +155,3 @@ export function trackTaskCompleted(sessionId: string, durationMs: number): void 
 export function trackTaskFailed(sessionId: string, durationMs: number): void {
   trackTelemetryEvent("task.failed", { sessionId, durationMs, success: false });
 }
-
-/**
- * Flush any pending events immediately. Call on sign-out or app close.
- */
-export function flushTelemetry(): void {
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
-  void flushEvents();
-}

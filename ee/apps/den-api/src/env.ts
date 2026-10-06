@@ -152,23 +152,14 @@ const EnvSchema = z.object({
   VERCEL_TEAM_SLUG: z.string().optional(),
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
-  DEN_INSTALL_LINKS_GATING_ENABLED: z.string().optional(),
   DEN_CONNECT_LINK_MODE: z.enum(["exchange", "signed"]).optional(),
   DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
   DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
-  DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
   DEN_APP_MCP_SERVERS_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
-  POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
-  POLAR_API_BASE: z.string().optional(),
-  POLAR_ACCESS_TOKEN: z.string().optional(),
-  POLAR_PRODUCT_ID: z.string().optional(),
-  POLAR_BENEFIT_ID: z.string().optional(),
-  POLAR_SUCCESS_URL: z.string().optional(),
-  POLAR_RETURN_URL: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
@@ -506,18 +497,8 @@ const mcpAdditionalResources = normalizeAbsoluteUrlCsv(
   parsed.DEN_MCP_ADDITIONAL_RESOURCES,
 )
 
-const polarFeatureGateEnabled =
-  (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
-
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
-
-// Deprecated compatibility knob for organization install links. The environment
-// variable is still parsed so existing deployment configs keep starting, but
-// organizationInstallLinksEnabled ignores this value: install links are
-// default-on unless org metadata explicitly disables them.
-const installLinksGatingEnabled =
-  (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
 // Exchange mode is the zero-config default. Signed mode is an explicit v2
 // opt-in because its public key must already be trusted by the desktop build.
@@ -534,13 +515,6 @@ const initialAdminBootstrapCode = optionalString(parsed.DEN_INITIAL_ADMIN_BOOTST
 const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && connectLinkKid
   ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
   : null
-
-// Deprecated compatibility knob for member-facing org MCP connections. The
-// environment variable is still parsed so existing deployment configs keep
-// starting, but memberFacingMcpConnectionsEnabled ignores this value: Connect is
-// default-on unless org metadata explicitly disables it.
-const mcpConnectionsGatingEnabled =
-  (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
 
 // Generated custom views require the matching desktop MCP Apps host release.
 // Keep the Den capability fail-closed so a Den deployment cannot advertise
@@ -709,9 +683,7 @@ export const env = {
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,
-  installLinksGatingEnabled,
   connectLink,
-  mcpConnectionsGatingEnabled,
   generatedArtifactViewsEnabled,
   appMcpServersEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
@@ -909,15 +881,6 @@ export const env = {
     teamId: parsed.VERCEL_TEAM_ID,
     teamSlug: parsed.VERCEL_TEAM_SLUG,
     dnsDomain: parsed.VERCEL_DNS_DOMAIN,
-  },
-  polar: {
-    featureGateEnabled: polarFeatureGateEnabled,
-    apiBase: parsed.POLAR_API_BASE ?? "https://api.polar.sh",
-    accessToken: parsed.POLAR_ACCESS_TOKEN,
-    productId: parsed.POLAR_PRODUCT_ID,
-    benefitId: parsed.POLAR_BENEFIT_ID,
-    successUrl: parsed.POLAR_SUCCESS_URL,
-    returnUrl: parsed.POLAR_RETURN_URL,
   },
   daytona: {
     envPath: optionalString(parsed.OPENWORK_DAYTONA_ENV_PATH),

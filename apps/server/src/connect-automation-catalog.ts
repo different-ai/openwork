@@ -102,10 +102,6 @@ export async function readOpenWorkAutomationCatalog(
   }
 }
 
-export function resetOpenWorkAutomationCatalogCacheForTests(): void {
-  catalogCache.clear();
-}
-
 function scheduleText(schedule: OpenWorkAutomationIndex["automations"][number]["schedule"]): string {
   if (schedule.kind === "once") return `once at ${new Date(schedule.at).toISOString()} (${schedule.timezone})`;
   const time = `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`;

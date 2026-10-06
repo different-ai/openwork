@@ -7,10 +7,7 @@ import type { Client, ModelOption } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import { pendingGatewayModelOptions, type GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { useModelCatalog } from "@/react-app/domains/models/use-model-catalog";
-import {
-  openModelPickerEvent,
-  pendingModelPickerProviderIdsKey,
-} from "@/react-app/shell/new-providers-listener";
+import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 
 export type UseModelPickerInput = {
   client: Client | null;
@@ -56,29 +53,12 @@ export function useModelPicker(input: UseModelPickerInput) {
   // Open model picker when the global toast's "Pick a new default?" is clicked
   useEffect(() => {
     const handler = (event: Event) => {
-      try {
-        window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
-      } catch {}
       const ids = (event as CustomEvent<{ newProviderIds?: string[] }>).detail?.newProviderIds;
       if (ids && ids.length > 0) setRecentProviderIds(new Set(ids));
       setOpen(true);
     };
     window.addEventListener(openModelPickerEvent, handler);
     return () => window.removeEventListener(openModelPickerEvent, handler);
-  }, []);
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(pendingModelPickerProviderIdsKey);
-      if (!raw) return;
-      window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
-      const parsed = JSON.parse(raw);
-      const ids = Array.isArray(parsed) ? parsed : parsed?.newProviderIds;
-      if (Array.isArray(ids) && ids.every((id) => typeof id === "string")) setRecentProviderIds(new Set(ids));
-      setOpen(true);
-    } catch {
-      // Ignore malformed pending-picker state.
-    }
   }, []);
 
   // Two sources of "new": providers not yet in the seen-set, and providers named by the toast.

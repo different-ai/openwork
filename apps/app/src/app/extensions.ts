@@ -87,7 +87,6 @@ export type OpenWorkExtensionLifecycle = {
 
 export type EnablementConditionType =
   | "mcp-connected"
-  | "plugin-loaded"
   | "provider-connected"
   | "env-set"
   | "toggle-enabled";
@@ -179,7 +178,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     enablement: [
       { type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" },
     ],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
+    lifecycle: { reload: ["plugins", "agents"] },
     defaultEnabled: true,
     platform: ["darwin", "linux", "windows"],
   },

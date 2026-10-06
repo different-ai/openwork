@@ -391,9 +391,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       const input = c.req.valid("json")
       const payload = c.get("organizationContext")
 
-      if (!organizationInstallLinksEnabled(payload.organization.metadata, {
-        gatingEnabled: env.installLinksGatingEnabled,
-      })) {
+      if (!organizationInstallLinksEnabled(payload.organization.metadata)) {
         return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
       }
 
