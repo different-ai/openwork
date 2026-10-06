@@ -42,6 +42,31 @@ Rules the tests enforce:
 - `entitlement: "free"` ⇔ `expiryPolicy: "n/a"`. `expiryPolicy: "restricted"`
   ⇔ `transitionOperations` with an `other` key.
 
+## Modules and feature flags (D43)
+
+Modules and feature flags are separate layers:
+
+- **Modules** (this package) answer "what does this organization have". They
+  are permanent, decided by plan or license entitlement plus the org's own
+  opt-outs (`organization.modules`).
+- **Feature flags** (`@openwork/features`, `packages/features`) answer "is this
+  new code safe to show yet". They are temporary rollout state set by the
+  platform team (deployment, kill switch, operator lock, per-org override,
+  everyone on or off).
+
+Rules:
+
+- Every feature flag belongs to exactly one module.
+- A new product area gets a module id first; its code ships behind a flag
+  scoped to that module.
+- Effective = module effective ∧ flag on. A flag can only hold a module back;
+  it never grants one.
+- When a rollout is done, the flag is deleted and module entitlement is the
+  only gate.
+
+`Deployment` uses the same values as `DEN_DEPLOYMENT` and the feature registry:
+`cloud` and `self_hosted`.
+
 ## Resolution
 
 `resolveModules()` implements discovery §6.3. For each module, in topological
@@ -89,7 +114,9 @@ and `src/module-ids.snapshot.json`.
 
 ## Docker images
 
-No image needs this package until a consumer depends on it. The first consumer
+No image needs this package until a consumer depends on it.
+`scripts/check-docker-workspace-packages.mjs` (run by `pnpm features:check`)
+fails once a copied package depends on it without these lines. The first consumer
 (den-db, then den-api, the gateway and den-web) adds to
 `packaging/docker/Dockerfile.den`, `Dockerfile.gateway` and
 `Dockerfile.den-web`: `COPY packages/license-contracts/package.json` next to

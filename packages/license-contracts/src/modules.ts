@@ -2,7 +2,8 @@ import { isModuleId, MODULE_IDS, type ModuleId } from "./module-ids"
 
 export { isModuleId, MODULE_IDS, moduleIdSchema, parseModuleIdList, type ModuleId } from "./module-ids"
 
-export type Deployment = "cloud" | "selfHosted"
+/** Same values as `DEN_DEPLOYMENT` and `FeatureDeployment` in `@openwork/features`. */
+export type Deployment = "cloud" | "self_hosted"
 export type TransitionOperationPolicy = "allow" | "owner_only" | "deny"
 export type ModuleEntitlement = "free" | "licensed"
 export type ModuleOrgToggle = "none" | "optOut"
@@ -34,7 +35,7 @@ export interface ModuleDefinition {
   readonly stability: ModuleStability
 }
 
-const BOTH: readonly Deployment[] = ["cloud", "selfHosted"]
+const BOTH: readonly Deployment[] = ["cloud", "self_hosted"]
 const CLOUD: readonly Deployment[] = ["cloud"]
 
 const LICENSED = {
@@ -477,7 +478,7 @@ export function validateLicenseModules(
   context: { scope: LicenseModuleScope },
   definitions: Readonly<Record<ModuleId, ModuleDefinition>> = MODULE_DEFINITIONS,
 ): LicenseModuleIssue[] {
-  const deployment: Deployment = context.scope === "hosted_cloud_org" ? "cloud" : "selfHosted"
+  const deployment: Deployment = context.scope === "hosted_cloud_org" ? "cloud" : "self_hosted"
   const granted = (id: ModuleId) => modules[id] === true || (modules[id] === undefined && definitions[id].entitlement === "free")
   const issues: LicenseModuleIssue[] = []
   for (const [key, value] of Object.entries(modules)) {

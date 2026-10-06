@@ -70,8 +70,8 @@ afterEach(() => vi.restoreAllMocks())
 
 describe("reason precedence (§6.3 steps 1-8)", () => {
   test("1. not on this deployment, even when entitled and available", () => {
-    expect(state(resolve({ deployment: "selfHosted" }), "billing")).toEqual(OFF("not_on_deployment"))
-    expect(state(resolve({ deployment: "selfHosted" }), "openworkModels.analytics")).toEqual(OFF("not_on_deployment"))
+    expect(state(resolve({ deployment: "self_hosted" }), "billing")).toEqual(OFF("not_on_deployment"))
+    expect(state(resolve({ deployment: "self_hosted" }), "openworkModels.analytics")).toEqual(OFF("not_on_deployment"))
   })
 
   test("2. not available: missing key is unknown, otherwise the reason", () => {
@@ -125,7 +125,7 @@ describe("reason precedence (§6.3 steps 1-8)", () => {
 
 describe("entitlement sources", () => {
   test("none: every module is not entitled, including free ones (D14)", () => {
-    const effective = resolve({ deployment: "selfHosted", entitlement: { source: "none" } })
+    const effective = resolve({ deployment: "self_hosted", entitlement: { source: "none" } })
     expect(state(effective, "installLinks")).toEqual(OFF("not_entitled"))
     expect(state(effective, "billing")).toEqual(OFF("not_on_deployment"))
     for (const id of MODULE_IDS) expect(isModuleUsable(effective, id)).toBe(false)

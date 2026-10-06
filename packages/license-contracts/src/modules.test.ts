@@ -69,7 +69,7 @@ describe("registry shape", () => {
       const expected = GRAPH[id]
       expect({ id, parent: definition.parent, hard: definition.dependsOn, soft: definition.softDependsOn })
         .toEqual({ id, parent: expected.parent, hard: expected.hard, soft: expected.soft })
-      expect([id, definition.deployments]).toEqual([id, expected.cloudOnly ? ["cloud"] : ["cloud", "selfHosted"]])
+      expect([id, definition.deployments]).toEqual([id, expected.cloudOnly ? ["cloud"] : ["cloud", "self_hosted"]])
     }
   })
 
@@ -177,7 +177,7 @@ describe("policy fields", () => {
 
   test("cloud-only, free and no-toggle sets", () => {
     const where = (predicate: (definition: ModuleDefinition) => boolean) => definitions.filter(predicate).map((definition) => definition.id)
-    expect(where((definition) => !definition.deployments.includes("selfHosted")))
+    expect(where((definition) => !definition.deployments.includes("self_hosted")))
       .toEqual(["openworkModels", "openworkModels.analytics", "freeInference", "billing"])
     expect(where((definition) => definition.entitlement === "free")).toEqual(["billing", "installLinks"])
     expect(where((definition) => definition.orgToggle === "none"))
@@ -211,7 +211,7 @@ describe("validateLicenseModules", () => {
     expect(validateLicenseModules({ "aiGateway.usageLimits": true }, { scope: "external_den" }))
       .toEqual([{ code: "submodule_without_parent", module: "aiGateway.usageLimits", detail: "aiGateway" }])
     expect(validateLicenseModules({ freeInference: true }, { scope: "external_den" }))
-      .toEqual([{ code: "not_on_deployment", module: "freeInference", detail: "selfHosted" }])
+      .toEqual([{ code: "not_on_deployment", module: "freeInference", detail: "self_hosted" }])
     expect(validateLicenseModules({ mcpApps: true, connect: true }, { scope: "external_den" }))
       .toEqual([{ code: "missing_hard_dependency", module: "mcpApps", detail: "marketplace" }])
   })

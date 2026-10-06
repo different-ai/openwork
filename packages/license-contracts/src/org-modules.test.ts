@@ -76,7 +76,7 @@ describe("organizationModulesSchema", () => {
 describe("client payload", () => {
   test("toOrgModulesPayload passes the wire schema", () => {
     const effective = resolveModules({
-      deployment: "selfHosted",
+      deployment: "self_hosted",
       availability: { ...mapModuleIds((): true => true), workbot: { reason: "workbot_url_missing" } },
       entitlement: { source: "static", modules: mapModuleIds(() => true), featureFlags: { beta: true } },
       disabled: ["connect"],
