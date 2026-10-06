@@ -38,7 +38,7 @@ import {
   openWorkWebAccessRequiredPayload,
   requireOpenWorkWebRuntimeAccess,
   type OpenWorkWebRuntimeAccessResolver,
-} from "../../openwork-web-runtime-access.js"
+} from "../../openwork-web/runtime-access.js"
 
 const logger = appLogger.child({ component: "worker_routes" })
 
@@ -337,7 +337,7 @@ export async function fetchWorkerRuntimeJson(input: {
 } = {}) {
   // Published desktops hold cloud worker tokens only after OpenWorkWebAccessGate
   // (v0.18.42+) granted Web access; this recheck covers lapsed entitlement and
-  // callers that bypass the gate. See openwork-web-runtime-access.ts.
+  // callers that bypass the gate. See openwork-web/runtime-access.ts.
   if (input.worker.destination === "cloud") {
     const webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(input.worker.org_id)
     if (!webAccess.hasAccess) {

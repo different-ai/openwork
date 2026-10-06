@@ -20,7 +20,7 @@ import {
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
   OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
   type OpenWorkWebRuntimeAccessResolver,
-} from "../openwork-web-runtime-access.js"
+} from "../openwork-web/runtime-access.js"
 // The automation repository is the presence source of truth. Importing the
 // automation service instead would pull the codemode execution graph (and
 // its `effect` dependency) into every spec that imports this module, which

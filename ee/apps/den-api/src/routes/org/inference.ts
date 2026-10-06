@@ -7,11 +7,16 @@ import { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, getMe
 import { INFERENCE_ACCESS_REASONS, freeInferenceProviderSummarySchema, withFreeInferenceDefaultPinned, freeInferenceDefaultPinned } from "@openwork/types/den/inference"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
+import type { OrganizationTable } from "@openwork-ee/den-db/schema"
+import { subscriptionStatus } from "../../core/providers/subscription-status.js"
 import { jsonValidator, orgRoleRoute, orgMemberRoute } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationAdminRole, orgAccessFailureStatus } from "./shared.js"
+
+function hasActiveInferenceSubscription(organizationId: typeof OrganizationTable.$inferSelect.id) {
+  return subscriptionStatus().hasActiveSubscription(organizationId, "inference")
+}
 
 const inferenceSettingsSchema = z.object({
   enabled: z.boolean(),
@@ -149,7 +154,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
       return c.json({
         inference: {
           ...await getInferenceStatus(payload.organization.id),
-          subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id),
+          subscribed: await hasActiveInferenceSubscription(payload.organization.id),
         },
       })
     },
@@ -183,7 +188,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
       try {
         if (input.enabled) {
           await assertOrganizationManagedModelsAllowed(payload.organization.id)
-          const subscribed = await organizationHasActiveInferenceSubscription(payload.organization.id)
+          const subscribed = await hasActiveInferenceSubscription(payload.organization.id)
           if (!subscribed) {
             await allowFreeInferenceOffer(payload.organization.id)
             return c.json({
@@ -201,7 +206,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
           tier: input.tier,
           source: "admin",
         })
-        return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id) } })
+        return c.json({ inference: { ...inference, subscribed: await hasActiveInferenceSubscription(payload.organization.id) } })
       } catch (error) {
         if (error instanceof ManagedModelsPolicyError) {
           return c.json({ error: error.code, message: error.message }, error.status)

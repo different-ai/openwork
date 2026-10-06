@@ -15,7 +15,7 @@ import {
   getOpenWorkWebRuntimeAccess,
   openWorkWebAccessRequiredPayload,
   type OpenWorkWebRuntimeAccessResolver,
-} from "../../openwork-web-runtime-access.js"
+} from "../../openwork-web/runtime-access.js"
 import { CLOUD_INSTANCE_BACKEND, CLOUD_INSTANCE_NAME } from "../../workers/cloud-constants.js"
 import { currentInstanceName } from "@openwork-ee/cloud-runtime/orchestrator"
 import {
@@ -823,7 +823,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
 
       // Published desktops reach this route only from inside the gateway
       // runtime, after OpenWorkWebAccessGate (v0.18.42+) has already resolved
-      // Web access for the organization; see openwork-web-runtime-access.ts.
+      // Web access for the organization; see openwork-web/runtime-access.ts.
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)

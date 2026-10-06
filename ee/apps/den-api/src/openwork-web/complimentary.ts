@@ -1,7 +1,5 @@
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 
-export type OpenWorkWebAccessSource = "subscription" | "complimentary" | null
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -21,6 +19,7 @@ function parseMetadata(value: Record<string, unknown> | string | null | undefine
   }
 }
 
+/** The complimentary OpenWork Web grant: OpenWork Web's own access source, set by platform admins. */
 export function hasOpenWorkWebComplimentaryAccess(metadata: Record<string, unknown> | string | null | undefined) {
   const complimentaryAccess = parseMetadata(metadata).complimentaryAccess
   return isRecord(complimentaryAccess) && complimentaryAccess.openworkWeb === true
@@ -44,26 +43,4 @@ export function setOpenWorkWebComplimentaryAccess(metadata: unknown, enabled: bo
   }
 
   return nextMetadata
-}
-
-export function resolveOpenWorkWebAccess(input: {
-  deploymentAvailable: boolean
-  hasEligibleSubscription: boolean
-  complimentaryAccess: boolean
-}): {
-  hasAccess: boolean
-  accessSource: OpenWorkWebAccessSource
-  complimentaryAccess: boolean
-} {
-  const accessSource: OpenWorkWebAccessSource = input.deploymentAvailable && input.hasEligibleSubscription
-    ? "subscription"
-    : input.complimentaryAccess
-      ? "complimentary"
-      : null
-
-  return {
-    hasAccess: accessSource !== null,
-    accessSource,
-    complimentaryAccess: input.complimentaryAccess,
-  }
 }

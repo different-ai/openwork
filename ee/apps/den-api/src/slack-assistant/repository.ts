@@ -21,7 +21,7 @@ import {
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
-import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
+import { getOpenWorkWebRuntimeAccess } from "../openwork-web/runtime-access.js"
 import { listTeamsForMember } from "../orgs.js"
 import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
 import { slackRuntimeForOrganization, type SlackRuntime } from "./headless.js"

@@ -2,17 +2,17 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
+import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
 import { orgRoleRoute } from "../../middleware/index.js"
-import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { forbiddenSchema, jsonResponse, openWorkWebUnavailableSchema, orgStripeBillingResponseSchema, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
 import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
-import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
+import { isOpenWorkWebAvailableForOrganization, openWorkWebUnavailableResponse } from "../../openwork-web-availability.js"
+import { getOpenWorkWebAccess, getOpenWorkWebSummary } from "../../openwork-web/public.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
-const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
 const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat", "web"]).optional() })
 const stripeCheckoutResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripeCheckoutResponse" })
 const stripeCheckoutSyncRequestSchema = z.object({ sessionId: z.string().trim().min(1) })
@@ -22,10 +22,6 @@ const managedModelsPolicyErrorSchema = z.object({
   error: z.enum(["managed_models_disabled_for_dpa", "managed_models_policy_unavailable"]),
   message: z.string(),
 })
-const openWorkWebUnavailableSchema = z.object({
-  error: z.literal("openwork_web_not_available"),
-  message: z.string(),
-}).meta({ ref: "OpenWorkWebUnavailableError" })
 
 const retiredPolarBillingStatus = {
   featureGateEnabled: false,
@@ -35,13 +31,6 @@ const retiredPolarBillingStatus = {
   price: null,
   subscription: null,
   invoices: [],
-}
-
-function openWorkWebUnavailableResponse(): { error: "openwork_web_not_available"; message: string } {
-  return {
-    error: "openwork_web_not_available",
-    message: "OpenWork Web is not available for this organization.",
-  }
 }
 
 function getRequestOrigin(c: { req: { raw: Request } }) {
@@ -134,36 +123,13 @@ function openWorkWebCheckoutCancelUrl(c: { req: { raw: Request } }) {
 
 export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
-    "/v1/billing/web",
-    describeRoute({
-      tags: ["Organizations"],
-      hide: true,
-      summary: "Get OpenWork Web billing eligibility",
-      responses: {
-        200: jsonResponse("OpenWork Web billing eligibility returned successfully.", stripeBillingResponseSchema),
-        401: jsonResponse("The caller must be an organization member.", unauthorizedSchema),
-        404: jsonResponse("OpenWork Web is not available for this organization.", openWorkWebUnavailableSchema),
-      },
-    }),
-    orgRoleRoute(["member"]),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      if (!isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
-        return c.json(openWorkWebUnavailableResponse(), 404)
-      }
-      const web = await getOpenWorkWebBillingSummary(payload.organization.id)
-      return c.json({ billing: { stripe: { web } } })
-    },
-  )
-
-  app.get(
     "/v1/billing",
     describeRoute({
       tags: ["Organizations"],
       hide: true,
       summary: "Get organization billing status",
       responses: {
-        200: jsonResponse("Organization billing status returned successfully.", stripeBillingResponseSchema),
+        200: jsonResponse("Organization billing status returned successfully.", orgStripeBillingResponseSchema),
         401: jsonResponse("The caller must be signed in to read billing settings.", unauthorizedSchema),
       },
     }),
@@ -177,17 +143,24 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
         isOwner: payload.currentMember.isOwner,
       })
-      const billing = await getOrgBillingSummary({
-        organizationId: payload.organization.id,
-        includePortalUrl: canManageBilling,
-        returnUrl: billingReturnUrl(c),
-      })
+      const [billing, webSummary] = await Promise.all([
+        getOrgBillingSummary({
+          organizationId: payload.organization.id,
+          includePortalUrl: canManageBilling,
+          returnUrl: billingReturnUrl(c),
+        }),
+        getOpenWorkWebSummary(payload.organization.id),
+      ])
       // Den web still reads `billing.polar` as the cloud-worker access summary
       // (den-flow.ts getBillingSummary). Polar billing is retired, so this is
       // the constant "no gate, access allowed" shape it always had in practice.
       const polar = email ? retiredPolarBillingStatus : null
 
-      return c.json({ billing: { ...billing, polar } })
+      // OpenWork Web owns the offer and access fields of `stripe.web`; billing
+      // overlays its own fields (price, portal, full subscription row).
+      const stripe = { ...billing.stripe, web: { ...webSummary, ...billing.stripe.web } }
+
+      return c.json({ billing: { ...billing, stripe, polar } })
     },
   )
 
@@ -227,8 +200,8 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
       if (subscriptionType === "web") {
-        const webBilling = await getOpenWorkWebBillingSummary(payload.organization.id)
-        if (webBilling.complimentaryAccess) {
+        const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+        if (webAccess.complimentaryAccess) {
           return c.json({
             error: "openwork_web_complimentary_access_exists",
             message: "OpenWork Web is already included for this organization without a Stripe subscription.",

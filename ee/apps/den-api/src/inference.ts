@@ -33,6 +33,7 @@ import {
 } from "@openwork/types/den/inference"
 import type { InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
 import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
+import { onSubscriptionChange, type SubscriptionChange } from "./core/providers/subscription-changes.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
@@ -884,4 +885,25 @@ export async function setInferenceEnabled(input: { organizationId: OrgId; enable
   })
   await syncInferenceForOrganizationMembers({ organizationId: input.organizationId })
   return getInferenceStatus(input.organizationId)
+}
+
+async function applyInferenceSubscriptionChange(change: SubscriptionChange) {
+  if (change.type !== "inference") return
+  if (change.change === "deactivated") {
+    await setInferenceEnabled({ organizationId: change.organizationId, enabled: false })
+    return
+  }
+  try {
+    await setInferenceEnabled({ organizationId: change.organizationId, enabled: true })
+  } catch (error) {
+    // Keep the purchase history, but acknowledge a deliberate policy denial.
+    // Unavailable policy must still fail safely so a later delivery can retry.
+    if (error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa") return
+    throw error
+  }
+}
+
+/** Turn inference on or off when billing reports an inference subscription change. Called once at boot (app.ts). */
+export function registerInferenceSubscriptionListener() {
+  onSubscriptionChange(applyInferenceSubscriptionChange)
 }

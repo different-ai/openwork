@@ -1,8 +1,18 @@
+import {
+  OPENWORK_WEB_CURRENCY,
+  OPENWORK_WEB_INTERVAL,
+  OPENWORK_WEB_QUANTITY_DEFINITION,
+  OPENWORK_WEB_UNIT_AMOUNT,
+} from "@openwork/types/den/openwork-web";
+
+export {
+  OPENWORK_WEB_CURRENCY,
+  OPENWORK_WEB_INTERVAL,
+  OPENWORK_WEB_QUANTITY_DEFINITION,
+  OPENWORK_WEB_UNIT_AMOUNT,
+};
+
 export const OPENWORK_WEB_CHECKOUT_TYPE = "web";
-export const OPENWORK_WEB_QUANTITY_DEFINITION = "joined_non_removed_members";
-export const OPENWORK_WEB_UNIT_AMOUNT = 5000;
-export const OPENWORK_WEB_CURRENCY = "usd";
-export const OPENWORK_WEB_INTERVAL = "month";
 
 export type OpenWorkWebAccessSource = "subscription" | "complimentary" | null;
 

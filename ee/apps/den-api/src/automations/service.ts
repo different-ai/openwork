@@ -32,7 +32,7 @@ import {
   OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
   requireOpenWorkWebRuntimeAccess,
   type OpenWorkWebRuntimeAccessResolver,
-} from "../openwork-web-runtime-access.js"
+} from "../openwork-web/runtime-access.js"
 
 const schedulerOwner = `den:${process.pid}:${randomUUID()}`
 const logger = appLogger.child({ component: "automations" })

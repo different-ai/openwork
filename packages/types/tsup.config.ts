@@ -24,6 +24,7 @@ export default defineConfig({
     "den/managed-models-policy": "src/den/managed-models-policy.ts",
     "den/mcp-connection-action": "src/den/mcp-connection-action.ts",
     "den/microsoft-365": "src/den/microsoft-365.ts",
+    "den/openwork-web": "src/den/openwork-web.ts",
   },
   tsconfig: "./tsconfig.json",
   format: ["esm"],

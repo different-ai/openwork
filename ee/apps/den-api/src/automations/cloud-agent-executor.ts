@@ -10,7 +10,7 @@ import {
   getOpenWorkWebRuntimeAccess,
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
   OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
-} from "../openwork-web-runtime-access.js"
+} from "../openwork-web/runtime-access.js"
 import { materializeCloudWorkerProviders } from "../llm/cloud-provider-materialization.js"
 import { appLogger } from "../observability/logger.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"

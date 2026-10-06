@@ -22,15 +22,15 @@
  * packages/types/src/automations.ts.
  */
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { OpenWorkWebAccessRequiredError } from "./openwork-web-access-error.js"
-import { getOpenWorkWebAccess } from "./stripe-billing.js"
+import { OpenWorkWebAccessRequiredError } from "../openwork-web-access-error.js"
+import { getOpenWorkWebAccess } from "./access.js"
 
 export {
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
   OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
   OpenWorkWebAccessRequiredError,
   openWorkWebAccessRequiredPayload,
-} from "./openwork-web-access-error.js"
+} from "../openwork-web-access-error.js"
 
 export type OpenWorkWebRuntimeAccess = {
   hasAccess: boolean

@@ -5,7 +5,7 @@ import {
   getOpenWorkWebRuntimeAccess,
   openWorkWebAccessRequiredPayload,
   type OpenWorkWebRuntimeAccessResolver,
-} from "../openwork-web-runtime-access.js"
+} from "../openwork-web/runtime-access.js"
 import { resolveCloudRuntimeAccess } from "./worker-access.js"
 
 type WorkerId = typeof WorkerTable.$inferSelect.id

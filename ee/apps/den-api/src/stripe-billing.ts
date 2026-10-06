@@ -1,6 +1,6 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import Stripe from "stripe"
-import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
   OrgSubscriptionStatus,
@@ -9,15 +9,27 @@ import {
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
-import { setInferenceEnabled } from "./inference.js"
 import { assertOrganizationManagedModelsAllowed } from "./organization-metadata.js"
 import { appLogger } from "./observability/logger.js"
 import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"
-import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess } from "./openwork-web-access.js"
+import { countJoinedPeopleMembers } from "./organization-member-counts.js"
+import {
+  OPENWORK_WEB_CURRENCY,
+  OPENWORK_WEB_INTERVAL,
+  OPENWORK_WEB_UNIT_AMOUNT,
+} from "@openwork/types/den/openwork-web"
+import {
+  registerOpenWorkWebPaidSource,
+  type OpenWorkWebPaidSource,
+} from "./core/providers/openwork-web-paid-source.js"
+import { emitSubscriptionChange, type SubscriptionChange } from "./core/providers/subscription-changes.js"
+import {
+  registerSubscriptionStatusProvider,
+  type SubscriptionStatusProvider,
+} from "./core/providers/subscription-status.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -29,10 +41,6 @@ const INFERENCE_SUBSCRIPTION_TYPE = "inference" as const
 const SEAT_SUBSCRIPTION_TYPE = "seat" as const
 const WEB_SUBSCRIPTION_TYPE = "web" as const
 export const FREE_ORG_SEAT_COUNT = 5
-export const OPENWORK_WEB_UNIT_AMOUNT = 5000
-export const OPENWORK_WEB_CURRENCY = "usd" as const
-export const OPENWORK_WEB_INTERVAL = "month" as const
-export const OPENWORK_WEB_QUANTITY_DEFINITION = "joined_non_removed_members" as const
 const ACTIVE_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing"])
 const ONGOING_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing", "incomplete", "past_due", "unpaid", "paused"])
 // Stripe keeps retrying a `past_due` subscription (Smart Retries) and only
@@ -214,38 +222,8 @@ async function activeMemberCount(organizationId: OrgId) {
   return Math.max(0, Number(row?.count ?? 0))
 }
 
-async function joinedMemberCount(organizationId: OrgId) {
-  const [row] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(MemberTable)
-    .where(and(
-      eq(MemberTable.organizationId, organizationId),
-      isNotNull(MemberTable.joinedAt),
-      peopleMemberCondition(),
-    ))
-  return normalizeSeatCount(Number(row?.count ?? 0))
-}
-
-async function organizationOpenWorkWebComplimentaryAccess(organizationId: OrgId) {
-  const rows = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, organizationId))
-    .limit(1)
-  return hasOpenWorkWebComplimentaryAccess(rows[0]?.metadata)
-}
-
 export function isOpenWorkWebBillableMember(input: { joinedAt: Date | null; removedAt: Date | null }) {
   return input.joinedAt !== null && input.removedAt === null
-}
-
-export function calculateOpenWorkWebBilling(input: { joinedMemberCount: number }) {
-  const quantity = normalizeSeatCount(input.joinedMemberCount)
-  return {
-    quantity,
-    unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
-    expectedMonthlyTotal: quantity * OPENWORK_WEB_UNIT_AMOUNT,
-  }
 }
 
 export function isEligibleOpenWorkWebSubscriptionStatus(status: string | null | undefined) {
@@ -626,7 +604,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
 
   if (subscriptionType === INFERENCE_SUBSCRIPTION_TYPE) {
     if (INFERENCE_DISABLING_STATUSES.has(status)) {
-      await setInferenceEnabled({ organizationId, enabled: false })
+      await emitSubscriptionChange({ organizationId, type: INFERENCE_SUBSCRIPTION_TYPE, change: "deactivated", reason: "disabling_status" })
     } else if (
       ACTIVE_STATUSES.has(status)
       && existingSubscription
@@ -636,7 +614,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
       // portal) or a replacement subscription taking over the row: restore
       // the access the earlier failure removed. Brand-new rows are activated
       // by the Checkout handlers once payment is confirmed.
-      await activatePurchasedInference(organizationId)
+      await activatePurchasedInference(organizationId, "sync")
     }
   }
 
@@ -816,7 +794,7 @@ async function createOpenWorkWebCheckoutSession(input: {
   cancelUrl: string
 }) {
   await validateOpenWorkWebPrice(input.priceId)
-  const quantity = await joinedMemberCount(input.organizationId)
+  const quantity = await countJoinedPeopleMembers(input.organizationId)
   if (quantity < 1) {
     throw new Error("stripe_openwork_web_quantity_empty")
   }
@@ -1091,59 +1069,20 @@ function serializeOpenWorkWebSubscription(row: Awaited<ReturnType<typeof findWeb
   } : null
 }
 
-async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
-  const [row, memberCount, complimentaryAccess] = await Promise.all([
-    findWebSubscriptionByOrg(organizationId),
-    joinedMemberCount(organizationId),
-    organizationOpenWorkWebComplimentaryAccess(organizationId),
-  ])
-  const billing = calculateOpenWorkWebBilling({ joinedMemberCount: memberCount })
-  const hasEligibleSubscription = isEligibleOpenWorkWebSubscriptionRow(row)
-  const access = resolveOpenWorkWebAccess({
-    deploymentAvailable: isOpenWorkWebAvailable(),
-    hasEligibleSubscription,
-    complimentaryAccess,
-  })
+async function openWorkWebBillingFields(organizationId: OrgId) {
+  const row = await findWebSubscriptionByOrg(organizationId)
   return {
-    row,
-    summary: {
-      configured: isOpenWorkWebAvailable()
-        && Boolean(env.stripe.secretKey && env.stripe.openworkWebPriceId),
-      unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
-      currency: OPENWORK_WEB_CURRENCY,
-      interval: OPENWORK_WEB_INTERVAL,
-      quantityDefinition: OPENWORK_WEB_QUANTITY_DEFINITION,
-      quantityDescription: "Every joined, non-removed organization member; pending invitations are excluded.",
-      quantity: billing.quantity,
-      expectedMonthlyTotal: billing.expectedMonthlyTotal,
-      hasEligibleSubscription,
-      ...access,
-      subscription: serializeOpenWorkWebSubscription(row),
-    },
-  }
-}
-
-export async function getOpenWorkWebAccess(organizationId: OrgId) {
-  const [row, complimentaryAccess] = await Promise.all([
-    findWebSubscriptionByOrg(organizationId),
-    organizationOpenWorkWebComplimentaryAccess(organizationId),
-  ])
-  return resolveOpenWorkWebAccess({
-    deploymentAvailable: isOpenWorkWebAvailable(),
+    configured: isOpenWorkWebAvailable()
+      && Boolean(env.stripe.secretKey && env.stripe.openworkWebPriceId),
     hasEligibleSubscription: isEligibleOpenWorkWebSubscriptionRow(row),
-    complimentaryAccess,
-  })
-}
-
-export async function getOpenWorkWebBillingSummary(organizationId: OrgId) {
-  return (await loadOpenWorkWebBillingSummary(organizationId)).summary
+    subscription: serializeOpenWorkWebSubscription(row),
+  }
 }
 
 export async function getOrgBillingSummary(input: { organizationId: OrgId; includePortalUrl?: boolean; returnUrl: string }) {
   const row = await findInferenceSubscriptionByOrg(input.organizationId)
   const seatRow = await findSeatSubscriptionByOrg(input.organizationId)
-  const webBillingState = await loadOpenWorkWebBillingSummary(input.organizationId)
-  const webRow = webBillingState.row
+  const webRow = await findWebSubscriptionByOrg(input.organizationId)
   const seatCounts = await getOrganizationSeatBillingCounts({ organizationId: input.organizationId })
   const hasActiveSubscription = Boolean(row && ACTIVE_STATUSES.has(row.status))
   const hasActiveSeatSubscription = Boolean(seatRow && ACTIVE_STATUSES.has(seatRow.status))
@@ -1180,8 +1119,9 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
         hasActiveSubscription: hasActiveSeatSubscription,
         subscription: serializeSubscription(seatRow),
       },
+      // Billing's fields of `stripe.web`. GET /v1/billing overlays them on the
+      // OpenWork Web summary (offer and access), which OpenWork Web owns.
       web: {
-        ...webBillingState.summary,
         priceId: env.stripe.openworkWebPriceId ?? null,
         hasEligibleSubscription: hasEligibleWebSubscription,
         portalUrl,
@@ -1240,7 +1180,7 @@ export async function syncWebSubscriptionQuantityAfterMemberChange(input: { orga
     return
   }
 
-  const quantity = await joinedMemberCount(input.organizationId)
+  const quantity = await countJoinedPeopleMembers(input.organizationId)
   if (quantity < 1 || row.quantity === quantity) {
     return
   }
@@ -1339,20 +1279,15 @@ export async function syncStripeCheckoutSession(input: { organizationId: OrgId; 
     })
   }
   if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
-    await activatePurchasedInference(row.organization_id)
+    await activatePurchasedInference(row.organization_id, "checkout")
   }
   return row
 }
 
-async function activatePurchasedInference(organizationId: OrgId) {
-  try {
-    await setInferenceEnabled({ organizationId, enabled: true })
-  } catch (error) {
-    // Keep the purchase history, but acknowledge a deliberate policy denial.
-    // Unavailable policy must still fail safely so a later delivery can retry.
-    if (error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa") return
-    throw error
-  }
+// OpenWork Models listens for inference subscription changes and turns
+// inference on or off; billing no longer calls it directly.
+async function activatePurchasedInference(organizationId: OrgId, reason: SubscriptionChange["reason"]) {
+  await emitSubscriptionChange({ organizationId, type: INFERENCE_SUBSCRIPTION_TYPE, change: "activated", reason })
 }
 
 async function syncCurrentStripeSubscription(stripeSubscriptionId: string, eventId: string) {
@@ -1424,7 +1359,7 @@ async function expireNonWebSubscriptionAfterPaymentFailure(
     .set({ status: "expired", last_event_id: eventId, updated_at: new Date() })
     .where(eq(OrgSubscriptionTable.id, row.id))
   if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
-    await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
+    await emitSubscriptionChange({ organizationId: row.organization_id, type: INFERENCE_SUBSCRIPTION_TYPE, change: "deactivated", reason: "webhook" })
   }
 }
 
@@ -1530,7 +1465,7 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
           })
         }
         if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
-          await activatePurchasedInference(row.organization_id)
+          await activatePurchasedInference(row.organization_id, "webhook")
         }
         if (row?.type === WEB_SUBSCRIPTION_TYPE && isEligibleOpenWorkWebSubscriptionStatus(subscription.status)) {
           await syncWebSubscriptionQuantityAfterMemberChange({
@@ -1571,4 +1506,33 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
   }
 
   return { received: true, type: event.type }
+}
+
+const openWorkWebPaidSource: OpenWorkWebPaidSource = {
+  async hasEligibleSubscription(organizationId) {
+    return organizationHasEligibleOpenWorkWebSubscription(organizationId)
+  },
+  billingSummary: openWorkWebBillingFields,
+}
+
+const billingSubscriptionStatus: SubscriptionStatusProvider = {
+  async hasActiveSubscription(organizationId, type) {
+    switch (type) {
+      case INFERENCE_SUBSCRIPTION_TYPE:
+        return organizationHasActiveInferenceSubscription(organizationId)
+      case SEAT_SUBSCRIPTION_TYPE:
+        return organizationHasActiveSeatSubscription(organizationId)
+      case WEB_SUBSCRIPTION_TYPE:
+        return organizationHasEligibleOpenWorkWebSubscription(organizationId)
+    }
+  },
+}
+
+/**
+ * Plug billing into the Core providers: the paid OpenWork Web source and the
+ * subscription-status provider. Called once at boot (app.ts).
+ */
+export function registerBillingProviders() {
+  registerOpenWorkWebPaidSource(openWorkWebPaidSource)
+  registerSubscriptionStatusProvider(billingSubscriptionStatus)
 }

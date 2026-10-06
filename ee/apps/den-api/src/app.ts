@@ -44,6 +44,8 @@ import { resolveMcpMemberIdentity } from "./mcp/external-capabilities.js"
 import { DEN_MCP_REQUESTED_SCOPES } from "./mcp/scopes.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
+import { registerBillingProviders } from "./stripe-billing.js"
+import { registerInferenceSubscriptionListener } from "./inference.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
@@ -80,6 +82,12 @@ const openApiDocumentSchema = z.object({
   paths: z.record(z.string(), z.unknown()),
   components: z.object({}).passthrough().optional(),
 }).passthrough().meta({ ref: "OpenApiDocument" })
+
+// Core providers. Billing contributes the paid OpenWork Web source and
+// subscription status; OpenWork Models listens for inference subscription
+// changes. Registered before any route or background loop can resolve them.
+registerBillingProviders()
+registerInferenceSubscriptionListener()
 
 const app = new Hono<{ Variables: AppVariables }>()
 const strictTransportSecurityHeader = "max-age=31536000; includeSubDomains"

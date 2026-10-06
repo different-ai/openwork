@@ -85,6 +85,14 @@ export const successSchema = z.object({
 
 export const emptyObjectSchema = z.object({}).passthrough().meta({ ref: "OpaqueObject" })
 
+/** Opaque `{ billing: ... }` body of `GET /v1/billing` and `GET /v1/billing/web`. */
+export const orgStripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
+
+export const openWorkWebUnavailableSchema = z.object({
+  error: z.literal("openwork_web_not_available"),
+  message: z.string(),
+}).meta({ ref: "OpenWorkWebUnavailableError" })
+
 /** `{ ok: true }` acknowledgement returned by several mutation endpoints. */
 export const okSchema = z.object({
   ok: z.literal(true),

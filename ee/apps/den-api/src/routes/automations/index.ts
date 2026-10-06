@@ -52,7 +52,7 @@ import { automationService, type AutomationService } from "../../automations/ser
 import { automationRunnerComputerIds } from "../../automations/repository.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
 import { env } from "../../env.js"
-import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
+import { OpenWorkWebAccessRequiredError } from "../../openwork-web/runtime-access.js"
 import { databaseRemoteSessionCommandStore, type RemoteSessionCommandStore } from "../../remote-sessions/commands.js"
 import { databaseRemoteSessionRequestStore, type RemoteSessionRequestStore } from "../../remote-sessions/requests.js"
 import {

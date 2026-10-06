@@ -23,7 +23,7 @@ import { getOrganizationFeatures } from "../../features.js"
 import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
 import { workbotOrigin } from "../../workbot/config.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
-import { getOpenWorkWebAccess } from "../../stripe-billing.js"
+import { getOpenWorkWebAccess } from "../../openwork-web/public.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
@@ -692,7 +692,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       // platform-admin complimentary grant) on hosted deployments; there is no
       // separate per-organization Cloud rollout flag.
       const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode })
-        && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
+        && (await getOpenWorkWebAccess(payload.organization.id, { metadata: currentOrganization.metadata })).hasAccess
       const [ssoRows, scimRows] = await Promise.all([
         db
           .select({ id: SsoConnectionTable.id })

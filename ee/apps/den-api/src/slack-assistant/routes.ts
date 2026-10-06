@@ -33,7 +33,7 @@ import {
 } from "../routes/org/shared.js"
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
-import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
+import { getOpenWorkWebRuntimeAccess } from "../openwork-web/runtime-access.js"
 import { listHeadlessModels, slackRuntimeForOrganization } from "./headless.js"
 import { getOrganizationFeatures } from "../features.js"
 import { publicRequestUrl } from "../request-url.js"
