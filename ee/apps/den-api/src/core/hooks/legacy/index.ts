@@ -3,6 +3,7 @@
 // same hooks from its manifest (setting moduleId and security/alwaysRun).
 // Delete this folder when it is empty.
 import "./ai-gateway.js"
+import "./audit-logs.js"
 import "./billing.js"
 import "./connect.js"
 import "./connect-native-providers.js"
