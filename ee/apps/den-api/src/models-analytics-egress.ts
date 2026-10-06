@@ -2,7 +2,7 @@ import { lookup } from "node:dns/promises"
 import { request } from "node:https"
 import { isIP } from "node:net"
 import { checkServerIdentity } from "node:tls"
-import { isPrivateAddress } from "./capability-sources/url-guard.js"
+import { isPrivateAddress } from "./core/net/url-guard.js"
 
 /** Resolve once, connect to that public IP, and verify TLS against the original host. */
 export async function postModelsAnalytics(url: URL, headers: Record<string, string>, body: string): Promise<unknown> {
