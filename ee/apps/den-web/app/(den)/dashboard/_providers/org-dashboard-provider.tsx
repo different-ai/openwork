@@ -81,7 +81,7 @@ export function OrgDashboardProvider({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce, runtimeConfig, runtimeConfigLoaded, setupOrganizationId } = useDenFlow();
+  const { user, sessionHydrated, signOut, runtimeConfig, runtimeConfigLoaded, setupOrganizationId } = useDenFlow();
   const [orgDirectory, setOrgDirectory] = useState<DenOrgSummary[]>([]);
   const [orgContext, setOrgContext] = useState<DenOrgContext | null>(null);
   const [orgSelectionOpen, setOrgSelectionOpen] = useState(false);
@@ -328,7 +328,6 @@ export function OrgDashboardProvider({
 
       setOrgDirectory(directoryPayload.orgs.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
       setOrgContext(context);
-      void refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
     } catch (error) {
       if (!isCurrent()) return;
       setRequestOrgScope(null);
@@ -572,7 +571,6 @@ export function OrgDashboardProvider({
         setOrgDirectory((current) => current.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
         setOrgContext(context);
         setOrgSelectionOpen(false);
-        await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
         if (!isCurrent()) return;
 
         router.replace(getOrgDashboardRoute(context.organization.slug));

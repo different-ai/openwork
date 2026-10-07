@@ -140,13 +140,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Workers
   userOrgs("GET", "/v1/workers", "tenant_read", "worker.list", "worker.management", "worker", null),
-  userOrgs("POST", "/v1/workers", "tenant_job", "worker.create", "worker.management", "worker", null, { jobOutcome: "not_recorded: provisioning reaches healthy/failed in src/routes/workers/shared.ts:continueCloudProvisioning, but src/workers/reconciler.ts (markFailed, re-continue) and cloud-lifecycle.ts (markWorkerFailed) also terminate it, so there is no single completion point; status stays on the worker row", notes: "Response carries worker tokens." }),
-  userOrgs("GET", "/v1/workers/:id", "tenant_read", "worker.read", "worker.management", "worker", "id"),
-  userOrgs("PATCH", "/v1/workers/:id", "tenant_change", "worker.update", "worker.management", "worker", "id"),
   userOrgs("DELETE", "/v1/workers/:id", "tenant_external", "worker.delete", "worker.management", "worker", "id", { external: "cloud_runtime (Daytona deprovision)" }),
-  userOrgs("POST", "/v1/workers/:id/tokens", "tenant_access", "worker.token.reveal", "worker.management", "worker", "id", { notes: "POST that discloses worker host/collaborator tokens." }),
-  userOrgs("GET", "/v1/workers/:id/runtime", "tenant_read", "worker.runtime.read", "worker.management", "worker", "id", { notes: "Reads status from the worker runtime (external read, no effect)." }),
-  userOrgs("POST", "/v1/workers/:id/runtime/upgrade", "tenant_external", "worker.runtime.upgrade", "worker.management", "worker", "id", { external: "worker_runtime (upgrade request)" }),
 
   // Diagnostics
   member("GET", "/v1/diagnostics/egress", "tenant_read", "diagnostics.egress.read", "diagnostics", "diagnostic", null),
@@ -186,7 +180,6 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   handler("DELETE", "/api/auth/scim/v2/Users/:userId", "tenant_external", "scim_user.deprovision", "scim.provisioning", "scim_user", "userId", `${SCIM_PROOF} Deprovisions via removeOrganizationMember (members emitter) and writes a tombstone.`, { changeEvidence: DOMAIN("members"), external: SEAT_SYNC }),
 
   // Worker tokens
-  handler("ALL", "/v1/cloud/workers/:workerId/*", "tenant_signal", "worker.runtime.proxy", "worker.runtime", "worker", "workerId", "Org proof: authenticateWorkerRequest() matches the worker token to :workerId -> WorkerTable org (actor service worker:<workerId>). Streams GET/HEAD reads and host-scoped writes into the live worker runtime (not an app.fetch re-dispatch)."),
   handler("POST", "/v1/workers/:id/activity-heartbeat", "tenant_signal", "worker.activity.heartbeat", "worker.runtime", "worker", "id", "Org proof: activity-scope WorkerTokenTable match for :id -> worker org (actor service worker:<id>). High volume."),
 
   // Install links and connect grants

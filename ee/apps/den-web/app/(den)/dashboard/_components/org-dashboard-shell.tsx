@@ -17,7 +17,6 @@ import { DEFAULT_AUTH_NAME } from "../../_lib/den-flow";
 import {
   getAiGatewayRoute,
   getAutomationsRoute,
-  getBackgroundAgentsRoute,
   getApiKeysRoute,
   getAuditLogsRoute,
   getBrandAppearanceRoute,
@@ -241,9 +240,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getSsoRoute(orgSlug))) {
     return "SSO";
-  }
-  if (pathname.startsWith(getBackgroundAgentsRoute(orgSlug))) {
-    return "Background Tasks";
   }
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";

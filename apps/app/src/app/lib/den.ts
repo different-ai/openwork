@@ -279,24 +279,6 @@ export function formatDenOrgRoleLabel(roleValue: string) {
     .join(", ");
 }
 
-export type DenWorkerSummary = {
-  workerId: string;
-  workerName: string;
-  status: string;
-  instanceUrl: string | null;
-  provider: string | null;
-  isMine: boolean;
-  createdAt: string | null;
-};
-
-export type DenWorkerTokens = {
-  clientToken: string | null;
-  ownerToken: string | null;
-  hostToken: string | null;
-  openworkUrl: string | null;
-  workspaceId: string | null;
-};
-
 export type DenCloudInstance = {
   status: "provisioning" | "waking" | "ready" | "failed";
   url: string | null;
@@ -1876,47 +1858,6 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
   });
 }
 
-function getWorkers(payload: unknown): DenWorkerSummary[] {
-  if (!isRecord(payload) || !Array.isArray(payload.workers)) {
-    return [];
-  }
-
-  return payload.workers.flatMap((entry) => {
-    if (!isRecord(entry)) return [];
-    const instance = isRecord(entry.instance) ? entry.instance : null;
-    if (typeof entry.id !== "string" || typeof entry.name !== "string") {
-      return [];
-    }
-    return [
-      {
-        workerId: entry.id,
-        workerName: entry.name,
-        status: typeof entry.status === "string" ? entry.status : "unknown",
-        instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
-        provider: instance && typeof instance.provider === "string" ? instance.provider : null,
-        isMine: Boolean(entry.isMine),
-        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
-      } satisfies DenWorkerSummary,
-    ];
-  });
-}
-
-function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
-  if (!isRecord(payload) || !isRecord(payload.tokens)) {
-    return null;
-  }
-
-  const tokens = payload.tokens;
-  const connect = isRecord(payload.connect) ? payload.connect : null;
-  return {
-    clientToken: typeof tokens.client === "string" ? tokens.client : null,
-    ownerToken: typeof tokens.owner === "string" ? tokens.owner : null,
-    hostToken: typeof tokens.host === "string" ? tokens.host : null,
-    openworkUrl: connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null,
-    workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
-  };
-}
-
 function parseCloudInstance(payload: unknown): DenCloudInstance | null {
   if (
     !isRecord(payload) ||
@@ -3066,17 +3007,6 @@ export function createDenClient(options: {
       });
     },
 
-    async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {
-      const params = new URLSearchParams();
-      params.set("limit", String(limit));
-      const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getWorkers(payload);
-    },
-
     async mintMcpToken(orgId: string): Promise<DenMcpToken> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
         method: "POST",
@@ -3089,20 +3019,6 @@ export function createDenClient(options: {
         throw new DenApiError(500, "invalid_mcp_token_payload", "MCP token response was missing required values.");
       }
       return minted;
-    },
-
-    async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens`, {
-        method: "POST",
-        token,
-        organizationId: orgId,
-        body: {},
-      });
-      const tokens = getWorkerTokens(payload);
-      if (!tokens) {
-        throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
-      }
-      return tokens;
     },
 
     async getCloudInstance(orgId: string): Promise<DenCloudInstance> {

@@ -554,11 +554,6 @@ export function getTeamRoute(orgSlug: string | null | undefined, teamId: string)
   return `${getMembersRoute(orgSlug)}/teams/${encodeURIComponent(teamId)}`;
 }
 
-export function getBackgroundAgentsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/background-agents`;
-}
-
-
 export function getAutomationsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/automations`;
 }

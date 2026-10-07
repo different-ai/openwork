@@ -4,7 +4,6 @@ export type DenOrgMode = "single_org" | "multi_org";
 
 export type DenWebRuntimeConfig = {
   denApiUrl: string;
-  openworkAppConnectUrl: string;
   openworkWebUrl: string;
   openworkAuthCallbackUrl: string;
   orgMode: DenOrgMode;
@@ -18,7 +17,6 @@ export const DEFAULT_OPENWORK_WEB_URL = "https://web.openworklabs.com";
 
 export const EMPTY_RUNTIME_CONFIG: DenWebRuntimeConfig = {
   denApiUrl: "",
-  openworkAppConnectUrl: "",
   openworkWebUrl: DEFAULT_OPENWORK_WEB_URL,
   openworkAuthCallbackUrl: "",
   orgMode: "single_org",
@@ -52,7 +50,6 @@ function normalizeRuntimeConfig(value: unknown): DenWebRuntimeConfig {
   const singleOrgSlug = readStringProperty(value, "singleOrgSlug");
   return {
     denApiUrl: readStringProperty(value, "denApiUrl"),
-    openworkAppConnectUrl: readStringProperty(value, "openworkAppConnectUrl"),
     openworkWebUrl: readStringProperty(value, "openworkWebUrl") || DEFAULT_OPENWORK_WEB_URL,
     openworkAuthCallbackUrl: readStringProperty(value, "openworkAuthCallbackUrl"),
     orgMode: normalizeOrgMode(readStringProperty(value, "orgMode")),

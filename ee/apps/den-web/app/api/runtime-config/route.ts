@@ -75,7 +75,6 @@ export async function GET() {
   return NextResponse.json(
     {
       denApiUrl: readDenApiUrl(),
-      openworkAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_APP_CONNECT_URL"),
       openworkWebUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_WEB_URL") || DEFAULT_OPENWORK_WEB_URL,
       openworkAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_AUTH_CALLBACK_URL"),
       orgMode,

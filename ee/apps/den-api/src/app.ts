@@ -48,7 +48,6 @@ import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
-import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
@@ -155,10 +154,6 @@ if (!env.corsHandledByEdge) {
     }),
   )
 }
-
-// This bearer-token-only compatibility surface must accept native/file-origin
-// preflights before the credentialed browser allowlist can intercept OPTIONS.
-registerCloudWorkerCompatibilityPreflightRoute(app)
 
 const corsLogger = appLogger.child({ component: "cors" })
 const WEB_ORIGIN_LOOKUP_FAILURE_LOG_INTERVAL_MS = 60_000
@@ -414,8 +409,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Inference Providers", description: "Organization inference Gateway providers, model groups, credential sets, access grants, member connections, and usage." },
       { name: "Gateway Usage Limits", description: "Estimated-cost policies, independent member calendar buckets, assignments, and audited usage-extension requests." },
       { name: "Cloud", description: "Organization Cloud instance lifecycle and browser gateway resolution." },
-      { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
-      { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
+      { name: "Workers", description: "List and delete the organization's workers, including OpenWork Web instances." },
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
