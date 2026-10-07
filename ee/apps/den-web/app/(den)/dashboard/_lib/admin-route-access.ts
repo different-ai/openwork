@@ -13,6 +13,7 @@ import {
   getMcpConnectionsRoute,
   getMembersRoute,
   getOrgDashboardRoute,
+  getPermissionsRoute,
   getPluginsRoute,
   getToolTesterRoute,
 } from "../../_lib/den-org";
@@ -62,6 +63,9 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
       || access.canViewTeams || access.canManageTeams || access.canManageAdminTeams,
     needs: MEMBERS_AREA_KEYS,
   },
+  // Feature-off and read-only states are shown by the Permissions screens themselves.
+  { prefix: getPermissionsRoute(), allowed: (access) => access.canViewPermissions, needs: ["permissions.view"] },
+  { prefix: `${getPermissionsRoute()}/new`, allowed: (access) => access.canManagePermissions, needs: ["permissions.manage"] },
   { prefix: getMcpConnectionsRoute(), allowed: (access) => access.canViewAllConnections, needs: ["connections.view"] },
   { prefix: `${getMcpConnectionsRoute()}/new`, allowed: (access) => access.canManageConnections, needs: ["connections.manage"] },
   {

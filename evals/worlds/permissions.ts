@@ -193,6 +193,21 @@ export async function storedDefaultSets(world: PermissionsWorld): Promise<Stored
 }
 
 /**
+ * Turn the Permissions feature on or off for an organization, as a platform
+ * administrator does from /admin. `admin` must be a platform administrator
+ * (the testkit's bootstrap admin is one).
+ */
+export async function setPermissionsFeature(admin: DenSession, organizationId: string, enabled: boolean): Promise<PermissionsCall> {
+  const result = call(await denFetch(admin, `/v1/admin/organizations/${encodeURIComponent(organizationId)}/capabilities`, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${admin.token}` },
+    body: JSON.stringify({ capabilities: { permissions: enabled } }),
+  }));
+  if (result.status < 200 || result.status >= 300) throw new Error(`Turning Permissions ${enabled ? "on" : "off"} failed: HTTP ${result.status} ${result.text.slice(0, 300)}`);
+  return result;
+}
+
+/**
  * Turn Permissions on for an organization (as a platform administrator, from
  * /admin) and deny `keys` in its Admin permissions, as the owner. Returns the
  * Admin permissions set id. For specs that need an admin who lacks one admin

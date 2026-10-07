@@ -127,6 +127,10 @@ export type DenOrgAccessFlags = {
   canManageTeams: boolean;
   /** `teams.manage_admin`: mark a team Admin, or change who is in an Admin team. */
   canManageAdminTeams: boolean;
+  /** `permissions.view`: Member, Admin and team permissions and their history. */
+  canViewPermissions: boolean;
+  /** `permissions.manage`: change Member, Admin and team permissions. */
+  canManagePermissions: boolean;
   /** `api_keys.view` */
   canViewApiKeys: boolean;
   /** `api_keys.manage` */
@@ -577,6 +581,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canViewTeams: can("teams.view"),
     canManageTeams: can("teams.manage"),
     canManageAdminTeams: can("teams.manage_admin"),
+    canViewPermissions: can("permissions.view"),
+    canManagePermissions: can("permissions.manage"),
     canViewApiKeys: can("api_keys.view"),
     canManageApiKeys: can("api_keys.manage"),
     canViewScim: can("scim.view"),
@@ -701,6 +707,26 @@ export function getManagedDashboardRoute(orgSlug: string | null | undefined, das
 
 export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
+}
+
+export function getPermissionsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/permissions`;
+}
+
+export function getNewTeamPermissionsRoute(orgSlug?: string | null): string {
+  return `${getPermissionsRoute(orgSlug)}/new`;
+}
+
+export function getPermissionSetRoute(orgSlug: string | null | undefined, permissionSetId: string): string {
+  return `${getPermissionsRoute(orgSlug)}/${encodeURIComponent(permissionSetId)}`;
+}
+
+export function getPermissionKeysRoute(orgSlug?: string | null): string {
+  return `${getPermissionsRoute(orgSlug)}/keys`;
+}
+
+export function getPermissionKeyRoute(orgSlug: string | null | undefined, permissionKey: string): string {
+  return `${getPermissionKeysRoute(orgSlug)}/${encodeURIComponent(permissionKey)}`;
 }
 
 export function getNewDesktopPolicyRoute(orgSlug?: string | null): string {

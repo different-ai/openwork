@@ -14,6 +14,7 @@ import {
   Send,
   Settings,
   Shield,
+  ShieldCheck,
   Trash2,
   User,
   Users,
@@ -44,6 +45,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { createOrganizationInstallLink } from "../../_lib/install-link-data";
 import { OrgMemberIdentity } from "./org-member-identity";
+import { MemberEffectivePermissions, canViewMemberPermissions } from "./member-effective-permissions";
 
 type MembersTab = "members" | "teams";
 
@@ -128,6 +130,7 @@ export function ManageMembersScreen() {
   const [openMemberMenuId, setOpenMemberMenuId] = useState<string | null>(null);
   const [memberRoleDraft, setMemberRoleDraft] = useState("member");
   const [editingMemberTeamsId, setEditingMemberTeamsId] = useState<string | null>(null);
+  const [permissionsMemberId, setPermissionsMemberId] = useState<string | null>(null);
   const [memberTeamsDraft, setMemberTeamsDraft] = useState<Set<string>>(new Set());
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
@@ -684,11 +687,12 @@ export function ManageMembersScreen() {
               const canManageMemberGrants = access.canManageAdminTeams || member.adminTeams.length === 0;
               const canResendInvitation = isInvited && canManageMemberGrants && canRefreshInvitationRole(member.role, access);
               const canTransferOwnershipToMember = access.canTransferOwnership && !isInvited && memberAccess.isAdmin;
+              const canViewPermissions = !isInvited && canViewMemberPermissions(orgContext, member.id);
               const canOpenActions = member.isOwner
                 ? false
                 : isInvited
                   ? canResendInvitation || (access.canCancelInvitations && canManageMemberGrants)
-                  : access.canManageRoles || access.canManageTeams || access.canRemoveMembers || canTransferOwnershipToMember;
+                  : access.canManageRoles || access.canManageTeams || access.canRemoveMembers || canTransferOwnershipToMember || canViewPermissions;
 
               return (
                 <div key={member.id}>
@@ -777,6 +781,20 @@ export function ManageMembersScreen() {
                                 Cancel invite
                               </button>
                             ) : null}
+                            {canViewPermissions ? (
+                              <button
+                                type="button"
+                                data-testid="view-member-permissions"
+                                onClick={() => {
+                                  setPermissionsMemberId((current) => current === member.id ? null : member.id);
+                                  setOpenMemberMenuId(null);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50"
+                              >
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                                {permissionsMemberId === member.id ? "Hide permissions" : "View permissions"}
+                              </button>
+                            ) : null}
                             {!isInvited && access.canManageRoles ? (
                               <button
                                 type="button"
@@ -852,6 +870,21 @@ export function ManageMembersScreen() {
                     )}
                   </div>
                 </div>
+                {permissionsMemberId === member.id && canViewPermissions ? (
+                  <div className="border-b border-gray-100 px-6 py-4" data-testid="member-permissions-panel">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <h3 className="text-[13px] font-medium text-gray-900">Effective permissions</h3>
+                      <button
+                        type="button"
+                        onClick={() => setPermissionsMemberId(null)}
+                        className="rounded text-[12px] text-gray-500 transition hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400"
+                      >
+                        Hide
+                      </button>
+                    </div>
+                    <MemberEffectivePermissions memberId={member.id} memberName={member.user.name} />
+                  </div>
+                ) : null}
                 {editingMemberTeamsId === member.id ? (
                   <div className="col-span-full border-b border-gray-100 bg-gray-50/50 px-6 py-4">
                     <div className="flex flex-wrap items-start gap-4">

@@ -31,6 +31,7 @@ import {
   getMcpConnectionsRoute,
   getMembersRoute,
   getOrgSettingsRoute,
+  getPermissionsRoute,
   getPluginsRoute,
   getScimRoute,
   getSsoRoute,
@@ -82,6 +83,8 @@ export type BuildDashboardNavSectionsInput = {
   runtimeConfigLoaded: boolean;
   /** How many Library items wait on the viewer's sign-in. */
   libraryNeedsSignIn?: number;
+  /** The organization has the `permissions` feature (orgFeatureEnabled). */
+  permissionsEnabled?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -90,6 +93,7 @@ export function buildDashboardNavSections({
   capabilities,
   runtimeConfigLoaded,
   libraryNeedsSignIn = 0,
+  permissionsEnabled = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
@@ -146,6 +150,7 @@ export function buildDashboardNavSections({
           { href: getBillingRoute(orgSlug), label: "Billing" },
           { href: getApiKeysRoute(orgSlug), label: "API Keys" },
         ].filter((item) => canOpen(item.href)),
+        ...permissionsNavChildren(orgSlug, access, permissionsEnabled),
         ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
         ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
         ...(canOpen(getMarketplacesRoute(orgSlug))
@@ -179,6 +184,17 @@ export function buildDashboardNavSections({
   ];
 }
 
+/**
+ * Permissions appears for members who hold `permissions.view` while the feature
+ * is on. While it is off, people who could manage it keep a locked entry that
+ * says why (DESIGN.md P4); everyone else does not see it.
+ */
+function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, enabled: boolean): DashboardNavChild[] {
+  const href = getPermissionsRoute(orgSlug);
+  if (enabled) return access.canViewPermissions ? [{ href, label: "Permissions" }] : [];
+  return access.canManagePermissions ? [{ href, label: "Permissions", badge: "Enterprise" }] : [];
+}
+
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
@@ -194,6 +210,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   General: ["organization", "workspace"],
   Members: ["people", "users", "invite", "teams", "roles"],
   Models: ["llm", "provider", "byok", "api key"],
+  Permissions: ["access", "roles", "teams", "admin", "rbac"],
   "My Automations": ["schedule", "recurring", "tasks"],
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
