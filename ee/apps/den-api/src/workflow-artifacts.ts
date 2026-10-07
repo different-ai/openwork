@@ -78,6 +78,20 @@ export function renderWorkflowMarkdown(value: unknown): string {
   return `\`\`\`json\n${canonical(value)}\n\`\`\``
 }
 
+/** The Workflow Artifact contract's limit for a needs_attention reason (@openwork/types/workflows). */
+export const ARTIFACT_FRESHNESS_REASON_MAX_LENGTH = 2_000
+
+/**
+ * A failed run's error message can be any length, but the artifact contract
+ * caps the reason. An over-long reason fails the MCP output schema, so the
+ * whole artifact, including its last good snapshot, would not open.
+ */
+function freshnessReason(failureReason: string | null | undefined): string {
+  const reason = failureReason?.trim() || "The latest refresh failed."
+  if (reason.length <= ARTIFACT_FRESHNESS_REASON_MAX_LENGTH) return reason
+  return `${reason.slice(0, ARTIFACT_FRESHNESS_REASON_MAX_LENGTH - 1).trimEnd()}…`
+}
+
 export function artifactFreshness(input: {
   latestFinishedAt: Date | null
   latestStatus: "succeeded" | "failed" | null
@@ -97,7 +111,7 @@ export function artifactFreshness(input: {
       state: "needs_attention",
       ageMs: successfulAgeMs,
       lastSuccessfulReceiptId: input.latestSuccessfulReceiptId,
-      reason: input.failureReason?.trim() || "The latest refresh failed.",
+      reason: freshnessReason(input.failureReason),
     }
   }
   const ageMs = Math.max(0, now.getTime() - input.latestFinishedAt.getTime())
