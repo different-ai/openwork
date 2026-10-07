@@ -742,12 +742,15 @@ export function SessionRoute() {
         }),
     [sessionsByWorkspaceId],
   );
+  const selectSessionChildIds = useMemo(createSessionChildIdsSelector, []);
+  const sessionChildIdsByWorkspaceId = useSessionActivityStore(selectSessionChildIds);
   const selectedInteractionSessionIds = useMemo(() => {
     const selected = selectedSessionId?.trim();
     if (!selected) return [];
     const sessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
-    return [selected, ...getSessionDescendantIds(sessions, selected)];
-  }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
+    const children = sessionChildIdsByWorkspaceId[selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId];
+    return [selected, ...getSessionDescendantIds(sessions, selected, children)];
+  }, [selectedSessionId, selectedWorkspaceId, selectedWorkspaceEndpoint?.workspaceId, sessionsByWorkspaceId, sessionChildIdsByWorkspaceId]);
   const activeSelectedWorkspaceSessionIds = useMemo(
     () => Array.from(new Set([
       ...selectedInteractionSessionIds,
@@ -850,8 +853,6 @@ export function SessionRoute() {
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
   const sessionWaitingByWorkspaceId = useSessionActivityStore((state) => state.waitingByWorkspaceId);
-  const selectSessionChildIds = useMemo(createSessionChildIdsSelector, []);
-  const sessionChildIdsByWorkspaceId = useSessionActivityStore(selectSessionChildIds);
   const selectWorkspaceAttention = useMemo(createWorkspaceSessionAttentionSelector, []);
 
   useEffect(() => {
