@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
 import { createPortal } from "react-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import {
   AlertCircle,
   AlertTriangle,
@@ -32,7 +32,6 @@ import type {
 } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 
-import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -61,15 +60,22 @@ import { buildConnectorToolIdentities } from "../connections/connector-tool-iden
 import { isOrgMcpConnectionReady } from "../settings/extension-items"
 import type { AutomationConnectedAccount } from "./automation-editor"
 import { AutomationEditor } from "./automation-editor"
-import { dispatchAutomationsStateChanged } from "./automation-events"
+import {
+  ACTIVE_RUN_STATUSES,
+  AUTOMATIONS_FAST_POLL_MS,
+  describeAutomationError,
+  useAutomationActions,
+  useAutomationDetailQuery,
+  useAutomationListQuery,
+  useAutomationRunsQuery,
+  useAutomationsDenContext,
+} from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
 import { automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { automationModelOptions, describeAutomationModel } from "./automation-model-options"
 
-const ACTIVE_RUN_STATUSES = new Set<AutomationRun["status"]>(["queued", "claimed", "running"])
-const AUTOMATIONS_PAGE_FAST_POLL_MS = 10_000
-const AUTOMATIONS_PAGE_SLOW_POLL_MS = 60_000
+const AUTOMATIONS_PAGE_FAST_POLL_MS = AUTOMATIONS_FAST_POLL_MS
 
 function stateLabel(state: AutomationState) {
   if (state === "needs_attention") return "Needs attention"
@@ -95,14 +101,7 @@ function ExecutionIcon({ run }: { run: AutomationRun }) {
     : <Cloud className="size-3" />
 }
 
-function describeError(error: unknown) {
-  if (error instanceof DenApiError) {
-    if (error.status === 401 || error.status === 403) return "Sign in to the selected Den organization to access Automations."
-    if (error.status === 404) return "This Automation is no longer available."
-    return error.message
-  }
-  return error instanceof Error ? error.message : "Automations could not be loaded."
-}
+const describeError = describeAutomationError
 
 /** Editor defaults for a pinned-Workflow Automation, which has no instructions or model of its own. */
 function inputDefaults(models: readonly AutomationModelOption[]): CreateAutomation {
@@ -162,21 +161,15 @@ export function AutomationsPage(props: {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
   const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
-  const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState("")
   const [editing, setEditing] = useState(false)
   const [repairingModel, setRepairingModel] = useState(false)
-  const [busyAction, setBusyAction] = useState<string | null>(null)
   const [archiveOpen, setArchiveOpen] = useState(false)
 
-  const settings = readDenSettings()
-  const organizationId = settings.activeOrgId?.trim() || null
-  const token = settings.authToken?.trim() || null
-  const client = useMemo(
-    () => token ? createDenClient({ baseUrl: settings.baseUrl, token }) : null,
-    [settings.baseUrl, token],
-  )
+  const denContext = useAutomationsDenContext()
+  const { client, organizationId, ready, queryRoot } = denContext
+  const { busyAction, setBusyAction, refresh, act } = useAutomationActions(denContext)
   const selectedId = searchParams.get("automation")?.trim() || null
   const selectedRunId = searchParams.get("run")?.trim() || null
   const selectedThreadId = searchParams.get("thread")?.trim() || null
@@ -185,19 +178,12 @@ export function AutomationsPage(props: {
   const workflowId = searchParams.get("workflow")?.trim() || null
   const workflowVersionId = searchParams.get("version")?.trim() || null
   const placement = automationCreationPlacement()
-  const ready = denAuth.isSignedIn && Boolean(client && organizationId)
-  const queryRoot = ["den", "automations", organizationId]
   const zenModelRestricted = useDesktopRestriction("allowZenModel")
   const freeStarterInRuntime = props.providerCatalog === undefined || Boolean(
     props.providerCatalog[AUTOMATION_FREE_MODEL.providerId]?.[AUTOMATION_FREE_MODEL.modelId],
   )
 
-  const listQuery = useQuery({
-    queryKey: [...queryRoot, "list"],
-    queryFn: () => client!.listAutomations(organizationId!, { limit: 100 }),
-    enabled: ready,
-    refetchInterval: AUTOMATIONS_PAGE_SLOW_POLL_MS,
-  })
+  const listQuery = useAutomationListQuery(denContext)
   const providersQuery = useQuery({
     queryKey: [...queryRoot, "models"],
     queryFn: () => client!.listOrgLlmProviders(organizationId!),
@@ -233,19 +219,8 @@ export function AutomationsPage(props: {
     mcpServers: [],
     orgConnections: orgConnections.connections.filter(isOrgMcpConnectionReady),
   }).flatMap((identity) => identity.connectionId ? [{ id: identity.connectionId, name: identity.name, iconUrl: identity.iconUrl }] : []), [orgConnections.connections])
-  const detailQuery = useQuery({
-    queryKey: [...queryRoot, "detail", selectedId],
-    queryFn: () => client!.getAutomation(organizationId!, selectedId!),
-    enabled: ready && Boolean(selectedId),
-  })
-  const runsQuery = useQuery({
-    queryKey: [...queryRoot, "runs", selectedId],
-    queryFn: () => client!.listAutomationRuns(organizationId!, selectedId!, { limit: 100 }),
-    enabled: ready && Boolean(selectedId),
-    refetchInterval: (queryState) => queryState.state.data?.items.some((run) => ACTIVE_RUN_STATUSES.has(run.status))
-      ? AUTOMATIONS_PAGE_FAST_POLL_MS
-      : AUTOMATIONS_PAGE_SLOW_POLL_MS,
-  })
+  const detailQuery = useAutomationDetailQuery(denContext, selectedId)
+  const runsQuery = useAutomationRunsQuery(denContext, selectedId)
   const workflowQuery = useQuery({
     queryKey: [...queryRoot, "workflow", workflowId],
     queryFn: () => client!.getWorkflow(organizationId!, workflowId!),
@@ -291,22 +266,6 @@ export function AutomationsPage(props: {
     setSearchParams(next)
     setEditing(false)
     setRepairingModel(false)
-  }
-  const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: queryRoot })
-    dispatchAutomationsStateChanged()
-  }
-  const act = async (key: string, action: () => Promise<void>, success: string) => {
-    setBusyAction(key)
-    try {
-      await action()
-      await refresh()
-      toast.success(success)
-    } catch (error) {
-      toast.error(describeError(error))
-    } finally {
-      setBusyAction(null)
-    }
   }
 
   if (denAuth.status === "checking") return <LoadingState />

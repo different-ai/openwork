@@ -5,7 +5,6 @@ import {
   AUTOMATION_FREE_MODEL,
   isAutomationCloudDefaultModel,
   type AutomationExecutionTarget,
-  type AutomationSchedule,
   type CreateAutomation,
 } from "@openwork/types/automations"
 
@@ -17,35 +16,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { IconImage } from "@/react-app/design-system/icon-image"
 import { ChevronDown, Cloud, Laptop } from "lucide-react"
 
+import { AutomationScheduleFields, AutomationTimezoneField } from "./automation-schedule-fields"
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { automationPickerOptions, describeAutomationModel } from "./automation-model-options"
 
-const WEEKDAYS = [
-  { value: 1, label: "Mon" },
-  { value: 2, label: "Tue" },
-  { value: 3, label: "Wed" },
-  { value: 4, label: "Thu" },
-  { value: 5, label: "Fri" },
-  { value: 6, label: "Sat" },
-  { value: 0, label: "Sun" },
-] as const
-
 function localTimezone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-}
-
-function tomorrowAtNine() {
-  const date = new Date()
-  date.setDate(date.getDate() + 1)
-  date.setHours(9, 0, 0, 0)
-  return date.getTime()
-}
-
-function toLocalDateTime(value: number) {
-  const date = new Date(value)
-  const component = (part: number) => String(part).padStart(2, "0")
-  return `${date.getFullYear()}-${component(date.getMonth() + 1)}-${component(date.getDate())}T${component(date.getHours())}:${component(date.getMinutes())}`
 }
 
 function defaultInput(modelOptions: readonly AutomationModelOption[]): CreateAutomation {
@@ -68,10 +45,6 @@ function withAvailableModel(input: CreateAutomation, options: readonly Automatio
   return { ...input, model: defaultInput(options).model }
 }
 
-function timeForSchedule(schedule: AutomationSchedule) {
-  if (schedule.kind === "once") return { hour: 9, minute: 0 }
-  return { hour: schedule.hour, minute: schedule.minute }
-}
 
 /** A Workflow version the Automation is pinned to instead of free-form instructions and a model. */
 export type AutomationEditorPinnedWorkflow = {
@@ -269,45 +242,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
       && (pinnedWorkflow !== undefined || (input.instructions.trim().length > 0 && currentModelAvailable)),
     [currentModelAvailable, input.instructions, input.name, pinnedWorkflow],
   )
-  const time = timeForSchedule(input.schedule)
-
-  const changeScheduleKind = (kind: AutomationSchedule["kind"]) => {
-    const timezone = input.schedule.timezone
-    if (kind === "once") {
-      setInput((current) => ({ ...current, schedule: { kind, timezone, at: tomorrowAtNine() } }))
-      return
-    }
-    if (kind === "daily") {
-      setInput((current) => ({ ...current, schedule: { kind, timezone, hour: time.hour, minute: time.minute } }))
-      return
-    }
-    setInput((current) => ({
-      ...current,
-      schedule: { kind, timezone, daysOfWeek: [1, 2, 3, 4, 5], hour: time.hour, minute: time.minute },
-    }))
-  }
-
-  const changeTime = (value: string) => {
-    const [hour, minute] = value.split(":").map(Number)
-    if (!Number.isInteger(hour) || !Number.isInteger(minute)) return
-    setInput((current) => current.schedule.kind === "once" ? current : {
-      ...current,
-      schedule: { ...current.schedule, hour, minute },
-    })
-  }
-
-  const toggleWeekday = (day: number) => {
-    setInput((current) => {
-      if (current.schedule.kind !== "weekly") return current
-      const selected = current.schedule.daysOfWeek.includes(day)
-      const daysOfWeek = selected
-        ? current.schedule.daysOfWeek.filter((value) => value !== day)
-        : [...current.schedule.daysOfWeek, day].sort((left, right) => left - right)
-      if (daysOfWeek.length === 0) return current
-      return { ...current, schedule: { ...current.schedule, daysOfWeek } }
-    })
-  }
-
   return (
     <form
       className="space-y-5"
@@ -358,83 +292,16 @@ export function AutomationEditor(props: AutomationEditorProps) {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="automation-frequency">Schedule</Label>
-          <select
-            id="automation-frequency"
-            className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
-            value={input.schedule.kind}
-            onChange={(event) => {
-              const kind = event.currentTarget.value
-              if (kind === "once" || kind === "daily" || kind === "weekly") changeScheduleKind(kind)
-            }}
-          >
-            <option value="once">Once</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-          </select>
-        </div>
-        {input.schedule.kind === "once" ? (
-          <div className="space-y-2">
-            <Label htmlFor="automation-once-at">Run at</Label>
-            <Input
-              id="automation-once-at"
-              type="datetime-local"
-              value={toLocalDateTime(input.schedule.at)}
-              onChange={(event) => {
-                const at = new Date(event.currentTarget.value).getTime()
-                if (Number.isFinite(at)) setInput((current) => ({
-                  ...current,
-                  schedule: { kind: "once", timezone: current.schedule.timezone, at },
-                }))
-              }}
-            />
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label htmlFor="automation-time">Time</Label>
-            <Input
-              id="automation-time"
-              type="time"
-              value={`${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`}
-              onChange={(event) => changeTime(event.currentTarget.value)}
-            />
-          </div>
-        )}
-      </div>
-
-      {input.schedule.kind === "weekly" ? (
-        <div className="space-y-2">
-          <Label>Days</Label>
-          <div className="flex flex-wrap gap-2">
-            {WEEKDAYS.map((day) => (
-              <Button
-                key={day.value}
-                type="button"
-                size="sm"
-                variant={input.schedule.kind === "weekly" && input.schedule.daysOfWeek.includes(day.value) ? "secondary" : "outline"}
-                onClick={() => toggleWeekday(day.value)}
-              >
-                {day.label}
-              </Button>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      <AutomationScheduleFields
+        schedule={input.schedule}
+        onChange={(schedule) => setInput((current) => ({ ...current, schedule }))}
+      />
 
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="automation-timezone">Timezone</Label>
-          <Input
-            id="automation-timezone"
-            value={input.schedule.timezone}
-            onChange={(event) => {
-              const timezone = event.currentTarget.value
-              setInput((current) => ({ ...current, schedule: { ...current.schedule, timezone } }))
-            }}
-          />
-        </div>
+        <AutomationTimezoneField
+          timezone={input.schedule.timezone}
+          onChange={(timezone) => setInput((current) => ({ ...current, schedule: { ...current.schedule, timezone } }))}
+        />
         {pinnedWorkflow || usesCloudDefault ? null : <div className="space-y-2">
           <Label htmlFor="automation-model">Model</Label>
           <Button
