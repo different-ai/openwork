@@ -14,6 +14,7 @@ import {
 import { runDetachedTask } from "./process-resilience.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
+import { policyRuleDenial, policyRuleDenialMessage } from "@openwork/types/den/policy-rules-runtime";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
@@ -43,6 +44,20 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
 });
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
+  // The member's `webfetch` team rules, from their desktop config. They apply
+  // to the pages and frames the built-in browser opens, as the engine applies
+  // them to the agent's web fetches.
+  let websiteRules = [];
+  function websiteRuleDenial(url) {
+    const denial = policyRuleDenial(websiteRules, "webfetch", [url]);
+    return denial ? policyRuleDenialMessage(denial) : null;
+  }
+  /** Website rules first, then the managed policy. Opening a link outside OpenWork is not a built-in browser load. */
+  async function checkBrowserPolicy(input) {
+    const denial = input.external ? null : websiteRuleDenial(input.url);
+    if (denial) throw Object.assign(new Error(denial), { code: "organization_policy_denied" });
+    await checkPolicy?.(input);
+  }
   let browserSessionHooksInstalled = false;
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
@@ -62,6 +77,16 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
       if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
       const tab = [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId);
+      // Pages and frames follow the website rules; the resources an allowed page loads do not.
+      const ruleDenial = details.resourceType === "mainFrame" || details.resourceType === "subFrame" ? websiteRuleDenial(details.url) : null;
+      if (ruleDenial) {
+        if (tab && details.resourceType === "mainFrame" && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()) {
+          tab.loadError = { code: "organization_policy_denied", message: ruleDenial };
+          sendBrowserState();
+        }
+        callback({ cancel: true });
+        return;
+      }
       const owner = registry.ownerOf(tab?.tabId);
       const documentGeneration = tab?.documentGeneration;
       const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
@@ -163,7 +188,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   async function browserTaskAllowed(url) {
     if (!browserControlEnabled || typeof checkPolicy !== "function") return false;
     try {
-      await checkPolicy({ url });
+      await checkBrowserPolicy({ url });
       return browserControlEnabled;
     } catch {
       return false;
@@ -521,7 +546,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if ((request.source === "link" && itemId !== "copy-url") || (request.source === "page" && itemId === "open-new-tab")) {
       try {
         const external = request.source === "link" && itemId !== "open-builtin";
-        await checkPolicy?.({ url: request.url, external });
+        await checkBrowserPolicy({ url: request.url, external });
         if (!isCurrent()) return;
         if (!external) {
           createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
@@ -1230,7 +1255,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!saved) return;
     reopeningTab = true;
     try {
-      await checkPolicy?.({ url: saved.url });
+      await checkBrowserPolicy({ url: saved.url });
       // Focus, owner cleanup, or a conversation switch may change while policy
       // is checked. A stale shortcut must not resurrect a deleted owner's page.
       if (shortcutFocus !== focus || registry.visibleSessionId() !== focus.visibleSessionId || !closedTabs.includes(saved)) return;
@@ -1595,6 +1620,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return ensureWebMcpFramePolicy().checkFrame(event.senderFrame);
     });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
+    ipcMain.handle("openwork:browser:setPolicyRules", (event, rules) => {
+      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
+      websiteRules = Array.isArray(rules) ? rules.filter((rule) => rule?.action === "webfetch"
+        && typeof rule.resource === "string" && (rule.effect === "allow" || rule.effect === "deny") && typeof rule.source === "string") : [];
+      return true;
+    });
     ipcMain.handle("openwork:browser:setControlEnabled", (event, enabled) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
       browserControlEnabled = enabled === true;

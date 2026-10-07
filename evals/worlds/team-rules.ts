@@ -1,6 +1,7 @@
 import { allocateFreePorts } from "@openwork/cdp";
 import { engineSessionProbe } from "@openwork/behaviors";
-import type { Seed } from "@openwork/env";
+import { startBrowserFixture, type Place, type Seed } from "@openwork/env";
+import type { MockAgentToolStep } from "@openwork/labs";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configureProvider } from "./chat.ts";
@@ -56,6 +57,58 @@ export async function teamRulesChat(seed: Seed) {
   await riley.teamRulesPlugin({ until: (plugin) => plugin?.state === "active" });
   await morgan.teamRulesPlugin({ until: (plugin) => plugin === null });
   return { ...world, riley, morgan };
+}
+
+/**
+ * Riley's Contractors rules allow only the project briefing page. Riley works
+ * in the desktop app, signed in to Den, with a model that asks the built-in
+ * browser to open pages; a local page fixture records every page request.
+ */
+export async function teamWebsiteRulesBrowser(seed: Seed, { place }: { place: Place }) {
+  const stack = new AsyncDisposableStack();
+  try {
+    const world = await teamRulesOrganization(seed, { web: false });
+    await world.enableTeamRules();
+    await world.saveTeamRules([
+      { action: "webfetch", resource: "*", effect: "deny" },
+      { action: "webfetch", resource: "http://127.0.0.1:*/briefing", effect: "allow" },
+    ]);
+    const mock = (await seed.mock({ isolatedProcessEnv: true }).boot(place)).handle;
+    stack.defer(() => mock.stop());
+    const created = await seed.api(world.den.admin, "/v1/llm-providers", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Team rules browser model", source: "custom", allMembers: true, memberIds: [], teamIds: [],
+        apiKey: "sk-openwork-team-rules-eval-only",
+        customConfig: {
+          id: "team-rules-browser-provider", name: "Team rules browser model", npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: `${mock.url}/v1` }, env: ["TEAM_RULES_BROWSER_API_KEY"],
+          models: [{ id: "team-rules-browser-model", name: "Team rules browser model", tool_call: true }],
+        },
+      }),
+    });
+    const provider = isRecord(created.body) && isRecord(created.body.llmProvider) ? created.body.llmProvider : null;
+    if (created.response.status !== 201 || typeof provider?.id !== "string") throw new Error(`Organization model setup failed: HTTP ${created.response.status}`);
+    const riley = world.den.members.riley;
+    if (!riley) throw new Error("Missing Riley's session");
+    const connected = await seed.api(riley, `/v1/llm-providers/${encodeURIComponent(provider.id)}/connect`);
+    if (!connected.response.ok) throw new Error(`Member model entitlement setup failed: HTTP ${connected.response.status}`);
+    const app = await seed.desktop({ name: "team-website-rules", den: world.den, as: "riley", model: `${provider.id}/team-rules-browser-model` });
+    const workspacePath = seed.tmpPath("team-website-rules");
+    await mkdir(workspacePath, { recursive: true });
+    const workspace = await seed.workspace(app, workspacePath, { create: true });
+    const session = await seed.session(app, { title: "Project research" });
+    const fixture = stack.use(await startBrowserFixture(app, { requireSignIn: false }));
+    return {
+      ...world, app, workspace, session, pageOrigin: fixture.origin,
+      async prepareTurn(promptMarker: string, finalReply: string, steps: MockAgentToolStep[]) {
+        const response = await fetch(`${mock.url}/admin/agent-workloads`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workloads: [{ promptMarker, latestUserTurn: true, finalReply, steps }] }) });
+        if (!response.ok) throw new Error("The browser model workload could not be configured");
+      },
+      async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
+    };
+  } catch (error) { await stack.disposeAsync(); throw error; }
 }
 
 type TeamRulesOrganization = Awaited<ReturnType<typeof teamRulesOrganization>>;
