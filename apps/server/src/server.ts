@@ -161,6 +161,11 @@ import { findManagedEngineWorkspace, managedEngineRootWorkspace } from "./worksp
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
 import { createEngineV2Preview, type EngineV2Preview } from "./engine-v2-preview.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -184,6 +189,87 @@ const AGENT_DIAGNOSTICS_DEFAULT_BODY_DEADLINE_MS = 2_000;
 const AGENT_DIAGNOSTICS_ERROR_FLUSH_MS = 25;
 const COMMAND_ADMISSION_CAPACITY = 10_000;
 const COMMAND_ADMISSION_TTL_MS = 24 * 60 * 60 * 1_000;
+const MCP_TOOL_PROBE_TIMEOUT_MS = 10_000;
+// The engine's first /mcp call for a directory pays a one-shot lazy-init cost
+// (observed ~5.4–5.9s, and it scales with the number of freshly-registered
+// MCPs). Wait comfortably past that so the first "Test connection" right after
+// engine boot does not time out and misreport a registered MCP as not_registered.
+const MCP_ENGINE_STATUS_PROBE_TIMEOUT_MS = 12_000;
+
+function mcpProbeHeaders(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function mcpProbeEnv(value: unknown): Record<string, string> {
+  return mcpProbeHeaders(value);
+}
+
+async function probeMcpToolCount(config: Record<string, unknown>): Promise<number> {
+  let transport: Transport;
+  const headers = mcpProbeHeaders(config.headers);
+  if (config.type === "local" || config.url === undefined) {
+    const command = Array.isArray(config.command) ? config.command : [];
+    if (command.length === 0 || typeof command[0] !== "string") {
+      throw new Error("local MCP config missing command");
+    }
+    transport = new StdioClientTransport({
+      command: command[0],
+      args: command.slice(1).filter((arg): arg is string => typeof arg === "string"),
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
+        ...mcpProbeEnv(config.environment),
+      },
+    });
+  } else if (typeof config.url === "string") {
+    const url = new URL(config.url);
+    const requestInit = { headers };
+    transport = url.pathname.endsWith("/sse")
+      ? new SSEClientTransport(url, { requestInit })
+      : new StreamableHTTPClientTransport(url, { requestInit });
+  } else {
+    throw new Error("MCP config has neither command nor url");
+  }
+  const client = new Client({ name: "openwork-mcp-test", version: "0.0.0" }, { capabilities: {} });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const probe = (async () => {
+      await client.connect(transport);
+      return client.listTools();
+    })();
+    const tools = await Promise.race([
+      probe,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("MCP tool probe timed out")),
+          MCP_TOOL_PROBE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    return tools?.tools?.length ?? 0;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    // A timed-out probe can outlive the race; settle client and transport
+    // late so a hung probe cannot leak the stdio child process.
+    probeMcpSettle(client, transport).catch(() => undefined);
+  }
+}
+
+async function probeMcpSettle(client: Client, transport: Transport): Promise<void> {
+  try {
+    await client.close();
+  } finally {
+    try {
+      await transport.close();
+    } catch {
+      undefined;
+    }
+  }
+}
 
 function rethrowMcpAppHostError(error: unknown): never {
   if (!(error instanceof McpAppHostError)) throw error;
@@ -4188,6 +4274,114 @@ function createRoutes(
     });
     const items = await listMcp(config, workspace.id, workspace.path);
     return jsonResponse({ items });
+  });
+
+  // Probe whether an MCP server is alive via the OpenCode engine's /mcp status endpoint.
+  addRoute(routes, "POST", "/workspace/:id/mcp/:name/test", "client", async (ctx) => {
+    requireClientScope(ctx, "viewer");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = String(ctx.params.name ?? "").trim();
+    validateMcpName(name);
+
+    const items = await listMcp(config, workspace.id, workspace.path);
+    const item = items.find((i) => i.name === name);
+    if (!item) {
+      throw new ApiError(404, "mcp_not_found", `MCP ${name} not found in workspace config`);
+    }
+    if (item.config.enabled === false) {
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "mcp.test",
+        target: openworkConfigPath(workspace.path),
+        summary: `Tested MCP ${name}`,
+        timestamp: Date.now(),
+      });
+      return jsonResponse({ ok: false, status: "disabled" as const, reason: "mcp disabled in config" });
+    }
+
+    const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+    if (!connection.baseUrl) {
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "mcp.test",
+        target: openworkConfigPath(workspace.path),
+        summary: `Tested MCP ${name}`,
+        timestamp: Date.now(),
+      });
+      return jsonResponse({ ok: false, status: "unavailable" as const, reason: "engine unreachable" });
+    }
+
+    let engineStatus: { status: string; error?: unknown } | null = null;
+    let engineStatusFetchSucceeded = false;
+    try {
+      const url = new URL("/mcp", connection.baseUrl);
+      const directory = resolveOpencodeDirectory(workspace);
+      if (directory) url.searchParams.set("directory", directory);
+      const headers: Record<string, string> = {};
+      if (connection.authHeader) headers.Authorization = connection.authHeader;
+      const response = await loopbackFetch(url.toString(), {
+        headers,
+        signal: AbortSignal.timeout(MCP_ENGINE_STATUS_PROBE_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error("MCP status probe failed");
+      const statuses: unknown = JSON.parse(await response.text());
+      engineStatusFetchSucceeded = true;
+      if (isRecord(statuses)) {
+        const entry = statuses[name];
+        if (isRecord(entry)) engineStatus = entry as unknown as { status: string; error?: unknown };
+      }
+    } catch {
+      // A probe that timed out or errored is NOT the same as "the engine has
+      // no entry for this MCP": the engine may simply be mid cold-start. Keep
+      // engineStatus null but remember the fetch did not succeed, so the result
+      // below reports "unavailable" instead of "not_registered".
+      engineStatus = null;
+    }
+
+    let result: { ok: boolean; status: string; reason?: string; toolCount?: number };
+    if (engineStatus === null) {
+      result = engineStatusFetchSucceeded
+        ? { ok: false, status: "not_registered", reason: "engine has no status for this MCP" }
+        : { ok: false, status: "unavailable", reason: "engine /mcp status probe did not complete" };
+    } else if (engineStatus.status === "connected") {
+      let toolCount = 0;
+      try {
+        toolCount = await probeMcpToolCount(item.config);
+      } catch (probeError) {
+        createServerLogger(config).log("warn", `MCP tool count probe failed for ${name}`, {
+          "mcp.name": name,
+          "workspace.id": workspace.id,
+          "probe.error": probeError instanceof Error ? probeError.message : String(probeError),
+        });
+      }
+      result = { ok: true, status: "connected", toolCount };
+    } else if (engineStatus.status === "disabled") {
+      result = { ok: false, status: "disabled", reason: "disabled" };
+    } else if (engineStatus.status === "needs_auth" || engineStatus.status === "needs_client_registration") {
+      result = { ok: false, status: "needs_auth", reason: "requires sign-in" };
+    } else if (engineStatus.status === "failed") {
+      const err = typeof engineStatus.error === "string"
+        ? sanitizeDiagnosticString(engineStatus.error).trim().slice(0, 400)
+        : "";
+      result = { ok: false, status: "failed", reason: err || "failed" };
+    } else {
+      result = { ok: false, status: "unknown", reason: "unrecognized engine status" };
+    }
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "mcp.test",
+      target: openworkConfigPath(workspace.path),
+      summary: `Tested MCP ${name}`,
+      timestamp: Date.now(),
+    });
+    return jsonResponse(result);
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/mcp/:name/auth", "client", async (ctx) => {

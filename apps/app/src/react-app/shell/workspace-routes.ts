@@ -55,6 +55,20 @@ export function dashboardRoute() {
   return "/dashboard";
 }
 
+export function connectorsRoute(workspaceId?: string | null) {
+  const id = workspaceId?.trim();
+  return id ? `/workspace/${encodeURIComponent(id)}/connectors` : "/connectors";
+}
+
+/**
+ * True when the path is a connectors route (either the workspace-scoped
+ * `/workspace/:id/connectors` or the global `/connectors` form). Both are
+ * self-contained and must not be normalized away to a session route.
+ */
+export function connectorsRoutePathname(pathname: string): boolean {
+  return /^\/connectors(?:\/|$)/.test(pathname) || /^\/workspace\/[^/]+\/connectors$/.test(pathname);
+}
+
 export function globalSettingsRoute(tab: SettingsTab) {
   return `/settings/${tab}`;
 }

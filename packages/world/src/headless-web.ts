@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
@@ -566,6 +566,20 @@ function childProcessGroupIsAlive(child: ChildProcess): boolean {
 }
 
 async function stopAcquiredChild(child: ChildProcess): Promise<void> {
+  if (process.platform === "win32") {
+    // Windows has no process groups, so a signal-style kill only reaches the
+    // direct child; the engine grandchild would survive and keep the
+    // workspace SQLite file locked. taskkill /T terminates the whole tree.
+    const pid = child.pid;
+    if (pid === undefined) return;
+    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && childProcessGroupIsAlive(child)) await delay(50);
+    if (childProcessGroupIsAlive(child)) {
+      throw new Error(`Acquired headless process group ${pid} did not stop.`);
+    }
+    return;
+  }
   if (!childProcessGroupIsAlive(child)) return;
   killChild(child, "SIGTERM");
   let deadline = Date.now() + 2_000;

@@ -1330,6 +1330,38 @@ export function createConnectionsStore(options: {
     }
   }
 
+  // Probe a configured MCP's live status through the OpenCode engine via the
+  // OpenWork server's `/mcp/:name/test` endpoint. Read-only: no config writes,
+  // no side effects — safe to call from the Connectors page.
+  //
+  // The server-side probe (apps/server/src/server.ts) resolves the engine
+  // status and, when connected, opens a live MCP client connection to the
+  // server to call listTools() and report a real tool count.
+  async function testMcp(name: string): Promise<import("@/react-app/domains/connectors/connectors-page").McpTestResult> {
+    try {
+      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
+        await resolveWritableOpenworkTarget();
+
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        const result = await openworkClient.testMcp(openworkWorkspaceId, name);
+        if (result.ok) {
+          return { ok: true, toolCount: result.toolCount };
+        }
+        return { ok: false, error: result.reason, status: result.status };
+      }
+
+      // No OpenWork server target (local fallback / remote workspace) — we
+      // can't reach the engine probe endpoint, report it as unavailable.
+      return { ok: false, error: t("mcp.connect_server_first"), status: "unavailable" };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : t("mcp.connect_failed"),
+        status: "unavailable",
+      };
+    }
+  }
+
   function closeMcpAuthModal() {
     mutateState((current) => ({
       ...current,
@@ -1459,6 +1491,7 @@ export function createConnectionsStore(options: {
     logoutMcpAuth,
     removeMcp,
     setMcpEnabled,
+    testMcp,
     notifyMcpReloading,
     pollMcpServersAfterReload,
     get mcpAuthModalOpen() {

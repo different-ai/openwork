@@ -185,6 +185,8 @@ export type SessionPageSidebarProps = {
   onOpenAutomations?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
+  connectorsActive?: boolean;
+  onOpenConnectors?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
@@ -1403,6 +1405,8 @@ export function SessionPage(props: SessionPageProps) {
           onOpenAutomations={props.sidebar.onOpenAutomations}
           dashboardActive={props.sidebar.dashboardActive}
           onOpenDashboard={props.sidebar.onOpenDashboard}
+          connectorsActive={props.sidebar.connectorsActive}
+          onOpenConnectors={props.sidebar.onOpenConnectors}
           conversationHistory={{
             canGoBack: canGoBackInConversationHistory,
             canGoForward: canGoForwardInConversationHistory,

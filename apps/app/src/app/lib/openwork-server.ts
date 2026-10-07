@@ -663,6 +663,15 @@ export type OpenworkMcpEngineSync = {
   failures: Array<{ name: string; status?: number; message?: string }>;
 };
 
+/** Result of POST /workspace/:id/mcp/:name/test — an engine-side liveness probe. */
+export type OpenworkMcpTestResult =
+  | { ok: true; status: "connected"; toolCount: number }
+  | { ok: false; status: "disabled"; reason: string }
+  | { ok: false; status: "unavailable"; reason: string }
+  | { ok: false; status: "needs_auth"; reason: string }
+  | { ok: false; status: "failed"; reason: string }
+  | { ok: false; status: "not_registered"; reason: string };
+
 export type OpenworkCloudMcpProviderModelContext = {
   provider: string;
   model: string;
@@ -2222,6 +2231,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "POST",
           body: { enabled },
         },
+      ),
+    testMcp: (workspaceId: string, name: string) =>
+      requestJson<OpenworkMcpTestResult>(
+        baseUrl,
+        `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}/test`,
+        { token, hostToken, method: "POST" },
       ),
 
     logoutMcpAuth: (workspaceId: string, name: string) =>
