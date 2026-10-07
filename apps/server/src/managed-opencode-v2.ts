@@ -215,6 +215,11 @@ export async function createManagedOpencodeV2Server(
     "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "CI",
     "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
     "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    // Windows tools such as the bundled OpenSSH locate their system-wide
+    // configuration through these and fail without them.
+    "SystemDrive", "ProgramData", "ALLUSERSPROFILE", "PUBLIC",
+    "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+    "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432",
     "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
   ]) {
     const value = options.env?.[key] ?? process.env[key];
