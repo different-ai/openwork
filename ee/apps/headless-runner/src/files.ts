@@ -89,9 +89,21 @@ function checkedWrite(store: Store, sessionId: string, path: string, content: st
   return { output: `Wrote ${path} (${size} bytes).`, isError: false }
 }
 
-export function runFileTool(store: Store, sessionId: string, name: string, input: unknown): ToolResult {
+/** The memory/ folder, which a conversation may share with another one of the same person (Session.memoryOf). */
+export const isMemoryPath = (path: string) => path === "memory" || path.startsWith("memory/")
+
+/**
+ * Runs a scratch file tool. With `memoryOf`, paths under memory/ live in that conversation instead, so the person's
+ * conversations remember together; everything else stays in this one.
+ */
+export function runFileTool(store: Store, sessionId: string, name: string, input: unknown, memoryOf?: string): ToolResult {
+  const home = (path: string) => (memoryOf && isMemoryPath(path) ? memoryOf : sessionId)
   if (name === "list_files") {
-    const files = store.listFiles(sessionId)
+    const files = memoryOf
+      ? [...store.listFiles(sessionId).filter((file) => !isMemoryPath(file.path)), ...store.listFiles(memoryOf).filter((file) => isMemoryPath(file.path))].sort(
+          (left, right) => left.path.localeCompare(right.path),
+        )
+      : store.listFiles(sessionId)
     if (files.length === 0) return { output: "The workspace is empty.", isError: false }
     return { output: files.map((file) => `${file.path}\t${file.size} bytes`).join("\n"), isError: false }
   }
@@ -100,28 +112,28 @@ export function runFileTool(store: Store, sessionId: string, name: string, input
     if (!parsed.success) return fail("write_file needs a string `path` and `content`.")
     const path = normalizePath(parsed.data.path)
     if (!path) return fail("Invalid path.")
-    return checkedWrite(store, sessionId, path, parsed.data.content)
+    return checkedWrite(store, home(path), path, parsed.data.content)
   }
   if (name === "edit_file") {
     const parsed = editInput.safeParse(input)
     if (!parsed.success) return fail("edit_file needs string `path`, `find` and `replace`.")
     const path = normalizePath(parsed.data.path)
-    const current = path ? store.readFile(sessionId, path) : null
+    const current = path ? store.readFile(home(path), path) : null
     if (!path || current === null) return fail("File not found.")
     const index = current.indexOf(parsed.data.find)
     if (index < 0) return fail("`find` text was not found in the file.")
     const next = current.slice(0, index) + parsed.data.replace + current.slice(index + parsed.data.find.length)
-    return checkedWrite(store, sessionId, path, next)
+    return checkedWrite(store, home(path), path, next)
   }
   const parsed = pathInput.safeParse(input)
   const path = parsed.success ? normalizePath(parsed.data.path) : null
   if (!path) return fail("Invalid path.")
   if (name === "read_file") {
-    const content = store.readFile(sessionId, path)
+    const content = store.readFile(home(path), path)
     return content === null ? fail("File not found.") : { output: content, isError: false }
   }
   if (name === "delete_file") {
-    return store.deleteFile(sessionId, path)
+    return store.deleteFile(home(path), path)
       ? { output: `Deleted ${path}.`, isError: false }
       : fail("File not found.")
   }

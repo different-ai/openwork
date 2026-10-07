@@ -93,6 +93,8 @@ export function sameGatewaySelection(expected: GatewayGrantSelection, current: G
     && a.credentialSet.credential_mode === b.credentialSet.credential_mode
     && a.credentialSet.oauth_client_id === b.credentialSet.oauth_client_id
     && a.credentialSet.oauth_client_secret === b.credentialSet.oauth_client_secret
+    && (a.credentialSet.oauth_tenant_id ?? null) === (b.credentialSet.oauth_tenant_id ?? null)
+    && JSON.stringify(a.credentialSet.aws_sso ?? null) === JSON.stringify(b.credentialSet.aws_sso ?? null)
     && a.credentialSet.updated_at.getTime() === b.credentialSet.updated_at.getTime()
 }
 

@@ -28,6 +28,8 @@ export const denSessionSchema = z.object({
   canSchedule: z.boolean(),
   /** Workbot's Calendar tab is on (Workbot and workbotCalendar). Older Dens omit it: off. */
   calendar: z.boolean().optional(),
+  /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
+  sideChats: z.boolean().default(false),
 })
 export type DenSession = z.infer<typeof denSessionSchema>
 

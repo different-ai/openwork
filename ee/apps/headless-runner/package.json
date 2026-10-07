@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.2.0",
     "@openwork-ee/headless-computer": "workspace:*",
     "@openwork/workbook": "workspace:*",
     "@vercel/blob": "^2.8.0",

@@ -137,9 +137,23 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotSideChats: {
+    label: "Workbot: side chats",
+    description: "Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   litellm: {
     label: "AI Gateway: LiteLLM",
     description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  gatewayCloudSignIn: {
+    label: "AI Gateway: AWS and Microsoft sign-in",
+    description: "Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

@@ -1,0 +1,207 @@
+name: Contributor Warden
+
+# Reviews a fork PR's changes without ever running them.
+#   stage: scan    free deterministic checks, no model and no secrets: hidden
+#                  characters, dependencies, database changes, binaries,
+#                  encoded code, text aimed at an AI reviewer (every push)
+#   stage: screen  Warden's contributor-screen skill (after /test)
+#   stage: review  the standard diff-security-review and confidentiality-review
+#                  (after /test)
+#
+# Called from contributor-pr.yml (pull_request_target) and
+# contributor-pr-test.yml (issue_comment), so this file, its scripts and the
+# Warden policy always come from dev. The PR is fetched as git objects and
+# written to disk with symlinks, LFS and filters disabled; nothing from it is
+# installed, built, sourced or executed by this job.
+#
+# Text in the diff can steer the model, and Warden's Read tool accepts any
+# path. So Warden runs in a container that holds no key and has no internet:
+# read-only PR files, non-root, no capabilities, and a network that reaches
+# only a proxy container. The proxy holds a dedicated, spend-limited key and
+# forwards only Responses calls for the configured models with no hosted
+# tools, up to a request budget (contributor-warden-sandbox.sh,
+# warden-model-proxy.mjs).
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        type: number
+        required: true
+      head_sha:
+        type: string
+        required: true
+      stage:
+        type: string
+        required: true
+    outputs:
+      verdict:
+        value: ${{ jobs.warden.outputs.verdict }}
+    secrets:
+      WARDEN_CONTRIBUTOR_OPENAI_API_KEY:
+        required: false
+
+permissions: {}
+
+jobs:
+  warden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    outputs:
+      verdict: ${{ steps.report.outputs.verdict || steps.aiscreen.outputs.verdict || steps.review.outputs.verdict }}
+    env:
+      GIT_LFS_SKIP_SMUDGE: "1"
+      PR_NUMBER: ${{ inputs.pr_number }}
+      HEAD_SHA: ${{ inputs.head_sha }}
+    steps:
+      - name: Check stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case "$STAGE" in scan|screen|review) ;; *) echo "::error::Unknown stage: $STAGE"; exit 1 ;; esac
+          {
+            echo "PR_DIR=$RUNNER_TEMP/pr"
+            echo "SCAN_PATH=$RUNNER_TEMP/scan.json"
+            echo "WARDEN_JSONL=$RUNNER_TEMP/warden.jsonl"
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout trusted scripts and Warden policy from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: trusted
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+
+      # Objects only. The head must still be the commit this run was asked to
+      # review; a newer push gets its own run.
+      - name: Fetch the PR as data
+        id: fetch
+        working-directory: trusted
+        run: |
+          git fetch --no-tags --filter=blob:none origin "+refs/pull/${PR_NUMBER}/head:refs/contributor/head" "+refs/heads/dev:refs/contributor/dev"
+          fetched="$(git rev-parse refs/contributor/head)"
+          if [ "$fetched" != "$HEAD_SHA" ]; then
+            echo "::notice::PR head moved to $fetched; the run for that push reviews it."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "merge_base=$(git merge-base refs/contributor/dev "$HEAD_SHA")" >> "$GITHUB_OUTPUT"
+          echo "stale=false" >> "$GITHUB_OUTPUT"
+
+      # CodeQL flags this as untrusted checkout in a privileged workflow
+      # (alert 375). It is deliberate and the files are data only: every later
+      # step runs scripts from trusted/, installs Warden in a sibling
+      # directory (no .npmrc from the PR applies), runs git in trusted/, and
+      # only the sandbox container reads these files, with no key and no
+      # network. Never add a step that runs anything from $PR_DIR on the host.
+      - name: Write the PR's files to disk without running anything
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
+        working-directory: trusted
+        run: |
+          case "$PR_DIR" in "$GITHUB_WORKSPACE"*|"$RUNNER_TEMP/warden-cli"*) echo "::error::PR_DIR must stay outside the workspace and the Warden install"; exit 1 ;; esac
+          git -c core.symlinks=false -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false \
+            worktree add --detach "$PR_DIR" "$HEAD_SHA"
+          # Warden reads policy and skills from the repository it reviews.
+          # Replace anything the PR brought with the trusted copy from dev.
+          rm -rf "$PR_DIR/.warden" "$PR_DIR/.agents" "$PR_DIR/.claude" "$PR_DIR/warden.toml"
+          cp -R .warden "$PR_DIR/.warden"
+          cp warden.toml "$PR_DIR/warden.toml"
+
+      - name: Scan for hidden characters, dependencies, database changes and obfuscation
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'scan'
+        env:
+          PR_GIT_DIR: ${{ github.workspace }}/trusted/.git
+          MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
+        run: node trusted/.github/scripts/contributor-screen.mjs scan
+
+      # Same model override as warden.yml, applied to the trusted copies.
+      - name: Apply model variable
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan' && vars.WARDEN_MODEL != ''
+        env:
+          MODEL: ${{ vars.WARDEN_MODEL }}
+        run: |
+          if ! printf '%s' "$MODEL" | grep -Eq '^[a-z0-9-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error::WARDEN_MODEL must be provider/model-id, got: $MODEL"
+            exit 1
+          fi
+          sed -i -E "s|^model = \".*\"$|model = \"$MODEL\"|" "$PR_DIR/warden.toml" "$PR_DIR/.warden/contributor.toml"
+
+      # Installed in an empty directory so no .npmrc or workspace file from
+      # the PR can change where it comes from. Mounted read-only into the
+      # sandbox; install scripts are not needed.
+      - name: Install the pinned Warden CLI outside the PR
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir warden-cli && cd warden-cli
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --no-save --ignore-scripts @sentry/warden@0.43.0
+
+      # The sandbox has no network, so fetch every blob the diff needs now.
+      - name: Fetch the objects Warden will read
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
+        working-directory: trusted
+        env:
+          MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
+        run: git diff --numstat "$MERGE_BASE" "$HEAD_SHA" > /dev/null
+
+      # Warden runs in a container with a placeholder key, read-only mounts
+      # and no internet; only the proxy container holds the real key. See
+      # .github/scripts/contributor-warden-sandbox.sh.
+      - name: Run Warden in the sandbox
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
+        continue-on-error: true
+        env:
+          STAGE: ${{ inputs.stage }}
+          MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
+          OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
+          IMAGE: node:24-bookworm@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::WARDEN_CONTRIBUTOR_OPENAI_API_KEY is not set; the Warden part of this check is incomplete."
+            exit 1
+          fi
+          config="warden.toml"
+          [ "$STAGE" = "screen" ] && config=".warden/contributor.toml"
+          ALLOWED_MODELS="$(grep -hE '^model = "openai/' "$PR_DIR/$config" | sed -E 's|^model = "openai/(.*)"$|\1|' | sort -u | paste -sd, -)"
+          cp -R "$PR_DIR/.warden/pi" "$RUNNER_TEMP/pi"
+          export ALLOWED_MODELS
+          export GIT_COMMON_DIR="$GITHUB_WORKSPACE/trusted/.git"
+          export WARDEN_CLI_DIR="$RUNNER_TEMP/warden-cli"
+          export PI_DIR="$RUNNER_TEMP/pi"
+          export OUT_DIR="$RUNNER_TEMP/warden-out"
+          export CONFIG="/work/pr/$config"
+          export RANGE="$MERGE_BASE..$HEAD_SHA"
+          export PROXY_SCRIPT="$GITHUB_WORKSPACE/trusted/.github/scripts/warden-model-proxy.mjs"
+          bash trusted/.github/scripts/contributor-warden-sandbox.sh
+          cp "$OUT_DIR/warden.jsonl" "$WARDEN_JSONL"
+
+      - name: Report the free screen
+        id: report
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'scan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted/.github/scripts/contributor-screen.mjs report
+
+      - name: Report the AI screen
+        id: aiscreen
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'screen'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted/.github/scripts/contributor-screen.mjs ai-screen
+
+      - name: Report the review
+        id: review
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'review'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted/.github/scripts/contributor-screen.mjs review

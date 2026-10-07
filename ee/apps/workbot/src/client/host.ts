@@ -10,6 +10,8 @@ export const meSchema = z.object({
   enabled: z.boolean(),
   /** Workbot's Calendar tab (Den's workbotCalendar feature); older servers omit it. */
   calendar: z.boolean().default(false),
+  /** Side chats are on for this person (the workbotSideChats feature). */
+  sideChats: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -57,5 +59,6 @@ export function createHost(me: Me): WorkbotHost {
     homeHref: me.denUrl ? `${me.denUrl}/dashboard` : "/",
     calendar: me.calendar,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
+    sideChats: me.sideChats,
   }
 }

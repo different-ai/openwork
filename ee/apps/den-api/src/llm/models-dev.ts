@@ -1,4 +1,5 @@
 import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
 
 const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10
@@ -76,8 +77,9 @@ async function loadModelsDevCatalog() {
     throw new Error("models.dev returned an invalid payload")
   }
 
-  // Mantle models need their own SDK per gateway provider; see bedrock-mantle-catalog.
-  const providers = Object.entries(withBedrockMantleProvider(payload))
+  // Mantle and Foundry Claude models need their own SDK per gateway provider; see
+  // bedrock-mantle-catalog and microsoft-foundry-catalog.
+  const providers = Object.entries(withMicrosoftFoundryProvider(withBedrockMantleProvider(payload)))
     .map(([providerKey, rawProvider]) => {
       if (!isRecord(rawProvider)) {
         throw new Error("models.dev returned an invalid provider")

@@ -23,6 +23,8 @@ export type WorkbotHost = {
   calendar?: boolean
   /** Where the person connects their own Google or Microsoft account, for the Calendar's connect links. */
   connectionsHref?: string | null
+  /** The person can start side chats next to their main chat (the workbotSideChats feature). Off when unset. */
+  sideChats?: boolean
 }
 
 let current: WorkbotHost | null = null

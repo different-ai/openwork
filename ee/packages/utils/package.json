@@ -80,6 +80,26 @@
       "types": "./src/ai-sdk-env-settings.ts",
       "development": "./src/ai-sdk-env-settings.ts",
       "default": "./dist/ai-sdk-env-settings.js"
+    },
+    "./aws-sigv4": {
+      "types": "./src/aws-sigv4.ts",
+      "development": "./src/aws-sigv4.ts",
+      "default": "./dist/aws-sigv4.js"
+    },
+    "./aws-identity-center": {
+      "types": "./src/aws-identity-center.ts",
+      "development": "./src/aws-identity-center.ts",
+      "default": "./dist/aws-identity-center.js"
+    },
+    "./microsoft-entra": {
+      "types": "./src/microsoft-entra.ts",
+      "development": "./src/microsoft-entra.ts",
+      "default": "./dist/microsoft-entra.js"
+    },
+    "./microsoft-foundry-catalog": {
+      "types": "./src/microsoft-foundry-catalog.ts",
+      "development": "./src/microsoft-foundry-catalog.ts",
+      "default": "./dist/microsoft-foundry-catalog.js"
     }
   },
   "scripts": {

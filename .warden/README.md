@@ -63,8 +63,49 @@ credentials, partial analysis, and model errors are incomplete reviews.
 
 ## Rollout
 
-Warden runs on every same-repository PR, including drafts. Forks cannot use
-the model secret and are skipped.
+Warden runs on every same-repository PR, including drafts. `warden.yml` skips
+forks: the action only analyzes `pull_request` events, which get no secrets
+from forks.
+
+Fork PRs are reviewed by `.github/workflows/contributor-warden.yml` instead,
+which runs the pinned Warden CLI from dev against the fork's commits written
+to disk as data (symlinks, LFS and filters off; this repository's `.warden/`
+and `warden.toml` replace the PR's copies). It only runs after a maintainer
+comments `/test`, so opening PRs cannot spend model budget. It first runs the
+`contributor-screen` skill (`.warden/contributor.toml`): hidden behavior,
+obfuscation and supply-chain risk. When that is clear, or the maintainer
+comments `/test` again, it runs the two standard skills. Neither result
+approves the PR; they feed the `contributor-pr-required` status.
+
+Text in a fork's diff can steer the model, and the agent's `Read` tool
+accepts any path, including `/proc/self/environ`. So for forks, Warden runs
+in a sandbox (`.github/scripts/contributor-warden-sandbox.sh`):
+
+- **No key to steal.** The Warden container gets a placeholder key. Pi's
+  `models.json` sends every OpenAI call to a proxy container, which alone
+  holds `WARDEN_CONTRIBUTOR_OPENAI_API_KEY` (a separate, spend-limited key).
+- **No way out.** The Warden container is on an internal Docker network
+  that reaches only the proxy. The proxy forwards only `POST /v1/responses`
+  for the configured models, refuses hosted tools (web search, MCP, code
+  interpreter, file search) and server-side state, and stops after a request
+  budget (`.github/scripts/warden-model-proxy.mjs`).
+- **Nothing else to read or change.** Read-only PR files and git objects,
+  read-only root filesystem, non-root, no Linux capabilities, no host
+  directories.
+- **Checked every run.** Before Warden starts, a check inside the container
+  fails the run if a real key, the internet, host files or writable PR files
+  are visible.
+
+Steering the model itself is resisted in two ways, neither of which is
+complete on its own. Every skill that runs on forks starts with an
+"Untrusted input" section in its system prompt: the diff, commit messages,
+comments and files are data, and text aimed at the reviewer is reported as a
+finding. Separately, the deterministic screen holds any PR whose added lines
+or commit messages try to address an AI reviewer, imitate prompt tags, or ask
+for no findings, without asking a model. A steered model can still lie about
+the code, so held items always need a person and Warden never approves a
+fork PR. Only OpenAI models work in the sandbox; pointing
+`WARDEN_MODEL` at another provider makes fork reviews incomplete.
 
 The workflow reads policy, skills, and the reporter from the PR's immutable
 base; proposed policy changes take effect after merging. PR code is inspected,

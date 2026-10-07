@@ -58,6 +58,10 @@ export type WorkbotWorldOptions = {
   workbotCalendarMockUrl?: string;
   upstream?: { baseUrl: string; key: string; model: string };
   runnerProxy?: (runnerUrl: string) => Promise<string>;
+  /** Extra runner settings, for example a small HEADLESS_CONTEXT_CHAR_BUDGET so a short journey outgrows the context. */
+  runnerEnv?: Record<string, string>;
+  /** Features turned on for the seeded organization besides Workbot itself, for example `workbotSideChats`. */
+  features?: Record<string, boolean>;
 };
 
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
@@ -184,14 +188,14 @@ async function startService(stack: AsyncDisposableStack, input: {
   throw new Error(`${input.label} did not become healthy: ${logs}`);
 }
 
-/** Turns Workbot (and headless Automations) on for the seeded organization, as a platform admin does. */
-export async function enableWorkbot(den: Den, extra: Record<string, boolean> = {}): Promise<string> {
+/** Turns Workbot (and headless Automations, and any `features`) on for the seeded organization, as a platform admin does. */
+export async function enableWorkbot(den: Den, features: Record<string, boolean> = {}): Promise<string> {
   const headers = { authorization: `Bearer ${den.admin.token}` };
   const orgs = await denFetch(den.admin, "/v1/me/orgs", { headers });
   const org = record(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs.find(record) : undefined;
   if (!orgs.response.ok || !org || typeof org.id !== "string") throw new Error("Acme organization missing.");
   const updated = await denFetch(den.admin, `/v1/admin/organizations/${org.id}/capabilities`, {
-    method: "PUT", headers, body: JSON.stringify({ capabilities: { workbot: true, headlessAutomations: true, ...extra } }),
+    method: "PUT", headers, body: JSON.stringify({ capabilities: { workbot: true, headlessAutomations: true, ...features } }),
   });
   if (!updated.response.ok) throw new Error(`Could not turn Workbot on: HTTP ${updated.response.status} ${updated.text.slice(0, 200)}`);
   return org.id;
@@ -248,6 +252,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       HEADLESS_API_TOKEN: secrets.runnerToken, HEADLESS_PORT: String(runnerPort), HEADLESS_DB_PATH: join(data, "runner.sqlite"),
       ...runner.env, HEADLESS_MCP_URL: `${den.ref.apiUrl}/mcp/agent`,
       HEADLESS_FILES: "disk", HEADLESS_FILES_DIR: join(data, "files"),
+      ...options.runnerEnv,
     },
   });
   await buildWorkbot();
@@ -269,7 +274,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
     },
   });
   // --calendar turns on both Calendars (desktop and Workbot), each behind its own feature.
-  const orgId = await enableWorkbot(den, options.calendar ? { automationCalendar: true, workbotCalendar: true } : {});
+  const orgId = await enableWorkbot(den, { ...options.features, ...(options.calendar ? { automationCalendar: true, workbotCalendar: true } : {}) });
   // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
   const demo = await bootDemoWorkspace(stack, den);
   await connectDemoWorkspace(den, demo);

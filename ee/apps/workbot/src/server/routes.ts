@@ -1,5 +1,13 @@
 import { createHeadlessRunnerClient } from "@openwork-ee/headless-protocol"
-import { createWorkbot, toWorkbotPageEvent, WorkbotFilesUnavailableError, WorkbotUnavailableError, type WorkbotActor } from "@openwork-ee/workbot-server"
+import {
+  createWorkbot,
+  toWorkbotPageEvent,
+  WORKBOT_CHAT_ID,
+  WorkbotFilesUnavailableError,
+  WorkbotUnavailableError,
+  type WorkbotActor,
+  type WorkbotChat,
+} from "@openwork-ee/workbot-server"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import { streamSSE } from "hono/streaming"
@@ -78,6 +86,17 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     })
 
   const enabled = (c: Context<AppEnv>) => c.get("member").den.enabled
+  /**
+   * The chat a request is for: `?chat=<id>` for one of the person's side chats, where side chats are on; none for
+   * their main chat.
+   */
+  const chatOf = (c: Context<AppEnv>): { chat: WorkbotChat; refused?: undefined } | { refused: Response } => {
+    const raw = c.req.query("chat")
+    if (!raw) return { chat: null }
+    if (!c.get("member").den.sideChats) return { refused: c.json({ error: "feature_disabled" }, 404) }
+    if (!WORKBOT_CHAT_ID.test(raw)) return { refused: c.json({ error: "invalid_request" }, 400) }
+    return { chat: raw }
+  }
   const rateLimited = (memberId: string) => {
     const now = Date.now()
     const recent = (sent.get(memberId) ?? []).filter((at) => now - at < MESSAGE_WINDOW_MS)
@@ -100,6 +119,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       organizationName: who.organization.name,
       enabled: who.enabled,
       calendar: who.enabled && who.calendar === true,
+      sideChats: who.enabled && who.sideChats,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
   })
@@ -126,6 +146,34 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   app.get("/v1/workbot/calendar/*", calendarRoute)
   app.post("/v1/workbot/calendar/*", calendarRoute)
   app.patch("/v1/workbot/calendar/*", calendarRoute)
+
+  /** The person's chats: when the main chat was last used, and their side chats, most recently used first. */
+  app.get("/v1/workbot/chats", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    if (!member.den.sideChats) return c.json({ error: "feature_disabled" }, 404)
+    try {
+      return c.json(await workbotFor(member).listChats(actorOf(member)))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** Removes a side chat with everything in it. */
+  app.delete("/v1/workbot/chats/:chatId", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    if (!member.den.sideChats) return c.json({ error: "feature_disabled" }, 404)
+    try {
+      const result = await workbotFor(member).removeChat(actorOf(member), c.req.param("chatId"))
+      if (!result.ok) return c.json({ error: result.code }, result.code === "busy" ? 409 : 404)
+      return c.json({ ok: true as const })
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
 
   /** Leaving the welcome screen: Workbot starts the conversation with its own hello. */
   app.post("/v1/workbot/hello", async (c) => {
@@ -161,9 +209,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (!enabled(c)) return c.json({ available: false as const, reason: "workbot_not_enabled" as const })
     const query = threadQuerySchema.safeParse(c.req.query())
     if (!query.success) return c.json({ error: "invalid_request" }, 400)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     try {
-      return c.json({ available: true as const, ...(await workbotFor(member).readThread(actorOf(member), { turns: query.data.turns })) })
+      return c.json({ available: true as const, ...(await workbotFor(member).readThread(actorOf(member), { turns: query.data.turns, chat: scope.chat })) })
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ available: false as const, reason: error.code })
       throw error
@@ -175,12 +225,34 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (!body.success) return c.json(tooLong(body.error) ? messageTooLong : { error: "invalid_request" }, 400)
     if (!body.data.text && !body.data.attachments?.length) return c.json({ error: "invalid_request", message: "Send text or a file." }, 400)
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     const retryAfter = rateLimited(member.den.memberId)
     if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
     try {
-      const result = await workbotFor(member).send(actorOf(member), body.data)
+      const result = await workbotFor(member).send(actorOf(member), { ...body.data, chat: scope.chat })
       if (!result.ok) return c.json({ error: result.code }, result.code === "unknown_file" ? 400 : 429)
+      return c.json({ ok: true as const }, 202)
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** Answers a message whose answer failed again, in place: the conversation doesn't get a second copy of it. */
+  app.post("/v1/workbot/messages/:id/retry", async (c) => {
+    const body = z.object({ timeZone: z.string().max(64).optional() }).strict().safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    const member = c.get("member")
+    const retryAfter = rateLimited(member.den.memberId)
+    if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
+    try {
+      const result = await workbotFor(member).retry(actorOf(member), { id: c.req.param("id"), timeZone: body.data.timeZone, chat: scope.chat })
+      if (!result.ok) return c.json({ error: result.code }, result.code === "unknown_message" ? 404 : result.code === "not_failed" ? 409 : 429)
       return c.json({ ok: true as const }, 202)
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
@@ -190,9 +262,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.post("/v1/workbot/stop", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     try {
-      return c.json(await workbotFor(member).stop(actorOf(member)))
+      return c.json(await workbotFor(member).stop(actorOf(member), scope.chat))
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
       throw error
@@ -202,9 +276,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   /** Deletes one of the person's messages and Workbot's answer to it. */
   app.delete("/v1/workbot/messages/:id", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     try {
-      const result = await workbotFor(member).deleteMessage(actorOf(member), c.req.param("id"))
+      const result = await workbotFor(member).deleteMessage(actorOf(member), c.req.param("id"), scope.chat)
       if (!result.ok) return c.json({ error: result.code }, result.code === "busy" ? 409 : 404)
       return c.json({ ok: true as const })
     } catch (error) {
@@ -219,11 +295,13 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (!body.success) return c.json(tooLong(body.error) ? messageTooLong : { error: "invalid_request" }, 400)
     if (!body.data.text && !body.data.attachments?.length) return c.json({ error: "invalid_request", message: "Send text or a file." }, 400)
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     const retryAfter = rateLimited(member.den.memberId)
     if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
     try {
-      const result = await workbotFor(member).editMessage(actorOf(member), { id: c.req.param("id"), ...body.data })
+      const result = await workbotFor(member).editMessage(actorOf(member), { id: c.req.param("id"), ...body.data, chat: scope.chat })
       if (!result.ok) {
         const status = result.code === "busy" ? 409 : result.code === "unknown_message" ? 404 : result.code === "unknown_file" ? 400 : 429
         return c.json({ error: result.code }, status)
@@ -237,9 +315,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.post("/v1/workbot/tasks/:taskId/stop", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     try {
-      return c.json(await workbotFor(member).stopTask(actorOf(member), c.req.param("taskId")))
+      return c.json(await workbotFor(member).stopTask(actorOf(member), c.req.param("taskId"), scope.chat))
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
       throw error
@@ -248,9 +328,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.get("/v1/workbot/events", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     const upstream = new AbortController()
-    const opened = await workbotFor(member).openEvents(actorOf(member), upstream.signal).catch(() => null)
+    const opened = await workbotFor(member).openEvents(actorOf(member), upstream.signal, scope.chat).catch(() => null)
     if (!opened?.body) return c.json({ error: "workbot_runner_unavailable" }, 409)
     const body = opened.body
     c.header("Cache-Control", "no-cache, no-transform")
@@ -308,6 +390,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       const query = uploadQuerySchema.safeParse(c.req.query())
       if (!query.success) return c.json({ error: "invalid_request" }, 400)
       if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+      const scope = chatOf(c)
+      if (scope.refused) return scope.refused
       const member = c.get("member")
       try {
         const file = await workbotFor(member).uploadFile(actorOf(member), {
@@ -315,6 +399,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
           mediaType: c.req.header("content-type") ?? "application/octet-stream",
           bytes: await c.req.arrayBuffer(),
           timeZone: query.data.timeZone,
+          chat: scope.chat,
         })
         return c.json(file, 201)
       } catch (error) {
@@ -327,9 +412,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.get("/v1/workbot/files", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const member = c.get("member")
     try {
-      return c.json(await workbotFor(member).listFiles(actorOf(member)))
+      return c.json(await workbotFor(member).listFiles(actorOf(member), scope.chat))
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
       throw error
@@ -338,18 +425,20 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.get("/v1/workbot/files/:fileId/preview", async (c) => {
     const fileId = fileIdSchema.safeParse(c.req.param("fileId"))
-    if (!fileId.success || !enabled(c)) return c.json({ error: "not_found" }, 404)
+    const scope = chatOf(c)
+    if (!fileId.success || !enabled(c) || scope.refused) return c.json({ error: "not_found" }, 404)
     const member = c.get("member")
-    const manifest = await workbotFor(member).readPreview(actorOf(member), fileId.data).catch(() => null)
+    const manifest = await workbotFor(member).readPreview(actorOf(member), fileId.data, scope.chat).catch(() => null)
     return manifest ? c.json(manifest, 200) : c.json({ error: "not_found" }, 404)
   })
 
   app.get("/v1/workbot/files/:fileId/preview/:page", async (c) => {
     const fileId = fileIdSchema.safeParse(c.req.param("fileId"))
     const page = z.coerce.number().int().min(1).max(1_000).safeParse(c.req.param("page"))
-    if (!fileId.success || !page.success || !enabled(c)) return c.json({ error: "not_found" }, 404)
+    const scope = chatOf(c)
+    if (!fileId.success || !page.success || !enabled(c) || scope.refused) return c.json({ error: "not_found" }, 404)
     const member = c.get("member")
-    const upstream = await workbotFor(member).downloadPreviewPage(actorOf(member), fileId.data, page.data).catch(() => null)
+    const upstream = await workbotFor(member).downloadPreviewPage(actorOf(member), fileId.data, page.data, scope.chat).catch(() => null)
     if (!upstream?.body) return c.json({ error: "not_found" }, 404)
     const length = upstream.headers.get("content-length")
     return new Response(upstream.body, {
@@ -367,9 +456,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.get("/v1/workbot/files/:fileId", async (c) => {
     const fileId = fileIdSchema.safeParse(c.req.param("fileId"))
-    if (!fileId.success || !enabled(c)) return c.json({ error: "not_found" }, 404)
+    const scope = chatOf(c)
+    if (!fileId.success || !enabled(c) || scope.refused) return c.json({ error: "not_found" }, 404)
     const member = c.get("member")
-    const upstream = await workbotFor(member).downloadFile(actorOf(member), fileId.data).catch(() => null)
+    const upstream = await workbotFor(member).downloadFile(actorOf(member), fileId.data, scope.chat).catch(() => null)
     if (!upstream?.body) return c.json({ error: "not_found" }, 404)
     const type = upstream.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "application/octet-stream"
     const encodedName = upstream.headers.get("x-file-name") ?? "file"
@@ -397,9 +487,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.delete("/v1/workbot/files/:fileId", async (c) => {
     const fileId = fileIdSchema.safeParse(c.req.param("fileId"))
-    if (!fileId.success || !enabled(c)) return c.json({ error: "not_found" }, 404)
+    const scope = chatOf(c)
+    if (!fileId.success || !enabled(c) || scope.refused) return c.json({ error: "not_found" }, 404)
     const member = c.get("member")
-    const deleted = await workbotFor(member).deleteFile(actorOf(member), fileId.data).catch(() => false)
+    const deleted = await workbotFor(member).deleteFile(actorOf(member), fileId.data, scope.chat).catch(() => false)
     return deleted ? c.body(null, 204) : c.json({ error: "not_found" }, 404)
   })
 }

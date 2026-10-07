@@ -13,7 +13,7 @@ import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token
 import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
-import { organizationFeatureEnabled } from "../features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
@@ -40,6 +40,8 @@ const sessionSchema = z.object({
   canSchedule: z.boolean(),
   /** Workbot shows its Calendar tab: Workbot and the workbotCalendar feature are on. Older Dens omit it. */
   calendar: z.boolean().optional(),
+  /** The person can start side chats next to their main chat (the workbotSideChats feature). */
+  sideChats: z.boolean(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
@@ -187,13 +189,15 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (auditBlocked) return auditBlocked
       const { organization, user, memberId } = resolved
       const canSchedule = (await cloudAutomationRuntime(organization.id).catch(() => "web")) === "headless"
+      const features = await getOrganizationFeatures(organization.id)
       return c.json({
         user,
         organization: { id: organization.id, name: organization.name, brandAppName: readBrandAppName(organization.metadata) },
         memberId,
-        enabled: await organizationFeatureEnabled(organization.id, "workbot"),
+        enabled: features.workbot,
         canSchedule,
-        calendar: await workbotCalendarEnabled(organization.id),
+        calendar: features.workbot && features.workbotCalendar,
+        sideChats: features.workbot && features.workbotSideChats,
       })
     },
   )

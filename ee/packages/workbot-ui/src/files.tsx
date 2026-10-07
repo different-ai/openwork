@@ -8,6 +8,7 @@ import {
   downloadWorkbotFile,
   uploadWorkbotFile,
   useDeleteWorkbotFile,
+  useWorkbotChat,
   useWorkbotFiles,
   useWorkbotImageUrl,
   type WorkbotAttachment,
@@ -115,10 +116,12 @@ export function useUploads() {
   const waiters = useRef(new Map<string, { promise: Promise<WorkbotFile | null>; controller: AbortController }>());
 
   const update = (key: string, patch: Partial<Upload>) => setUploads((current) => current.map((upload) => (upload.key === key ? { ...upload, ...patch } : upload)));
+  // Files are kept in the chat they are sent in; the page starts a fresh tray for each chat.
+  const chat = useWorkbotChat();
 
   const start = useCallback((file: File, key: string = crypto.randomUUID()) => {
     const controller = new AbortController();
-    const promise = uploadWorkbotFile(file, (loaded) => update(key, { loaded }), controller.signal)
+    const promise = uploadWorkbotFile(file, (loaded) => update(key, { loaded }), controller.signal, chat)
       .then((saved) => {
         update(key, { status: "done", saved, loaded: file.size });
         return saved;
@@ -129,7 +132,7 @@ export function useUploads() {
       });
     waiters.current.set(key, { promise, controller });
     return key;
-  }, []);
+  }, [chat]);
 
   const add = useCallback((files: FileList | File[]) => {
     const added = Array.from(files).map((file) => ({
@@ -363,6 +366,7 @@ export function FilesButton({ open, onOpen }: { open: boolean; onOpen: () => voi
 
 function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistantName: string; onOpen: (file: WorkbotFile) => void }) {
   const remove = useDeleteWorkbotFile();
+  const chat = useWorkbotChat();
   const thumb = useWorkbotImageUrl(isImage(file.mediaType) ? file.id : null);
   const when = dayLabel(file.createdAt);
   return (
@@ -386,7 +390,7 @@ function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistant
       </button>
       <button
         type="button"
-        onClick={() => void downloadWorkbotFile(file)}
+        onClick={() => void downloadWorkbotFile(file, chat)}
         aria-label={`Download ${file.name}`}
         title="Download"
         className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"

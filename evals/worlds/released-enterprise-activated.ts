@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import { appendFile, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { createAndSelectWorkspace, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
@@ -48,6 +48,8 @@ export interface ReleasedLaunch extends AsyncDisposable {
   rootText(): Promise<string>;
   state(): Promise<AppStateProbe>;
   exceptions(): RendererException[];
+  /** Renderer console warnings, errors and exceptions seen so far, for evidence. */
+  consoleLines(): string[];
   /** Ask Chromium to close the browser the way a quit does, then make sure the process is gone. */
   quit(): Promise<void>;
 }
@@ -80,6 +82,9 @@ export async function observeRendererExceptions(surface: AttachedSurface) {
   if (!debuggerUrl) throw new Error("Renderer exception witness needs a page debugger URL");
   const socket = new WebSocket(debuggerUrl);
   const exceptions: RendererException[] = [];
+  // Renderer warnings and errors, kept as evidence: a swallowed failure (for
+  // example a workspace create that never lands) only ever reaches the console.
+  const consoleLines: string[] = [];
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Renderer exception witness did not attach")), 15_000);
     socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method: "Runtime.enable", params: {} })));
@@ -95,17 +100,33 @@ export async function observeRendererExceptions(surface: AttachedSurface) {
         if (message.error) reject(new Error("Runtime.enable failed for the exception witness"));
         else resolve();
       }
+      if (message.method === "Runtime.consoleAPICalled") {
+        const line = consoleLineFrom(message.params);
+        if (line) consoleLines.push(line);
+        return;
+      }
       if (message.method !== "Runtime.exceptionThrown") return;
       const exception = exceptionFrom(message.params);
-      if (exception) exceptions.push(exception);
+      if (exception) {
+        exceptions.push(exception);
+        consoleLines.push(`[${new Date().toISOString()}] exception ${exception.text} ${exception.description}`);
+      }
     });
   });
   return {
     exceptions,
+    consoleLines,
     close() {
       socket.close();
     },
   };
+}
+
+function consoleLineFrom(params: unknown): string | null {
+  if (!isRecord(params) || (params.type !== "error" && params.type !== "warning")) return null;
+  const args = Array.isArray(params.args) ? params.args : [];
+  const text = args.map((arg) => (isRecord(arg) ? readString(arg.description) || readString(arg.value) || String(arg.value ?? "") : "")).join(" ");
+  return `[${new Date().toISOString()}] ${params.type} ${text}`;
 }
 
 function pidIsAlive(pid: number): boolean {
@@ -297,6 +318,7 @@ async function launchReleased(host: Host, name: string, den: Den, activatedAt: s
     rootText: () => evaluateOnSurface(attached, () => document.getElementById("root")?.innerText ?? ""),
     state: () => probeAppStateOnSurface(attached, { timeoutMs: 8_000 }),
     exceptions: () => [...observed.exceptions],
+    consoleLines: () => [...observed.consoleLines],
     async quit() {
       if (stopped) return;
       // Browser.close runs Chromium's normal shutdown, which flushes renderer
@@ -332,7 +354,8 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
     newProfileDir(label: string): string {
       const root = seed.tmpPath(`released-${label}`);
       ownedProfiles.push(root);
-      return join(root, "profile");
+      // Named after the label: the local host keeps each log as <profile dir name>-electron.log.
+      return join(root, label);
     },
     async launch(options: LaunchOptions): Promise<ReleasedLaunch> {
       launchIndex += 1;
@@ -352,7 +375,7 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
       return createAndSelectWorkspace(launch.app, { path: workspacePath });
     },
     [Symbol.asyncDispose]: async () => {
-      for (const launch of launches.reverse()) {
+      for (const launch of [...launches].reverse()) {
         try {
           await launch[Symbol.asyncDispose]();
         } catch {
@@ -360,6 +383,17 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
         }
       }
       await waitForShipItIdle(60_000);
+      // The local host keeps each electron.log in OPENWORK_EVAL_SURFACE_LOGS_DIR;
+      // the renderer side only reaches the console, so keep that beside it. A
+      // swallowed failure (a workspace create that never lands) shows up here.
+      const keptLogs = process.env.OPENWORK_EVAL_SURFACE_LOGS_DIR?.trim();
+      if (keptLogs) {
+        await mkdir(keptLogs, { recursive: true }).catch(() => undefined);
+        for (const launch of launches) {
+          const lines = [`--- ${basename(launch.binary)} on ${basename(dirname(launch.profileDir))}`, ...launch.consoleLines()].join("\n");
+          await appendFile(join(keptLogs, "renderer.log"), `${lines}\n`).catch(() => undefined);
+        }
+      }
       for (const profile of ownedProfiles) await rm(profile, { recursive: true, force: true }).catch(() => undefined);
     },
   };

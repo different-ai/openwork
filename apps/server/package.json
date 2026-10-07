@@ -50,8 +50,8 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "3.0.12",
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/client": "^2.2.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@opencode-ai/sdk": "^1.18.15",
     "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/free-auto": "workspace:*",

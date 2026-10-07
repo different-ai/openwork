@@ -366,6 +366,84 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
+  # The update path every existing enterprise customer takes, which the fast
+  # packaged smoke gate cannot cover: the latest public enterprise release
+  # signs in to a local Den and picks a workspace, then this commit's
+  # enterprise package opens that same profile, and opens it again after a
+  # restart (released-enterprise-activated, #4848). Scheduled only; it needs a
+  # local Den and a downloaded release.
+  packaged-upgrade-path:
+    name: Open the latest release's enterprise profile in this build
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Same runner as PR proof's packaged lane, which already runs packaged-smoke here.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - name: Setup tests
+        uses: ./.github/actions/setup-tests
+      - name: Download the latest public enterprise release as the baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          version=${tag#v}
+          dir="$RUNNER_TEMP/baseline"
+          mkdir -p "$dir"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "openwork-enterprise-linux-x64-$version.tar.gz" --dir "$dir"
+          tar -xzf "$dir/openwork-enterprise-linux-x64-$version.tar.gz" -C "$dir"
+          binary="$dir/openwork-enterprise-linux-x64-$version/openwork-enterprise"
+          test -x "$binary"
+          echo "binary=$binary" >> "$GITHUB_OUTPUT"
+          echo "Baseline: enterprise $tag at $binary" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      # After the bundle step, which removes packages/types/dist that the local Den needs.
+      - name: Build local Den dependencies and start MySQL
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm dev:den:mysql
+      - name: Package this commit and open the baseline's profile in it
+        timeout-minutes: 25
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          OPENWORK_EVAL_RELEASED_BASELINE_BINARY: ${{ steps.baseline.outputs.binary }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Same Chromium SUID-sandbox constraint as PR proof's packaged lane.
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey released-enterprise-activated
+      - name: Upload upgrade-path evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-upgrade-path-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke/logs/**
+            evals/results/test-runs/**
+          include-hidden-files: true
+          retention-days: 7
+
   validate-models-snapshot:
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'snapshot'
