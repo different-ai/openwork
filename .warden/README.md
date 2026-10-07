@@ -74,10 +74,31 @@ and `warden.toml` replace the PR's copies). On every push it runs the
 `contributor-screen` skill (`.warden/contributor.toml`): hidden behavior,
 obfuscation and supply-chain risk. When that screen is clean, or after a
 maintainer's `/test`, it runs the two standard skills. Neither result
-approves the PR; they feed the `contributor-pr-required` status. It uses a
-separate, spend-limited key, `WARDEN_CONTRIBUTOR_OPENAI_API_KEY`, because
-text in a fork's diff can steer the model and the agent's `Read` tool is not
-confined to the repository.
+approves the PR; they feed the `contributor-pr-required` status.
+
+Text in a fork's diff can steer the model, and the agent's `Read` tool
+accepts any path, including `/proc/self/environ`. So for forks, Warden runs
+in a sandbox (`.github/scripts/contributor-warden-sandbox.sh`):
+
+- **No key to steal.** The Warden container gets a placeholder key. Pi's
+  `models.json` sends every OpenAI call to a proxy container, which alone
+  holds `WARDEN_CONTRIBUTOR_OPENAI_API_KEY` (a separate, spend-limited key).
+- **No way out.** The Warden container is on an internal Docker network
+  that reaches only the proxy. The proxy forwards only `POST /v1/responses`
+  for the configured models, refuses hosted tools (web search, MCP, code
+  interpreter, file search) and server-side state, and stops after a request
+  budget (`.github/scripts/warden-model-proxy.mjs`).
+- **Nothing else to read or change.** Read-only PR files and git objects,
+  read-only root filesystem, non-root, no Linux capabilities, no host
+  directories.
+- **Checked every run.** Before Warden starts, a check inside the container
+  fails the run if a real key, the internet, host files or writable PR files
+  are visible.
+
+A steered model can still lie about the code. That is why the deterministic
+screen runs separately, held items always need a person, and Warden never
+approves a fork PR. Only OpenAI models work in the sandbox; pointing
+`WARDEN_MODEL` at another provider makes fork reviews incomplete.
 
 The workflow reads policy, skills, and the reporter from the PR's immutable
 base; proposed policy changes take effect after merging. PR code is inspected,

@@ -9,9 +9,15 @@ name: Contributor Warden
 # contributor-pr-test.yml (issue_comment), so this file, its scripts and the
 # Warden policy always come from dev. The PR is fetched as git objects and
 # written to disk with symlinks, LFS and filters disabled; nothing from it is
-# installed, built, sourced or executed. Warden's agent only has Read, Grep
-# and Glob. The model key is a dedicated, spend-limited key because text in
-# the diff can steer the model.
+# installed, built, sourced or executed by this job.
+#
+# Text in the diff can steer the model, and Warden's Read tool accepts any
+# path. So Warden runs in a container that holds no key and has no internet:
+# read-only PR files, non-root, no capabilities, and a network that reaches
+# only a proxy container. The proxy holds a dedicated, spend-limited key and
+# forwards only Responses calls for the configured models with no hosted
+# tools, up to a request budget (contributor-warden-sandbox.sh,
+# warden-model-proxy.mjs).
 on:
   workflow_call:
     inputs:
@@ -120,33 +126,54 @@ jobs:
           sed -i -E "s|^model = \".*\"$|model = \"$MODEL\"|" "$PR_DIR/warden.toml" "$PR_DIR/.warden/contributor.toml"
 
       # Installed in an empty directory so no .npmrc or workspace file from
-      # the PR can change where it comes from.
+      # the PR can change where it comes from. Mounted read-only into the
+      # sandbox; install scripts are not needed.
       - name: Install the pinned Warden CLI outside the PR
         if: steps.fetch.outputs.stale == 'false'
         working-directory: ${{ runner.temp }}
         run: |
           mkdir warden-cli && cd warden-cli
           npm init -y > /dev/null
-          npm install --no-audit --no-fund --no-save @sentry/warden@0.43.0
+          npm install --no-audit --no-fund --no-save --ignore-scripts @sentry/warden@0.43.0
 
-      - name: Run Warden on the PR's changes
+      # The sandbox has no network, so fetch every blob the diff needs now.
+      - name: Fetch the objects Warden will read
+        if: steps.fetch.outputs.stale == 'false'
+        working-directory: trusted
+        env:
+          MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
+        run: git diff --numstat "$MERGE_BASE" "$HEAD_SHA" > /dev/null
+
+      # Warden runs in a container with a placeholder key, read-only mounts
+      # and no internet; only the proxy container holds the real key. See
+      # .github/scripts/contributor-warden-sandbox.sh.
+      - name: Run Warden in the sandbox
         if: steps.fetch.outputs.stale == 'false'
         continue-on-error: true
-        working-directory: ${{ runner.temp }}/warden-cli
         env:
           STAGE: ${{ inputs.stage }}
           MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
-          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pr/.warden/pi
-          WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
+          IMAGE: node:24-bookworm@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0
         run: |
-          if [ -z "$WARDEN_OPENAI_API_KEY" ]; then
+          if [ -z "$OPENAI_API_KEY" ]; then
             echo "::error::WARDEN_CONTRIBUTOR_OPENAI_API_KEY is not set; the Warden part of this check is incomplete."
             exit 1
           fi
-          config="$PR_DIR/warden.toml"
-          [ "$STAGE" = "screen" ] && config="$PR_DIR/.warden/contributor.toml"
-          ./node_modules/.bin/warden "$MERGE_BASE..$HEAD_SHA" -C "$PR_DIR" \
-            --config-path "$config" --runtime pi --fail-on off --log -o "$WARDEN_JSONL"
+          config="warden.toml"
+          [ "$STAGE" = "screen" ] && config=".warden/contributor.toml"
+          ALLOWED_MODELS="$(grep -hE '^model = "openai/' "$PR_DIR/$config" | sed -E 's|^model = "openai/(.*)"$|\1|' | sort -u | paste -sd, -)"
+          cp -R "$PR_DIR/.warden/pi" "$RUNNER_TEMP/pi"
+          export ALLOWED_MODELS
+          export GIT_COMMON_DIR="$GITHUB_WORKSPACE/trusted/.git"
+          export WARDEN_CLI_DIR="$RUNNER_TEMP/warden-cli"
+          export PI_DIR="$RUNNER_TEMP/pi"
+          export OUT_DIR="$RUNNER_TEMP/warden-out"
+          export CONFIG="/work/pr/$config"
+          export RANGE="$MERGE_BASE..$HEAD_SHA"
+          export PROXY_SCRIPT="$GITHUB_WORKSPACE/trusted/.github/scripts/warden-model-proxy.mjs"
+          bash trusted/.github/scripts/contributor-warden-sandbox.sh
+          cp "$OUT_DIR/warden.jsonl" "$WARDEN_JSONL"
 
       - name: Report the screen
         id: report
