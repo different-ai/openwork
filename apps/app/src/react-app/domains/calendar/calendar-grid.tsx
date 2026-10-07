@@ -86,7 +86,7 @@ function automationAriaLabel(item: AutomationCalendarItem, timeZone: string) {
   return `${item.name}, ${STATUS_LABEL[item.status]}, ${formatTime(item.at, timeZone)}`
 }
 
-function AutomationBlock(props: { item: AutomationCalendarItem; timeZone: string; selected: boolean; compact?: boolean; onSelect: () => void }) {
+function AutomationBlock(props: { item: AutomationCalendarItem; timeZone: string; selected: boolean; compact?: boolean; fill?: boolean; onSelect: () => void }) {
   const { item } = props
   return (
     <button
@@ -96,7 +96,7 @@ function AutomationBlock(props: { item: AutomationCalendarItem; timeZone: string
       aria-pressed={props.selected}
       aria-label={automationAriaLabel(item, props.timeZone)}
       title={`${item.name} · ${STATUS_LABEL[item.status]}`}
-      className={cn(automationBlockClass(item, props.selected), "h-full")}
+      className={cn(automationBlockClass(item, props.selected), props.fill && "h-full")}
       onClick={props.onSelect}
     >
       <AutomationStatusIcon item={item} className="mt-px" />
@@ -112,7 +112,7 @@ function AutomationBlock(props: { item: AutomationCalendarItem; timeZone: string
   )
 }
 
-function MeetingBlock(props: { event: CalendarEvent; timeZone: string; selected: boolean; compact?: boolean; onSelect: () => void }) {
+function MeetingBlock(props: { event: CalendarEvent; timeZone: string; selected: boolean; compact?: boolean; fill?: boolean; onSelect: () => void }) {
   const { event } = props
   const source = CALENDAR_PROVIDER_LABEL[event.provider]
   return (
@@ -123,7 +123,7 @@ function MeetingBlock(props: { event: CalendarEvent; timeZone: string; selected:
       aria-pressed={props.selected}
       aria-label={`${event.title}, ${source}${event.timing.kind === "timed" ? `, ${formatTime(event.timing.start, props.timeZone)}` : ", all day"}`}
       title={`${event.title} — ${source}`}
-      className={cn(meetingBlockClass(props.selected), "h-full")}
+      className={cn(meetingBlockClass(props.selected), props.fill && "h-full")}
       onClick={props.onSelect}
     >
       <span className="truncate font-medium">{event.title} <span className="font-normal text-muted-foreground">— {source}</span></span>
@@ -252,6 +252,7 @@ export function CalendarTimeGrid(props: GridProps) {
                           item={block.item}
                           timeZone={props.timeZone}
                           compact={compact}
+                          fill
                           selected={isSelected(props.selection, block)}
                           onSelect={() => props.onSelect({ kind: "automation", automationId: block.item.automationId, itemKey: block.item.key })}
                         />
@@ -260,6 +261,7 @@ export function CalendarTimeGrid(props: GridProps) {
                           event={block.event}
                           timeZone={props.timeZone}
                           compact={compact}
+                          fill
                           selected={isSelected(props.selection, block)}
                           onSelect={() => props.onSelect({ kind: "meeting", key: block.event.key })}
                         />
@@ -293,7 +295,13 @@ export function CalendarMonthGrid(props: GridProps & { anchorMonth: number; onOp
   const today = localDateOf(props.now, props.timeZone)
   const weeks = props.range.days.length / 7
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-7 border-l border-t border-border" style={{ gridTemplateRows: `repeat(${weeks}, minmax(0, 1fr))` }} data-calendar-grid="month">
+    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="sticky top-0 z-10 grid grid-cols-7 border-b border-border bg-background" aria-hidden="true">
+      {props.range.days.slice(0, 7).map((day) => (
+        <div key={`h-${day.year}-${day.month}-${day.day}`} className="border-r border-border px-2 py-1.5 text-xs text-muted-foreground">{formatDayHeader(day).weekday}</div>
+      ))}
+    </div>
+    <div className="grid min-h-full grid-cols-7" style={{ gridTemplateRows: `repeat(${weeks}, minmax(7.5rem, 1fr))` }} data-calendar-grid="month">
       {props.range.days.map((day) => {
         const timed = blocksForDay(day, props.timeZone, props.automations, props.meetings).sort((left, right) => left.start - right.start)
         const allDay = props.meetings.filter((event) => allDayCovers(event, day))
@@ -301,7 +309,7 @@ export function CalendarMonthGrid(props: GridProps & { anchorMonth: number; onOp
         const isToday = isSameDate(day, today)
         const outside = day.month !== props.anchorMonth
         return (
-          <div key={`m-${day.year}-${day.month}-${day.day}`} className={cn("flex min-h-24 min-w-0 flex-col gap-0.5 border-b border-r border-border p-1", outside && "bg-muted/30")}>
+          <div key={`m-${day.year}-${day.month}-${day.day}`} className={cn("flex min-w-0 flex-col gap-0.5 border-b border-r border-border p-1", outside && "bg-muted/30")}>
             <button
               type="button"
               className={cn("self-start rounded px-1 text-xs hover:bg-muted", outside ? "text-muted-foreground" : "text-foreground", isToday && "bg-primary text-primary-foreground hover:bg-primary")}
@@ -337,6 +345,7 @@ export function CalendarMonthGrid(props: GridProps & { anchorMonth: number; onOp
           </div>
         )
       })}
+    </div>
     </div>
   )
 }

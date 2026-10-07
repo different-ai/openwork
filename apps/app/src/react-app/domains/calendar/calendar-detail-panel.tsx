@@ -67,7 +67,7 @@ export function AutomationDetailPanel(props: {
   const pastRuns = (props.runs ?? []).slice(0, PAST_RUN_LIMIT)
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-background" aria-label={automation.name} data-calendar-detail={automation.id}>
+    <aside className="flex w-[25rem] shrink-0 flex-col border-l border-border bg-background" aria-label={automation.name} data-calendar-detail={automation.id}>
       <div className="flex items-start gap-2 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold tracking-[-0.2px]">{automation.name}</h2>
@@ -123,7 +123,7 @@ export function AutomationDetailPanel(props: {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
+      <div className="flex flex-wrap gap-1.5 border-t border-border px-4 py-3">
         {automation.state === "active" ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={props.actions.onPause}><Pause />Pause</Button>
         ) : automation.state === "inactive" ? (
@@ -166,7 +166,7 @@ export function MeetingDetailPanel(props: { event: CalendarEvent; timeZone: stri
       ? `${formatDate(event.timing.startDate)} · All day`
       : `${formatDate(event.timing.startDate)} – ${formatDate(addDays(event.timing.endDate, -1))} · All day`
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-background" aria-label={event.title} data-calendar-meeting-detail={event.key}>
+    <aside className="flex w-[25rem] shrink-0 flex-col border-l border-border bg-background" aria-label={event.title} data-calendar-meeting-detail={event.key}>
       <div className="flex items-start gap-2 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[15px] font-semibold tracking-[-0.2px]">{event.title}</h2>

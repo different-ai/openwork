@@ -1,9 +1,9 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import type { AutomationList, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
-import { buildAutomationCalendarItems, describeRunOutcome } from "../../apps/app/src/react-app/domains/calendar/automation-calendar";
-import { describeSchedule } from "../../apps/app/src/react-app/domains/calendar/calendar-format";
-import { layoutOverlappingBlocks } from "../../apps/app/src/react-app/domains/calendar/calendar-layout";
-import { calendarRange, dayLengthMinutes, minutesIntoDay, parseGraphDateTime, zonedTimeToInstant } from "../../apps/app/src/react-app/domains/calendar/calendar-time";
+import { buildAutomationCalendarItems, describeRunOutcome } from "../src/react-app/domains/calendar/automation-calendar";
+import { describeSchedule } from "../src/react-app/domains/calendar/calendar-format";
+import { layoutOverlappingBlocks } from "../src/react-app/domains/calendar/calendar-layout";
+import { calendarRange, dayLengthMinutes, minutesIntoDay, parseGraphDateTime, zonedTimeToInstant } from "../src/react-app/domains/calendar/calendar-time";
 
 /**
  * The Calendar's Automations layer: Den run receipts reconciled with schedule

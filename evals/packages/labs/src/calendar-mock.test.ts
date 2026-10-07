@@ -1,19 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { extractCalendarEvents } from "../../ee/apps/den-api/src/capability-sources/google-workspace-api";
-import { extractMicrosoftCalendarEvents } from "../../ee/apps/den-api/src/capability-sources/microsoft-graph";
+import { extractCalendarEvents } from "../../../../ee/apps/den-api/src/capability-sources/google-workspace-api";
+import { extractMicrosoftCalendarEvents } from "../../../../ee/apps/den-api/src/capability-sources/microsoft-graph";
 import {
   createCalendarAdapter,
   normalizeGoogleEvent,
   normalizeMicrosoftEvent,
   type CalendarTransport,
-} from "../../apps/app/src/react-app/domains/calendar/calendar-adapters";
+} from "../../../../apps/app/src/react-app/domains/calendar/calendar-adapters";
 import {
   denGoogleCalendarEventsResponseSchema,
   denMicrosoftCalendarEventsResponseSchema,
-} from "../../apps/app/src/app/lib/den-calendar-contract";
-import { CalendarConnectionError } from "../../apps/app/src/react-app/domains/calendar/calendar-event";
-import { createMockCalendarTransport } from "../../apps/app/src/react-app/domains/calendar/calendar-source";
-import { calendarRange } from "../../apps/app/src/react-app/domains/calendar/calendar-time";
+} from "../../../../apps/app/src/app/lib/den-calendar-contract";
+import { CalendarConnectionError } from "../../../../apps/app/src/react-app/domains/calendar/calendar-event";
+import { createMockCalendarTransport } from "../../../../apps/app/src/react-app/domains/calendar/calendar-source";
+import { calendarRange } from "../../../../apps/app/src/react-app/domains/calendar/calendar-time";
 import {
   createCalendarMockState,
   denCalendarEvents,
@@ -21,7 +21,7 @@ import {
   graphCalendarView,
   SCENARIOS,
   startCalendarMock,
-} from "../packages/labs/src/calendar-mock.mjs";
+} from "./calendar-mock.mjs";
 
 /**
  * One chain, both providers: the calendar mock's provider payloads (Google

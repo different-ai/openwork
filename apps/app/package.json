@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:health": "node scripts/health.mjs",
     "test:boot": "bun test tests/app-boot.test.tsx",
+    "test:calendar": "bun test tests/calendar-automation-layer.test.ts",
     "test:mention-send": "node scripts/mention-send.mjs",
     "test:sessions": "node scripts/sessions.mjs",
     "test:refactor": "pnpm typecheck && pnpm test:health && pnpm test:sessions",

@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react"
 import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Lock, RefreshCw } from "lucide-react"
-import { useNavigate } from "react-router"
+import { useNavigate, useSearchParams } from "react-router"
 import type { AutomationRun } from "@openwork/types/automations"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -22,7 +22,7 @@ import {
   useAutomationRunsQuery,
   useAutomationsDenContext,
 } from "@/react-app/domains/automations/use-automations"
-import { resolveExtensionIconSrc, resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src"
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src"
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections"
 import { usePlatform } from "@/react-app/kernel/platform"
 import { buildAutomationCalendarItems } from "./automation-calendar"
@@ -30,7 +30,7 @@ import { CALENDAR_PROVIDER_LABEL, type CalendarConnectionError, type CalendarEve
 import { AutomationDetailPanel, MeetingDetailPanel } from "./calendar-detail-panel"
 import { formatRangeLabel, formatTime } from "./calendar-format"
 import { CalendarMonthGrid, CalendarTimeGrid, type CalendarSelection } from "./calendar-grid"
-import { calendarRange, localDateOf, shiftAnchor, type CalendarView, type LocalDate } from "./calendar-time"
+import { calendarRange, dateKey, localDateOf, parseDateKey, shiftAnchor, type CalendarView, type LocalDate } from "./calendar-time"
 import {
   calendarProviderPresence,
   useAutomationRunsInRange,
@@ -63,7 +63,7 @@ function displayTimeZone(): string {
 }
 
 function ProviderLogo({ provider }: { provider: CalendarProviderId }) {
-  const src = provider === "google" ? resolveExtensionIconSrc("/ext-google-workspace.svg") : resolveExtensionIconUrl({ iconSlug: "microsoftoutlook" })
+  const src = resolveExtensionIconSrc(provider === "google" ? "/ext-google-workspace.svg" : "/ext-microsoft-365.svg")
   return <img src={src} alt="" aria-hidden="true" className="size-3.5 shrink-0" />
 }
 
@@ -107,11 +107,36 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
   const { client, organizationId } = denContext
   const timeZone = displayTimeZone()
   const [now, setNow] = useState(() => Date.now())
-  const [view, setView] = useState<CalendarView>("week")
-  const [anchor, setAnchor] = useState<LocalDate>(() => localDateOf(Date.now(), timeZone))
+  // View, date and selection live in the URL so a reload or a shell remount keeps them.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const viewParam = searchParams.get("view")
+  const view: CalendarView = viewParam === "day" || viewParam === "month" ? viewParam : "week"
+  const anchor: LocalDate = parseDateKey(searchParams.get("date") ?? "") ?? localDateOf(now, timeZone)
+  const selection: CalendarSelection = searchParams.get("automation")
+    ? { kind: "automation", automationId: searchParams.get("automation") ?? "", itemKey: searchParams.get("block") }
+    : searchParams.get("meeting") ? { kind: "meeting", key: searchParams.get("meeting") ?? "" } : null
+  const updateParams = (change: (next: URLSearchParams) => void) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      change(next)
+      return next
+    }, { replace: true })
+  }
+  const setView = (next: CalendarView) => updateParams((params) => { params.set("view", next) })
+  const setAnchor = (next: LocalDate | ((current: LocalDate) => LocalDate)) => updateParams((params) => {
+    params.set("date", dateKey(typeof next === "function" ? next(anchor) : next))
+  })
+  const setSelection = (next: CalendarSelection) => updateParams((params) => {
+    for (const key of ["automation", "block", "meeting"]) params.delete(key)
+    if (next?.kind === "automation") {
+      params.set("automation", next.automationId)
+      if (next.itemKey) params.set("block", next.itemKey)
+    } else if (next?.kind === "meeting") {
+      params.set("meeting", next.key)
+    }
+  })
   const [layers, setLayers] = useState<Layers>(readLayers)
   const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<CalendarProviderId>>(new Set())
-  const [selection, setSelection] = useState<CalendarSelection>(null)
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), NOW_TICK_MS)
@@ -125,7 +150,8 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
     }
   }, [layers])
 
-  const range = useMemo(() => calendarRange(view, anchor, timeZone, WEEK_STARTS_ON), [anchor, timeZone, view])
+  const { year, month, day } = anchor
+  const range = useMemo(() => calendarRange(view, { year, month, day }, timeZone, WEEK_STARTS_ON), [day, month, timeZone, view, year])
   const feature = useCalendarFeature(denContext)
   const enabled = feature.data === true
   const listQuery = useAutomationListQuery(denContext)
@@ -208,7 +234,7 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
     )
   }
 
-  const goToday = () => setAnchor(localDateOf(Date.now(), timeZone))
+  const goToday = () => updateParams((params) => { params.delete("date") })
   const noAutomations = (automationItems ?? []).every((item) => item.automation.state === "archived")
   const providersOffered = PROVIDERS.filter((provider) => presence[provider]?.presence !== "absent")
 
@@ -329,7 +355,7 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
               selection={selection}
               onSelect={setSelection}
               anchorMonth={anchor.month}
-              onOpenDay={(day) => { setAnchor(day); setView("day") }}
+              onOpenDay={(day) => updateParams((params) => { params.set("date", dateKey(day)); params.set("view", "day") })}
             />
           ) : (
             <CalendarTimeGrid

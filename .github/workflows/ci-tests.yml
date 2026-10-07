@@ -93,6 +93,8 @@ jobs:
           pnpm --filter @openwork-ee/headless-runner test:computer-config
       - name: Boot the app provider tree
         run: pnpm test:boot
+      - name: Test the Calendar's Automations layer
+        run: pnpm --filter @openwork/app test:calendar
       - name: Run core unit tests
         run: pnpm --dir evals run test:core
       # Uses the pinned OpenCode that Setup tests put on PATH.
