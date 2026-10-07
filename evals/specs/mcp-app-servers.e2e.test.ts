@@ -485,6 +485,14 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       frame = await world.appFrame(pricerTitle);
       await user.on(frame).see({ text: `Ready — ${text}` }, { timeoutMs: 90_000 });
     };
+    // An added or restored tile shows its saved copy at once, then replaces that frame with the live App.
+    // Read the revision from the frame that stays, once the tile has finished loading.
+    const tileRevision = async (text: string) => {
+      expect(await probe.eventually(async () => (await probe.dom('[data-dashboard-tile^="personal:"][aria-busy="false"]')).elements, {
+        within: 90_000, intervalMs: 200, label: "the tile has replaced its saved copy with the live App", until: elements => elements.length === 1,
+      })).toHaveLength(1);
+      await revision(text);
+    };
     await step("before: discovery and preparation have no App preview", async () => {
       await world.holdCreation(true);
       expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
@@ -562,18 +570,18 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       await user.click({ role: "button", label: "Add an artifact" });
       await user.type({ label: "Search artifacts" }, pricerTitle, { replace: true });
       await user.click({ role: "option", label: new RegExp(pricerTitle) });
-      await revision("revision two");
+      await tileRevision("revision two");
       await closeFrame();
       await openTileMenu({ user, probe }, world.den.admin, pricerTitle);
       await user.click({ role: "menuitem", label: `Refresh ${pricerTitle}` });
-      await revision("revision two");
+      await tileRevision("revision two");
       await closeFrame();
       await openTileMenu({ user, probe }, world.den.admin, pricerTitle);
       await user.click({ role: "menuitem", label: `Remove ${pricerTitle} from dashboard` });
       expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
       await user.click({ role: "button", label: "Undo" });
       expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
-      await revision("revision two");
+      await tileRevision("revision two");
       evidence.recordAssertionEvidence("Personal placement survives refresh, removal and Undo", `${name}: the real App shows revision two in its personal tile, refreshes through the tile menu, and remains usable after remove and Undo.`, true);
       await user.screenshot();
     });
