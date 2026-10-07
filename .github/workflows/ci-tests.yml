@@ -390,7 +390,7 @@ jobs:
           name: packaged-upgrade-path-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/openwork-packaged-smoke/timing.json
-            ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
+            ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/*.log
             evals/results/test-runs/**
           include-hidden-files: true
           retention-days: 7
