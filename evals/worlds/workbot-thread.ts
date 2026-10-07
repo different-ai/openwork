@@ -62,7 +62,8 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
     const address = vite.httpServer?.address();
     if (!address || typeof address === "string") throw new Error("Thread fixture did not bind");
     const url = `http://127.0.0.1:${address.port}`;
-    const app = resources.use(await chrome({ name: "workbot-thread", host: place.host(), startUrl: "about:blank", headless: true }));
+    // The spec proves hover-only Edit; a member on a desktop has a mouse even when the runner's headless Chrome finds none.
+    const app = resources.use(await chrome({ name: "workbot-thread", host: place.host(), startUrl: "about:blank", headless: true, mouse: true }));
     await setViewport(app, { width: 1440, height: 1000, deviceScaleFactor: 1 });
     return {
       app, url,
