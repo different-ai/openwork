@@ -434,6 +434,13 @@ export async function testWorkflowDraft(input: {
   }
 }
 
+function capabilityUnavailable(built: BuiltCodemodeTools, path: string): Error {
+  const namespace = codemodeCallName(path).split(".")[0] ?? ""
+  return new Error(built.unreachableNamespaces?.includes(namespace)
+    ? `workflow_capability_unreachable:${path}`
+    : `workflow_capability_unavailable:${path}`)
+}
+
 /** Manifest entries keyed by the dotted name Code Mode records for each call. */
 function manifestByCallName(entries: readonly CodemodeManifestEntry[]): Map<string, CodemodeManifestEntry> {
   return new Map(entries.map((entry) => [codemodeCallName(entry.scriptPath), entry]))
@@ -496,7 +503,7 @@ export async function createWorkflowVersion(input: {
   for (const required of payload.parsed.requiredCapabilities) {
     const current = manifest.get(codemodeCallName(required.scriptPath))
     if (!current || current.capabilityName !== required.capabilityName) {
-      throw new Error(`workflow_capability_unavailable:${required.scriptPath}`)
+      throw capabilityUnavailable(built, required.scriptPath)
     }
   }
   for (const call of parseCodemodeToolCalls(receipt.tool_calls)) {
@@ -760,7 +767,7 @@ export async function saveWorkflow(input: {
   const requiredCapabilities: Array<{ capabilityName: string; scriptPath: string }> = []
   for (const call of parseCodemodeToolCalls(receipt.tool_calls)) {
     const resolved = manifest.get(codemodeCallName(call.name))
-    if (!resolved) throw new Error(`workflow_capability_unavailable:${call.name}`)
+    if (!resolved) throw capabilityUnavailable(built, call.name)
     if (!requiredCapabilities.some((entry) => entry.scriptPath === resolved.scriptPath)) {
       requiredCapabilities.push({
         capabilityName: resolved.capabilityName,

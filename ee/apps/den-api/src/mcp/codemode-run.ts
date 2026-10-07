@@ -9,9 +9,19 @@ type CodemodeRunCommon = {
 }
 
 export type CodemodeRunResult = CodemodeRunCommon & (
-  | { ok: true; value: CodeMode.DataValue }
+  // tooLargeBytes: the returned value exceeded the output limit, so `value` is truncated text.
+  | { ok: true; value: CodeMode.DataValue; tooLargeBytes?: number }
   | { ok: false; error: CodeMode.Diagnostic }
 )
+
+// CodeMode's `truncated` flag also covers dropped logs; only this marker means the value itself was cut.
+const TRUNCATED_VALUE_MARKER = / \[result truncated: (\d+) bytes exceeds the \d+-byte output limit; return a smaller value\]$/u
+
+function truncatedValueBytes(result: { truncated?: boolean; value: CodeMode.DataValue }): number | undefined {
+  if (!result.truncated || typeof result.value !== "string") return undefined
+  const match = TRUNCATED_VALUE_MARKER.exec(result.value)
+  return match ? Number(match[1]) : undefined
+}
 
 function isJsonSafe(value: unknown, seen = new Set<object>()): value is CodeMode.DataValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true
@@ -29,6 +39,13 @@ function isJsonSafe(value: unknown, seen = new Set<object>()): value is CodeMode
 // A runaway-loop guard, not a work budget: scripts call tools without a
 // per-call approval, and the timeout and output cap bound everything else.
 const DEFAULT_MAX_TOOL_CALLS = 1_024
+const DEFAULT_MAX_OUTPUT_BYTES = 65_536
+
+/** Replaces the outputSchema mismatch a truncated result otherwise causes. */
+export function resultTooLargeMessage(bytes: number, maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES): string {
+  const size = (value: number, round: (kb: number) => number) => value < 1024 ? `${value} bytes` : `${round(value / 1024)} KB`
+  return `The result is ${size(bytes, Math.ceil)}, over the ${size(maxOutputBytes, Math.floor)} limit. Return only the fields the Workflow needs.`
+}
 
 export async function runCodemodeScript(input: {
   code: string
@@ -58,7 +75,7 @@ export async function runCodemodeScript(input: {
     limits: {
       timeoutMs: input.timeoutMs,
       maxToolCalls: input.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
-      maxOutputBytes: input.maxOutputBytes ?? 65_536,
+      maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     },
   }))
   const common = {
@@ -66,7 +83,7 @@ export async function runCodemodeScript(input: {
     toolCalls: result.toolCalls.map((call) => ({ name: call.name })),
     durationMs: Date.now() - startedAt,
   }
-  return result.ok
-    ? { ok: true, value: result.value, ...common }
-    : { ok: false, error: result.error, ...common }
+  if (!result.ok) return { ok: false, error: result.error, ...common }
+  const tooLargeBytes = truncatedValueBytes(result)
+  return { ok: true, value: result.value, ...(tooLargeBytes === undefined ? {} : { tooLargeBytes }), ...common }
 }

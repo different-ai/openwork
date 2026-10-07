@@ -16,7 +16,7 @@ import {
   type CodemodeScriptInputIssue,
 } from "./codemode-script-object.js"
 import { restrictCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
-import { runCodemodeScript } from "./codemode-run.js"
+import { resultTooLargeMessage, runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
 
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
@@ -179,6 +179,9 @@ export async function executeWorkflow(input: {
     const validation = validateCodemodeScriptOutput(parsed.payload.outputSchema, result.value)
     if (!validation.ok) {
       if (validation.error === "invalid_schema") return { ok: false, error: "unsupported", message: validation.message }
+      const { tooLargeBytes } = result
+      const tooLarge = tooLargeBytes !== undefined
+      const tooLargeMessage = tooLarge ? resultTooLargeMessage(tooLargeBytes, parsed.payload.limits?.maxOutputBytes) : undefined
       const receiptId = await recordWorkflowRun(input.database, {
         organizationId: input.organizationId,
         orgMembershipId: input.orgMembershipId,
@@ -193,8 +196,8 @@ export async function executeWorkflow(input: {
         source: receiptSource,
         code: input.code,
         status: "failed",
-        errorKind: "InvalidResult",
-        errorMessage: "The Workflow result did not match its outputSchema.",
+        errorKind: tooLarge ? "ResultTooLarge" : "InvalidResult",
+        errorMessage: tooLargeMessage ?? "The Workflow result did not match its outputSchema.",
         toolCalls: result.toolCalls,
         durationMs: result.durationMs,
         startedAt,
@@ -203,7 +206,7 @@ export async function executeWorkflow(input: {
       return {
         ok: false,
         error: "invalid_result",
-        message: "The Workflow result does not match its outputSchema.",
+        message: tooLargeMessage ?? "The Workflow result does not match its outputSchema.",
         issues: validation.issues,
         receiptId,
       }

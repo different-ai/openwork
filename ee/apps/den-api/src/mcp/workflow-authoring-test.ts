@@ -11,7 +11,7 @@ import {
 } from "../workflow-authoring-receipts.js"
 import type { RecordWorkflowRunInput } from "../workflow-runs.js"
 import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
-import { runCodemodeScript } from "./codemode-run.js"
+import { resultTooLargeMessage, runCodemodeScript } from "./codemode-run.js"
 import { validateCodemodeScriptInput, validateCodemodeScriptOutput } from "./codemode-script-object.js"
 import type { BuiltCodemodeTools } from "./codemode-tools.js"
 import { normalizeToolBody } from "./invoke.js"
@@ -90,9 +90,12 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
   if (outputSchema) {
     const validation = validateCodemodeScriptOutput(outputSchema, result.value)
     if (!validation.ok) {
-      const receiptId = await record({ ...receipt, resultDigest, status: "failed", errorKind: "InvalidResult",
-        errorMessage: "The result does not match outputSchema.", toolCalls: result.toolCalls, durationMs: result.durationMs, startedAt, finishedAt })
-      return failure("invalid_result", "The result does not match outputSchema.", { receiptId })
+      const { tooLargeBytes } = result
+      const tooLarge = tooLargeBytes !== undefined
+      const message = tooLarge ? resultTooLargeMessage(tooLargeBytes) : "The result does not match outputSchema."
+      const receiptId = await record({ ...receipt, resultDigest, status: "failed", errorKind: tooLarge ? "ResultTooLarge" : "InvalidResult",
+        errorMessage: message, toolCalls: result.toolCalls, durationMs: result.durationMs, startedAt, finishedAt })
+      return failure("invalid_result", message, { receiptId })
     }
   }
   const receiptId = await record({ ...receipt, resultDigest, status: "succeeded",

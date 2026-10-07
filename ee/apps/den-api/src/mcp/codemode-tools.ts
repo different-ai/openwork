@@ -50,6 +50,8 @@ export type CodemodeManifestEntry = {
 export type BuiltCodemodeTools = {
   tools: CodemodeToolTree
   manifest: CodemodeManifestEntry[]
+  // Connection namespaces whose tool list could not be read, so their tools are absent, not removed.
+  unreachableNamespaces?: string[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -299,6 +301,8 @@ export async function buildExternalMcpToolTree(input: {
   })
   const connections = namespaceContext.codemodeExternalMcpConnections
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
+  const namespaces = namespaceContext.namespaces.externalMcp
+  const unreachableNamespaces: string[] = []
   const listed = (await mapConcurrent(connections, EXTERNAL_MCP_SEARCH_CONCURRENCY, async (connection) => {
     try {
       const member = connection.credentialMode === "per_member"
@@ -313,10 +317,11 @@ export async function buildExternalMcpToolTree(input: {
       )
       return { connection, tools }
     } catch {
+      const namespace = namespaces.get(connection.id)
+      if (namespace) unreachableNamespaces.push(namespace)
       return undefined
     }
   })).filter(isListedExternalConnection)
-  const namespaces = namespaceContext.namespaces.externalMcp
   const namespaceEntries = listed.flatMap(({ connection, tools }) => {
     const namespace = namespaces.get(connection.id)
     if (!namespace) return []
@@ -353,5 +358,6 @@ export async function buildExternalMcpToolTree(input: {
           authority: "external" as const,
         }))
     }),
+    ...(unreachableNamespaces.length > 0 ? { unreachableNamespaces } : {}),
   }
 }

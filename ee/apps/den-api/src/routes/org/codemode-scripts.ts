@@ -32,6 +32,7 @@ import { env } from "../../env.js"
 import { getOrganizationFeatures } from "../../features.js"
 import { getCatalog } from "../../mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "../../mcp/capability-registry.js"
+import { codemodeCallName } from "../../mcp/codemode-namespaces.js"
 import {
   executeMarketplaceCapability,
   listAccessibleWorkflows,
@@ -194,6 +195,19 @@ function routeFailure(error: unknown) {
       body: {
         error: message,
         message: "Run the exact procedure successfully with execute_capability_script, then retry saving the Workflow without changing the code. The successful run must be less than 15 minutes old. The match is byte-exact on the code string, so re-send the identical source (same whitespace) that succeeded.",
+      },
+    } as const
+  }
+  const unreachablePrefix = "workflow_capability_unreachable:"
+  if (message.startsWith(unreachablePrefix)) {
+    const capability = message.slice(unreachablePrefix.length)
+    const service = codemodeCallName(capability).split(".")[0]
+    return {
+      status: 503,
+      body: {
+        error: "workflow_capability_unreachable",
+        capability,
+        message: `Couldn't reach ${service} to confirm ${capability}, so the Workflow was not saved. Try saving again; if it keeps failing, reconnect ${service}.`,
       },
     } as const
   }

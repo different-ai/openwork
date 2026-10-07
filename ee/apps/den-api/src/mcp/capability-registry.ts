@@ -236,11 +236,15 @@ export type CapabilityLeaf = {
 
 type CapabilitySourceExclusion = { excluded: string }
 
+type CapabilityEnumerateContext = CapabilityRegistryContext & {
+  reportUnreachableNamespaces?: (namespaces: readonly string[]) => void
+}
+
 export type CapabilitySource = {
   kind: CapabilitySourceKind
   parseName: (name: string) => ParsedCapability | null
   search: (ctx: CapabilitySearchContext, query: string, limit: number) => Promise<CapabilityMatch[]>
-  enumerate: (ctx: CapabilityRegistryContext) => Promise<CapabilityLeaf[]> | CapabilitySourceExclusion
+  enumerate: (ctx: CapabilityEnumerateContext) => Promise<CapabilityLeaf[]> | CapabilitySourceExclusion
   execute: (ctx: CapabilityRegistryContext, parsed: ParsedCapability, input: CapabilityExecuteInput) => Promise<ExecuteCapabilityToolResult>
 }
 
@@ -566,13 +570,15 @@ const externalMcpSource: CapabilitySource = {
   },
   enumerate: async (ctx) => {
     if (!ctx.externalMcpConnectionsEnabled) return []
-    return leavesFromBuilt(await buildExternalMcpToolTree({
+    const built = await buildExternalMcpToolTree({
       organizationId: ctx.organizationId,
       member: ctx.member,
       scopes: ctx.principal.scopes,
       redirectUriBase: ctx.redirectUriBase,
       namespaceContext: await ctx.resolveNamespaceContext(),
-    }))
+    })
+    if (built.unreachableNamespaces) ctx.reportUnreachableNamespaces?.(built.unreachableNamespaces)
+    return leavesFromBuilt(built)
   },
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "externalMcp")) return unknownCapabilityResult(input.name)
@@ -864,8 +870,15 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       return unknownCapabilityResult(input.name)
     },
     buildToolTree: async (ctx: CapabilityRegistryContext): Promise<BuiltCodemodeTools> => {
+      const unreachableNamespaces: string[] = []
+      const enumerateContext: CapabilityEnumerateContext = {
+        ...ctx,
+        reportUnreachableNamespaces: (namespaces) => {
+          unreachableNamespaces.push(...namespaces)
+        },
+      }
       const enumerated = await Promise.all(CAPABILITY_SOURCE_KINDS.map(async (kind) => {
-        const result = await sources[kind].enumerate(ctx)
+        const result = await sources[kind].enumerate(enumerateContext)
         return "excluded" in result ? [] : result
       }))
       const leaves = enumerated.flat()
@@ -883,6 +896,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           ...(readOnly === undefined ? {} : { readOnly }),
           ...(authority === undefined ? {} : { authority }),
         })),
+        ...(unreachableNamespaces.length > 0 ? { unreachableNamespaces } : {}),
       }
     },
   }
