@@ -122,9 +122,9 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   // The row's details icon opens the script (its source and its error).
   const only = calls.length === 1 && !waiting && !statusUnknown ? calls[0] : undefined;
   if (only) {
-    // The call's own input is the readable one (a Den script's source); the
-    // script's result lives on the outer step.
-    const merged: DynamicToolUIPart = only.state === "output-available" && part.state === "output-available"
+    // The call's own input is the readable one (a Den script's source). Its
+    // own captured result wins; otherwise show the script's result.
+    const merged: DynamicToolUIPart = only.state === "output-available" && only.output === undefined && part.state === "output-available"
       ? { ...only, output: part.output } : only;
     return (
       <div data-code-mode-call={part.toolCallId}>

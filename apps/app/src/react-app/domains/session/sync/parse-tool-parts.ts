@@ -87,6 +87,8 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
     ...(part.metadata?.openworkV2CodeMode === true ? {
       codeMode: {
         calls: Array.isArray(stateMetadata.toolCalls) && isJsonValue(stateMetadata.toolCalls) ? stateMetadata.toolCalls : [],
+        details: Array.isArray(stateMetadata.openworkToolDetails) && isJsonValue(stateMetadata.openworkToolDetails) ? stateMetadata.openworkToolDetails : [],
+        ...(stateMetadata.openworkToolDetailsTruncated === true ? { detailsTruncated: true } : {}),
       },
     } : {}),
   };
