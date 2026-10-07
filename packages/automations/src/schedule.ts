@@ -4,7 +4,6 @@ import {
 } from "@openwork/types/automations"
 
 const DAY_MS = 24 * 60 * 60 * 1_000
-const SEARCH_WINDOW_HOURS = 18
 
 type LocalDate = { year: number; month: number; day: number }
 type LocalDateTime = LocalDate & {
@@ -75,6 +74,25 @@ function sameLocalDate(left: LocalDate, right: LocalDate): boolean {
   )
 }
 
+/** Zone offset (local minus UTC) at a minute-aligned instant, in milliseconds. */
+function zoneOffsetMs(timestamp: number, timezone: string): number {
+  const minute = Math.floor(timestamp / 60_000) * 60_000
+  return localKey(localDateTime(minute, timezone)) - minute
+}
+
+const OFFSET_PROBE_MS = 14 * 60 * 60 * 1_000
+
+/**
+ * Resolves one wall-clock occurrence in an IANA zone without scanning.
+ *
+ * Semantics (shared by the scheduler, previews and the calendar range API):
+ * - an ambiguous time (DST fall-back repeats it) resolves to its first instant;
+ * - a nonexistent time (DST spring-forward skips it) shifts to the first valid
+ *   minute after the gap, reported as `shifted`.
+ *
+ * The instant must lie within ±14h of the nominal UTC wall time, so the zone
+ * offsets sampled at both ends (and the middle) contain every candidate offset.
+ */
 function resolveLocalOccurrence(
   date: LocalDate,
   hour: number,
@@ -82,21 +100,33 @@ function resolveLocalOccurrence(
   timezone: string,
 ): { timestamp: number; shifted: boolean } | null {
   const nominal = Date.UTC(date.year, date.month - 1, date.day, hour, minute)
-  const start = nominal - SEARCH_WINDOW_HOURS * 60 * 60 * 1_000
-  const end = nominal + SEARCH_WINDOW_HOURS * 60 * 60 * 1_000
-  const targetKey = Date.UTC(date.year, date.month - 1, date.day, hour, minute)
-  let shifted: number | null = null
+  const offsets = [...new Set([
+    zoneOffsetMs(nominal - OFFSET_PROBE_MS, timezone),
+    zoneOffsetMs(nominal, timezone),
+    zoneOffsetMs(nominal + OFFSET_PROBE_MS, timezone),
+  ])]
+  const exact = offsets
+    .map((offset) => nominal - offset)
+    .filter((candidate) => localKey(localDateTime(candidate, timezone)) === nominal)
+    .sort((left, right) => left - right)
+  if (exact[0] !== undefined) return { timestamp: exact[0], shifted: false }
 
-  for (let candidate = start; candidate <= end; candidate += 60_000) {
-    const local = localDateTime(candidate, timezone)
-    if (!sameLocalDate(local, date)) continue
-    const key = localKey(local)
-    if (key === targetKey) return { timestamp: candidate, shifted: false }
-    if (key > targetKey && (shifted === null || candidate < shifted)) {
-      shifted = candidate
-    }
+  // Nonexistent wall time: binary-search the transition between the two offsets.
+  const candidates = offsets.map((offset) => nominal - offset)
+  let low = Math.min(...candidates)
+  let high = Math.max(...candidates)
+  if (localKey(localDateTime(high, timezone)) <= nominal) return null
+  if (localKey(localDateTime(low, timezone)) > nominal) {
+    const local = localDateTime(low, timezone)
+    return sameLocalDate(local, date) ? { timestamp: low, shifted: true } : null
   }
-  return shifted === null ? null : { timestamp: shifted, shifted: true }
+  // Invariant: key(low) <= nominal < key(high), both minute aligned.
+  while (high - low > 60_000) {
+    const middle = low + Math.floor((high - low) / 120_000) * 60_000
+    if (localKey(localDateTime(middle, timezone)) > nominal) high = middle
+    else low = middle
+  }
+  return sameLocalDate(localDateTime(high, timezone), date) ? { timestamp: high, shifted: true } : null
 }
 
 function isScheduledDay(
@@ -164,6 +194,67 @@ export function automationOccurrences(
   }
 
   return { occurrences, warnings: [...warnings] }
+}
+
+export interface AutomationOccurrenceRangeOptions {
+  /** Inclusive lower bound (epoch ms). */
+  from: number
+  /** Exclusive upper bound (epoch ms). */
+  to: number
+  /** Maximum occurrences to return; the result says when more existed. */
+  limit?: number
+}
+
+export const AUTOMATION_OCCURRENCE_RANGE_MAX_DAYS = 400
+export const AUTOMATION_OCCURRENCE_RANGE_DEFAULT_LIMIT = 1_000
+
+/**
+ * Every scheduled occurrence in `[from, to)`, using exactly the scheduler's
+ * wall-clock resolution (see `resolveLocalOccurrence`). Cost is one resolution
+ * per local calendar day in the range, never a minute scan. Ranges longer than
+ * AUTOMATION_OCCURRENCE_RANGE_MAX_DAYS are clipped and reported as truncated.
+ */
+export function automationOccurrencesInRange(
+  input: AutomationSchedule,
+  options: AutomationOccurrenceRangeOptions,
+): { occurrences: number[]; truncated: boolean; warnings: string[] } {
+  const schedule = automationScheduleSchema.parse(input)
+  assertAutomationTimezone(schedule.timezone)
+  const limit = Math.max(0, Math.floor(options.limit ?? AUTOMATION_OCCURRENCE_RANGE_DEFAULT_LIMIT))
+  const from = Math.floor(options.from)
+  const requestedTo = Math.floor(options.to)
+  const to = Math.min(requestedTo, from + AUTOMATION_OCCURRENCE_RANGE_MAX_DAYS * DAY_MS)
+  let truncated = to < requestedTo
+  if (!(to > from) || limit === 0) return { occurrences: [], truncated, warnings: [] }
+
+  if (schedule.kind === "once") {
+    return { occurrences: schedule.at >= from && schedule.at < to ? [schedule.at] : [], truncated, warnings: [] }
+  }
+
+  const occurrences: number[] = []
+  const warnings = new Set<string>()
+  // A local day can start up to ~14h either side of UTC midnight; start one day
+  // early and stop one day late so the edges of the range are always covered.
+  const first = addLocalDays(localDateTime(from, schedule.timezone), -1)
+  const last = addLocalDays(localDateTime(to, schedule.timezone), 1)
+  const lastKey = Date.UTC(last.year, last.month - 1, last.day)
+  for (let date = first; Date.UTC(date.year, date.month - 1, date.day) <= lastKey; date = addLocalDays(date, 1)) {
+    const weekday = new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay()
+    if (!isScheduledDay(schedule, weekday)) continue
+    const resolved = resolveLocalOccurrence(date, schedule.hour, schedule.minute, schedule.timezone)
+    if (!resolved || resolved.timestamp < from || resolved.timestamp >= to) continue
+    if (occurrences.length >= limit) {
+      truncated = true
+      break
+    }
+    if (resolved.shifted) {
+      warnings.add(
+        `A wall-clock occurrence falls inside a daylight-saving transition and was shifted to the next valid minute in ${schedule.timezone}.`,
+      )
+    }
+    occurrences.push(resolved.timestamp)
+  }
+  return { occurrences, truncated, warnings: [...warnings] }
 }
 
 export function nextAutomationOccurrence(

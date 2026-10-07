@@ -24,7 +24,8 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --conditions=development --test src/*.test.ts"
   },
   "dependencies": {
     "@openwork/types": "workspace:*",

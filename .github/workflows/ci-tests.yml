@@ -99,6 +99,7 @@ jobs:
       - name: Run Den provider unit tests
         run: |
           pnpm --filter @openwork-ee/utils test
+          pnpm --filter @openwork/automations test
           pnpm --filter @openwork-ee/den-api test
       - name: Check sandbox contracts and adapters (no cloud resources)
         run: |
