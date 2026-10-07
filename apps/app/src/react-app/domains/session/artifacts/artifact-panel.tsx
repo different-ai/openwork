@@ -39,7 +39,6 @@ type ArtifactPanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
-  isRemoteWorkspace?: boolean;
   onClose: () => void;
 };
 
@@ -48,7 +47,6 @@ type ArtifactPanelViewProps = {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceRoot: string;
-  isRemoteWorkspace?: boolean;
   target: OpenTarget;
   onClose: () => void;
 };
@@ -70,7 +68,7 @@ function isTextContent(target: OpenTarget): boolean {
   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
 }
 
-export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, isRemoteWorkspace = false, onClose }: ArtifactPanelProps) {
+export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, onClose }: ArtifactPanelProps) {
   const transcriptTargets = usePanelTabStore((state) => state.transcriptArtifactTargets[sessionId] ?? EMPTY_TRANSCRIPT_TARGETS);
   const artifactTargets = useMemo(() => transcriptTargets.filter(isCollectibleArtifactTarget), [transcriptTargets]);
   const target = tab.target ?? artifactTargets.find((item) => item.id === tab.id) ?? null;
@@ -85,14 +83,13 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
       client={client}
       workspaceId={workspaceId}
       workspaceRoot={workspaceRoot}
-      isRemoteWorkspace={isRemoteWorkspace}
       target={target}
       onClose={onClose}
     />
   );
 }
 
-function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRemoteWorkspace = false, target, onClose }: ArtifactPanelViewProps) {
+function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, target, onClose }: ArtifactPanelViewProps) {
   const [failure, setFailure] = useState<{ owner: string; title: string; details: string } | null>(null);
   const owner = JSON.stringify([sessionId, workspaceId, target.id]);
   const reportFailure = (title: string, error: unknown) => setFailure({ owner, title, details: error instanceof Error ? error.message : String(error) });
@@ -108,7 +105,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   // their rendered previews and retain the existing Edit toggle.
   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
   const isDirectCodeEdit = target.kind === "file" && target.preview === "code";
-  const canUseDesktopWorkspaceActions = !isRemoteWorkspace && platform.capabilities.revealInFileManager;
+  const canUseDesktopWorkspaceActions = platform.capabilities.revealInFileManager;
   const canUseDesktopFileActions = target.kind === "file" && canUseDesktopWorkspaceActions;
   const workspaceName = workspaceRoot.split(/[/\\]/).filter(Boolean).pop() ?? "Workspace";
 
@@ -232,12 +229,6 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   };
 
   const openFileExternally = async (path: string) => {
-    if (isRemoteWorkspace) {
-      await downloadFile(path, path.split(/[/\\]/).pop() ?? path).catch((error: unknown) => reportFailure("Could not download this file. Try again.", error));
-
-      return;
-    }
-
     try {
       await openDesktopPath(absoluteWorkspacePath(workspaceRoot, path));
     } catch (cause) {
@@ -246,7 +237,6 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   };
 
   const revealFile = async (path: string) => {
-    if (isRemoteWorkspace) return;
     try {
       await revealDesktopItemInDir(absoluteWorkspacePath(workspaceRoot, path));
     } catch (cause) {

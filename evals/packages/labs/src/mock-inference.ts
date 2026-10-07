@@ -10,6 +10,7 @@ function record(value: unknown): value is Record<string, unknown> {
 export async function startInferenceWitness(options: { reportedCostUsd?: number } = {}) {
   if (options.reportedCostUsd !== undefined && (!Number.isFinite(options.reportedCostUsd) || options.reportedCostUsd < 0)) throw new Error("Invalid fixture reported cost");
   let mode: InferenceFixtureMode = "success";
+  let headerDelayMs = 0;
   let toolFile = "";
   const requests: InferenceWitness[] = [];
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -23,6 +24,14 @@ export async function startInferenceWitness(options: { reportedCostUsd?: number 
       requests.push(witness);
       response.once("close", () => { witness.cancelled = !response.writableFinished; });
       if (mode === "header-stall") return;
+      if (headerDelayMs > 0) {
+        // A provider that accepts the request but takes a while to start answering.
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => { timers.delete(timer); resolve(); }, headerDelayMs);
+          timers.add(timer);
+        });
+        if (response.destroyed) return;
+      }
       if (mode === "rate-limit" || mode === "access-denied" || mode === "capability-400" || mode === "capability-422") {
         const status = mode === "rate-limit" ? 429 : mode === "access-denied" ? 401 : mode === "capability-400" ? 400 : 422;
         response.writeHead(status, { "content-type": "application/json", "retry-after": "7" });
@@ -141,6 +150,8 @@ export async function startInferenceWitness(options: { reportedCostUsd?: number 
   return {
     url: `http://127.0.0.1:${address.port}/api/v1`, requests,
     mode(next: InferenceFixtureMode) { mode = next; },
+    /** Wait this long before sending response headers, for every mode except header-stall. */
+    delayHeaders(ms: number) { headerDelayMs = ms; },
     readToolFile(path: string) { toolFile = path; },
     async [Symbol.asyncDispose]() {
       for (const timer of timers) clearTimeout(timer);

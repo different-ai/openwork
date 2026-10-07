@@ -43,6 +43,13 @@ export const providerBackgroundSteps = ["catalog.refresh"]
 export const providerUncoveredRoutes = [
   "DELETE /v1/inference-providers/:inferenceProviderId/oauth",
   "POST /v1/inference-providers/migrate-from-llm-provider",
+  // LiteLLM setup, sync and member key connection are not yet captured.
+  "POST /v1/inference-providers/litellm",
+  "POST /v1/inference-providers/:inferenceProviderId/litellm/sync",
+  "PATCH /v1/inference-providers/:inferenceProviderId/litellm",
+  "PUT /v1/inference-providers/:inferenceProviderId/litellm/member-key",
+  "POST /v1/inference-providers/oauth/browser-litellm-key",
+  "POST /v1/inference-providers/oauth/browser-litellm-check",
 ]
 export const auditReadCoveredRoutes = [
   { method: "GET", path: "/v1/audit/event-types", action: "event_types" },
@@ -59,7 +66,7 @@ export const providerCoverage: AuditCoverageDeclaration = {
     ...[...new Set([...providerCoveredRoutes.map(({ step }) => step), ...providerBackgroundSteps])].flatMap((step) => ["committed", "attempted"].map((outcome) => `provider.configuration.${step}.${outcome}`)),
   ],
   categories: ["change", "request", "security", "execution"],
-  capturePolicy: "Fresh literal metadata.capabilities.auditLogs=true AND (Enterprise plan OR explicit self-hosted installation entitlement) AND default-on deployment capture switch AND enabled stored policy AND selected category; missing policies initialize with temporary server defaults before snapshot reads. Organization share lock before snapshot reads, state/policy revision recheck before commit. Existing OFF stays OFF. Generic DB writer semantics are unchanged.",
+  capturePolicy: "auditLogs feature on for the organization (read fresh) AND (Enterprise plan OR explicit self-hosted installation entitlement) AND default-on deployment capture switch AND enabled stored policy AND selected category; missing policies initialize with temporary server defaults before snapshot reads. Organization share lock before snapshot reads, state/policy revision recheck before commit. Existing OFF stays OFF. Generic DB writer semantics are unchanged.",
   resources: [...providerCoveredResources.map(({ type }) => type), "organization", "member", "team"],
   snapshotPolicy: "Per-resource allowlisted before/after and changed fields; secret/configuration changes use markers, never secret values or comparison hashes; oversize rejects.",
   emitter: "src/audit/provider.ts:providerAuditMutation; recordProviderAttempt; src/llm/gateway-matrix.ts:refreshGatewayCatalog",
@@ -122,7 +129,6 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "audit.ts": { ...auditReadCoverage, operationKinds: [...auditReadCoverage.operationKinds, ...auditCaptureCoverage.operationKinds], actions: [...auditReadCoverage.actions, ...auditCaptureCoverage.actions], categories: [...auditReadCoverage.categories, ...auditCaptureCoverage.categories], capturePolicy: `${auditReadCoverage.capturePolicy} ${auditCaptureCoverage.capturePolicy}`, snapshotPolicy: `${auditReadCoverage.snapshotPolicy} ${auditCaptureCoverage.snapshotPolicy}`, emitter: `${auditReadCoverage.emitter}; ${auditCaptureCoverage.emitter}`, failurePolicy: `${auditReadCoverage.failurePolicy} ${auditCaptureCoverage.failurePolicy}`, limitations: `${auditReadCoverage.limitations} ${auditCaptureCoverage.limitations}` },
   "billing.ts": uncovered("Organization billing and checkout are not operation-audited; no audit billing product is introduced."),
   "brand-assets.ts": uncovered("Branding uploads and downloads."),
-  "codemode-runs.ts": uncovered("Workflow run receipts and reads."),
   "codemode-scripts.ts": uncovered("Workflow authoring, testing, saving and execution."),
   "core.ts": uncovered("Organization settings and lifecycle."),
   "dashboards.ts": uncovered("Dashboard mutations and reads."),
@@ -164,7 +170,7 @@ export const otherAuditSurfaces: readonly Readonly<{ location: string; surface: 
   { location: "ee/apps/den-api/scripts/audit-pilot.ts", surface: "cli", coverage: pilotPolicyCoverage },
   { location: "ee/apps/den-api/src/routes/admin", surface: "route", coverage: { ...uncovered("Some platform-admin actions retain legacy events; remaining actions uncovered, not migrated to operation capture."), status: "legacy_only", emitter: "src/audit-events.ts:buildOrganizationAuditEvent" } },
   ...[
-    "auth", "automations", "bootstrap", "cloud", "dev", "me", "telemetry", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
+    "auth", "automations", "bootstrap", "cloud", "dev", "me", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
   ].map((name) => ({ location: `ee/apps/den-api/src/routes/${name}`, surface: "route", coverage: uncovered("No operation-audit implementation for this route surface; existing logging/receipts do not establish coverage.") } satisfies { location: string; surface: "route"; coverage: AuditCoverageDeclaration })),
   { location: "ee/apps/den-api/src/routes/mcp", surface: "mcp", coverage: uncovered("MCP transport, invocation, delegation and observed external effects not captured. A downstream covered provider mutation does not imply MCP invocation coverage.") },
   { location: "ee/apps/den-api/src/mcp", surface: "mcp", coverage: uncovered("Capability search/execution and external MCP tools/apps are not operation-audited.") },

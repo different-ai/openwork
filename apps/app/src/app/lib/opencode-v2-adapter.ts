@@ -855,7 +855,10 @@ function mapV2Message(
   const role = messageRole(value);
   const nativeParts = mapV2MessageParts(value, id, resolvedSessionID, created, taskSessions);
   const parts = role === "user" ? nativeParts.flatMap(mapV2UserPart) : nativeParts;
-  const error = readRecord(value, "error");
+  const rawError = readRecord(value, "error");
+  // v2 marks a stopped step with { type: "aborted", message: "Step interrupted" }.
+  // The person stopped it themselves, so it is not a failure worth a row.
+  const error = readString(rawError, "type") === "aborted" ? undefined : rawError;
   return {
     info: {
       id,

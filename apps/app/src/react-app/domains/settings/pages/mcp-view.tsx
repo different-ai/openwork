@@ -15,7 +15,6 @@ import {
   Info,
   Laptop,
   LayoutGrid,
-  List,
   Loader2,
   Lock,
   Plug,
@@ -30,7 +29,7 @@ import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } f
 import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../app/cloud/import-state";
-import { ExtensionCard, type ExtensionLayout } from "../../../design-system/extension-card";
+import { ExtensionCard, libraryRowLanes } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
 import {
@@ -87,10 +86,8 @@ import {
   isOpenWorkExtensionEnabled,
   isOpenWorkExtensionHidden,
   OPENWORK_EXTENSION_STATE_CHANGED,
-  readExtensionLayout,
   setOpenWorkExtensionEnabled,
   setOpenWorkExtensionHidden,
-  writeExtensionLayout,
 } from "../extension-state";
 import {
   initialMcpViewLocalState,
@@ -179,7 +176,6 @@ const getSkillHiddenId = (skill: SkillItem) => `skill:${skill.name}`;
 export type McpViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
   /** Composer slash commands to render in Library. */
@@ -425,7 +421,6 @@ export function McpView(props: McpViewProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionInventoryFilter>(primaryLibraryFilter(props.initialFilter));
   const [onlyNeedsSignIn, setOnlyNeedsSignIn] = useState(props.initialState === "needs_signin");
-  const [layout, setLayout] = useState<ExtensionLayout>(readExtensionLayout);
   const [screen, setScreen] = useState<LibraryScreen>({ kind: "list" });
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [changedPluginIds, setChangedPluginIds] = useState<Set<string>>(() => new Set());
@@ -990,7 +985,7 @@ export function McpView(props: McpViewProps) {
     const nextId = configRequestId.current + 1;
     configRequestId.current = nextId;
     const readConfig = props.readConfigFile;
-    const canReadDesktopConfig = !props.isRemoteWorkspace && isDesktopRuntime();
+    const canReadDesktopConfig = isDesktopRuntime();
 
     if (!readConfig && !canReadDesktopConfig) {
       dispatchLocal({ type: "configUnavailable" });
@@ -1028,7 +1023,7 @@ export function McpView(props: McpViewProps) {
         });
       }
     })();
-  }, [props.isRemoteWorkspace, props.readConfigFile, props.selectedWorkspaceRoot]);
+  }, [props.readConfigFile, props.selectedWorkspaceRoot]);
 
   const activeConfig = configScope === "project" ? projectConfig : globalConfig;
 
@@ -1038,7 +1033,6 @@ export function McpView(props: McpViewProps) {
 
   const canRevealConfig =
     isDesktopRuntime() &&
-    !props.isRemoteWorkspace &&
     !revealBusy &&
     !(configScope === "project" && !props.selectedWorkspaceRoot.trim()) &&
     Boolean(activeConfig?.exists);
@@ -1156,9 +1150,7 @@ export function McpView(props: McpViewProps) {
     try {
       const resolved = props.readConfigFile
         ? await props.readConfigFile(configScope)
-        : !props.isRemoteWorkspace
-        ? await readOpencodeConfig(configScope, root)
-        : null;
+        : await readOpencodeConfig(configScope, root);
       const configFile = resolved as OpencodeConfigFile | null;
       if (!configFile) {
         throw new Error(t("mcp.config_load_failed"));
@@ -1626,7 +1618,6 @@ export function McpView(props: McpViewProps) {
       searchText: `${entry.name} ${entry.description}`,
       node: (
         <ExtensionCard
-          layout={layout}
           name={entry.name}
           description={entry.description}
           iconSlug={entry.iconSlug}
@@ -1663,7 +1654,6 @@ export function McpView(props: McpViewProps) {
       searchText: `${server.name} ${name} ${match?.description ?? ""} ${server.config.type === "remote" ? server.config.url : server.config.command?.join(" ") ?? ""}`,
       node: (
         <ExtensionCard
-          layout={layout}
           name={name}
           description={error ?? match?.description ?? localServerTypeLabel(server)}
           iconSlug={match?.iconSlug}
@@ -1693,7 +1683,6 @@ export function McpView(props: McpViewProps) {
       searchText: `${skill.name} ${skill.description ?? ""}`,
       node: (
         <ExtensionCard
-          layout={layout}
           name={skill.name}
           description={skill.description ?? t("extensions.row_skill_fallback")}
           taxonomy="skill"
@@ -1721,7 +1710,6 @@ export function McpView(props: McpViewProps) {
       searchText: `${plugin.name} ${plugin.description ?? ""}`,
       node: (
         <ExtensionCard
-          layout={layout}
           name={plugin.name}
           description={plugin.description ?? kindLabel(taxonomy)}
           url={connection?.url}
@@ -1760,7 +1748,6 @@ export function McpView(props: McpViewProps) {
       searchText: `${entry.name} ${entry.pluginName ?? ""} ${entry.marketplaceName ?? ""}`,
       node: (
         <ExtensionCard
-          layout={layout}
           name={entry.name}
           description={entry.pluginName
             ? t("extensions.row_provided_by", { source: entry.pluginName })
@@ -1798,7 +1785,6 @@ export function McpView(props: McpViewProps) {
       searchText: [plugin.name, plugin.description ?? "", ...plugin.files.map((file) => `${file.title} ${file.objectType} ${file.path}`)].join(" "),
       node: (
         <ExtensionCard
-          layout={layout}
           name={plugin.name}
           description={plugin.description ?? t(fileCount === 1 ? "extensions.row_one_capability" : "extensions.row_capabilities", { count: String(fileCount) })}
           taxonomy={taxonomy}
@@ -1826,7 +1812,6 @@ export function McpView(props: McpViewProps) {
       searchText: `${item.name} ${item.description ?? ""} ${connection.url}`,
       node: (
         <ExtensionCard
-          layout={layout}
           name={item.name}
           description={item.description?.trim() || t("extensions.row_shared_connection")}
           taxonomy="connection"
@@ -1856,7 +1841,6 @@ export function McpView(props: McpViewProps) {
     <LibraryInventory
       rows={rows}
       loading={props.inventoryLoading === true}
-      layout={layout}
       filter={filter}
       search={search}
       sectionMeta={sectionMeta}
@@ -2066,13 +2050,6 @@ export function McpView(props: McpViewProps) {
               onChange={(e) => setSearch(e.currentTarget.value)}
             />
           </div>
-          <ExtensionLayoutToggle
-            layout={layout}
-            onChange={(next) => {
-              setLayout(next);
-              writeExtensionLayout(next);
-            }}
-          />
           {props.onRefresh ? (
             <RefreshButton className="h-[30px] w-8 rounded-lg hover:bg-dls-hover" busy={props.busy} onRefresh={refreshLibrary}>
               {t("common.refresh")}
@@ -2149,7 +2126,6 @@ export function McpView(props: McpViewProps) {
         onClose={() => setAddMcpModalOpen(false)}
         onAdd={props.connectMcp}
         busy={props.busy}
-        isRemoteWorkspace={props.isRemoteWorkspace}
       />
 
       <LibraryDeleteDialog
@@ -2373,10 +2349,29 @@ function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
   );
 }
 
+/**
+ * Column labels over the Library rows. Only wide windows get them: that is
+ * where a row splits into separate "What it does" and "From" columns.
+ */
+function LibraryColumnHeader() {
+  const label = "shrink-0 text-xs text-dls-secondary";
+  return (
+    <div data-library-columns aria-hidden className="hidden h-7 items-center gap-3 lg:flex">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span className="w-8 shrink-0" />
+        <span className={`${label} ${libraryRowLanes.name}`}>{t("extensions.column_name")}</span>
+        <span className={`${label} ${libraryRowLanes.kind}`}>{t("extensions.column_kind")}</span>
+        <span className={`${label} ${libraryRowLanes.from}`}>{t("extensions.column_from")}</span>
+        <span className={`${label} ${libraryRowLanes.description}`}>{t("extensions.column_description")}</span>
+      </div>
+      <span className={`shrink-0 ${libraryRowLanes.action}`} />
+    </div>
+  );
+}
+
 export function LibraryInventory(props: {
   rows: LibraryRow[];
   loading: boolean;
-  layout: ExtensionLayout;
   filter: ExtensionInventoryFilter;
   search?: string;
   sectionMeta?: Partial<Record<LibrarySection, string | null>>;
@@ -2394,84 +2389,58 @@ export function LibraryInventory(props: {
   const sections = librarySectionOrder
     .map((section) => ({ section, rows: visible.filter((row) => row.section === section) }))
     .filter((entry) => entry.rows.length > 0);
-  const containerClassName = props.layout === "list"
-    ? "flex flex-col [&>div]:border-b [&>div]:border-dls-border/60"
-    : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3";
+  const containerClassName = "flex flex-col [&>div]:border-b [&>div]:border-dls-border/60";
   const showLocked = props.signedOut === true && category === "all" && !needle && !props.onlyNeedsSignIn;
 
   return (
     <div className="space-y-6">
       {props.signedOut ? <LibrarySignUpBanner onSignUp={props.onSignUp} /> : null}
       {sections.length === 0 && props.loading ? (
-        <div className={props.layout === "list" ? "flex flex-col gap-2" : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3"}>
+        <div className="flex flex-col gap-2">
           {[0, 1, 2].map((index) => (
-            <Skeleton key={index} className={props.layout === "list" ? "h-[42px] rounded-lg" : "h-[104px] rounded-xl"} />
+            <Skeleton key={index} className="h-[42px] rounded-lg" />
           ))}
         </div>
       ) : sections.length === 0 && !showLocked ? props.emptyState ?? null : (
-        sections.map(({ section, rows }) => (
-          <div key={section} className={props.layout === "list" ? "" : "space-y-2.5"} data-library-section={section}>
-            <LibrarySectionHeader section={section} label={librarySectionLabel(section)} meta={props.sectionMeta?.[section]} />
-            <div className={containerClassName}>
-              {rows.map((row) => (
-                <div key={row.key} data-library-row-key={row.key}>{row.node}</div>
-              ))}
-            </div>
-          </div>
-        ))
-      )}
-      {showLocked ? (
-        <div className="space-y-2.5" data-library-section="locked">
-          <LibrarySectionHeader section="openwork" label={t("extensions.section_openwork_locked")} />
-          <div className={containerClassName}>
-            {lockedLibraryPreviews.map((preview) => (
-              <div key={preview.name} className="opacity-60" data-library-locked={preview.name}>
-                <ExtensionCard
-                  layout={props.layout}
-                  name={preview.name}
-                  description={preview.description}
-                  iconSrc={preview.iconSrc}
-                  taxonomy="connection"
-                  disabled
-                  trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
-                />
+        // The column labels belong to the rows: they sit directly on the first
+        // section instead of floating one section-gap above it.
+        <div>
+          <LibraryColumnHeader />
+          <div className="space-y-6">
+            {sections.map(({ section, rows }) => (
+              <div key={section} data-library-section={section}>
+                <LibrarySectionHeader section={section} label={librarySectionLabel(section)} meta={props.sectionMeta?.[section]} />
+                <div className={containerClassName}>
+                  {rows.map((row) => (
+                    <div key={row.key} data-library-row-key={row.key}>{row.node}</div>
+                  ))}
+                </div>
               </div>
             ))}
+            {showLocked ? (
+              <div data-library-section="locked">
+                <LibrarySectionHeader section="openwork" label={t("extensions.section_openwork_locked")} />
+                <div className={containerClassName}>
+                  {lockedLibraryPreviews.map((preview) => (
+                    <div key={preview.name} className="opacity-60" data-library-locked={preview.name}>
+                      <ExtensionCard
+                        name={preview.name}
+                        description={preview.description}
+                        iconSrc={preview.iconSrc}
+                        meta={t("extensions.row_locked_from")}
+                        taxonomy="connection"
+                        disabled
+                        trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2.5 px-0.5 text-xs text-dls-secondary">{t("extensions.locked_more")}</p>
+              </div>
+            ) : null}
           </div>
-          <p className="px-0.5 text-xs text-dls-secondary">{t("extensions.locked_more")}</p>
         </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ExtensionLayoutToggle(props: {
-  layout: ExtensionLayout;
-  onChange: (layout: ExtensionLayout) => void;
-}) {
-  const options: { layout: ExtensionLayout; label: string; icon: ReactNode }[] = [
-    { layout: "grid", label: t("extensions.layout_grid"), icon: <LayoutGrid size={13} /> },
-    { layout: "list", label: t("extensions.layout_list"), icon: <List size={13} /> },
-  ];
-  return (
-    <div className="flex items-center gap-1">
-      {options.map((option) => (
-        <Tooltip key={option.layout}>
-          <TooltipTrigger render={
-            <Button
-              variant={props.layout === option.layout ? "secondary" : "ghost"}
-              size="icon-sm"
-              className="h-[30px] w-8 rounded-full hover:bg-dls-hover"
-              aria-pressed={props.layout === option.layout}
-              aria-label={option.label}
-              onClick={() => props.onChange(option.layout)}
-            >
-              {option.icon}
-            </Button>
-          } />
-          <TooltipContent>{option.label}</TooltipContent>
-        </Tooltip>
-      ))}
+      )}
     </div>
   );
 }

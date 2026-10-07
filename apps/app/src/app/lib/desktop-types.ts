@@ -20,11 +20,9 @@ export type {
   DesktopCommandMap,
   DesktopCommandName,
   DesktopCommandResult,
-  DesktopBinaryDownloadInput,
   DesktopBinaryDownloadResult,
   DesktopFetchInit,
   DesktopFetchResult,
-  DesktopMultipartUploadInput,
   EngineDoctorResult,
   EngineInfo,
   EvalRelaunchResult,
@@ -45,11 +43,9 @@ export type {
   OpenworkServerInfo,
   UpdaterEnvironment,
   WorkspaceCreateInput,
-  WorkspaceCreateRemoteInput,
   WorkspaceExportSummary,
   WorkspaceList,
   WorkspaceOpenworkConfig,
-  WorkspaceUpdateRemoteInput,
 } from "@openwork/types/desktop-ipc";
 
 // Canonical wire shape shared with openwork-server and the desktop bridge.

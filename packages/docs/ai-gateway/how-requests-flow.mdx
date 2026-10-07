@@ -1,0 +1,108 @@
+---
+title: "How a prompt reaches a model"
+sidebarTitle: "How requests flow"
+description: "How the OpenWork desktop app uses one AI Gateway key for every provider, and how the gateway swaps it for the right provider key, including LiteLLM keys."
+---
+
+Members never hold provider keys. The desktop app (or OpenWork Web) gets **one AI Gateway key per person**, plus a list of the models that person may use. Every prompt goes to the gateway with that one key. The gateway works out which provider and which upstream key to use, swaps them in, and sends the request on.
+
+## One key in, many keys out
+
+```mermaid
+flowchart LR
+  subgraph Device["Member's device"]
+    App["OpenWork desktop app<br/>or OpenWork Web"]
+  end
+  subgraph Cloud["OpenWork"]
+    Den["Den<br/>providers, models, access"]
+    GW["AI Gateway"]
+  end
+  subgraph Upstream["Model providers"]
+    OA["OpenAI<br/>(organization key)"]
+    AN["Anthropic<br/>(organization key)"]
+    LL["Your LiteLLM proxy<br/>(organization, personal or<br/>OpenWork-created key)"]
+  end
+  App -- "sign in, sync providers" --> Den
+  Den -- "ow_gw_ key + gwm_ model ids" --> App
+  App -- "prompt: ow_gw_ key, gwm_ model" --> GW
+  GW -- "provider key, real model name" --> OA
+  GW -- "provider key, real model name" --> AN
+  GW -- "LiteLLM key, LiteLLM model name" --> LL
+```
+
+- **AI Gateway key** (`ow_gw_…`): one per person per organization. It proves who is asking. It never leaves OpenWork.
+- **Model id** (`gwm_…`): each model the person may use has its own id. It encodes the model, the model group and the key set that grants it, so the gateway knows exactly which access rule applies.
+- **Provider keys**: stored encrypted in Den and only read by the gateway. A provider key is either one key shared by the organization, or a key that belongs to one person, such as their own Google sign-in or their LiteLLM key.
+
+## What happens on each prompt
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant App as Desktop app
+  participant Den
+  participant GW as AI Gateway
+  participant LL as LiteLLM proxy
+  participant M as Model provider
+
+  Note over App,Den: When the app starts and refreshes
+  App->>Den: GET /v1/inference-providers
+  Den-->>App: providers, gwm_ model ids, connect prompts
+  App->>Den: GET /v1/inference-providers/{id}/connect
+  Den-->>App: ow_gw_ key (the same for every provider)
+
+  Note over App,M: Every prompt
+  App->>GW: POST /api/v1/providers/{id}/chat/completions<br/>Authorization: Bearer ow_gw_…<br/>model: gwm_…
+  GW->>GW: check the key, find the person
+  GW->>GW: read the gwm_ id: provider, model group, key set
+  GW->>GW: check the person's access is still granted
+  GW->>GW: load the upstream key for that key set<br/>(organization key, or this person's own key)
+  GW->>GW: usage limits (when spend tracking is on)
+  GW->>LL: POST /v1/chat/completions<br/>Authorization: Bearer sk-… (LiteLLM key)<br/>model: gpt-4o
+  LL->>M: provider request (LiteLLM's own provider keys)
+  M-->>LL: response
+  LL-->>GW: response with token usage
+  GW-->>App: response, streamed as it arrives
+  GW->>Den: log tokens and cost for the person
+```
+
+The desktop app sends each provider's requests to that provider's gateway URL, `/api/v1/providers/{id}`, using the provider's normal SDK. Other clients can leave the provider out and call `/api/v1/chat/completions`, `/api/v1/responses` or `/api/v1/messages` with a `gwm_` model id; the gateway finds the provider from the id.
+
+The gateway removes the person's AI Gateway key before forwarding, so a provider, including your LiteLLM proxy, never sees it. It also replaces the `gwm_` id with the provider's real model name, so LiteLLM receives `gpt-4o`, not an OpenWork id.
+
+## Which upstream key the gateway uses
+
+Each model reaches a person through a **key set**. The key set decides which upstream key the gateway loads:
+
+| Key set | Upstream key on each request | Example |
+| --- | --- | --- |
+| Organization key | The one key the admin saved | OpenAI, Anthropic, LiteLLM "One organization key" |
+| Each person's own credential | That person's own key or sign-in, never someone else's | Google sign-in for Vertex, LiteLLM "Each person's own key" |
+| Keys OpenWork creates | The LiteLLM key OpenWork created for that person and team | LiteLLM "OpenWork creates keys" |
+
+If a person's own credential is missing, the gateway refuses the request and the app shows a **Connect** prompt for that provider. It never falls back to an organization key.
+
+### LiteLLM in each mode
+
+```mermaid
+flowchart TB
+  P["Prompt from Alice<br/>ow_gw_ key + gwm_ model"] --> GW["AI Gateway"]
+  GW --> Q{"LiteLLM key mode?"}
+  Q -- "One organization key" --> K1["Shared LiteLLM key<br/>OpenWork prices and limits spend"]
+  Q -- "Each person's own key" --> K2["The key Alice pasted<br/>LiteLLM budgets it"]
+  Q -- "OpenWork creates keys" --> K3["Alice's key for the team<br/>that owns this model<br/>LiteLLM budgets it"]
+  K1 --> LL["Your LiteLLM proxy"]
+  K2 --> LL
+  K3 --> LL
+```
+
+With **OpenWork creates keys** and one key per team, a person in two LiteLLM teams holds two keys. Each model id points at one team's key set, so a request for a research model uses the research team's key and is billed to that team in LiteLLM.
+
+## Spend tracking
+
+Every request is logged with its token counts. Whether OpenWork also prices it and applies usage limits depends on whose key paid:
+
+- **Organization keys**: priced from the provider's prices (for LiteLLM, the prices synced from your proxy) and checked against your [spend limits](/ai-gateway/overview).
+- **A person's own LiteLLM key, or one OpenWork created**: tokens only. LiteLLM's own user, team and key budgets apply, so OpenWork does not block or charge these requests.
+
+See [Use your LiteLLM proxy](/ai-gateway/litellm) to set up each mode.

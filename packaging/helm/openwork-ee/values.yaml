@@ -16,6 +16,27 @@ config:
   openworkDevMode: "0"
   # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
   denApiNodeOptions: ""
+  # Which product this install is. Only OpenWork Cloud sets "cloud"; features
+  # declared unavailable for self-hosted cannot be turned on here. Renders DEN_DEPLOYMENT.
+  deployment: self_hosted
+  # BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/registry.ts)
+  # Operator locks for this install. Each key renders DEN_FEATURE_<KEY>.
+  #   ""      follow /admin: on or off for everyone, plus per-organization overrides
+  #   "true"  on for everyone; /admin shows "Set by deployment config"
+  #   "false" off for everyone; /admin shows "Set by deployment config"
+  # The /admin kill switch still turns a feature off, even when locked on.
+  features:
+    installLinks: ""           # default on · Workspace admins can create desktop install links for their organization.
+    mcpConnections: ""         # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
+    modelsAnalytics: ""        # default off · Organization admins can opt in to task analytics for OpenWork Models.
+    auditLogs: ""              # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
+    orgManagedDashboards: ""   # default off · Organization admins publish dashboards to members in Den and the desktop app.
+    slackAssistant: ""         # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
+    slackAssistantHeadless: "" # default off · Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.
+    headlessAutomations: ""    # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
+    workbot: ""                # default off · Members can use Workbot. Needs the deployment's Workbot app.
+    litellm: ""                # default off · Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.
+  # END GENERATED features
   tenancy:
     mode: single_org
     singleOrgName: OpenWork
@@ -28,7 +49,7 @@ config:
     selfHostedEnabled: "false"
     # Rollout gates; org admins separately control capture on their initialized policy.
     # Default-on deployment switches; explicit false disables globally.
-    # Also requires metadata.capabilities.auditLogs=true per org plus entitlement.
+    # Also requires the auditLogs feature per org (/admin or config.features) plus entitlement.
     # Ready orgs auto-provision 6M retained operations, capture ON, no cap enforcement.
     # Existing policy values and explicit capture OFF choices are preserved.
     captureEnabled: "true"

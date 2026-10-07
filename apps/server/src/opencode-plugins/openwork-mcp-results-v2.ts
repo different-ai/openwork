@@ -1,5 +1,6 @@
 import { type HostConnectionDecision } from "@openwork/types/connection-action-app";
 import { waitForConnectionDecision, type ConnectionGateEndpoint } from "./openwork-connection-gate-v2.js";
+import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
 
 type Registration = { dispose(): Promise<void> };
 type CallEvent = { readonly tool: string; readonly sessionID?: string; readonly messageID: string; readonly id: string };
@@ -10,7 +11,8 @@ type ExecuteAfter = CallEvent & { readonly input: unknown } & (
 type Context = {
   options?: { connectionGate?: ConnectionGateEndpoint };
   tool: {
-    hook(name: "execute.before", callback: (event: CallEvent) => void): Promise<Registration>;
+    transform(callback: (editor: { get(id: string): unknown }) => void): Promise<Registration>;
+    hook(name: "execute.before", callback: (event: CallEvent & { input: unknown }) => void): Promise<Registration>;
     hook(name: "execute.after", callback: (event: ExecuteAfter) => void | Promise<void>): Promise<Registration>;
   };
 };
@@ -130,7 +132,14 @@ export default {
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
     const lifetime = new AbortController();
-    const before = await context.tool.hook("execute.before", event => collector.before(event));
+    let rootSearch = false;
+    const catalog = await context.tool.transform(editor => { rootSearch = editor.get("search") !== undefined; });
+    const before = await context.tool.hook("execute.before", event => {
+      if (!rootSearch && event.tool === "execute" && isRecord(event.input) && typeof event.input.code === "string") {
+        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code) };
+      }
+      collector.before(event);
+    });
     const after = await context.tool.hook("execute.after", async rawEvent => {
       // Normalize before gating too: current Code Mode calls use dotted names.
       // Keep the result/error references so the engine receives the decision.
@@ -142,6 +151,7 @@ export default {
       lifetime.abort();
       await before.dispose();
       await after.dispose();
+      await catalog.dispose();
     };
   },
 };

@@ -4,7 +4,7 @@ import { registerWorkbotRoutes } from "./workbot/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { MemberTable } from "@openwork-ee/den-db/schema"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -13,6 +13,7 @@ import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { getOrganizationFeatures } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
@@ -43,8 +44,8 @@ import { resolveMcpMemberIdentity } from "./mcp/external-capabilities.js"
 import { DEN_MCP_REQUESTED_SCOPES } from "./mcp/scopes.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
-import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
+import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
@@ -283,6 +284,7 @@ registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
 registerWorkbotRoutes(app)
 registerVersionRoutes(app)
+registerFeatureRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
@@ -290,7 +292,6 @@ registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
 registerAdminMcpRoutes(app)
-registerTelemetryRoutes(app)
 
 configureCloudAgentExecutor({ execute: executeCloudAgent, runtimeAvailable: cloudAgentRuntimeAvailable })
 configureHeadlessAgentExecutor((input) => executeHeadlessAgent(input))
@@ -305,10 +306,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
   )).limit(1)
   const userId = members[0]?.userId
   if (!userId) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
-  const organizations = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(
-    eq(OrganizationTable.id, normalizedOrganizationId),
-  ).limit(1)
-  const organizationMetadata = organizations[0]?.metadata
+  const organizationFeatures = await getOrganizationFeatures(normalizedOrganizationId)
   const member = await resolveMcpMemberIdentity({ userId, organizationId })
   if (!member) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
   const catalog = await getCatalog(app as unknown as Hono, undefined)
@@ -322,7 +320,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     member,
     redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-    organizationMetadata,
+    organizationFeatures,
   })
   const result = await executeMarketplaceCapability({
     organizationId,
@@ -429,7 +427,6 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Connectors", description: "Connector accounts and instances (GitHub and other sources) and their sync state." },
       { name: "GitHub", description: "GitHub App installation, repository discovery, and plugin import from GitHub." },
       { name: "Diagnostics", description: "Controlled egress diagnostics for self-hosted deployments." },
-      { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
       { name: "Webhooks", description: "Signed inbound webhooks from third-party providers." },
       { name: "Admin", description: "Platform administration routes for allowlisted OpenWork administrators." },
       { name: "Deprecated", description: "Removed features that answer with 410 or an empty result for old clients." },

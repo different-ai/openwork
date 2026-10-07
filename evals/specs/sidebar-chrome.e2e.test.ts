@@ -7,27 +7,25 @@ const test = spec.world(sidebarChrome, {
   resources: { surfaces: ["desktop"], services: ["den"], nativeReason: "The sidebar shares the native Electron titlebar, traffic-light clearance and platform shortcuts." },
 });
 
-test("a member can search and read notifications from either titlebar while session selection follows the destination", async ({ world, user, agent, probe, step }) => {
+test("a member can search sessions and open Activity from either titlebar while session selection follows the destination", async ({ world, user, agent, probe, step, evidence }) => {
   const search: Target = { role: "button", label: "Search sessions" };
-  const bell: Target = { role: "button", label: /^Notifications/ };
+  const bell: Target = { role: "button", label: /^Activity/ };
   const hideSidebar: Target = { testId: "sidebar-sidebar-toggle" };
   const showSidebar: Target = { testId: "main-sidebar-toggle" };
   const newSession: Target = { role: "button", label: "New session" };
   const sessionsBefore = await agent.list();
   const selected = () => probe.dom('[data-sidebar="menu-button"][aria-current="page"]');
-  const openNotifications = async () => {
+  const openActivity = async () => {
     await user.click(bell);
-    await user.see({ text: "1 new provider available" });
     await probe.eventually(world.presentation, {
-      within: 5_000, label: "notifications finish opening", until: (value) => value.panelSettled,
+      within: 5_000, label: "Activity finishes opening", until: (value) => value.panelSettled,
     });
   };
-  const closeNotifications = async () => {
+  const closeActivity = async () => {
     await user.press("Escape");
     await probe.eventually(() => probe.dom('[data-notification-panel]'), {
-      within: 5_000, label: "notifications finish closing", until: (value) => value.elements.length === 0,
+      within: 5_000, label: "Activity finishes closing", until: (value) => value.elements.length === 0,
     });
-    await user.notSee({ text: "1 new provider available" });
   };
 
   await step("before: Dashboard and New session have separate destinations and only Dashboard is selected", async () => {
@@ -38,8 +36,8 @@ test("a member can search and read notifications from either titlebar while sess
     await user.see({ role: "button", label: "Library" });
     expect((await selected()).elements.map((element) => element.text)).toEqual(["Dashboard"]);
     expect((await probe.dom('[data-sidebar-actions] button')).elements).toHaveLength(2);
-    expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(1);
-    await user.screenshot();
+    expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(0);
+    await user.looks(["The Dashboard page is open and Dashboard is the only highlighted item in the sidebar navigation."]);
   });
 
   await step("after: starting a draft leaves navigation unselected and creates no empty session", async () => {
@@ -50,49 +48,53 @@ test("a member can search and read notifications from either titlebar while sess
     expect(await agent.list()).toEqual(sessionsBefore);
     // The regression was a permanent background, despite inactive navigation.
     expect((await world.presentation()).newSessionBackground).toBe("rgba(0, 0, 0, 0)");
-    await user.screenshot();
+    await user.looks(["The new-session composer is shown and no item in the sidebar navigation is highlighted."]);
     await user.click({ role: "button", label: "Dashboard" });
     await user.press(`${world.modifier}+n`);
     await user.see("composer", { editable: true });
     expect((await selected()).elements).toHaveLength(0);
     expect(await agent.list()).toEqual(sessionsBefore);
+    evidence.recordAssertionEvidence("A draft selects no navigation and creates no session", `New session and ${world.modifier}+N both open an editable composer with no sidebar item selected, and the session list still has ${sessionsBefore.length} session(s).`, true);
   });
 
   await step("the search icon opens the existing session search and the result selects its session", async () => {
     await user.click(search);
-    await user.type({ placeholder: "Search all sessions and messages…" }, "Planning");
+    await user.type({ placeholder: "Search session titles…" }, "Planning");
     await user.see({ role: "option", label: /Planning notes/ });
-    await user.screenshot();
+    await user.looks(["A session search dialog lists the Planning notes session under a Sessions group with its workspace name, and shows no message text or message snippets."]);
     await user.press("Enter");
     await user.see({ role: "heading", label: "Planning notes" });
     expect((await probe.dom(`[data-testid="sidebar-session-${world.session.sessionId}"][data-session-tab-active="true"]`)).elements).toHaveLength(1);
-    await user.screenshot();
+    evidence.recordAssertionEvidence("Session search finds a session by title and opens it", "Typing Planning into Search session titles lists the Planning notes session; Enter opens it and selects its sidebar row.", true);
+    await user.looks(["The Planning notes session is open and highlighted in the sidebar session list."]);
   });
 
-  await step("opening the bell clears its unread dot while the notification is still visible", async () => {
-    await openNotifications();
-    expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(0);
-    await user.screenshot();
-    await closeNotifications();
+  await step("the bell opens Activity and returns focus to itself when it closes", async () => {
+    await openActivity();
+    expect((await probe.dom('[data-notification-panel]')).elements).toHaveLength(1);
+    await user.looks(["An Activity panel is open below the bell in the sidebar titlebar."]);
+    await closeActivity();
     expect((await probe.dom('[data-notification-bell]')).elements[0]?.focused).toBe(true);
+    evidence.recordAssertionEvidence("The bell opens Activity and returns focus", "The sidebar bell opens the Activity panel with no unread dot, and Escape closes it and focuses the bell again.", true);
   });
 
-  await step("hiding the sidebar keeps search and notifications in the main titlebar", async () => {
+  await step("hiding the sidebar keeps search and Activity in the main titlebar", async () => {
     await user.click(hideSidebar);
     await probe.eventually(() => probe.dom('[data-slot="sidebar-gap"]'), {
       within: 5_000, label: "sidebar finishes closing", until: (value) => value.elements[0]?.rect.width === 0,
     });
     expect((await probe.dom('[data-session-header] [data-sidebar-actions] button')).elements).toHaveLength(2);
-    await openNotifications();
-    await user.screenshot();
-    await closeNotifications();
+    await openActivity();
+    await user.looks(["The sidebar is hidden and an Activity panel is open below the bell in the main titlebar."]);
+    await closeActivity();
     await user.click(search);
-    await user.see({ placeholder: "Search all sessions and messages…" });
+    await user.see({ placeholder: "Search session titles…" });
     await user.press("Escape");
-    await probe.eventually(() => probe.dom('[placeholder="Search all sessions and messages…"]'), {
+    await probe.eventually(() => probe.dom('[placeholder="Search session titles…"]'), {
       within: 5_000, label: "session search closes", until: (value) => value.elements.length === 0,
     });
-    await user.screenshot();
+    await user.looks(["The sidebar is hidden, the main titlebar shows the search and bell buttons, and no dialog or Activity panel is open."]);
+    evidence.recordAssertionEvidence("Search and Activity stay reachable with the sidebar hidden", "With the sidebar collapsed, the main titlebar holds both buttons: the bell opens Activity and the search icon opens session search, and each closes with Escape.", true);
     await user.click(showSidebar);
     await user.see(newSession);
   });
@@ -101,10 +103,10 @@ test("a member can search and read notifications from either titlebar while sess
     await world.reducedMotion(true);
     await user.click(hideSidebar);
     expect((await world.presentation()).sidebarTransitions).toEqual(["none", "none"]);
-    await openNotifications();
+    await openActivity();
     expect((await world.presentation()).panelAnimation).toBe("none");
-    await user.screenshot();
-    await closeNotifications();
+    await user.looks(["The sidebar is hidden and an Activity panel is open below the bell in the main titlebar."]);
+    await closeActivity();
     await user.click(showSidebar);
     await world.reducedMotion(false);
   });

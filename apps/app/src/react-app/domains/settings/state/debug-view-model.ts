@@ -227,13 +227,7 @@ function describeOpenworkServer(info: OpenworkServerInfo | null) {
       t("settings.debug_base_url", { url: info?.baseUrl ?? "—" }),
       t("settings.diag_opencode_binary", { binary: formatManagedOpencodeBinary(info) }),
       t("settings.debug_log_file", { path: info?.logFilePath ?? "—" }),
-      t("settings.debug_connect_url", { url: info?.connectUrl ?? "—" }),
-      t("settings.debug_lan_url", { url: info?.lanUrl ?? "—" }),
-      t("settings.debug_mdns_url", { url: info?.mdnsUrl ?? "—" }),
       t("settings.debug_pid", { pid: info?.pid ? String(info.pid) : "—" }),
-      t("settings.debug_remote_access", {
-        value: info?.remoteAccessEnabled ? t("settings.on") : t("settings.off"),
-      }),
     ],
     stdout: info?.lastStdout ?? null,
     stderr: info?.lastStderr ?? null,
@@ -722,9 +716,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     const workspacePaths = [workspacePath];
     const workspacePathSet = new Set(workspacePaths);
     try {
-      const list = (await workspaceBootstrapCmd()) as { workspaces?: Array<{ workspaceType?: string; path?: string }> } | null;
+      const list = (await workspaceBootstrapCmd()) as { workspaces?: Array<{ path?: string }> } | null;
       for (const entry of list?.workspaces ?? []) {
-        if (entry.workspaceType === "remote") continue;
         const path = entry.path?.trim() ?? "";
         if (path && !workspacePathSet.has(path)) {
           workspacePaths.push(path);
@@ -739,9 +732,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       runtime: "direct",
       workspacePaths,
       opencodeEnableExa: readOpencodeEnableExa(),
-      openworkRemoteAccess:
-        optionsRef.current.openworkServerSnapshot.openworkServerSettings
-          .remoteAccessEnabled === true,
     });
 
     // engine_start restarts openwork-server on a NEW port and lets that server
@@ -753,7 +743,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
         clientToken?: string;
         hostToken?: string;
         port?: number;
-        remoteAccessEnabled?: boolean;
       } | null;
       if (hostInfo?.baseUrl) {
         writeOpenworkServerSettings({
@@ -761,7 +750,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
           token: hostInfo.ownerToken?.trim() || hostInfo.clientToken?.trim() || undefined,
           hostToken: hostInfo.hostToken?.trim() || undefined,
           portOverride: hostInfo.port ?? undefined,
-          remoteAccessEnabled: hostInfo.remoteAccessEnabled === true,
         });
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
@@ -806,9 +794,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setOpenworkServiceStatus(null);
     setServiceRestartError(null);
     try {
-      await openworkServerRestartCmd({
-        remoteAccessEnabled: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
-      });
+      await openworkServerRestartCmd();
       setOpenworkServiceStatus({
         tone: "success",
         message: t("settings.restart_succeeded_template", { service: "OpenWork server" }),
@@ -825,11 +811,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     } finally {
       setOpenworkServerRestarting(false);
     }
-  }, [
-    openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled,
-    openworkServerStore,
-    pushDeveloperLog,
-  ]);
+  }, [openworkServerStore, pushDeveloperLog]);
 
   const formatServiceLogs = useCallback(
     (stdout: string | null | undefined, stderr: string | null | undefined): string => {

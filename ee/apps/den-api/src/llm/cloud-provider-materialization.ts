@@ -499,6 +499,13 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
     models[model.modelId] = buildModelConfig(model, provider.providerConfig.npm)
   }
 
+  // Same runtime names and SDK option bindings the desktop receives.
+  const runtime = toRuntimeProviderEnv({
+    id: provider.id,
+    source: provider.source,
+    providerConfig: provider.providerConfig,
+    apiKeys: decodeProviderCredential(provider.apiKey).apiKeys,
+  })
   const config: JsonRecord = {
     id: provider.providerId,
     name: provider.name,
@@ -519,7 +526,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
     config.api = api
   }
 
-  const options = provider.providerConfig.options
+  const options = runtime.providerConfig.options
   if (isRecord(options)) {
     config.options = options
   }

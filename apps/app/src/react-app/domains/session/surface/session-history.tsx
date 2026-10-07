@@ -28,7 +28,6 @@ export function sessionHistoryIdentity(input: {
   runtimeWorkspaceId: string;
   sessionId: string;
 }) {
-  // Sidebar aliases (rem_*) are navigation identities, not runtime cache owners.
   return {
     owner: composerAutoSendScopeKey({ ...input, workspaceId: input.runtimeWorkspaceId }),
     runtimeOwner: sessionHistoryRuntimeOwner(input),

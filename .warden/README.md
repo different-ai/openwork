@@ -3,6 +3,8 @@
 Warden runs two skills: new security regressions and public-repository
 confidentiality. It does not review design, provenance, or Desktop/Den parity
 automatically. Those skill files remain available for optional local use.
+Rendered UI is reviewed from evidence screenshots instead, where the pixels
+and layout exist: see `evals/design-review/README.md`.
 
 Findings appear in the run summary; incomplete analysis fails the job so it
 cannot look like a clean review. Warden never leaves review threads or
@@ -19,13 +21,26 @@ hold:
 - Both skills completed, and the receipt matches the run, attempt, PR, and head.
 - No high or medium security findings. Low findings are noted, not blocking.
 - No confidentiality findings at any severity.
-- The PR does not touch `.github/`, `warden.toml`, `.warden/`,
-  `.agents/skills/`, `.claude/skills/`, `.opencode/`, or `AGENTS.md`. Those
-  changes always need a human, because a PR could otherwise rewrite its own
-  reviewer.
+- The PR does not change Warden itself: `.github/workflows/warden.yml`,
+  `.github/workflows/warden-clearance.yml`, `.github/scripts/warden-report.mjs`,
+  `.github/scripts/warden-clearance.mjs`, `warden.toml`, or `.warden/`.
+  `warden.yml` runs inside the PR's own review and could forge its result; the
+  others would let one PR rewrite the reviewer for every later PR.
+
+Other CI workflows, `AGENTS.md`, and agent skills are approvable. The security
+skill reviews workflow changes for concrete CI attack paths, and Warden's
+runtime never loads `AGENTS.md` or skills from the PR as instructions.
 
 Otherwise it dismisses any earlier `diff-warden` approval. A new push dismisses
 the approval through the branch rule, and the next Warden run decides again.
+
+Either way, `diff-warden` keeps one comment on the PR, edited after every run:
+approved or not and why, then each security finding (severity, title,
+`file:line`, description). Confidentiality findings appear only as a count;
+their text could name the outside identity the rule protects. Model-written
+text is escaped and its @mentions are broken, so a finding cannot ping anyone.
+The repository is public, so security findings are visible to anyone, as the
+run summary already was.
 
 The approval only unblocks merges if the `dev` ruleset accepts it. With a
 required `openwork-reviewers` team review, an App approval cannot count, so

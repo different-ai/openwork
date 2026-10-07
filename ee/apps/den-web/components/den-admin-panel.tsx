@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
+import { FEATURE_KEYS, FEATURES, mapFeatures, type FeatureKey } from "@openwork/features";
 import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
 import { withStoredBearer } from "./admin/admin-request";
 
@@ -129,18 +130,61 @@ type AdminUser = {
   organizations: AdminUserOrganization[];
 };
 
-type AdminOrganizationCapabilities = {
-  auditLogs: boolean;
-  orgManagedDashboards: boolean;
-  appMcpServers: boolean;
-  slackAssistant: boolean;
-  slackAssistantHeadless: boolean;
-  headlessAutomations: boolean;
-  workbot: boolean;
-  modelsAnalytics: boolean;
-  installLinks: boolean;
-  mcpConnections: boolean;
+const ADMIN_FEATURE_SOURCES = ["unavailable", "killed", "lock", "override", "everyone"] as const;
+
+/** One registry feature for one organization, as /v1/admin reports it (featureStates). */
+type AdminFeatureState = {
+  enabled: boolean;
+  source: (typeof ADMIN_FEATURE_SOURCES)[number];
+  /** The deployment-wide on/off state. */
+  everyone: boolean;
+  killed: boolean;
+  override: boolean | null;
+  /** An organization override would take effect (not killed or locked). */
+  overrideApplies: boolean;
 };
+
+type AdminOrganizationFeatures = Record<FeatureKey, AdminFeatureState>;
+
+function parseAdminFeatureSource(value: unknown): AdminFeatureState["source"] {
+  return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "everyone";
+}
+
+/** Server featureStates, falling back to the effective capabilities map from older servers. */
+function parseAdminOrganizationFeatures(featureStates: unknown, capabilities: unknown): AdminOrganizationFeatures {
+  const states = isRecord(featureStates) ? featureStates : {};
+  const effective = isRecord(capabilities) ? capabilities : {};
+  return mapFeatures((key) => {
+    const state = states[key];
+    if (!isRecord(state)) {
+      const enabled = effective[key] === true;
+      return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
+    }
+    return {
+      enabled: state.enabled === true,
+      source: parseAdminFeatureSource(state.source),
+      everyone: state.everyone === true,
+      killed: state.killed === true,
+      override: typeof state.override === "boolean" ? state.override : null,
+      overrideApplies: state.overrideApplies === true,
+    };
+  });
+}
+
+function describeAdminFeatureSource(state: AdminFeatureState): string {
+  switch (state.source) {
+    case "everyone":
+      return state.everyone ? "On for everyone" : "Off for everyone";
+    case "override":
+      return "Set for this organization";
+    case "lock":
+      return "Set by deployment config";
+    case "killed":
+      return "Turned off everywhere";
+    case "unavailable":
+      return "Not part of this deployment";
+  }
+}
 
 type AdminOpenWorkWebAccess = {
   hasAccess: boolean;
@@ -166,7 +210,7 @@ type AdminOrganization = {
   freeSeatCount: number;
   seatsFreeAdditional: number;
   billableSeatCount: number;
-  capabilities: AdminOrganizationCapabilities;
+  features: AdminOrganizationFeatures;
   openworkWebAccess: AdminOpenWorkWebAccess;
 };
 
@@ -441,7 +485,6 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
 
         const plan = isRecord(value.plan) ? value.plan : {};
         const tier = plan.tier === "team" || plan.tier === "enterprise" ? plan.tier : "free";
-        const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
 
         return {
           id: value.id,
@@ -458,18 +501,7 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           freeSeatCount: toNumberValue(value.freeSeatCount) || DEFAULT_FREE_SEAT_COUNT,
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
           billableSeatCount: toNumberValue(value.billableSeatCount),
-          capabilities: {
-            auditLogs: capabilities.auditLogs === true,
-            orgManagedDashboards: capabilities.orgManagedDashboards === true,
-            appMcpServers: capabilities.appMcpServers === true,
-            slackAssistant: capabilities.slackAssistant === true,
-            slackAssistantHeadless: capabilities.slackAssistantHeadless === true,
-            headlessAutomations: capabilities.headlessAutomations === true,
-            workbot: capabilities.workbot === true,
-            modelsAnalytics: capabilities.modelsAnalytics === true,
-            installLinks: capabilities.installLinks === true,
-            mcpConnections: capabilities.mcpConnections === true
-          },
+          features: parseAdminOrganizationFeatures(value.featureStates, value.capabilities),
           openworkWebAccess: parseAdminOpenWorkWebAccess(value.openworkWebAccess)
         };
       })
@@ -839,7 +871,10 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    capabilities: { auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, headlessAutomations: false, workbot: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
+    features: mapFeatures((key) => {
+      const enabled = target && (key === "installLinks" || key === "mcpConnections");
+      return { enabled, source: "everyone", everyone: enabled, killed: false, override: null, overrideApplies: true };
+    }),
     openworkWebAccess: {
       hasAccess: target,
       accessSource: target ? "complimentary" : null,
@@ -2116,7 +2151,7 @@ export function DenAdminPanel() {
     }
   }, [freeSeatsDialog]);
 
-  const setOrganizationCapabilityLocally = useCallback((orgId: string, key: keyof AdminOrganizationCapabilities, enabled: boolean) => {
+  const setOrganizationFeaturesLocally = useCallback((orgId: string, update: (features: AdminOrganizationFeatures) => AdminOrganizationFeatures) => {
     setPayload((current) => {
       if (!current) {
         return current;
@@ -2125,39 +2160,55 @@ export function DenAdminPanel() {
       return {
         ...current,
         organizations: current.organizations.map((org) =>
-          org.id === orgId ? { ...org, capabilities: { ...org.capabilities, [key]: enabled } } : org
+          org.id === orgId ? { ...org, features: update(org.features) } : org
         )
       };
     });
   }, []);
 
-  const saveOrganizationCapability = useCallback(async (org: AdminOrganization, key: keyof AdminOrganizationCapabilities, enabled: boolean) => {
+  // value: true/false sets an override for this organization; null makes it follow the deployment-wide state again.
+  const saveOrganizationFeature = useCallback(async (org: AdminOrganization, key: FeatureKey, value: boolean | null) => {
+    const previous = org.features;
     setSavingCapabilityOrgId(org.id);
     setError(null);
     setCapabilityError(null);
-    // Optimistic: flip the toggle immediately, roll back if the PUT fails.
-    setOrganizationCapabilityLocally(org.id, key, enabled);
+    // Optimistic: show the change immediately, roll back if the PUT fails.
+    setOrganizationFeaturesLocally(org.id, (features) => ({
+      ...features,
+      [key]: {
+        ...features[key],
+        enabled: value ?? features[key].everyone,
+        override: value,
+        source: value === null ? "everyone" : "override",
+      },
+    }));
 
     try {
       const { response, payload: nextPayload } = await putJson(`/v1/admin/organizations/${org.id}/capabilities`, {
-        capabilities: { [key]: enabled }
+        capabilities: { [key]: value }
       });
 
       if (!response.ok) {
-        setOrganizationCapabilityLocally(org.id, key, !enabled);
-        const message = getErrorMessage(nextPayload, `Could not update capabilities for ${org.name}.`);
+        setOrganizationFeaturesLocally(org.id, () => previous);
+        const message = getErrorMessage(nextPayload, `Could not update features for ${org.name}.`);
         setError(message);
         setCapabilityError({ orgId: org.id, message });
+        return;
+      }
+      // The server's answer is the truth (locks, defaults), not the optimistic guess.
+      if (isRecord(nextPayload) && isRecord(nextPayload.featureStates)) {
+        const features = parseAdminOrganizationFeatures(nextPayload.featureStates, nextPayload.capabilities);
+        setOrganizationFeaturesLocally(org.id, () => features);
       }
     } catch (nextError) {
-      setOrganizationCapabilityLocally(org.id, key, !enabled);
+      setOrganizationFeaturesLocally(org.id, () => previous);
       const message = nextError instanceof Error ? nextError.message : "Unknown network error";
       setError(message);
       setCapabilityError({ orgId: org.id, message });
     } finally {
       setSavingCapabilityOrgId(null);
     }
-  }, [setOrganizationCapabilityLocally]);
+  }, [setOrganizationFeaturesLocally]);
 
   const saveOpenWorkWebAccess = useCallback(async () => {
     if (!openworkWebAccessDialog) {
@@ -2714,136 +2765,52 @@ export function DenAdminPanel() {
                   </div>
 
                   <div className="mt-4 border-t border-slate-200 pt-4">
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Capabilities</p>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-installLinks"
-                          checked={org.capabilities.installLinks}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => {
-                            void saveOrganizationCapability(org, "installLinks", event.target.checked);
-                          }}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Install links
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-mcpConnections"
-                          checked={org.capabilities.mcpConnections}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => {
-                            void saveOrganizationCapability(org, "mcpConnections", event.target.checked);
-                          }}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        OpenWork Connect (alpha)
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-auditLogs"
-                          checked={org.capabilities.auditLogs}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => void saveOrganizationCapability(org, "auditLogs", event.target.checked)}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Audit logs
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-orgManagedDashboards"
-                          checked={org.capabilities.orgManagedDashboards}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => void saveOrganizationCapability(org, "orgManagedDashboards", event.target.checked)}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Dashboards
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-appMcpServers"
-                          checked={org.capabilities.appMcpServers}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => void saveOrganizationCapability(org, "appMcpServers", event.target.checked)}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Apps built in OpenWork
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-slackAssistant"
-                          checked={org.capabilities.slackAssistant}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => {
-                            void saveOrganizationCapability(org, "slackAssistant", event.target.checked);
-                          }}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Slack Assistant
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-slackAssistantHeadless"
-                          checked={org.capabilities.slackAssistantHeadless}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => {
-                            void saveOrganizationCapability(org, "slackAssistantHeadless", event.target.checked);
-                          }}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Slack Assistant: headless runtime
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-headlessAutomations"
-                          checked={org.capabilities.headlessAutomations}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => {
-                            void saveOrganizationCapability(org, "headlessAutomations", event.target.checked);
-                          }}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Cloud Automations: headless runtime
-                      </label>
-                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          data-testid="admin-capability-workbot"
-                          checked={org.capabilities.workbot}
-                          disabled={savingCapabilityOrgId === org.id}
-                          onChange={(event) => {
-                            void saveOrganizationCapability(org, "workbot", event.target.checked);
-                          }}
-                          className="h-4 w-4 rounded-sm border-slate-300"
-                        />
-                        Workbot
-                      </label>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Features</p>
+                      <a href="/admin/features" className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">All features</a>
                     </div>
-                    <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-700">
-                      <input type="checkbox" checked={org.capabilities.modelsAnalytics} disabled={savingCapabilityOrgId === org.id}
-                        onChange={(event) => void saveOrganizationCapability(org, "modelsAnalytics", event.target.checked)} />
-                      OpenWork Models task analytics (requires admin opt-in)
-                    </label>
+                    {/* Generated from packages/features/src/registry.ts; add features there, not here. */}
+                    <ul className="mt-2 grid gap-2">
+                      {FEATURE_KEYS.filter((key) => org.features[key].source !== "unavailable").map((key) => {
+                        const state = org.features[key];
+                        const definition = FEATURES[key];
+                        return (
+                          <li key={key} className="flex items-start gap-3">
+                            <label className="flex min-w-0 flex-1 items-start gap-2">
+                              <input
+                                type="checkbox"
+                                data-testid={`admin-capability-${key}`}
+                                checked={state.enabled}
+                                disabled={!state.overrideApplies || savingCapabilityOrgId === org.id}
+                                onChange={(event) => void saveOrganizationFeature(org, key, event.target.checked)}
+                                className="mt-0.5 h-4 w-4 shrink-0 rounded-sm border-slate-300"
+                              />
+                              <span className="min-w-0">
+                                <span className="text-sm text-slate-700">{definition.label}</span>
+                                <span className="ml-2 text-xs text-slate-400" data-testid={`admin-capability-source-${key}`}>{describeAdminFeatureSource(state)}</span>
+                                <span className="block text-xs leading-5 text-slate-400">{definition.description}</span>
+                              </span>
+                            </label>
+                            {state.source === "override" && state.overrideApplies ? (
+                              <button
+                                type="button"
+                                data-testid={`admin-capability-reset-${key}`}
+                                disabled={savingCapabilityOrgId === org.id}
+                                onClick={() => void saveOrganizationFeature(org, key, null)}
+                                className="shrink-0 text-xs font-medium text-slate-500 underline-offset-2 hover:underline disabled:opacity-50"
+                              >
+                                Use everyone&apos;s setting
+                              </button>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
                     {capabilityError?.orgId === org.id ? (
                       <p data-testid="admin-capability-error" className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
                         Save failed — the change was reverted. {capabilityError.message}
                       </p>
                     ) : null}
-                    <p className="mt-1 text-xs text-slate-400">On by default. Turn off to stop workspace admins from minting desktop install links for this organization.</p>
-                    <p className="mt-1 text-xs text-slate-400">On by default. Turn off to hide member-facing org connections, marketplace capabilities on the agent rail, and the desktop Connect tab.</p>
-                    <p className="mt-1 text-xs text-slate-400">Slack Assistant is off by default. Enables Slack mentions and DMs for this organization after Slack connector setup. Turn off to stop new requests and further replies; no redeploy is needed.</p>
-                    <p className="mt-1 text-xs text-slate-400">Slack Assistant: headless runtime is off by default. Answers Slack requests on the shared headless runner instead of each member&apos;s OpenWork Web computer, so no Web seat is needed. Requires the deployment&apos;s headless runner to be configured.</p>
-                    <p className="mt-1 text-xs text-slate-400">Confined multi-tool scripts run server-side for this organization.</p>
-                    <p className="mt-1 text-xs text-slate-400">Off by default. Requires the deployment master switch and exposes native provider MCP Apps and imported Apps for this organization.</p>
                   </div>
 
                   <div className="mt-4 border-t border-slate-200 pt-4" data-testid="admin-openwork-web-access">

@@ -116,8 +116,8 @@ Coverage is limited to implemented provider configuration and audit-read emitter
 category names do not promise all security, execution or read activity is captured.
 Global DEN_AUDIT_CAPTURE_ENABLED and DEN_AUDIT_VISIBILITY_ENABLED default true;
 explicit false is a kill switch. This initializer never changes them.
-Traffic and API access require metadata.capabilities.auditLogs=true (literal true),
-managed only by platform admins; absent/false means hidden and no traffic capture.
+Traffic and API access require the auditLogs feature to be on for the organization,
+set only by platform admins in /admin; off means hidden and no traffic capture.
 Disabling the feature hides history without deleting data or changing captureOn.
 Ready organizations now lazily initialize missing policies ON during capture or
 GET usage, with a system audit.policy.initialized event. Temporary server defaults:

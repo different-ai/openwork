@@ -30,7 +30,7 @@ Common misses:
 
 | Host | Requirement | Why it is reached | What breaks when blocked |
 | --- | --- | --- | --- |
-| `app.openworklabs.com` | Required for OpenWork Cloud | Hosted Cloud web origin. The desktop uses one base URL and derives Den API/MCP calls through `/api/den/...`. | Cloud sign-in, org settings, Collections, and remote workspace flows cannot load. |
+| `app.openworklabs.com` | Required for OpenWork Cloud | Hosted Cloud web origin. The desktop uses one base URL and derives Den API/MCP calls through `/api/den/...`. | Cloud sign-in, org settings, and Collections cannot load. |
 | `api.app.openworklabs.com` | Required for hosted install and OpenWork Connect | Hosted public API and OpenWork Connect MCP endpoint used by install and external-client flows. | Hosted install checks and public OpenWork Connect fail. |
 | `app.openwork.software`, `api.openwork.software` | Required only for legacy hosted configurations | Older desktop configurations may still derive Cloud and OpenWork Connect traffic from these legacy hosted origins. | Legacy configurations cannot reconcile OpenWork Connect or native MCP Apps until moved to the current hosted origins. |
 | Your self-hosted Den web origin | Required for self-hosted desktop | Replaces `app.openworklabs.com` for signed-in desktop traffic. In the single-origin shape, API and MCP use `/api/den/...` on the same origin. | The desktop cannot sign in or reach Den. |

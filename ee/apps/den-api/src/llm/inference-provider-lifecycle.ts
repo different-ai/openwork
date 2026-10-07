@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { GatewayKeyTable, GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderOauthStateTable, GatewayProviderTable, InferenceKeyTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
+import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { isGoogleOAuthInferenceProviderId, revokeGoogleToken } from "./inference-provider-google-oauth.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -79,7 +80,8 @@ export async function lockMemberOAuthAuthorization(tx: Tx, provider: Provider, s
     .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt))).for("update")
   if (!member?.userId || expectedUserId !== undefined && member.userId !== expectedUserId) return false
   const [current] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id)).for("update")
-  if (!current || current.status !== "active" || !isGoogleOAuthInferenceProviderId(current.provider_id)
+  // Member sets: each member's own Google sign-in, or their own LiteLLM key.
+  if (!current || current.status !== "active" || !(isGoogleOAuthInferenceProviderId(current.provider_id) || isLiteLlmProviderId(current.provider_id))
     || current.organization_id !== provider.organization_id || current.provider_id !== provider.provider_id) return false
   const [currentSet] = await tx.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, set.id)).for("update")
   if (!currentSet || currentSet.gateway_provider_id !== provider.id || currentSet.status !== "active" || currentSet.credential_mode !== "member"

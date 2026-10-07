@@ -2,9 +2,11 @@
 
 Each attempted review writes a compact GitHub Actions job summary: result,
 analysis duration, and elapsed time through summary creation. Skill durations
-and actionable security findings sit in a collapsed details section. There
-are no PR comments or review-thread mutations. Confidentiality finding text
-and paths are omitted; reviewers inspect the added diff privately.
+and actionable security findings sit in a collapsed details section. Warden
+itself never writes to the PR; Warden Clearance posts one comment from the
+`warden-findings` artifact (security findings only, bound to the run, kept 30
+days). Confidentiality finding text and paths are omitted everywhere; reviewers
+inspect the added diff privately.
 
 One `warden-summary` artifact retains `warden-summary.json` for 90 days. Its
 version 2 record contains:

@@ -36,6 +36,7 @@ import {
   InferenceOrgUsageBucketTable,
   GatewayKeyTable,
   GatewayCredentialSetTable,
+  GatewayLiteLlmIssuedKeyTable,
   GatewayModelGroupTable,
   GatewayModelGroupModelTable,
   GatewayProviderAccessTable,
@@ -77,8 +78,6 @@ import {
   SsoProviderTable,
   TeamMemberTable,
   TeamTable,
-  TelemetryEventTable,
-  TelemetrySessionDimensionTable,
   WorkerBundleTable,
   WorkerInstanceTable,
   WorkerTable,
@@ -471,6 +470,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           .map((row) => row.id)
         if (gatewayProviderIds.length > 0) {
           await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
+          // Keys OpenWork created in a customer's LiteLLM outlive this record; that proxy is not ours to change.
+          await tx.delete(GatewayLiteLlmIssuedKeyTable).where(inArray(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, gatewayProviderIds))
           const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
           if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
           await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
@@ -526,8 +527,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId))
         await tx.delete(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId))
         await tx.delete(WorkerTable).where(eq(WorkerTable.org_id, organizationId))
-        await tx.delete(TelemetryEventTable).where(eq(TelemetryEventTable.org_id, organizationId))
-        await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))
         await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
 
         await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))

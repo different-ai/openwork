@@ -23,6 +23,8 @@ import {
   accessFromGrants, buildInferenceProviderRequestBody, getAwsKeysError, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
   isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isSupportedGatewayNpm, supportsMemberCredentialMode, type AwsKeysInput,
 } from "./inference-provider-request";
+import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
+import { LiteLlmProviderScreen } from "./litellm-provider-screen";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
 import { normalizeAzureResourceNameInput } from "./llm-provider-guided";
 import type { ProviderAccessValue } from "./llm-provider-pickers";
@@ -102,7 +104,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
 
   useEffect(() => {
     setDetail(null);
-    if (!orgId || !providerId) return;
+    // LiteLLM models come from the organization's own proxy, not the shared catalog.
+    if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID) return;
     let cancelled = false;
     setCatalogError(null);
     void requestLlmProviderCatalogDetail(orgId, providerId)
@@ -250,6 +253,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   if (inferenceProviderId && !provider) {
     return <div className="p-8">{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
   }
+  if (provider?.providerId === LITELLM_PROVIDER_ID) return <LiteLlmProviderScreen provider={provider} reload={reload} embedded={embedded} />;
 
   const teams = orgContext?.teams ?? [];
   const members = orgContext?.members ?? [];

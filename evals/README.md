@@ -2,7 +2,9 @@
 
 All executable coverage lives in [`specs/**/*.test.ts`](./specs) and imports
 `test` from `@openwork/testkit`. Tests that drive Electron, Den, or another app
-surface use `.e2e.test.ts`.
+surface use `.e2e.test.ts`. Unit tests of the eval packages themselves sit next
+to the module they test (`packages/*/src/**/*.test.ts`) and run in the same
+`pr` project.
 
 ## How CI works (start here)
 
@@ -108,6 +110,7 @@ Skills own mechanics; this README owns the map and vocabulary.
 | Author a spec | `write-a-spec` | Add executable coverage under `evals/specs`. |
 | Run tests | `run-tests` | Run a selected spec; the CLI chooses and reports placement. |
 | Failing or red run | `diagnose-a-red-run` | Classify a failure before changing code. |
+| Design notes on a PR | `fix-design-notes` | Read the design notes in the Evidence preview check, fix what they found, prove the note is gone. |
 | Missing secret or environment variable | `get-env-var` | Load a required team secret into the shell. |
 | Drive local Electron via CDP | `browser-automation` | Explore or debug the local desktop surface. |
 | Daytona setup or sandbox debugging | `daytona` | Repair the CLI, snapshots, sandboxes, or secrets volume. |

@@ -311,7 +311,6 @@ export type ProviderAuthStoreSnapshot = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthPreferredProviderId: string | null;
-  providerAuthWorkerType: "local" | "remote";
   providerAuthProviders: ProviderAuthProvider[];
   cloudOrgProviders: DenOrgLlmProvider[];
   importedCloudProviders: Record<string, CloudImportedProvider>;
@@ -409,9 +408,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const emitChange = () => {
     for (const listener of listeners) listener();
    };
-
-  const getProviderAuthWorkerType = (): "local" | "remote" =>
-    options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
 
   // Providers that are not connected yet, loaded only when the Connect modal
   // opens. The everyday provider list holds connected providers only.
@@ -603,7 +599,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       providerAuthError: state.providerAuthError,
       providerAuthMethods: state.providerAuthMethods,
       providerAuthPreferredProviderId: state.providerAuthPreferredProviderId,
-      providerAuthWorkerType: getProviderAuthWorkerType(),
       providerAuthProviders: getProviderAuthProviders(),
       cloudOrgProviders: state.cloudOrgProviders,
       importedCloudProviders: state.importedCloudProviders,
@@ -1507,7 +1502,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const buildProviderAuthMethods = (
     methods: Record<string, ProviderAuthMethod[]>,
     availableProviders: ProviderAuthProvider[],
-    workerType: "local" | "remote",
   ) => {
     const restrictToCloud = options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
     const merged = Object.fromEntries(
@@ -1561,8 +1555,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         // are offered off-desktop.
         if (!isDesktopRuntime()) return false;
         const label = method.label.toLowerCase();
-        const isHeadless = /headless|device/.test(label);
-        return workerType === "remote" ? isHeadless : !isHeadless;
+        return !/headless|device/.test(label);
       });
     }
 
@@ -1587,7 +1580,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   };
 
-  const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
+  const loadProviderAuthMethods = async () => {
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
@@ -1599,7 +1592,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return buildProviderAuthMethods(
       methods as Record<string, ProviderAuthMethod[]>,
       getProviderAuthProviders(),
-      workerType,
     );
   };
 
@@ -1616,7 +1608,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       const cachedMethods = state.providerAuthMethods;
       const authMethods = Object.keys(cachedMethods).length
         ? cachedMethods
-        : await loadProviderAuthMethods(getProviderAuthWorkerType());
+        : await loadProviderAuthMethods();
       const providerIds = Object.keys(authMethods).sort();
       if (!providerIds.length) {
         throw new Error(t("providers.no_providers_available"));
@@ -1705,7 +1697,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     setStateField("providerLoadState", { status: "loading", error: state.providerLoadState.error });
 
     const serverClient = options.openworkServer.getSnapshot().openworkServerClient;
-    const liveCatalog = optionsArg?.dispose && serverClient && options.selectedWorkspaceDisplay().workspaceType !== "remote"
+    const liveCatalog = optionsArg?.dispose && serverClient
       ? await serverClient.getEngineV2PreviewStatus().then(status => status.enabled && status.chatRouting).catch(() => false)
       : false;
     if (optionsArg?.dispose && !liveCatalog) {
@@ -2657,7 +2649,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }));
 
     try {
-      const methods = await loadProviderAuthMethods(getProviderAuthWorkerType());
+      const methods = await loadProviderAuthMethods();
       mutateState((current) => ({
         ...current,
         providerAuthMethods: methods,

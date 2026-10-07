@@ -1,6 +1,5 @@
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type { WorkspaceSessionGroup } from "../../../../app/types";
-import { isSandboxWorkspace } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { getSessionOrder } from "./session-order";
 
@@ -209,17 +208,11 @@ const EMPTY_ARRAY: string[] = [];
 
 export const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
-  workspace.openworkWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
   t("workspace_list.workspace_fallback");
 
-export const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-  workspace.workspaceType === "remote"
-    ? isSandboxWorkspace(workspace)
-      ? t("workspace.sandbox_badge")
-      : t("workspace.remote_badge")
-    : t("workspace.local_badge");
+export const workspaceKindLabel = () => t("workspace.local_badge");
 
 const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 

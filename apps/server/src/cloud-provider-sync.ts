@@ -1438,7 +1438,7 @@ export class CloudProviderSync {
       const hasStoredConfig = await hasOpenworkWorkspaceConfig(this.config, workspace.id);
       const openwork = hasStoredConfig
         ? await readOpenworkWorkspaceConfig(this.config, workspace.id)
-        : workspace.workspaceType !== "remote" && workspace.path.trim().length > 0
+        : workspace.path.trim().length > 0
           ? await readLegacyOpenworkConfig(openworkConfigPath(workspace.path))
           : null;
       if (!openwork) continue;

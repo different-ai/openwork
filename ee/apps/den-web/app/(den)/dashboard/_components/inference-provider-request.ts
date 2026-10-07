@@ -10,7 +10,7 @@ import type {
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
 } from "@openwork/types/den/inference";
-import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayUsableModel } from "@openwork/types/den/gateway";
+import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { z } from "zod";
 
 export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_credential_missing";
@@ -50,6 +50,8 @@ export type DenInferenceProvider = {
   credentialSets: GatewayCredentialSet[] | null;
   accessGrants: GatewayAccessGrant[] | null;
   authorizationRequests: GatewayAuthorizationRequest[];
+  /** LiteLLM providers only (manage view). */
+  litellm: GatewayLiteLlmStatus | null;
 };
 
 export type DenInferenceProviderDetails = DenInferenceProvider & {
@@ -79,6 +81,18 @@ const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
     z.object({ type: z.literal("team"), teamId: z.string() }),
     z.object({ type: z.literal("member"), memberId: z.string() }),
   ]),
+});
+const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
+  mode: z.enum(["org", "member"]),
+  keySource: z.enum(["personal", "issued"]).nullable().catch(null),
+  issueStrategy: z.enum(["per_team", "mirror"]).nullable().catch(null),
+  mirrorFallback: z.enum(["per_team", "error"]).nullable().catch(null),
+  issuedMemberCount: z.number().catch(0),
+  attentionCount: z.number().catch(0),
+  attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })).catch([]),
+  baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(),
+  lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
+  modelCount: z.number(), teamCount: z.number(), connectedMemberCount: z.number(),
 });
 const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
@@ -282,6 +296,7 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     credentialSets: value.credentialSets === undefined ? null : z.array(credentialSetSchema).parse(value.credentialSets),
     accessGrants: value.accessGrants === undefined ? null : z.array(accessGrantSchema).parse(value.accessGrants),
     authorizationRequests: value.authorizationRequests === undefined ? [] : z.array(authorizationRequestSchema).parse(value.authorizationRequests),
+    litellm: value.litellm === undefined ? null : liteLlmStatusSchema.parse(value.litellm),
   };
 }
 

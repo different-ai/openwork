@@ -14,7 +14,7 @@ test("Native evidence links open a readable report and preserve commit-bound pub
   expect(result.stdout).toMatch(/(?:fail 0|# fail 0)/);
   evidence.recordAssertionEvidence(
     "Native presentation rejects stale evidence and preserves recorded failures",
-    "The controller and preview card contract tests passed against a simulated GitHub API: commit binding, failed reports, missing reports, stale heads and attempts, delayed progress, publication races, URL validation, retirement of older deployments, readable preview links, outdated reports, and bot comment ownership. Actual GitHub check/deployment creation runs separately after this proof completes.",
+    "The controller and preview card contract tests passed against a simulated GitHub API: commit binding, failed reports, missing reports, stale heads and attempts, delayed progress, publication races, URL validation, retirement of older deployments, readable preview links, outdated reports, and bot comment ownership; advisory design notes ride in the same evidence check with where to look in the code and how to reproduce each one, page and model text stays inert, and the verdict never changes. Actual GitHub check/deployment creation runs separately after this proof completes.",
     true,
   );
 

@@ -26,6 +26,7 @@ import type { Context, Hono } from "hono"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { getOrganizationFeatures } from "../features.js"
 import { appMcpServersEnabled } from "../mcp-app-rollout.js"
 import {
   loadMcpAppResource,
@@ -246,18 +247,17 @@ async function handleMcpAppServerRequestUntimed(input: {
   const organizationId = normalizeDenTypeId("organization", principal.organizationId)
   const refuse = (reason: AppRefusal, organizationName?: string) =>
     refuseAppRequest(context.req.raw, { reason, organizationId, appId: input.appId, organizationName })
-  const [member, home, organization, catalog] = await Promise.all([
+  const [member, home, organizationFeatures, catalog] = await Promise.all([
     resolveMcpMemberIdentity({ userId: principal.userId, organizationId }),
     appOrganizationForMember(input.appId, principal.userId),
-    db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
-      .where(eq(OrganizationTable.id, organizationId)).limit(1),
+    getOrganizationFeatures(organizationId),
     getCatalog(input.app, context.env),
   ])
   if (!member) return refuse("not_a_member")
   // A client authorized for one organization cannot reach an App built in another.
   if (home && home.id !== organizationId) return refuse("other_organization", home.name)
   // Building your own Apps is per-organization and default-off.
-  if (!appMcpServersEnabled(organization[0]?.metadata)) return refuse("apps_off")
+  if (!appMcpServersEnabled(organizationFeatures)) return refuse("apps_off")
   const capabilityContext = createCapabilityRegistryContext({
     app: input.app,
     env: context.env,
@@ -267,7 +267,7 @@ async function handleMcpAppServerRequestUntimed(input: {
     member,
     redirectUriBase: resolvePublicOrigin(context.req.raw, env.apiPublicUrl),
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-    organizationMetadata: organization[0]?.metadata,
+    organizationFeatures,
   })
   const access = { organizationId, member, enabled: capabilityContext.externalMcpConnectionsEnabled, requestScope: {} }
   let definition: McpAppServerDefinition

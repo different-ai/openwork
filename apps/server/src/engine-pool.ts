@@ -940,7 +940,6 @@ export class EnginePool {
     this.config.opencodeUsername = next.handle.username;
     this.config.opencodePassword = next.handle.password;
     for (const entry of this.config.workspaces) {
-      if (entry.workspaceType === "remote") continue;
       entry.baseUrl = next.handle.url;
       entry.opencodeUsername = next.handle.username;
       entry.opencodePassword = next.handle.password;
@@ -1392,11 +1391,7 @@ export class EnginePool {
   }
 
   private engineProbeDirectories(): Array<string | null> {
-    const directories = new Set(
-      this.config.workspaces
-        .filter((workspace) => workspace.workspaceType !== "remote")
-        .map((workspace) => workspace.path),
-    );
+    const directories = new Set(this.config.workspaces.map((workspace) => workspace.path));
     return directories.size > 0 ? [...directories] : [null];
   }
 

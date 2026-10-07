@@ -78,7 +78,7 @@
       "components": ["desktop", "renderer", "bootstrap"],
       "purpose": "Hosted OpenWork Cloud web origin; the desktop derives Den API and MCP calls from this base URL.",
       "requirement": "required-for-cloud",
-      "blockedEffect": "Hosted Cloud sign-in, org settings, marketplace, and remote workspace flows cannot load.",
+      "blockedEffect": "Hosted Cloud sign-in, org settings, and marketplace cannot load.",
       "override": "desktop base URL (self-hosted Den replaces this host)"
     },
     {

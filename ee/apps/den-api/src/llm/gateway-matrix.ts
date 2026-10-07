@@ -5,6 +5,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
+import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, recordProviderAttempt, type ProviderAuditCapture } from "../audit/provider.js"
 import { recheckAuditEntitlement } from "../audit/capture.js"
@@ -13,6 +14,7 @@ import { env } from "../env.js"
 import { bedrockSettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
 import { isGoogleOAuthInferenceProviderId } from "./inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
+import { liteLlmCatalogProvider, liteLlmStatus, readLiteLlmSettings } from "./litellm-settings.js"
 import { getModelsDevProvider, type ModelsDevProvider } from "./models-dev.js"
 import { readProviderEnvNames } from "./provider-credentials.js"
 
@@ -45,7 +47,16 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
   }
 }
 
+/**
+ * The trusted catalog for a saved provider. LiteLLM catalogs come from the
+ * organization's last sync (settings.litellm), never from models.dev.
+ */
+export async function trustedProviderCatalog(provider: Pick<GatewayProvider, "provider_id" | "settings">): Promise<ModelsDevProvider | null> {
+  return isLiteLlmProviderId(provider.provider_id) ? liteLlmCatalogProvider(provider) : getModelsDevProvider(provider.provider_id)
+}
+
 export async function gatewayCatalog(providerId: string, modelIds: string[]) {
+  if (isLiteLlmProviderId(providerId)) throw new GatewayWriteError(400, "litellm_setup_required", "Create LiteLLM providers with POST /v1/inference-providers/litellm so OpenWork can sync their models.")
   const catalog = await getModelsDevProvider(providerId)
   if (!catalog) throw new GatewayWriteError(404, "provider_not_found")
   return resolveGatewayCatalog(catalog, modelIds)
@@ -91,12 +102,15 @@ export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: P
     ? loadProviderAudit(db, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true, providerSystemAuditContext(provider.organization_id, provider.id), "catalog.refresh")
     : audit ? { ...audit, step: "catalog.refresh" } : null
   // Catalog I/O never holds a provider/OAuth lock. A failed load cannot prune rows.
-  const catalog = await getModelsDevProvider(provider.provider_id).catch(() => null)
+  // LiteLLM's catalog is its last sync, stored on the provider row: no network.
+  const litellm = isLiteLlmProviderId(provider.provider_id)
+  const fetched = litellm ? null : await getModelsDevProvider(provider.provider_id).catch(() => null)
   let capture: ProviderAuditCapture | null | undefined
   try {
     const [snapshot] = await db.select().from(GatewayProviderTable)
       .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id)))
     if (!snapshot) throw new GatewayWriteError(404, "inference_provider_not_found")
+    const catalog = litellm ? liteLlmCatalogProvider(snapshot) : fetched
     if (!catalog) return { provider: snapshot, catalogWarning: catalogUnavailableWarning }
     if (!catalogCompatible(catalog, snapshot)) return { provider: snapshot, catalogWarning: catalogSdkChangedWarning }
     const preview = resolveGatewayCatalog(catalog, snapshot.model_ids, snapshot.provider_config, false)
@@ -109,8 +123,9 @@ export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: P
         .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
       if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
       // Recheck under the lock: the provider may have changed since the unlocked preview.
-      if (!catalogCompatible(catalog, current)) return { provider: current, catalogWarning: catalogSdkChangedWarning }
-      const resolved = resolveGatewayCatalog(catalog, current.model_ids, current.provider_config, false)
+      const lockedCatalog = litellm ? liteLlmCatalogProvider(current) : catalog
+      if (!catalogCompatible(lockedCatalog, current)) return { provider: current, catalogWarning: catalogSdkChangedWarning }
+      const resolved = resolveGatewayCatalog(lockedCatalog, current.model_ids, current.provider_config, false)
       return providerAuditMutation(tx, writeCapture, async () => {
         if (await writeGatewayModels(tx, current, resolved.models)) {
           current.updated_at = new Date()
@@ -315,15 +330,18 @@ export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, 
   if (!name || !mode) throw new GatewayWriteError(400, "invalid_request")
   const clientId = input.oauthClientId === undefined ? existing?.oauth_client_id ?? null : input.oauthClientId || null
   const clientSecret = input.oauthClientSecret === undefined ? existing?.oauth_client_secret ?? null : input.oauthClientSecret || null
-  if (mode === "member" && (!isGoogleOAuthInferenceProviderId(provider.provider_id) || input.credential !== undefined || input.apiKeys !== undefined)) {
-    throw new GatewayWriteError(400, "unsupported_credential_mode", "Member sets use each member's own Google OAuth flow, never an uploaded shared credential.")
+  // LiteLLM member sets hold each member's own LiteLLM key, connected by that member.
+  const litellm = isLiteLlmProviderId(provider.provider_id)
+  if (mode === "member" && ((!isGoogleOAuthInferenceProviderId(provider.provider_id) && !litellm) || input.credential !== undefined || input.apiKeys !== undefined)) {
+    throw new GatewayWriteError(400, "unsupported_credential_mode", "Member sets use each member's own sign-in or key, never an uploaded shared credential.")
   }
+  if (litellm && (clientId || clientSecret)) throw new GatewayWriteError(400, "unsupported_oauth_client", "LiteLLM sets do not use an OAuth client.")
   const id = existing?.id ?? createDenTypeId("gatewayCredentialSet")
   const modeChanged = existing && mode !== existing.credential_mode
   const clientChanged = existing && (clientId !== existing.oauth_client_id || clientSecret !== existing.oauth_client_secret)
   const disabled = existing?.status === "active" && input.status === "disabled"
   const enabled = existing && existing.status !== "active" && input.status === "active"
-  if (mode === "member" && (!existing || modeChanged || clientChanged || enabled) && (!clientId?.trim() || !clientSecret?.trim())) {
+  if (mode === "member" && !litellm && (!existing || modeChanged || clientChanged || enabled) && (!clientId?.trim() || !clientSecret?.trim())) {
     throw new GatewayWriteError(400, "oauth_client_required", "Member credential sets require a non-empty Google OAuth client ID and secret.")
   }
   // Lock exchanges before tokens, but defer cancellation until validation succeeds. Renames do neither.
@@ -421,14 +439,15 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
     const subject = set.credential_mode === "org" ? "org" : memberId
     const token = credentials.find(({ credential: row }) => row.credential_set_id === set.id && row.subject === subject
       && row.org_membership_id === (set.credential_mode === "org" ? null : memberId) && row.status === "active")?.credential
-    const configured = set.credential_mode === "member" ? Boolean(set.oauth_client_id && set.oauth_client_secret) : Boolean(token)
+    const litellm = isLiteLlmProviderId(provider.provider_id)
+    const configured = set.credential_mode === "member" ? litellm || Boolean(set.oauth_client_id && set.oauth_client_secret) : Boolean(token)
     let usable = false
     if (token) {
       try {
         const parsed = parseGatewayProviderSecret(token.kind, token.secret)
         usable = isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
           && (parsed.kind !== "oauth_google" || token.last_error !== "invalid_client")
-          && (set.credential_mode !== "member" || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken))
+          && (set.credential_mode !== "member" || (litellm ? parsed.kind === "api_key" : parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken)))
           && (parsed.kind !== "oauth_google" || Boolean(token.expires_at && Number.isFinite(token.expires_at.getTime())))
           && (parsed.kind !== "api_key_map" || Boolean(pickInferenceApiKeyFromMap(parsed.apiKeys, readProviderEnvNames(provider.provider_config))))
           && (!token.expires_at || token.expires_at.getTime() > Date.now() || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken && set.oauth_client_id && set.oauth_client_secret))
@@ -439,7 +458,11 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
       credentialStatus: provider.status === "active" && set.status === "active" && configured && usable ? "ready" : set.credential_mode === "member" ? "member_auth_required" : "org_credential_missing",
       oauthClientId: set.oauth_client_id, hasOauthClientSecret: Boolean(set.oauth_client_secret) }
   })
-  const authorizationRequests = setSummaries.filter((set) => set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
+  // LiteLLM keys created by OpenWork need nothing from the person once any key exists.
+  const liteLlmSettings = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings) : null
+  const issuedReady = liteLlmSettings?.mode === "member" && liteLlmSettings.keySource === "issued"
+    && credentials.some(({ credential }) => credential.org_membership_id === memberId && credential.status === "active")
+  const authorizationRequests = setSummaries.filter((set) => !issuedReady && set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
     .map((set) => {
       const models: GatewayUsableModel[] = []
       return { credentialSetId: set.id, name: set.name, authUrl: `${baseUrl}/v1/inference-providers/${provider.id}/oauth/start?credentialSetId=${encodeURIComponent(set.id)}`, models }
@@ -476,6 +499,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   if (!manage) return summary
   const modelGroups: GatewayModelGroup[] = groups.map((group) => ({ id: group.id, name: group.name, description: group.description, status: group.status,
     modelIds: models.filter((model) => links.some((link) => link.model_group_id === group.id && link.gateway_provider_model_id === model.id)).map((model) => model.model_id) }))
-  return { ...summary, settings: publicProviderSettings(provider.settings), modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
+  const litellm = await liteLlmStatus(provider)
+  return { ...summary, ...(litellm ? { litellm } : {}), settings: publicProviderSettings(provider.settings), modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
     credentials: credentials.map(({ credential, memberName, memberEmail }) => ({ id: credential.id, credentialSetId: credential.credential_set_id, subject: credential.subject, orgMembershipId: credential.org_membership_id, memberName, memberEmail, kind: credential.kind, status: credential.status, expiresAt: credential.expires_at?.toISOString() ?? null })) }
 }

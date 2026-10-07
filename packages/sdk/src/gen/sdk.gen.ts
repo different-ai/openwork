@@ -175,6 +175,8 @@ import type {
   GetMcpWellKnownOauthProtectedResourceResponses,
   GetReadyErrors,
   GetReadyResponses,
+  GetV1AdminFeaturesErrors,
+  GetV1AdminFeaturesResponses,
   GetV1AdminFreeAutoUsageErrors,
   GetV1AdminFreeAutoUsageResponses,
   GetV1AdminMetricsErrors,
@@ -287,6 +289,7 @@ import type {
   GetV1DesktopPoliciesResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
+  GetV1FeaturesResponses,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses,
   GetV1GatewayUsageLimitPoliciesErrors,
@@ -458,20 +461,12 @@ import type {
   GetV1TeamsByTeamIdPluginAccessErrors,
   GetV1TeamsByTeamIdPluginAccessResponses,
   GetV1TeamsByTeamIdResponses,
-  GetV1TelemetryAdoptionErrors,
-  GetV1TelemetryAdoptionResponses,
-  GetV1TelemetryAnalyticsErrors,
-  GetV1TelemetryAnalyticsResponses,
-  GetV1TelemetryDimensionsErrors,
-  GetV1TelemetryDimensionsResponses,
   GetV1WorkersByIdErrors,
   GetV1WorkersByIdResponses,
   GetV1WorkersByIdRuntimeErrors,
   GetV1WorkersByIdRuntimeResponses,
   GetV1WorkersErrors,
   GetV1WorkersResponses,
-  GetV1WorkflowRunsErrors,
-  GetV1WorkflowRunsResponses,
   GetV1WorkflowsByConfigObjectIdErrors,
   GetV1WorkflowsByConfigObjectIdResponses,
   GetV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdErrors,
@@ -558,6 +553,8 @@ import type {
   PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
   PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdLitellmErrors,
+  PatchV1InferenceProvidersByInferenceProviderIdLitellmResponses,
   PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdErrors,
   PatchV1InferenceProvidersByInferenceProviderIdModelGroupsByGroupIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdResponses,
@@ -707,8 +704,6 @@ import type {
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses,
   PostV1GatewayUsageLimitResetRequestsErrors,
   PostV1GatewayUsageLimitResetRequestsResponses,
-  PostV1InferenceAnalyticsEventsErrors,
-  PostV1InferenceAnalyticsEventsResponses,
   PostV1InferenceAnalyticsLangfuseConnectErrors,
   PostV1InferenceAnalyticsLangfuseConnectResponses,
   PostV1InferenceAnalyticsLangfuseTestErrors,
@@ -721,11 +716,19 @@ import type {
   PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses,
   PostV1InferenceProvidersByInferenceProviderIdEnableModelsErrors,
   PostV1InferenceProvidersByInferenceProviderIdEnableModelsResponses,
+  PostV1InferenceProvidersByInferenceProviderIdLitellmSyncErrors,
+  PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponses,
   PostV1InferenceProvidersByInferenceProviderIdModelGroupsErrors,
   PostV1InferenceProvidersByInferenceProviderIdModelGroupsResponses,
   PostV1InferenceProvidersErrors,
+  PostV1InferenceProvidersLitellmErrors,
+  PostV1InferenceProvidersLitellmResponses,
   PostV1InferenceProvidersMigrateFromLlmProviderErrors,
   PostV1InferenceProvidersMigrateFromLlmProviderResponses,
+  PostV1InferenceProvidersOauthBrowserLitellmCheckErrors,
+  PostV1InferenceProvidersOauthBrowserLitellmCheckResponses,
+  PostV1InferenceProvidersOauthBrowserLitellmKeyErrors,
+  PostV1InferenceProvidersOauthBrowserLitellmKeyResponses,
   PostV1InferenceProvidersResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
@@ -843,8 +846,6 @@ import type {
   PostV1SsoVerifyDomainResponses,
   PostV1TeamsErrors,
   PostV1TeamsResponses,
-  PostV1TelemetryIngestErrors,
-  PostV1TelemetryIngestResponses,
   PostV1WebhooksConnectorsGithubErrors,
   PostV1WebhooksConnectorsGithubResponses,
   PostV1WorkersByIdActivityHeartbeatErrors,
@@ -865,6 +866,8 @@ import type {
   PutApiAuthScimV2GroupsByGroupIdResponses,
   PutApiAuthScimV2UsersByUserIdErrors,
   PutApiAuthScimV2UsersByUserIdResponses,
+  PutV1AdminFeaturesByKeyErrors,
+  PutV1AdminFeaturesByKeyResponses,
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
   PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessErrors,
@@ -875,6 +878,8 @@ import type {
   PutV1DesktopPoliciesByKeyByExternalKeyResponses,
   PutV1DiagnosticsEgressTokenErrors,
   PutV1DiagnosticsEgressTokenResponses,
+  PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors,
+  PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses,
   PutV1LlmProvidersByKeyByExternalKeyErrors,
   PutV1LlmProvidersByKeyByExternalKeyResponses,
   PutV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdErrors,
@@ -1247,7 +1252,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get an organization's capability overrides
    *
-   * Returns admin-visible capabilities. The deprecated gatewayDashboard compatibility field is always true, not a mutable organization flag; deployment configuration and authorization still apply.
+   * Returns the effective value of every registry feature (capabilities) and, per feature, its source and whether /admin can change it (featureStates). The deprecated gatewayDashboard compatibility field is always true, not a mutable organization flag; deployment configuration and authorization still apply.
    */
   public getV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {
@@ -1270,7 +1275,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Set an organization's capability overrides
    *
-   * Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs, orgManagedDashboards and appMcpServers overrides. Audit logs, org-managed Dashboards and appMcpServers (building your own Apps as MCP servers) require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.
+   * Enables, disables or clears (null) per-organization feature overrides. Every key in the feature registry (packages/features/src/registry.ts) is accepted; a feature that is fixed on this deployment (unavailable, off or on for everyone) returns 400, and unknown or retired keys are ignored. A deployment lock (DEN_FEATURE_*) outranks a stored override; featureStates shows the effective value and its source. The auditLogs feature neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true.
    */
   public putV1AdminOrganizationsByOrganizationIdCapabilities<ThrowOnError extends boolean = false>(
     parameters: {
@@ -1285,6 +1290,41 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/admin/organizations/{organizationId}/capabilities",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List features and their state
+   *
+   * Every feature in the registry (packages/features/src/registry.ts) with what is fixed in code (deployments, default) and this deployment's state: on or off for everyone, kill switch, and any operator lock.
+   */
+  public getV1AdminFeatures<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1AdminFeaturesResponses, GetV1AdminFeaturesErrors, ThrowOnError>({
+      url: "/v1/admin/features",
+      ...options,
+    });
+  }
+
+  /**
+   * Change a feature's state
+   *
+   * Turns the feature on or off for everyone on this deployment (organization overrides still apply), and/or sets the kill switch. The kill switch turns the feature off everywhere, outranking operator locks and organization overrides; it is the way to revert.
+   */
+  public putV1AdminFeaturesByKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      key: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "key" }] }]);
+    return (options?.client ?? this.client).put<
+      PutV1AdminFeaturesByKeyResponses,
+      PutV1AdminFeaturesByKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/features/{key}",
       ...options,
       ...params,
     });
@@ -3022,7 +3062,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Set organization audit capture
    *
-   * Fresh organization administrator authorization, literal metadata.capabilities.auditLogs=true and visibility required. Only captureOn and expectedRevision are accepted. Enabling requires Enterprise or explicit installation entitlement and capture rollout availability. A missing policy is initialized with server-owned temporary defaults; expectedRevision=0 is accepted only by the initializing request. Explicit OFF initializes and disables atomically, never publishing intermediate ON. Disabling remains available after entitlement loss while flagged. Revision conflicts require refresh; matching no-ops do not record duplicate events. Changes and immutable lifecycle evidence commit atomically. Existing capacity configuration and retained history are unchanged.
+   * Fresh organization administrator authorization, the auditLogs feature on for the organization and visibility required. Only captureOn and expectedRevision are accepted. Enabling requires Enterprise or explicit installation entitlement and capture rollout availability. A missing policy is initialized with server-owned temporary defaults; expectedRevision=0 is accepted only by the initializing request. Explicit OFF initializes and disables atomically, never publishing intermediate ON. Disabling remains available after entitlement loss while flagged. Revision conflicts require refresh; matching no-ops do not record duplicate events. Changes and immutable lifecycle evidence commit atomically. Existing capacity configuration and retained history are unchanged.
    */
   public updateAuditCapture<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3057,7 +3097,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List supported audit event types
    *
-   * Organization administrator, fresh literal metadata.capabilities.auditLogs=true and audit visibility required. Returns the static supported semantic action catalog from the executable provider, audit-read, capture-settings, default-policy and pilot-policy coverage registries, including hidden child actions and this endpoint's access events. Unique deterministic lexicographic order. This fixed bounded catalog needs no pagination or observed full-history DISTINCT scan. It is independent of loaded rows, time/filter selection and capture category enablement, including empty history; support does not imply this organization has events of every type or that every cloud action is captured. Legacy event types are excluded. Access capture uses the same content-free requested/served policy as other audit reads.
+   * Organization administrator, the auditLogs feature on for the organization (read fresh) and audit visibility required. Returns the static supported semantic action catalog from the executable provider, audit-read, capture-settings, default-policy and pilot-policy coverage registries, including hidden child actions and this endpoint's access events. Unique deterministic lexicographic order. This fixed bounded catalog needs no pagination or observed full-history DISTINCT scan. It is independent of loaded rows, time/filter selection and capture category enablement, including empty history; support does not imply this organization has events of every type or that every cloud action is captured. Legacy event types are excluded. Access capture uses the same content-free requested/served policy as other audit reads.
    */
   public getAuditEventTypes<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetAuditEventTypesResponses, GetAuditEventTypesErrors, ThrowOnError>({
@@ -3069,7 +3109,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List retained audit operations
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the latest literal metadata.capabilities.auditLogs=true and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Newest operations first, ordered by server first-recorded time then ID. Summary action and resources describe the FIRST event only (at most 256 stored references), not all affected resources. Expand events for complete evidence; X-Audit-Resource-Scope is first_event.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Newest operations first, ordered by server first-recorded time then ID. Summary action and resources describe the FIRST event only (at most 256 stored references), not all affected resources. Expand events for complete evidence; X-Audit-Resource-Scope is first_event.
    */
   public getAuditOperations<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -3117,7 +3157,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List retained operation events
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the latest literal metadata.capabilities.auditLogs=true and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Events are in ascending tenant sequence order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Events are in ascending tenant sequence order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.
    */
   public getAuditOperationEvents<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3153,7 +3193,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read audit retention usage
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the latest literal metadata.capabilities.auditLogs=true and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Reads stored policy and tenant counters, plus the oldest retained operation. Capture requires audit entitlement, organization captureOn and the deployment capture flag. A ready organization without a policy is lazily initialized ON, including on this GET, with one system lifecycle event. Temporary defaults: 6,000,000 retained OPERATIONS (not child events), 300-second grouping window, change/security/execution/access/request/lifecycle categories, cloud/delete_oldest for Enterprise or operator/keep_all for explicit self-hosted entitlement. Existing OFF and custom policies are preserved. These are provisional declarations, not enforced caps: no billing, cleanup or deletion is activated. Drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Reads stored policy and tenant counters, plus the oldest retained operation. Capture requires audit entitlement, organization captureOn and the deployment capture flag. A ready organization without a policy is lazily initialized ON, including on this GET, with one system lifecycle event. Temporary defaults: 6,000,000 retained OPERATIONS (not child events), 300-second grouping window, change/security/execution/access/request/lifecycle categories, cloud/delete_oldest for Enterprise or operator/keep_all for explicit self-hosted entitlement. Existing OFF and custom policies are preserved. These are provisional declarations, not enforced caps: no billing, cleanup or deletion is activated. Drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.
    */
   public getAuditUsage<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetAuditUsageResponses, GetAuditUsageErrors, ThrowOnError>({
@@ -3165,7 +3205,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Export one audit snapshot page
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the latest literal metadata.capabilities.auditLogs=true and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Exports ALL matching operations' children within the watermark in ascending tenant sequence, not date/ID order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-Sequence stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Exports ALL matching operations' children within the watermark in ascending tenant sequence, not date/ID order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-Sequence stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.
    */
   public getAuditExport<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -3259,36 +3299,6 @@ export class DenClient extends HeyApiClient {
       PostV1OrgBrandAssetsErrors,
       ThrowOnError
     >({ url: "/v1/org/brand-assets", ...options });
-  }
-
-  /**
-   * List Workflow runs
-   *
-   * Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
-   */
-  public getV1WorkflowRuns<ThrowOnError extends boolean = false>(
-    parameters?: {
-      cursor?: string;
-      limit?: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "cursor" },
-            { in: "query", key: "limit" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).get<GetV1WorkflowRunsResponses, GetV1WorkflowRunsErrors, ThrowOnError>({
-      url: "/v1/workflow-runs",
-      ...options,
-      ...params,
-    });
   }
 
   /**
@@ -4613,65 +4623,6 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).patch<PatchV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
       url: "/v1/inference/analytics/settings",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * Report task analytics events for the calling member's OpenWork Models calls
-   *
-   * Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.
-   */
-  public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
-    parameters: {
-      events: Array<{
-        id: string;
-        type:
-          | "task.started"
-          | "task.completed"
-          | "task.failed"
-          | "task.cancelled"
-          | "tool.executed"
-          | "skill.loaded"
-          | "model.call";
-        timestamp: string;
-        sessionId: string;
-        taskId: string;
-        callId?: string;
-        durationMs?: number;
-        status?: "completed" | "failed" | "cancelled";
-        model?: string;
-        provider?: string;
-        inputTokens?: number;
-        outputTokens?: number;
-        cacheReadTokens?: number;
-        cacheWriteTokens?: number;
-        costUsd?: number;
-        usageComplete?: boolean;
-        tool?: string;
-        skill?: string;
-        skillVersion?: string;
-        mcp?: string;
-        metadata?: {
-          [key: string]: string | number | boolean;
-        };
-      }>;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
-    return (options?.client ?? this.client).post<
-      PostV1InferenceAnalyticsEventsResponses,
-      PostV1InferenceAnalyticsEventsErrors,
-      ThrowOnError
-    >({
-      url: "/v1/inference/analytics/events",
       ...options,
       ...params,
       headers: {
@@ -7595,6 +7546,233 @@ export class DenClient extends HeyApiClient {
       url: "/v1/inference-providers/{inferenceProviderId}/oauth",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Create LiteLLM gateway provider
+   *
+   * Connects the organization's own LiteLLM proxy and syncs its models. mode=org stores one organization LiteLLM key used for everyone, creates an "All LiteLLM models" group granted to the given audiences, and keeps OpenWork spend tracking and limits on. mode=member stores a LiteLLM admin key used only to sync models and teams; each person then connects their own LiteLLM key, which picks the shared group matching that key's models. The given audiences are granted the empty "Can connect a LiteLLM key" group, and OpenWork spend tracking is off because LiteLLM budgets those keys. Keys are write-only. Requires owner/admin and Gateway management; session callers must recently reauthenticate.
+   */
+  public postV1InferenceProvidersLitellm<ThrowOnError extends boolean = false>(
+    parameters: {
+      name?: string;
+      baseUrl: string;
+      mode: "org" | "member" | "issued";
+      issueStrategy?: "per_team" | "mirror";
+      mirrorFallback?: "per_team" | "error";
+      apiKey: string;
+      allMembers?: boolean;
+      memberIds?: Array<string>;
+      teamIds?: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "baseUrl" },
+            { in: "body", key: "mode" },
+            { in: "body", key: "issueStrategy" },
+            { in: "body", key: "mirrorFallback" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "allMembers" },
+            { in: "body", key: "memberIds" },
+            { in: "body", key: "teamIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersLitellmResponses,
+      PostV1InferenceProvidersLitellmErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/litellm",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Sync LiteLLM models and groups
+   *
+   * Reads the LiteLLM proxy with the stored organization key (org mode) or admin key (member mode) and refreshes the provider's models. Org mode refreshes the "All LiteLLM models" group. Member mode refreshes team groups, re-checks every connected member key, moves members to the group matching their key's models, revokes keys LiteLLM rejects, and removes automatic grants of people who may no longer connect. A failed read keeps the last synced catalog and records the error. Requires owner/admin and Gateway management.
+   */
+  public postV1InferenceProvidersByInferenceProviderIdLitellmSync<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "inferenceProviderId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersByInferenceProviderIdLitellmSyncResponses,
+      PostV1InferenceProvidersByInferenceProviderIdLitellmSyncErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/litellm/sync",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update LiteLLM key or key creation
+   *
+   * Verifies and stores a new organization LiteLLM key (org mode) or LiteLLM admin key (member and issued modes), and in issued mode changes how keys are created, then syncs. Changing issueStrategy replaces existing created keys at that sync. The proxy URL and mode are fixed; create a new provider to change them. Keys are write-only. Requires owner/admin and Gateway management; session callers must recently reauthenticate.
+   */
+  public patchV1InferenceProvidersByInferenceProviderIdLitellm<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      apiKey?: string;
+      issueStrategy?: "per_team" | "mirror";
+      mirrorFallback?: "per_team" | "error";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "issueStrategy" },
+            { in: "body", key: "mirrorFallback" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceProvidersByInferenceProviderIdLitellmResponses,
+      PatchV1InferenceProvidersByInferenceProviderIdLitellmErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/litellm",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Connect the caller's LiteLLM key
+   *
+   * Stores the caller's own LiteLLM key for a per-user LiteLLM provider after checking it with the LiteLLM proxy, and grants the shared model group whose models match what that key can reach. Requires a user session and an admin grant that lets the caller connect a key. Replacing the key re-matches the group. The key is write-only. Disconnect with DELETE /v1/inference-providers/{inferenceProviderId}/oauth.
+   */
+  public putV1InferenceProvidersByInferenceProviderIdLitellmMemberKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      inferenceProviderId: string;
+      apiKey: string;
+      credentialSetId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "inferenceProviderId" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "credentialSetId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyResponses,
+      PutV1InferenceProvidersByInferenceProviderIdLitellmMemberKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/{inferenceProviderId}/litellm/member-key",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Connect a LiteLLM key from a signed-in browser
+   *
+   * Completes a LiteLLM Connect started in the desktop app: the ten-minute entry handle from oauth/start plus the signed-in browser session of the same user. Checks the key with the LiteLLM proxy, stores it as the member's own credential and grants the matching shared model group. A rejected key keeps the handle usable so the person can retry; success consumes it. Bearer authentication alone is not accepted.
+   */
+  public postV1InferenceProvidersOauthBrowserLitellmKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+      apiKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "attempt" },
+            { in: "body", key: "apiKey" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersOauthBrowserLitellmKeyResponses,
+      PostV1InferenceProvidersOauthBrowserLitellmKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-litellm-key",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Retry creating the caller's LiteLLM keys from a signed-in browser
+   *
+   * For LiteLLM providers where OpenWork creates each person's key. Uses the ten-minute entry handle from oauth/start plus the signed-in browser session of the same user to look the person up in LiteLLM by email again and create their keys. Returns the outcome; success consumes the handle. Bearer authentication alone is not accepted.
+   */
+  public postV1InferenceProvidersOauthBrowserLitellmCheck<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "attempt" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersOauthBrowserLitellmCheckResponses,
+      PostV1InferenceProvidersOauthBrowserLitellmCheckErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-litellm-check",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
@@ -14235,6 +14413,18 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Get features for people without an organization
+   *
+   * On or off for every feature that is part of this deployment, for someone who is not signed in: the deployment-wide state after the kill switch and operator locks, with no organization overrides. A feature missing here is off.
+   */
+  public getV1Features<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1FeaturesResponses, unknown, ThrowOnError>({
+      url: "/v1/features",
+      ...options,
+    });
+  }
+
+  /**
    * GitHub webhook ingress
    *
    * Verifies a GitHub App webhook signature against the raw request body, then records any relevant sync work.
@@ -14653,118 +14843,5 @@ export class DenClient extends HeyApiClient {
       unknown,
       ThrowOnError
     >({ url: "/mcp/admin/.well-known/oauth-protected-resource", ...options });
-  }
-
-  /**
-   * Ingest telemetry events
-   *
-   * Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.
-   */
-  public postV1TelemetryIngest<ThrowOnError extends boolean = false>(
-    parameters: {
-      events: Array<{
-        type: string;
-        timestamp: string;
-        source?: string;
-        sessionId?: string;
-        durationMs?: number;
-        success?: boolean;
-        dimensions?: Array<{
-          type: string;
-          value?: string;
-          label: string;
-          metadata?: {
-            [key: string]: unknown;
-          };
-        }>;
-      }>;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
-    return (options?.client ?? this.client).post<
-      PostV1TelemetryIngestResponses,
-      PostV1TelemetryIngestErrors,
-      ThrowOnError
-    >({
-      url: "/v1/telemetry/ingest",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * List telemetry dimension values
-   *
-   * Returns unique analytics dimension values for the active organization, such as project labels for the project selector.
-   */
-  public getV1TelemetryDimensions<ThrowOnError extends boolean = false>(
-    parameters: {
-      type: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "type" }] }]);
-    return (options?.client ?? this.client).get<
-      GetV1TelemetryDimensionsResponses,
-      GetV1TelemetryDimensionsErrors,
-      ThrowOnError
-    >({
-      url: "/v1/telemetry/dimensions",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Get adoption metrics
-   *
-   * Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.
-   */
-  public getV1TelemetryAdoption<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<
-      GetV1TelemetryAdoptionResponses,
-      GetV1TelemetryAdoptionErrors,
-      ThrowOnError
-    >({ url: "/v1/telemetry/adoption", ...options });
-  }
-
-  /**
-   * Get usage analytics
-   *
-   * Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks.
-   */
-  public getV1TelemetryAnalytics<ThrowOnError extends boolean = false>(
-    parameters?: {
-      dimensionType?: string;
-      dimensionValue?: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "dimensionType" },
-            { in: "query", key: "dimensionValue" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).get<
-      GetV1TelemetryAnalyticsResponses,
-      GetV1TelemetryAnalyticsErrors,
-      ThrowOnError
-    >({
-      url: "/v1/telemetry/analytics",
-      ...options,
-      ...params,
-    });
   }
 }

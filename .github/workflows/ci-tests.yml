@@ -62,9 +62,9 @@ jobs:
 
             // Route, schema, or contract changes must ship the regenerated
             // packages/docs/openapi.json and packages/sdk/src/gen.
-            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/sdk/"]
+            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/features/", "packages/sdk/"]
             // The workflow itself is listed so changes to this check exercise it.
-            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", ".github/workflows/ci-tests.yml"])
+            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", "scripts/den-contract.mjs", ".github/workflows/ci-tests.yml"])
             const touchesDenContract = (name) => Boolean(name) && (denContractFiles.has(name) || denContractPrefixes.some((prefix) => name.startsWith(prefix)))
             const denContract = lane === "full" && files.some((file) => touchesDenContract(file.filename) || touchesDenContract(file.previous_filename))
             core.setOutput("den_contract", denContract ? "true" : "false")
@@ -90,6 +90,13 @@ jobs:
         run: pnpm test:boot
       - name: Run core unit tests
         run: pnpm --dir evals run test:core
+      # Uses the pinned OpenCode that Setup tests put on PATH.
+      - name: Run Den provider unit tests
+        run: |
+          pnpm --filter @openwork-ee/utils test
+          pnpm --filter @openwork-ee/den-api test
+      - name: Check contract generation and commit-hook safety
+        run: pnpm test:contracts
       # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;
       # it used to run only nightly, and debt piled up unnoticed.
       - name: Check the test framework (lint and ratchets)

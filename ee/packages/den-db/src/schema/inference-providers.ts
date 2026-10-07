@@ -4,6 +4,7 @@ import {
   index,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -243,6 +244,40 @@ export const GatewayProviderOauthStateTable = mysqlTable(
   ],
 )
 
+/**
+ * LiteLLM keys OpenWork created for a member ("OpenWork creates each person's
+ * key" mode). One row per member and slot: a LiteLLM team id, `personal` for a
+ * key without a team, or `mirror` for a copy of the member's existing key. The
+ * `member` slot carries only the member's lookup status. The key value itself
+ * lives in gateway_provider_credentials; LiteLLM's token hash is kept so the
+ * key can be deleted in LiteLLM when access ends.
+ */
+export const GatewayLiteLlmIssuedKeyTable = mysqlTable(
+  "gateway_litellm_issued_keys",
+  {
+    gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    slot: varchar("slot", { length: 191 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    message: text("message"),
+    litellm_user_id: varchar("litellm_user_id", { length: 255 }),
+    litellm_team_id: varchar("litellm_team_id", { length: 255 }),
+    litellm_token_id: varchar("litellm_token_id", { length: 128 }),
+    mirrored_from_token_id: varchar("mirrored_from_token_id", { length: 128 }),
+    source_fingerprint: varchar("source_fingerprint", { length: 64 }),
+    credential_set_id: denTypeIdColumn("gatewayCredentialSet", "credential_set_id"),
+    credential_id: denTypeIdColumn("inferenceProviderCredential", "credential_id"),
+    model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id"),
+    access_grant_id: denTypeIdColumn("inferenceProviderAccess", "access_grant_id"),
+    checked_at: timestamp("checked_at", { fsp: 3 }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ name: "gateway_litellm_issued_keys_pk", columns: [table.gateway_provider_id, table.org_membership_id, table.slot] }),
+    index("gateway_litellm_issued_keys_member").on(table.org_membership_id),
+  ],
+)
+
 export const gatewayProviderRelations = relations(GatewayProviderTable, ({ many, one }) => ({
   organization: one(OrganizationTable, {
     fields: [GatewayProviderTable.organization_id],
@@ -387,6 +422,7 @@ export const gatewayCredentialSet = GatewayCredentialSetTable
 export const gatewayProviderCredential = GatewayProviderCredentialTable
 export const gatewayProviderAccess = GatewayProviderAccessTable
 export const gatewayProviderOauthState = GatewayProviderOauthStateTable
+export const gatewayLiteLlmIssuedKey = GatewayLiteLlmIssuedKeyTable
 
 // Temporary source aliases, not parallel tables or legacy column mappings.
 export {

@@ -15,8 +15,8 @@ import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
 import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import { organizationFeatureEnabled } from "../../features.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -376,7 +376,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         ...desktopPolicy,
         automationsEnabled: env.automations.enabled,
         dashboardEnabled: env.dashboardsEnabled,
-        connectEnabled: memberFacingMcpConnectionsEnabled(organization.metadata),
+        connectEnabled: await organizationFeatureEnabled(organization.id, "mcpConnections"),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),

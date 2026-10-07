@@ -13,9 +13,8 @@ import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
-import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
+import { organizationBuildsMcpApps } from "../../mcp-app-rollout.js"
 import { currentMcpAppRevisionIds } from "../../mcp-apps.js"
-import { organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -27,6 +26,7 @@ import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, 
 import type { MemberTeamSummary } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { idParamSchema } from "./shared.js"
+import { organizationFeatureEnabled } from "../../features.js"
 
 /**
  * Organization-managed Dashboards: an org-owned, ordered list of MCP App
@@ -255,7 +255,7 @@ async function grantTargetsInOrganization(
 const requireOrgManagedDashboards: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
   const payload = c.get("organizationContext")
   if (!payload) return c.json({ error: "organization_not_found" }, 404)
-  if (!organizationManagedDashboardsEnabled(payload.organization.metadata)) {
+  if (!(await organizationFeatureEnabled(payload.organization.id, "orgManagedDashboards"))) {
     return c.json({ error: "dashboards_not_enabled" }, 404)
   }
   await next()
@@ -283,7 +283,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         .from(DashboardTable)
         .where(and(eq(DashboardTable.organizationId, payload.organization.id), isNull(DashboardTable.deletedAt)))
         .orderBy(asc(DashboardTable.name), asc(DashboardTable.id))
-      return c.json({ items: (await withCurrentAppRevisions(payload.organization.id, rows, appMcpServersEnabled(payload.organization.metadata))).map(serializeDashboard) })
+      return c.json({ items: (await withCurrentAppRevisions(payload.organization.id, rows, await organizationBuildsMcpApps(payload.organization.id))).map(serializeDashboard) })
     },
   )
 
@@ -318,7 +318,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         deletedAt: null,
       }
       await db.insert(DashboardTable).values(row)
-      const [current] = await withCurrentAppRevisions(payload.organization.id, [row], appMcpServersEnabled(payload.organization.metadata))
+      const [current] = await withCurrentAppRevisions(payload.organization.id, [row], await organizationBuildsMcpApps(payload.organization.id))
       return c.json({ item: serializeDashboard(current ?? row) }, 201)
     },
   )
@@ -346,7 +346,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         normalizeDenTypeId("dashboard", c.req.valid("param").dashboardId),
       )
       if (!row) return c.json({ error: "dashboard_not_found" }, 404)
-      const [current] = await withCurrentAppRevisions(payload.organization.id, [row], appMcpServersEnabled(payload.organization.metadata))
+      const [current] = await withCurrentAppRevisions(payload.organization.id, [row], await organizationBuildsMcpApps(payload.organization.id))
       return c.json({ item: serializeDashboard(current ?? row) })
     },
   )
@@ -388,7 +388,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         .update(DashboardTable)
         .set({ name: next.name, elementsJson: next.elementsJson, updatedAt })
         .where(eq(DashboardTable.id, existing.id))
-      const [current] = await withCurrentAppRevisions(payload.organization.id, [next], appMcpServersEnabled(payload.organization.metadata))
+      const [current] = await withCurrentAppRevisions(payload.organization.id, [next], await organizationBuildsMcpApps(payload.organization.id))
       return c.json({ item: serializeDashboard(current ?? next) })
     },
   )
@@ -608,7 +608,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
     async (c) => {
       const payload = c.get("organizationContext")
       // Desktop polls this route; a disabled org sees no granted dashboards.
-      if (!organizationManagedDashboardsEnabled(payload.organization.metadata)) {
+      if (!(await organizationFeatureEnabled(payload.organization.id, "orgManagedDashboards"))) {
         return c.json({ items: [] })
       }
       const memberId = payload.currentMember.id
@@ -642,7 +642,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         ))
         .orderBy(asc(DashboardTable.name), asc(DashboardTable.id))
       const seen = new Set<string>()
-      const items = (await withCurrentAppRevisions(payload.organization.id, rows, appMcpServersEnabled(payload.organization.metadata))).flatMap((row) => {
+      const items = (await withCurrentAppRevisions(payload.organization.id, rows, await organizationBuildsMcpApps(payload.organization.id))).flatMap((row) => {
         if (seen.has(row.id)) return []
         seen.add(row.id)
         return [{

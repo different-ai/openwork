@@ -20,6 +20,10 @@ export async function mcpAppOpenPerformance(seed: Seed, context: { place: Place 
   if (!runtime) throw new Error("Test-owned App host missing");
   const fixture = resolve(root, "evals/worlds/fixtures/mcp-app-open-performance.tsx");
   await using resources = new AsyncDisposableStack();
+  // Holds live App discovery so a cached App's startup tool calls land first,
+  // the order a slower installed desktop sees.
+  let discoveryDelayMs = 0;
+  let delayedDiscoveries = 0;
   const vite = await createViteServer({
     configFile: false, root: resolve(root, "apps/app"), cacheDir: resolve(paths.directory, "performance-vite"),
     resolve: { alias: { "@": resolve(root, "apps/app/src") }, dedupe: ["react", "react-dom"] },
@@ -32,7 +36,7 @@ export async function mcpAppOpenPerformance(seed: Seed, context: { place: Place 
         if (normalized === "@/react-app/shell/workspace-provider") return "\0performance-workspace";
         const names = new Map([
           ["./connector-catalog", "ConnectorCatalogCard"], ["./connection-card", "ConnectionCard"],
-          ["./message-list-provider", "useMessageList"], ["@/react-app/domains/apps/app-chat-artifact", "AppChatArtifact"],
+          ["./message-list-provider", "useMessageList,useOptionalMessageList"], ["@/react-app/domains/apps/app-chat-artifact", "AppChatArtifact"],
           ["@/components/tools/error-attribution", "connectionCardPayloadFromChatToolResult,reconnectActionFromChatToolResult,isConnectionDiscoveryTool"],
           ["./dashboard-connection-card", "DashboardConnectionCard"],
         ]);
@@ -41,12 +45,16 @@ export async function mcpAppOpenPerformance(seed: Seed, context: { place: Place 
       },
       load(id) {
         if (id === "\0performance-workspace") return `import { benchmarkWorkspace } from ${JSON.stringify(fixture)}; export const useWorkspace = benchmarkWorkspace;`;
-        if (id === "\0performance-unused:useMessageList") return `import { benchmarkChatContext } from ${JSON.stringify(fixture)}; export const useMessageList = benchmarkChatContext;`;
+        if (id === "\0performance-unused:useMessageList,useOptionalMessageList") return `import { benchmarkChatContext } from ${JSON.stringify(fixture)}; export const useMessageList = benchmarkChatContext; export const useOptionalMessageList = benchmarkChatContext;`;
         if (id.startsWith("\0performance-unused:")) return id.split(":")[1].split(",").map(name => `export function ${name}() { return null; }`).join("\n");
       },
       configureServer(server) {
         server.middlewares.use(async (request, response, next) => {
           if (request.url?.startsWith("/host/")) {
+            if (discoveryDelayMs && request.url.endsWith("/mcp-apps/resolve")) {
+              delayedDiscoveries++;
+              await new Promise(resolve => setTimeout(resolve, discoveryDelayMs));
+            }
             const chunks: Buffer[] = [];
             for await (const chunk of request) chunks.push(Buffer.from(chunk));
             const result = await fetch(`${runtime.openworkUrl}${request.url.slice(5)}`, {
@@ -107,6 +115,8 @@ export async function mcpAppOpenPerformance(seed: Seed, context: { place: Place 
   await writeFile(resolve(output, `index-${process.env.OPENWORK_MCP_APP_BASELINE === "1" ? "before" : "after"}.json`), JSON.stringify(indexSamples, null, 2));
   return {
     app, samples,
+    /** Delay live discovery; returns how many discoveries were held while it was set. */
+    holdDiscovery(ms: number) { const held = delayedDiscoveries; discoveryDelayMs = ms; delayedDiscoveries = 0; return held; },
     async begin() {
       beforeApi = await world.den.apiLog();
       beforeHost = await readFile(runtime.headlessLogPath, "utf8");
@@ -146,7 +156,7 @@ export async function mcpAppOpenPerformance(seed: Seed, context: { place: Place 
           document.documentElement.dataset.mcpAppErrorObserver = "1";
           const check = () => {
             if (Array.from(document.querySelectorAll('[role="alert"], [role="status"]'))
-              .some(node => /unavailable|can't run app tools|not available/i.test(node.textContent ?? ""))) console.debug("__MCP_APP_VISIBLE_ERROR__");
+              .some(node => /unavailable|can't run app tools|not available|closed or changed/i.test(node.textContent ?? ""))) console.debug("__MCP_APP_VISIBLE_ERROR__");
           };
           new MutationObserver(check).observe(document.body, { childList: true, subtree: true, characterData: true });
           check();
@@ -161,7 +171,7 @@ export async function mcpAppOpenPerformance(seed: Seed, context: { place: Place 
             if (!document.querySelector("h1")) return null;
             await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
             return { paintedAt: performance.timeOrigin + performance.now(), errors: Array.from(document.querySelectorAll('[role="alert"], [role="status"]'))
-              .filter(node => /unavailable|can't run app tools|not available/i.test(node.textContent ?? "")).length };
+              .filter(node => /unavailable|can't run app tools|not available|closed or changed/i.test(node.textContent ?? "")).length };
           }).catch(() => null);
           if (observed) { paintedAt = observed.paintedAt; guestErrors += observed.errors; break; }
         }

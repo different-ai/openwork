@@ -51,7 +51,7 @@ export interface ManagedOpencodeV2ServerOptions {
   port?: number;
   env?: Record<string, string>;
   bootTimeoutMs?: number;
-  contextTools?: { url: string; token: string };
+  contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
   connectionGate?: { url: string; token: string };
   permissions?: () => Promise<EnginePermissionRule[]>;
 }
@@ -111,7 +111,7 @@ export function renderOpencodeV2Config(input: {
   /** Preserves OpenWork Cloud connection reports from Code Mode calls for the chat. */
   mcpResultsPluginDirectory?: string;
   contextPluginDirectory?: string;
-  contextTools?: { url: string; token: string };
+  contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
   connectionGate?: { url: string; token: string };
 }): Record<string, unknown> {
   const disabled = new Set(input.disabledProviderIds ?? []);

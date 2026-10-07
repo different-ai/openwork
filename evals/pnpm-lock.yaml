@@ -17,6 +17,9 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:packages/cdp
+      '@openwork/design-review':
+        specifier: workspace:*
+        version: link:packages/design-review
       '@openwork/env':
         specifier: workspace:*
         version: link:packages/env
@@ -133,6 +136,8 @@ importers:
 
   packages/cdp: {}
 
+  packages/design-review: {}
+
   packages/env:
     dependencies:
       '@openwork/behaviors':
@@ -184,6 +189,9 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
+      '@openwork/design-review':
+        specifier: workspace:*
+        version: link:../design-review
       '@openwork/env':
         specifier: workspace:*
         version: link:../env

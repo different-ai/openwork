@@ -1191,14 +1191,11 @@ function runtimeHealthCheck(
   const absent = inspection.status === "database-missing"
     || inspection.status === "row-missing"
     || inspection.status === "table-missing";
-  const remote = inspection.status === "remote-workspace";
-  const status = corrupt || !engineConfigured ? "failed" : absent || remote ? "warning" : "passed";
+  const status = corrupt || !engineConfigured ? "failed" : absent ? "warning" : "passed";
   const code = corrupt
     ? "runtime_config_unreadable"
     : !engineConfigured
       ? "workspace_engine_unconfigured"
-      : remote
-        ? "remote_workspace_runtime_not_inspected"
       : absent
         ? "runtime_config_not_initialized"
         : "workspace_runtime_configured";
@@ -1208,8 +1205,6 @@ function runtimeHealthCheck(
       ? "The selected workspace does not have an OpenCode runtime endpoint configured."
       : absent
         ? "The runtime configuration database or selected workspace row has not been initialized."
-        : remote
-          ? "A local runtime row was not inspected for the remote workspace shell."
         : "The selected workspace runtime configuration is available and the engine endpoint is configured.";
   return diagnosticCheck({
     id: "workspace-runtime",
@@ -1222,12 +1217,10 @@ function runtimeHealthCheck(
       ? "No action is required."
       : corrupt
         ? "Repair the OpenWork runtime state before relying on injected configuration."
-        : remote
-          ? "Run diagnostics on the OpenWork server that owns the workspace."
-          : "Start or configure the selected workspace runtime, then rerun diagnostics.",
+        : "Start or configure the selected workspace runtime, then rerun diagnostics.",
     details: {
       workspaceType: workspace.workspaceType,
-      remoteType: workspace.remoteType ?? null,
+      remoteType: null,
       runtimeInspectionStatus: inspection.status,
       managedMcpVaultStatus: managedVault ? managedVault.status : "not-inspected",
       managedMcpVaultRecoveredAt: managedVault?.recovery?.at ?? null,
@@ -1281,24 +1274,20 @@ export async function runAgentContextDiagnostics(input: {
 
   input.dependencies?.signal?.throwIfAborted();
   const runtimeStarted = now();
-  const runtimeInspection: RuntimeOpencodeConfigInspection = input.workspace.workspaceType === "remote"
-    ? { status: "remote-workspace", config: {} }
-    : await inspectRuntimeOpencodeConfigState(input.config, input.workspace.id, {
-      signal: input.dependencies?.signal,
-    });
+  const runtimeInspection: RuntimeOpencodeConfigInspection = await inspectRuntimeOpencodeConfigState(
+    input.config,
+    input.workspace.id,
+    { signal: input.dependencies?.signal },
+  );
   // Passive plaintext read of the managed MCP credential vault: surfaces
   // secure-storage recovery evidence without decrypting and never throws.
-  const managedVaultInspection = input.workspace.workspaceType === "remote"
-    ? null
-    : await inspectLocalManagedMcpVault(input.config);
+  const managedVaultInspection = await inspectLocalManagedMcpVault(input.config);
   const globalRuntimeInspection = await inspectRuntimeOpencodeConfigState(
     input.config,
     ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
     { signal: input.dependencies?.signal },
   );
-  const runtime = input.workspace.workspaceType === "remote"
-    ? globalRuntimeInspection.config
-    : mergeRuntimeOpencodeConfigLayers(globalRuntimeInspection.config, runtimeInspection.config);
+  const runtime = mergeRuntimeOpencodeConfigLayers(globalRuntimeInspection.config, runtimeInspection.config);
   input.dependencies?.signal?.throwIfAborted();
   const runtimeDuration = elapsed(runtimeStarted, now);
   // The injected engine config file is rendered from the ENGINE_GLOBAL row
@@ -1364,7 +1353,6 @@ export async function runAgentContextDiagnostics(input: {
   let connectSnapshotAvailable = true;
   let connectStateStatus: ConnectStateInspectionStatus = "unreadable";
   try {
-    if (input.workspace.workspaceType === "remote") throw new Error("passive remote inspection");
     const inspection = await inspectConnectSnapshot(input.config, { signal: input.dependencies?.signal });
     connectStateStatus = inspection.status;
     connectSnapshotAvailable = inspection.status === "available" || inspection.status === "missing";
@@ -1953,7 +1941,7 @@ export async function runAgentContextDiagnostics(input: {
       id: safeText(input.workspace.id, 160, "unknown-workspace"),
       name: safeText(input.workspace.name, 240, "Unnamed workspace"),
       type: input.workspace.workspaceType,
-      remoteType: input.workspace.remoteType ?? null,
+      remoteType: null,
       engineConfigured,
     },
     checks,

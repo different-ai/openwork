@@ -42,4 +42,31 @@ test("seen Apps paint quickly in chat and Dashboard, with live actions and no er
         && (temperature !== "warm" || htmlReads.every(reads => reads === 0)));
     }
   }
+  // A slower installed desktop finishes live discovery after a cached App has
+  // already made its startup tool calls; those calls must not surface an error.
+  const discoveryDelayMs = 1_500;
+  let late: Awaited<ReturnType<typeof world.capture>> | undefined;
+  await step("witness: live discovery answers after a cached chat App already called its tools", async () => {
+    world.holdDiscovery(discoveryDelayMs);
+    await world.begin();
+    // The most recently seen chat App is still in the bounded presentation cache.
+    await user.click({ role: "button", label: "Open 4" });
+    await user.see({ testId: "measurement" }, { text: /paintMs/, timeoutMs: 60_000 });
+    late = await world.capture("chat", "warm");
+    const held = world.holdDiscovery(0);
+    evidence.recordAssertionEvidence("Startup tool calls were made by the cached App before live discovery answered",
+      `Live discovery was held ${discoveryDelayMs} ms (${held} held); the cached App painted at ${late.paintMs.toFixed(1)} ms and ran its startup tool calls while waiting.`,
+      held >= 1 && late.paintMs < discoveryDelayMs);
+    expect(held).toBeGreaterThanOrEqual(1);
+    expect(late.paintMs).toBeLessThan(discoveryDelayMs);
+  });
+  await step("after: the cached App never shows \"MCP error -32603: This artifact view has closed or changed.\"", async () => {
+    await user.see({ role: "button", label: "Close App" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The waiting startup calls did not render an error in the App",
+      `Errors observed across the cached and replacement App documents: ${late?.errors ?? "not measured"}.`,
+      late?.errors === 0);
+    expect(late?.errors).toBe(0);
+    await user.click({ role: "button", label: "Close App" });
+  });
 });

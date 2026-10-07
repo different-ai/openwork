@@ -95,18 +95,17 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
 /**
  * Provision workspace files for every workspace that has local files to set up.
  *
- * Skips remote workspaces (which live on a host and may even carry a non-empty
- * remote `directory`) and any workspace without a resolved local path. Either
- * would otherwise reach ensureWorkspaceFiles() — which throws
+ * Skips any workspace without a resolved local path, which would otherwise
+ * reach ensureWorkspaceFiles() — which throws
  * `invalid_workspace_path` on a blank path — and abort server startup. Local
  * provisioning failures are logged and skipped so one stale path cannot abort
  * startup. Shared by the embedded-server and CLI boot paths.
  */
 export async function ensureLocalWorkspaceFiles(
-  workspaces: ReadonlyArray<Pick<WorkspaceInfo, "path" | "preset" | "workspaceType">>,
+  workspaces: ReadonlyArray<Pick<WorkspaceInfo, "path" | "preset">>,
 ): Promise<void> {
   for (const workspace of workspaces) {
-    if (workspace.workspaceType === "remote" || !workspace.path.trim()) continue;
+    if (!workspace.path.trim()) continue;
     try {
       await ensureWorkspaceFiles(workspace.path, workspace.preset);
     } catch (error) {
