@@ -313,6 +313,8 @@ jobs:
           path: |
             evals/results/test-runs/
             evals/results/.testkit/cli-run-*.json
+            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke/logs/**
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: error

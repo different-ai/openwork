@@ -57,6 +57,9 @@ async function bootPackagedDesktop(name, journey, binary, timeout, display) {
       OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
       OPENWORK_EVAL_ENGINE: "v1",
       OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", name),
+      // Profiles are removed when a journey ends; keep each main-process log
+      // outside them so CI can upload it.
+      OPENWORK_EVAL_SURFACE_LOGS_DIR: join(output, "logs", name),
       ELECTRON_RUN_AS_NODE: "",
       NODE_PATH: "", NODE_OPTIONS: "",
     },

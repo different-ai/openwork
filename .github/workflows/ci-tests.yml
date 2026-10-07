@@ -265,6 +265,7 @@ jobs:
           path: |
             ${{ runner.temp }}/openwork-packaged-smoke/timing.json
             ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
+            ${{ runner.temp }}/openwork-packaged-smoke/logs/**
             evals/results/test-runs/**
           include-hidden-files: true
           retention-days: 7
