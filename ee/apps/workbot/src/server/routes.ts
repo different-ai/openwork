@@ -99,9 +99,33 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       email: who.user.email,
       organizationName: who.organization.name,
       enabled: who.enabled,
+      calendar: who.enabled && who.calendar === true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
   })
+
+  /**
+   * Workbot's Calendar: the person's Automations, runs and meetings, and Pause / Resume / Run now / schedule edits,
+   * forwarded to Den's allowlist (`/v1/workbot/calendar/*`), which decides what may pass. With a calendar mock
+   * configured (testing), meeting reads go to the mock instead; it serves the same routes and payloads.
+   */
+  const calendarRoute = async (c: Context<AppEnv>) => {
+    const member = c.get("member")
+    if (!member.den.enabled || member.den.calendar !== true) return c.json({ error: "workbot_calendar_not_enabled" }, 403)
+    const url = new URL(c.req.url)
+    const path = url.pathname.slice("/v1/workbot/calendar".length)
+    const method = c.req.method === "POST" ? "POST" : c.req.method === "PATCH" ? "PATCH" : "GET"
+    if (method === "GET" && config.calendarMockUrl && /^\/v1\/capabilities\/(google-workspace|microsoft-365)\/calendar-events$/.test(path)) {
+      const response = await fetch(`${config.calendarMockUrl}${path}${url.search}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20_000) })
+      return new Response(JSON.stringify(await response.json().catch(() => null)), { status: response.status, headers: { "content-type": "application/json" } })
+    }
+    const body = method === "PATCH" ? await c.req.json().catch(() => null) : method === "POST" ? {} : undefined
+    const { status, payload } = await den.calendar(member.accessToken, { method, path: `${path}${url.search}`, body })
+    return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } })
+  }
+  app.get("/v1/workbot/calendar/*", calendarRoute)
+  app.post("/v1/workbot/calendar/*", calendarRoute)
+  app.patch("/v1/workbot/calendar/*", calendarRoute)
 
   /** Leaving the welcome screen: Workbot starts the conversation with its own hello. */
   app.post("/v1/workbot/hello", async (c) => {

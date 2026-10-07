@@ -19,6 +19,10 @@ export type WorkbotHost = {
   appIcons: (name: string) => string[]
   /** Where the avatar in the header leads. */
   homeHref: string
+  /** Workbot's Calendar tab is on for this person (Den's workbotCalendar feature). */
+  calendar?: boolean
+  /** Where the person connects their own Google or Microsoft account, for the Calendar's connect links. */
+  connectionsHref?: string | null
 }
 
 let current: WorkbotHost | null = null

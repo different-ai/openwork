@@ -25,6 +25,7 @@ import { WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
 import { PreviewPanel } from "./preview";
 import { Welcome } from "./welcome";
+import { WorkbotCalendar } from "./calendar";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -56,6 +57,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   const [pending, setPending] = useState<Pending[]>([]);
   const [turnWindow, setTurnWindow] = useState(PAGE_TURNS);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [tab, setTab] = useWorkbotTab();
   const [preview, setPreview] = useState<WorkbotAttachment | null>(null);
   // The welcome shows once, while there's no conversation yet; leaving it, Workbot starts the conversation itself.
   // "pending" until the conversation is first read: then it shows (no conversation yet) or never does.
@@ -166,6 +168,22 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     );
   };
 
+  if (tab === "calendar" && host.calendar) {
+    return (
+      <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
+        <WorkbotHeader
+          name={data?.name ?? "Workbot"}
+          organizationName={data?.organizationName ?? ""}
+          userName={user?.name ?? null}
+          files={null}
+          nav={<WorkbotNav tab={tab} onTab={setTab} />}
+        />
+        <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
+          <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} />
+        </div>
+      </div>
+    );
+  }
   if (thread.isPending) return <WorkbotSkeleton />;
   if (thread.isError && !thread.data) {
     return (
@@ -232,6 +250,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
         organizationName={data.organizationName}
         userName={user?.name ?? null}
         files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+        nav={host.calendar ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
       />
       <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -373,7 +392,48 @@ function useConnectedApps() {
   return workbotHost().useConnectedApps();
 }
 
-function WorkbotHeader({ name, organizationName, userName, files }: { name: string; organizationName: string; userName: string | null; files: ReactNode }) {
+type WorkbotTab = "home" | "calendar";
+
+function tabFromLocation(): WorkbotTab {
+  return typeof window !== "undefined" && window.location.pathname.replace(/\/+$/, "") === "/calendar" ? "calendar" : "home";
+}
+
+/** Home (the conversation) and Calendar, as paths so a reload or a shared link opens the same tab. */
+function useWorkbotTab() {
+  const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
+  useEffect(() => {
+    const sync = () => setTabState(tabFromLocation());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const setTab = (next: WorkbotTab) => {
+    if (next === tab) return;
+    window.history.pushState(null, "", next === "calendar" ? "/calendar" : "/");
+    setTabState(next);
+  };
+  return [tab, setTab] as const;
+}
+
+/** Paper v3: Home / Calendar beside the name; the open tab sits on a soft chip. */
+function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
+  return (
+    <nav className="ml-4 flex items-center gap-0.5" aria-label="Workbot">
+      {(["home", "calendar"] as const).map((entry) => (
+        <button
+          key={entry}
+          type="button"
+          aria-current={tab === entry ? "page" : undefined}
+          onClick={() => onTab(entry)}
+          className={`flex h-8 items-center rounded-lg px-3 text-[13px] leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === entry ? "bg-[#EDF0F2] font-semibold text-[#11181C]" : "font-medium text-[#687076] hover:text-[#11181C]"}`}
+        >
+          {entry === "home" ? "Home" : "Calendar"}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function WorkbotHeader({ name, organizationName, userName, files, nav }: { name: string; organizationName: string; userName: string | null; files: ReactNode; nav?: ReactNode }) {
   const apps = useConnectedApps();
   const names = apps.map((app) => app.name);
   return (
@@ -381,6 +441,7 @@ function WorkbotHeader({ name, organizationName, userName, files }: { name: stri
       <div className="flex min-w-0 items-center gap-2" title={organizationName}>
         <Mark name={name} size="header" />
         <h1 className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</h1>
+        {nav}
       </div>
       <div className="flex shrink-0 items-center gap-2.5 sm:gap-3.5">
         {files}

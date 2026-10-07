@@ -1354,6 +1354,9 @@ importers:
       '@openwork/calendar':
         specifier: workspace:*
         version: link:../../../packages/calendar
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
       '@openwork/workbook':
         specifier: workspace:*
         version: link:../../../packages/workbook

@@ -8,6 +8,8 @@ export const meSchema = z.object({
   email: z.string(),
   organizationName: z.string(),
   enabled: z.boolean(),
+  /** Workbot's Calendar tab (Den's workbotCalendar feature); older servers omit it. */
+  calendar: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -53,5 +55,7 @@ export function createHost(me: Me): WorkbotHost {
     useConnectedApps: () => noApps,
     appIcons: (name) => appIconCandidates(name, me.denUrl),
     homeHref: me.denUrl ? `${me.denUrl}/dashboard` : "/",
+    calendar: me.calendar,
+    connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
   }
 }
