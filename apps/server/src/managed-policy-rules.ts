@@ -23,7 +23,7 @@ export function executionRules(policy: DesktopExecutionPolicy | undefined): Engi
   return rules;
 }
 /** Team rule actions the v2 engine evaluates natively, as its own permission rules. */
-export const TEAM_ENGINE_ACTIONS: readonly PolicyRuleAction[] = ["shell", "skill"];
+export const TEAM_ENGINE_ACTIONS: readonly PolicyRuleAction[] = ["shell", "skill", "webfetch"];
 /** The member's team rules the engine evaluates, in order, without their policy labels. */
 export function teamEngineRules(rules: readonly SourcedPolicyRule[] | undefined): EnginePermissionRule[] {
   return (rules ?? []).flatMap(({ action, resource, effect }) => TEAM_ENGINE_ACTIONS.includes(action) ? [{ action, resource, effect }] : []);

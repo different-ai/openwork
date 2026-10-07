@@ -22,7 +22,7 @@ type Context = {
 };
 
 // Actions this plugin keeps the organization's rules for.
-const ENFORCED: readonly PolicyRuleAction[] = ["shell", "skill"];
+const ENFORCED: readonly PolicyRuleAction[] = ["shell", "skill", "webfetch"];
 
 function enforced(action: unknown): action is PolicyRuleAction {
   return ENFORCED.some((entry) => entry === action);
