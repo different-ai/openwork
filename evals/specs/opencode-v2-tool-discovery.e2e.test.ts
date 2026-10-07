@@ -44,8 +44,9 @@ test("a v2 conversation discovers and calls a connected tool without the unknown
   await step("after: the agent discovers the report and reads its fresh value", async () => {
     const prompt = `Find and read the current verification report. ${randomUUID()}`;
     const answer = `The report was read. ${randomUUID()}`;
-    const code = 'const catalog = await tools.search({query:"discovery report", namespace:"discovery-witness", limit:20}); '
-      + 'const same = await tools["search"]({query:"discovery report", namespace:"discovery-witness", limit:20}); '
+    // Type annotations matter: the engine runs scripts as TypeScript.
+    const code = 'const catalog: unknown = await tools.search({query:"discovery report", namespace:"discovery-witness", limit:20}); '
+      + 'const same = (await tools["search"]({query:"discovery report", namespace:"discovery-witness", limit:20})) as unknown; '
       + 'return {catalog, same, literal:"tools.search({query: \'unchanged\'})", report:await tools["discovery-witness"].read_report({})};';
     await world.prepareTurn(prompt, answer, [{ tool: "execute", arguments: { code } }]);
     await user.type("composer", prompt);
@@ -58,7 +59,7 @@ test("a v2 conversation discovers and calls a connected tool without the unknown
     expect(output).toContain("tools.search");
     expect(output).not.toContain("Unknown tool");
     expect(record(state?.metadata) ? state.metadata.error : undefined).not.toBe(true);
-    evidence.recordAssertionEvidence("both discovery spellings return the live catalog and report", `The native execution returned ${nonce}; dotted and bracket discovery succeeded and the quoted tools.search text stayed unchanged.`, true);
+    evidence.recordAssertionEvidence("both discovery spellings return the live catalog and report", `The native execution of a type-annotated script returned ${nonce}; dotted and bracket discovery succeeded and the quoted tools.search text stayed unchanged.`, true);
     await user.screenshot();
   });
   await step("a removed connection remains unavailable", async () => {
