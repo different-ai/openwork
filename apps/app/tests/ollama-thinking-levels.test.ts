@@ -3,7 +3,9 @@ import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import {
   buildLocalProviderConfig,
   buildLocalProviderInstallPatch,
+  buildLocalProviderSyncPatch,
   fetchOllamaModelCapabilities,
+  fetchOllamaSyncInput,
   parseOllamaThinkingLevels,
 } from "../src/react-app/domains/settings/openai-image-extension.ts";
 
@@ -101,4 +103,46 @@ test("an unreachable Ollama adds the model without vision or levels", async () =
   }, { preconnect: originalFetch.preconnect });
   expect(await fetchOllamaModelCapabilities("gemma4", "http://localhost:11434/v1"))
     .toEqual({ supportsVision: false, thinkingLevels: [] });
+});
+
+test("sync replaces the saved Ollama models with what Ollama lists now", () => {
+  const patch = buildLocalProviderSyncPatch({
+    providerId: "ollama",
+    name: "Ollama (local)",
+    baseURL: "http://localhost:11434/v1",
+    models: [
+      { modelId: "gemma4", modelName: "gemma4", supportsVision: true, thinkingLevels: ["none", "high"] },
+      { modelId: "qwen2.5-coder:7b", modelName: "qwen2.5-coder:7b", supportsVision: false, thinkingLevels: [] },
+    ],
+  });
+  expect("mergeProviderModels" in patch).toBe(false);
+  const models = patch.opencode.provider.ollama.models ?? {};
+  expect(Object.keys(models)).toEqual(["gemma4", "qwen2.5-coder:7b"]);
+  expect(models.gemma4?.variants).toEqual({ none: { reasoningEffort: "none" }, high: { reasoningEffort: "high" } });
+  expect(models["qwen2.5-coder:7b"]?.variants).toBeUndefined();
+});
+
+test("sync reads every listed model, and gives up without touching anything when Ollama is down", async () => {
+  globalThis.fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/tags")) return Response.json({ models: [{ name: "gpt-oss:120b" }, { name: "gemma4" }, { name: "gemma4" }] });
+    const model: unknown = JSON.parse(String(init?.body)).model;
+    return Response.json(model === "gemma4"
+      ? { capabilities: ["vision"], thinking: { values: [false, true] } }
+      : { capabilities: ["thinking"], thinking: { values: ["low", "medium", "high"] } });
+  }, { preconnect: originalFetch.preconnect });
+  expect(await fetchOllamaSyncInput("http://localhost:11434/v1")).toEqual({
+    providerId: "ollama",
+    name: "Ollama (local)",
+    baseURL: "http://localhost:11434/v1",
+    models: [
+      { modelId: "gpt-oss:120b", modelName: "gpt-oss:120b", supportsVision: false, thinkingLevels: ["low", "medium", "high"] },
+      { modelId: "gemma4", modelName: "gemma4", supportsVision: true, thinkingLevels: ["none", "high"] },
+    ],
+  });
+
+  globalThis.fetch = Object.assign(async () => {
+    throw new TypeError("fetch failed");
+  }, { preconnect: originalFetch.preconnect });
+  expect(await fetchOllamaSyncInput("http://localhost:11434/v1")).toBeNull();
 });

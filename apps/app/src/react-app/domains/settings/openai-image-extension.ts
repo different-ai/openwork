@@ -83,9 +83,14 @@ export async function fetchOllamaModelCapabilities(modelId: string, baseURL: str
   }
 }
 
-export function buildLocalProviderModelConfig(
-  input: Pick<LocalProviderInstallInput, "modelId" | "modelName" | "supportsVision" | "thinkingLevels">,
-): ProviderModelConfig {
+export type LocalProviderModelInput = Pick<LocalProviderInstallInput, "modelId" | "modelName" | "supportsVision" | "thinkingLevels">;
+
+/** Every model a local server has, to replace the saved list with. */
+export type LocalProviderSyncInput = Pick<LocalProviderInstallInput, "providerId" | "name" | "baseURL"> & {
+  models: LocalProviderModelInput[];
+};
+
+export function buildLocalProviderModelConfig(input: LocalProviderModelInput): ProviderModelConfig {
   const thinkingLevels = input.thinkingLevels ?? [];
   return {
     name: input.modelName.trim() || input.modelId,
@@ -101,14 +106,20 @@ export function buildLocalProviderModelConfig(
   };
 }
 
-export function buildLocalProviderConfig(input: LocalProviderInstallInput): ProviderConfig {
-  const modelId = input.modelId.trim();
+function buildLocalProviderConfigWithModels(input: LocalProviderSyncInput): ProviderConfig {
   return {
     npm: "@ai-sdk/openai-compatible",
     name: input.name,
     options: { baseURL: input.baseURL },
-    models: { [modelId]: buildLocalProviderModelConfig({ ...input, modelId }) },
+    models: Object.fromEntries(input.models.flatMap((model) => {
+      const modelId = model.modelId.trim();
+      return modelId ? [[modelId, buildLocalProviderModelConfig({ ...model, modelId })]] : [];
+    })),
   };
+}
+
+export function buildLocalProviderConfig(input: LocalProviderInstallInput): ProviderConfig {
+  return buildLocalProviderConfigWithModels({ ...input, models: [input] });
 }
 
 /**
@@ -121,4 +132,43 @@ export function buildLocalProviderInstallPatch(input: LocalProviderInstallInput)
     opencode: { provider: { [input.providerId]: buildLocalProviderConfig(input) } },
     mergeProviderModels: [input.providerId],
   };
+}
+
+/**
+ * Workspace config patch that makes the saved models match the local server:
+ * new models are added, removed ones are dropped, and every model's
+ * capabilities are refreshed. The provider is replaced, not merged.
+ */
+export function buildLocalProviderSyncPatch(input: LocalProviderSyncInput) {
+  return {
+    opencode: { provider: { [input.providerId]: buildLocalProviderConfigWithModels(input) } },
+  };
+}
+
+/**
+ * Lists the models Ollama has now (`/api/tags`) and reads each one's
+ * capabilities, ready for `buildLocalProviderSyncPatch`. Returns null when
+ * Ollama cannot be reached, so a failed read never empties the saved list.
+ */
+export async function fetchOllamaSyncInput(baseURL: string = OLLAMA_PROVIDER_CONFIG.baseURL): Promise<LocalProviderSyncInput | null> {
+  let names: string[];
+  try {
+    const response = await fetch(`${baseURL.replace(/\/v1\/?$/, "")}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    if (!response.ok) return null;
+    const payload: unknown = await response.json();
+    const models = readProperty(payload, "models");
+    if (!Array.isArray(models)) return null;
+    names = [...new Set(models.flatMap((model) => {
+      const name = readProperty(model, "name");
+      return typeof name === "string" && name.trim() ? [name.trim()] : [];
+    }))];
+  } catch {
+    return null;
+  }
+  const models = await Promise.all(names.map(async (name) => ({
+    modelId: name,
+    modelName: name,
+    ...await fetchOllamaModelCapabilities(name, baseURL),
+  })));
+  return { providerId: OLLAMA_PROVIDER_CONFIG.providerId, name: OLLAMA_PROVIDER_CONFIG.name, baseURL, models };
 }

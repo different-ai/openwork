@@ -5,7 +5,7 @@ import type { McpDirectoryInfo } from "../../../app/constants";
 import { evaluateEnablement, type EnablementContext } from "../../../app/enablement";
 import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
 import { getExtensionConfigSlot, type ExtensionConfigContext } from "./extension-registry";
-import type { LocalProviderInstallInput } from "./openai-image-extension";
+import type { LocalProviderInstallInput, LocalProviderSyncInput } from "./openai-image-extension";
 
 type SettingsExtensionControllerInput = {
   openworkServerClient: OpenworkServerClient | null;
@@ -17,6 +17,7 @@ type SettingsExtensionControllerInput = {
     status: string | null;
     error: string | null;
     onInstall: (input: LocalProviderInstallInput) => void | Promise<void>;
+    onSync: (input: LocalProviderSyncInput) => void | Promise<void>;
   };
 };
 

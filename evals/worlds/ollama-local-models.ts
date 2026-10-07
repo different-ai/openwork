@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { SkipError, type Seed } from "@openwork/env";
 import {
   buildLocalProviderInstallPatch,
+  buildLocalProviderSyncPatch,
   fetchOllamaModelCapabilities,
+  fetchOllamaSyncInput,
   OLLAMA_PROVIDER_CONFIG,
 } from "../../apps/app/src/react-app/domains/settings/openai-image-extension.ts";
 import { bootManagedOpenworkServer, close, engineBinary, isRecord, listen, readBody, sendJson, sendStream } from "./openwork-server-cli.ts";
@@ -15,6 +17,7 @@ export const OLLAMA_MODELS: Record<string, { capabilities: string[]; thinking?: 
   "deepseek-v4-pro": { capabilities: ["completion", "tools", "thinking"], thinking: { values: ["none", "low", "high", "max"], default: "high" } },
   "gemma4": { capabilities: ["completion", "vision", "thinking"], thinking: { values: [false, true], default: true } },
   "qwen2.5-coder:7b": { capabilities: ["completion", "tools"], thinking: { values: [false] } },
+  "glm-5.3": { capabilities: ["completion", "tools", "thinking"], thinking: { values: ["low", "high", "max"], default: "high" } },
 };
 export const REPLY = "Local model reply.";
 
@@ -36,15 +39,20 @@ export async function ollamaLocalModels(seed: Seed) {
   await mkdir(workspace, { recursive: true });
 
   const shown: string[] = [];
+  /** Models pulled in the fake Ollama, as `/api/tags` lists them. */
+  const installed = new Set(Object.keys(OLLAMA_MODELS));
   const chats: ChatRequest[] = [];
   const ollama = createServer((request, response) => {
     void (async () => {
+      if (request.method === "GET" && request.url === "/api/tags") {
+        return sendJson(response, 200, { models: [...installed].map((name) => ({ name, model: name, size: 1 })) });
+      }
       if (request.method !== "POST") return sendJson(response, 200, { object: "list", data: [] });
       const raw = await readBody(request);
       const body: unknown = JSON.parse(raw);
       if (!isRecord(body)) return sendJson(response, 400, {});
       if (request.url === "/api/show") {
-        const model = typeof body.model === "string" ? OLLAMA_MODELS[body.model] : undefined;
+        const model = typeof body.model === "string" && installed.has(body.model) ? OLLAMA_MODELS[body.model] : undefined;
         if (!model || typeof body.model !== "string") return sendJson(response, 404, { error: "model not found" });
         shown.push(body.model);
         return sendJson(response, 200, { details: { family: "test" }, ...model });
@@ -73,6 +81,11 @@ export async function ollamaLocalModels(seed: Seed) {
     const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
     const workspaceUrl = `${server.base}/workspace/${encodeURIComponent(server.workspaceId)}`;
 
+    const reload = async () => {
+      const reloaded = await fetch(`${workspaceUrl}/engine/reload`, { method: "POST", headers, signal: AbortSignal.timeout(90_000) });
+      if (!reloaded.ok) throw new Error(`Engine reload failed: ${reloaded.status} ${await reloaded.text()}`);
+    };
+
     /** Settings > Ollama > Add to workspace, for one pulled model. */
     const addModel = async (modelId: string) => {
       const baseURL = `${ollamaURL}/v1`;
@@ -83,10 +96,22 @@ export async function ollamaLocalModels(seed: Seed) {
       });
       const patched = await fetch(`${workspaceUrl}/config`, { method: "PATCH", headers, body: JSON.stringify(patch) });
       if (!patched.ok) throw new Error(`Adding ${modelId} failed: ${patched.status} ${await patched.text()}`);
-      const reloaded = await fetch(`${workspaceUrl}/engine/reload`, { method: "POST", headers, signal: AbortSignal.timeout(90_000) });
-      if (!reloaded.ok) throw new Error(`Engine reload failed: ${reloaded.status} ${await reloaded.text()}`);
+      await reload();
       return capabilities;
     };
+
+    /** Settings > Ollama > Sync all models. */
+    const syncModels = async () => {
+      const input = await fetchOllamaSyncInput(`${ollamaURL}/v1`);
+      if (!input) throw new Error("Ollama was not reachable for sync");
+      const patched = await fetch(`${workspaceUrl}/config`, { method: "PATCH", headers, body: JSON.stringify(buildLocalProviderSyncPatch(input)) });
+      if (!patched.ok) throw new Error(`Sync failed: ${patched.status} ${await patched.text()}`);
+      await reload();
+      return input.models.map((model) => model.modelId);
+    };
+
+    /** The person removes a model with `ollama rm`, outside OpenWork. */
+    const removeFromOllama = (modelId: string) => { installed.delete(modelId); };
 
     /** Each Ollama model the engine offers, with its thinking levels (sorted; the picker orders them itself). */
     const pickerModels = async (): Promise<Record<string, string[]>> => {
@@ -114,7 +139,7 @@ export async function ollamaLocalModels(seed: Seed) {
       return request;
     };
 
-    return { shown, addModel, pickerModels, send, [Symbol.asyncDispose]: dispose };
+    return { shown, addModel, syncModels, removeFromOllama, pickerModels, send, [Symbol.asyncDispose]: dispose };
   } catch (error) {
     await dispose();
     throw error;

@@ -59,3 +59,36 @@ test("a person adds several Ollama models and chooses how much each one thinks",
     expect(levels["gpt-oss:120b"]).toEqual(["high", "low", "medium"]);
   });
 });
+
+test("a person syncs OpenWork's Ollama models with what Ollama has now", { timeout: 300_000 }, async ({ world, step, evidence }) => {
+  await step("given three models were added in OpenWork, and one of them was later removed from Ollama", async () => {
+    for (const id of ["gpt-oss:120b", "gemma4", "qwen2.5-coder:7b"]) await world.addModel(id);
+    world.removeFromOllama("qwen2.5-coder:7b");
+    const models = Object.keys(await world.pickerModels()).sort();
+    evidence.recordAssertionEvidence("before: the picker still lists the removed model", models.join(", "), models.includes("qwen2.5-coder:7b"));
+    expect(models).toEqual(["gemma4", "gpt-oss:120b", "qwen2.5-coder:7b"]);
+  });
+
+  await step("when the person clicks Sync all models", async () => {
+    const synced = (await world.syncModels()).sort();
+    evidence.recordAssertionEvidence("Models Ollama listed at sync time", synced.join(", "), true);
+    expect(synced).toEqual(["deepseek-v4-pro", "gemma4", "glm-5.3", "gpt-oss:120b"]);
+  });
+
+  await step("after: the picker matches Ollama: the removed model is gone and the others were added", async () => {
+    const levels = await world.pickerModels();
+    evidence.recordAssertionEvidence("after: Ollama models and thinking levels", JSON.stringify(levels), !("qwen2.5-coder:7b" in levels));
+    expect(levels).toEqual({
+      "deepseek-v4-pro": ["high", "low", "max", "none"],
+      "gemma4": ["high", "none"],
+      "glm-5.3": ["high", "low", "max"],
+      "gpt-oss:120b": ["high", "low", "medium"],
+    });
+  });
+
+  await step("a newly synced model sends the chosen level to Ollama", async () => {
+    const sent = await world.send("glm-5.3", "max");
+    evidence.recordAssertionEvidence("glm-5.3 at Max", `reasoning_effort ${String(sent.effort)}`, sent.effort === "max");
+    expect(sent.effort).toBe("max");
+  });
+});
