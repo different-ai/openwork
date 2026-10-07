@@ -37,7 +37,8 @@ import {
 } from "../mcp-apps.js"
 import { executeCapabilityWithBudget } from "./agent.js"
 import { callMcpAppTool } from "./app-tools.js"
-import type { McpPrincipal } from "./auth.js"
+import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
+import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
 import { createCapabilityRegistryContext, type ExecuteCapabilityToolResult } from "./capability-registry.js"
 import { resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { getCatalog } from "./index.js"
@@ -268,6 +269,7 @@ async function handleMcpAppServerRequestUntimed(input: {
     redirectUriBase: resolvePublicOrigin(context.req.raw, env.apiPublicUrl),
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationFeatures,
+    audit: mcpAuditPrincipal({ organizationId, userId: principal.userId, memberId: member.orgMembershipId, credentialId: mcpPrincipalCredentialId(principal) }),
   })
   const access = { organizationId, member, enabled: capabilityContext.externalMcpConnectionsEnabled, requestScope: {} }
   let definition: McpAppServerDefinition

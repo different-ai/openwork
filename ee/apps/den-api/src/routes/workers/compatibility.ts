@@ -1,6 +1,7 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { cors } from "hono/cors"
+import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { tokenRoute } from "../../middleware/index.js"
 import {
   proxyCloudWorkerCompatibilityRequest,
@@ -60,6 +61,17 @@ export function registerCloudWorkerCompatibilityRoutes<T extends { Variables: Wo
     } catch {
       return unauthorizedResponse()
     }
-    return proxyCloudWorkerCompatibilityRequest({ request: c.req.raw, workerId }, options)
+    return proxyCloudWorkerCompatibilityRequest({ request: c.req.raw, workerId }, {
+      ...options,
+      // The verified token's worker row names the organization; attribute
+      // before the proxied request reaches the live worker runtime.
+      onAuthorized: async (authorization) => {
+        const audited = await attributeAuditRequest(c, {
+          organizationId: authorization.organizationId,
+          ...auditServiceAttribution("worker", workerId, { credentialId: authorization.tokenId ? `worker_token:${authorization.tokenId}` : null }),
+        })
+        return audited.ok ? null : audited.response
+      },
+    })
   })
 }

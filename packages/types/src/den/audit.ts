@@ -28,6 +28,9 @@ export const auditPolicySchema = z.object({
   excessMode: auditExcessModeSchema, effectiveAt: z.string().datetime(), captureStartedAt: z.string().datetime().nullable(),
   attachmentWindowSeconds: z.number().int().min(1).max(86400),
 }).strict()
+export const auditHttpContextSchema = z.object({
+  method: z.string(), route: z.string(), status: z.number().int().min(100).max(599).optional(),
+}).strict()
 export const auditEventEnvelopeSchema = z.object({
   schemaVersion: z.literal(1), id: z.string(), organizationId: z.string(), operationId: z.string(),
   sequence: z.number().int().positive().safe(),
@@ -38,7 +41,7 @@ export const auditEventEnvelopeSchema = z.object({
   actor: auditActorSchema, action: z.string(), category: auditCategorySchema, outcome: auditOutcomeSchema,
   occurredAt: z.string().datetime(), recordedAt: z.string().datetime(), requestId: z.string().nullable(),
   jobRunId: z.string().optional(), causedByEventId: z.string().optional(), resources: z.array(auditResourceSchema),
-  changes: auditChangesSchema.optional(), reasonCode: z.string().optional(), logicalBytes: z.number().int().nonnegative().safe(),
+  changes: auditChangesSchema.optional(), reasonCode: z.string().optional(), http: auditHttpContextSchema.optional(), logicalBytes: z.number().int().nonnegative().safe(),
 }).strict()
 export const auditOperationSummarySchema = z.object({
   id: z.string(), kind: z.string(), scope: z.string(), action: z.string(), initiatingActor: auditActorSchema,
@@ -73,6 +76,7 @@ export type AuditCategory = z.infer<typeof auditCategorySchema>
 export type AuditActor = z.infer<typeof auditActorSchema>
 export type AuditPolicy = z.infer<typeof auditPolicySchema>
 export type AuditEventEnvelope = z.infer<typeof auditEventEnvelopeSchema>
+export type AuditHttpContext = z.infer<typeof auditHttpContextSchema>
 export type AuditOperationSummary = z.infer<typeof auditOperationSummarySchema>
 export type AuditOperationsResponse = z.infer<typeof auditOperationsResponseSchema>
 export type AuditEventsResponse = z.infer<typeof auditEventsResponseSchema>

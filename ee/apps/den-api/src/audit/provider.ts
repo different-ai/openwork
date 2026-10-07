@@ -4,6 +4,7 @@ import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { readEffectiveAuditPolicy, recheckAuditEntitlement } from "./capture.js"
+import { withAuditRetry } from "./retry.js"
 import { AUDIT_CORRELATION_HEADER } from "@openwork/types/den/audit"
 import type { GatewayAccessGrantWrite } from "@openwork/types/den/gateway"
 import { diffProviderSnapshots, serializeProvider, serializeProviderCredential, serializeProviderGrant, serializeProviderGroup, serializeProviderModel, serializeProviderSet, serializeProviderUniverse, type ProviderAuditResource, type ProviderAuditSnapshot } from "./provider-serializers.js"
@@ -185,12 +186,17 @@ function providerAttemptEvent(capture: ProviderAuditCapture, outcome: AuditEvent
     ...(reasonCode ? { reasonCode } : {}),
   }
 }
+/** Own transaction outside the rolled-back mutation, retried on transient failures with a per-call idempotency key. */
 export async function recordProviderAttempt(database: AuditDatabase, capture: ProviderAuditCapture | null, status: number) {
   if (!capture || status < 400) return
   const denied = status === 401 || status === 403
-  await database.transaction(async (tx) => {
+  const event: AuditEventInput = {
+    ...providerAttemptEvent(capture, denied ? "denied" : "failed", denied ? "provider_configuration_denied" : status >= 500 ? "provider_configuration_failed" : "provider_configuration_rejected"),
+    idempotencyKey: `provider.attempt:${randomUUID()}`,
+  }
+  await withAuditRetry(() => database.transaction(async (tx) => {
     await recheckAuditEntitlement(tx, capture.context.organizationId)
     await assertAuditPolicyCurrent(tx, capture.policy)
-    await appendAuditEvent(tx, { ...capture, event: providerAttemptEvent(capture, denied ? "denied" : "failed", denied ? "provider_configuration_denied" : status >= 500 ? "provider_configuration_failed" : "provider_configuration_rejected") })
-  })
+    await appendAuditEvent(tx, { ...capture, event })
+  }), { label: event.action, idempotent: Boolean(capture.context.requestId || capture.context.jobRunId), requestId: capture.context.requestId ?? null, organizationId: capture.context.organizationId })
 }

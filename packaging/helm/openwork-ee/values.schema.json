@@ -117,6 +117,16 @@
                 false
               ],
               "description": "AI Gateway: LiteLLM: Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person. Renders DEN_FEATURE_LITELLM."
+            },
+            "platformAuditReads": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Platform audit: read-only requests: Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect. Renders DEN_FEATURE_PLATFORM_AUDIT_READS."
             }
           }
         }

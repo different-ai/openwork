@@ -1,6 +1,7 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { decideDeviceUserCode, lookupDeviceUserCode } from "../../device-authorization.js"
 import { jsonValidator, paramValidator, userSessionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -97,8 +98,17 @@ export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVaria
         userId: user.id,
         decision: input.decision,
         organizationId: input.organizationId ?? null,
+        // Approval binds the CLI session to this organization: attribute it to
+        // the verified member before the code is decided (fails closed).
+        beforeEffect: async (membership) => {
+          const attribution = auditSessionUserAttribution(membership.userId, membership.memberId)
+          if (!attribution) return null
+          const audited = await attributeAuditRequest(c, { organizationId: membership.organizationId, ...attribution })
+          return audited.ok ? null : audited.response
+        },
       })
       if (!result.ok) {
+        if ("response" in result) return result.response
         return c.json({ error: result.error, message: result.message }, result.status)
       }
       return c.json({ status: result.status })

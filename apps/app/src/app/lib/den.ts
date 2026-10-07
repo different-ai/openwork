@@ -130,8 +130,6 @@ export const DEN_INFERENCE_PATH = "/dashboard/inference";
 export type * from "./den-types";
 import type {
   DenAssignedMarketplaceCapability,
-  DenDashboardElement,
-  DenGrantedDashboard,
   DenMeLibraryPlugin,
   DenOrgExtensionProjection,
   DenOrgMarketplace,
@@ -1878,54 +1876,6 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
   });
 }
 
-function getDashboardElement(entry: unknown): DenDashboardElement | null {
-  if (!isRecord(entry)) return null;
-  if (
-    typeof entry.serverName !== "string"
-    || typeof entry.toolName !== "string"
-    || typeof entry.projectedToolName !== "string"
-    || typeof entry.resourceUri !== "string"
-    || typeof entry.title !== "string"
-  ) {
-    return null;
-  }
-  return {
-    serverName: entry.serverName,
-    ...(typeof entry.connectionId === "string" ? { connectionId: entry.connectionId } : {}),
-    toolName: entry.toolName,
-    projectedToolName: entry.projectedToolName,
-    resourceUri: entry.resourceUri,
-    title: entry.title,
-    ...(isRecord(entry.launchArguments) ? { launchArguments: entry.launchArguments } : {}),
-    ...(entry.requiresApproval === true ? { requiresApproval: true } : {}),
-    ...(entry.organizationAutoLaunch === true ? { organizationAutoLaunch: true } : {}),
-  };
-}
-
-function getGrantedDashboards(payload: unknown): DenGrantedDashboard[] {
-  if (!isRecord(payload) || !Array.isArray(payload.items)) {
-    return [];
-  }
-
-  return payload.items.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
-    const elements = Array.isArray(entry.elements)
-      ? entry.elements.flatMap((element) => {
-          const parsed = getDashboardElement(element);
-          return parsed ? [parsed] : [];
-        })
-      : [];
-    return [
-      {
-        id: entry.id,
-        name: entry.name,
-        elements,
-        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : null,
-      } satisfies DenGrantedDashboard,
-    ];
-  });
-}
-
 function getWorkers(payload: unknown): DenWorkerSummary[] {
   if (!isRecord(payload) || !Array.isArray(payload.workers)) {
     return [];
@@ -3114,28 +3064,6 @@ export function createDenClient(options: {
       await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/dashboard`, {
         method: "POST", token, organizationId: orgId, body: { added },
       });
-    },
-
-    /** Organization-managed dashboards granted to the signed-in member. */
-    async listGrantedDashboards(orgId: string): Promise<DenGrantedDashboard[]> {
-      const context = await requestJson<unknown>(baseUrls, "/v1/org", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      const capabilities = isRecord(context) && isRecord(context.capabilities)
-        ? context.capabilities
-        : null;
-      // Missing means unsupported. This makes a newer Desktop safe against a
-      // Den deployment that predates the managed-dashboard API.
-      if (capabilities?.orgManagedDashboards !== true) return [];
-
-      const payload = await requestJson<unknown>(baseUrls, "/v1/me/dashboards", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getGrantedDashboards(payload);
     },
 
     async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {

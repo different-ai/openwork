@@ -63,6 +63,8 @@ type InternalMcpPrincipal = {
   userId: string
   organizationId: string
   expiresAt: number
+  /** MCP grant/client/run-token identifier (`grant:<id>` …) for audit attribution; never token material. */
+  credentialId?: string
 }
 
 type InternalCapabilityConnector = InternalMcpPrincipal & {
@@ -98,11 +100,12 @@ function verifySignature(payload: string, signature: string) {
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
 }
 
-export function createInternalMcpPrincipalHeader(input: { userId: string; organizationId: string }) {
+export function createInternalMcpPrincipalHeader(input: { userId: string; organizationId: string; credentialId?: string | null }) {
   const principal: InternalMcpPrincipal = {
     userId: normalizeDenTypeId("user", input.userId),
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     expiresAt: Date.now() + INTERNAL_MCP_PRINCIPAL_TTL_MS,
+    ...(input.credentialId ? { credentialId: input.credentialId } : {}),
   }
   const payload = Buffer.from(JSON.stringify(principal), "utf8").toString("base64url")
   return `${payload}.${signPrincipalPayload(payload)}`
@@ -149,6 +152,12 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
   }
 
   return parsed
+}
+
+/** The MCP credential identifier carried by a verified internal principal header (audit attribution only). */
+export function readInternalMcpPrincipalCredentialId(headers: Headers): string | null {
+  const credentialId = verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER))?.credentialId
+  return typeof credentialId === "string" && credentialId ? credentialId : null
 }
 
 export function readInternalCapabilityConnectorId(headers: Headers): string | null {
@@ -388,7 +397,7 @@ export async function revokeBearerSession(headers: Headers) {
   }
 
   const rows = await db
-    .select({ id: AuthSessionTable.id })
+    .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.token, token))
     .limit(1)
@@ -398,6 +407,10 @@ export async function revokeBearerSession(headers: Headers) {
   const session = rows[0]
   if (session) {
     await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id))
+    // Direct delete (desktop bearer sign-out): no better-auth hook fires.
+    // Lazy import keeps session.ts free of an audit import cycle at load time.
+    const { recordSessionRevoked } = await import("./audit/domain/sessions.js")
+    await recordSessionRevoked(session, "sign_out").catch(() => undefined)
   }
   return true
 }

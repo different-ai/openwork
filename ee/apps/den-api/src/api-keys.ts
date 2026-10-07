@@ -1,6 +1,9 @@
 import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthApiKeyTable, AuthUserTable, MemberTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { apiKeyAuditColumns, apiKeyDeletedEvent, apiKeyRevokedEvent, type ApiKeyRevocationReason } from "./audit/domain/api-keys.js"
+import { appendDomainChanges } from "./audit/domain/legacy.js"
+import { currentAuditChangeCapture, fenceAuditChanges, logAuditOutcomeLost, type AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 
 export const DEN_API_KEY_HEADER = "x-api-key"
@@ -201,9 +204,37 @@ export async function revokeOrganizationApiKeysForMember(input: {
   organizationId: OrganizationId
   orgMembershipId: OrganizationMemberId
   userId: UserId | null
+  reason?: ApiKeyRevocationReason
 }) {
   if (!input.userId) {
     return 0
+  }
+  const userId = input.userId
+  const matches = (apiKey: { metadata: string | null }) => apiKeyMetadataMatchesOrganizationMember({
+    metadata: parseApiKeyMetadata(apiKey.metadata),
+    organizationId: input.organizationId,
+    orgMembershipId: input.orgMembershipId,
+  })
+
+  // Implicit revocation is an alternate path to the api_key resource: with the
+  // request's change capture active each newly disabled key gets api_key.revoked
+  // in the same transaction. Revocation must never be lost to an audit failure,
+  // so that falls back to the plain update below with [audit-outcome-lost].
+  const capture = currentAuditChangeCapture(input.organizationId)
+  if (capture) {
+    try {
+      return await db.transaction(async (tx) => {
+        await fenceAuditChanges(tx, capture)
+        const rows = (await tx.select({ ...apiKeyAuditColumns, metadata: AuthApiKeyTable.metadata }).from(AuthApiKeyTable).where(eq(AuthApiKeyTable.referenceId, userId)).for("update")).filter(matches)
+        if (rows.length === 0) return 0
+        await tx.update(AuthApiKeyTable).set({ enabled: false }).where(inArray(AuthApiKeyTable.id, rows.map((row) => row.id)))
+        const owner = { userId, memberId: input.orgMembershipId }
+        await appendDomainChanges(tx, capture, rows.map((row) => apiKeyRevokedEvent(input.organizationId, row, owner, input.reason ?? "member_access_changed")))
+        return rows.length
+      })
+    } catch (error) {
+      logAuditOutcomeLost({ requestId: capture.context.requestId, organizationId: capture.context.organizationId, action: "api_key.revoked", error })
+    }
   }
 
   const apiKeys = await db
@@ -212,15 +243,9 @@ export async function revokeOrganizationApiKeysForMember(input: {
       metadata: AuthApiKeyTable.metadata,
     })
     .from(AuthApiKeyTable)
-    .where(eq(AuthApiKeyTable.referenceId, input.userId))
+    .where(eq(AuthApiKeyTable.referenceId, userId))
 
-  const apiKeyIds = apiKeys
-    .filter((apiKey) => apiKeyMetadataMatchesOrganizationMember({
-      metadata: parseApiKeyMetadata(apiKey.metadata),
-      organizationId: input.organizationId,
-      orgMembershipId: input.orgMembershipId,
-    }))
-    .map((apiKey) => apiKey.id)
+  const apiKeyIds = apiKeys.filter(matches).map((apiKey) => apiKey.id)
 
   if (apiKeyIds.length === 0) {
     return 0
@@ -242,20 +267,29 @@ export async function getOrganizationApiKeyById(input: {
   return keys.find((apiKey) => apiKey.id === input.apiKeyId) ?? null
 }
 
+/**
+ * Deletes one organization API key. With change capture the delete and its
+ * api_key.deleted event commit in one transaction (organization share fence
+ * first, then the key row); `auditEventIds` lists the appended events.
+ */
 export async function deleteOrganizationApiKey(input: {
   organizationId: OrganizationId
   apiKeyId: ApiKeyId
-}) {
+}, capture: AuditChangeCapture | null = null) {
   const apiKey = await getOrganizationApiKeyById(input)
   if (!apiKey) {
     return null
   }
 
-  await db
-    .delete(AuthApiKeyTable)
-    .where(and(eq(AuthApiKeyTable.id, input.apiKeyId), eq(AuthApiKeyTable.referenceId, apiKey.owner.userId)))
+  const auditEventIds = await db.transaction(async (tx) => {
+    await fenceAuditChanges(tx, capture)
+    const scope = and(eq(AuthApiKeyTable.id, input.apiKeyId), eq(AuthApiKeyTable.referenceId, apiKey.owner.userId))
+    const [row] = capture ? await tx.select(apiKeyAuditColumns).from(AuthApiKeyTable).where(scope).limit(1).for("update") : []
+    await tx.delete(AuthApiKeyTable).where(scope)
+    return row ? appendDomainChanges(tx, capture, [apiKeyDeletedEvent(input.organizationId, row, { userId: apiKey.owner.userId, memberId: apiKey.owner.memberId })]) : []
+  })
 
-  return apiKey
+  return { ...apiKey, auditEventIds }
 }
 
 export function isScopedApiKeyForOrganization(input: {

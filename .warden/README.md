@@ -3,6 +3,8 @@
 Warden runs two skills: new security regressions and public-repository
 confidentiality. It does not review design, provenance, or Desktop/Den parity
 automatically. Those skill files remain available for optional local use.
+Rendered UI is reviewed from evidence screenshots instead, where the pixels
+and layout exist: see `evals/design-review/README.md`.
 
 Findings appear in the run summary; incomplete analysis fails the job so it
 cannot look like a clean review. Warden never leaves review threads or

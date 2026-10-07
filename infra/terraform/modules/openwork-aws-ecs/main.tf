@@ -7,6 +7,15 @@ locals {
   den_api_image = var.den_api_image != "" ? var.den_api_image : "ghcr.io/different-ai/openwork-den-api:${var.openwork_version}"
   den_web_image = var.den_web_image != "" ? var.den_web_image : "ghcr.io/different-ai/openwork-den-web:${var.openwork_version}"
 
+  # OpenWork Web: den-gateway serves the web app and proxies each member to
+  # their Daytona sandbox; den-api provisions the sandboxes.
+  web_enabled       = var.openwork_web_enabled
+  gateway_host      = var.openwork_web_domain_name != "" ? var.openwork_web_domain_name : "web.${var.domain_name}"
+  gateway_url       = "https://${local.gateway_host}"
+  den_gateway_image = var.den_gateway_image != "" ? var.den_gateway_image : "ghcr.io/different-ai/openwork-den-gateway:${var.openwork_version}"
+  provisioner_mode  = var.provisioner_mode != "" ? var.provisioner_mode : (local.web_enabled ? "daytona" : "stub")
+  daytona_prefix    = var.daytona.name_prefix != "" ? var.daytona.name_prefix : var.name
+
   # den-web reaches den-api privately through Cloud Map, not the public ALB.
   internal_api_url = "http://den-api.${aws_service_discovery_private_dns_namespace.this.name}:8788"
 
@@ -45,13 +54,13 @@ locals {
     DEN_AUTOMATIONS_ENABLED            = local.bool[var.automations_enabled]
     DEN_DASHBOARDS_ENABLED             = local.bool[var.dashboards_enabled]
     DEN_OPENWORK_WEB_ENABLED           = local.bool[var.openwork_web_enabled]
-    PROVISIONER_MODE                   = var.provisioner_mode
+    PROVISIONER_MODE                   = local.provisioner_mode
     DEN_API_BASE                       = local.internal_api_url
     DEN_AUTH_FALLBACK_BASE             = local.internal_api_url
     DEN_AUTH_ORIGIN                    = local.web_url
     DEN_WEB_PUBLIC_ORIGIN              = local.web_url
     DEN_WEB_OPENWORK_AUTH_CALLBACK_URL = local.web_url
-    DEN_WEB_OPENWORK_WEB_URL           = var.openwork_web_url
+    DEN_WEB_OPENWORK_WEB_URL           = var.openwork_web_url != "" ? var.openwork_web_url : (local.web_enabled ? local.gateway_url : "")
     # ElastiCache in this module always uses TLS (rediss://).
     DATABASE_REDIS_ALLOW_INSECURE_INTERNAL = "0"
     EMAIL_FROM                             = var.email_from
@@ -59,7 +68,24 @@ locals {
     SMTP_PORT                              = tostring(var.smtp.port)
     SMTP_USER                              = var.smtp.username
     SMTP_SECURE                            = local.bool[var.smtp.secure]
-  }, var.extra_environment)
+  }, local.web_environment, var.extra_environment)
+
+  # Empty values are dropped below, so these are unset while Web is off.
+  web_environment = {
+    # The gateway signs members in through den-web and calls den-api from its
+    # own origin; den-api trusts only listed origins for both.
+    DEN_GATEWAY_ORIGIN              = local.web_enabled ? local.gateway_url : ""
+    CORS_ORIGINS                    = local.web_enabled ? local.gateway_url : ""
+    DEN_BETTER_AUTH_TRUSTED_ORIGINS = local.web_enabled ? local.gateway_url : ""
+    # Sandboxes report activity to the public API; the default (den-web) does
+    # not serve /v1. Daytona must be able to reach it, so not internal_alb.
+    WORKER_ACTIVITY_BASE_URL    = local.web_enabled ? local.api_url : ""
+    DAYTONA_API_URL             = local.provisioner_mode == "daytona" ? var.daytona.api_url : ""
+    DAYTONA_SNAPSHOT            = local.provisioner_mode == "daytona" ? var.daytona.snapshot : ""
+    DAYTONA_TARGET              = local.provisioner_mode == "daytona" ? var.daytona.target : ""
+    DAYTONA_SANDBOX_NAME_PREFIX = local.provisioner_mode == "daytona" ? "${local.daytona_prefix}-worker" : ""
+    DAYTONA_SHARED_VOLUME_NAME  = local.provisioner_mode == "daytona" ? "${local.daytona_prefix}-workers" : ""
+  }
 
   environment_list = [for k, v in local.environment : { name = k, value = v } if v != ""]
 
@@ -72,6 +98,8 @@ locals {
     DATABASE_REDIS_URL               = local.redis_url
     SMTP_PASS                        = var.smtp.password
     RESEND_API_KEY                   = var.resend_api_key
+    DAYTONA_API_KEY                  = local.provisioner_mode == "daytona" ? var.daytona_api_key : ""
+    DEN_GATEWAY_KEY                  = try(random_password.gateway_key[0].result, "")
   } : k => v if v != "" }
 
   secrets_list = concat(

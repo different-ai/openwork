@@ -20,7 +20,7 @@ async function enterPastDate(owner: User, label: string, day: string) {
   await owner.see({ label }, { value: `2000-01-${day.padStart(2, "0")}T01:00` });
 }
 
-test("a flagged owner records and filters audit history by default while an unflagged owner and a teammate cannot read it", async ({ world, user, probe, step, evidence }) => {
+test("a flagged owner records and filters audit history by default while an unflagged owner and a teammate cannot read it", async ({ world, user, probe, seed, step, evidence }) => {
   const owner = user.on(world.web);
   const audit = probe.on(world.web);
   const teammate = user.on(world.memberWeb);
@@ -34,16 +34,60 @@ test("a flagged owner records and filters audit history by default while an unfl
   let initializationOperationId = "";
   let originalEventIds: string[] = [];
 
-  async function selectEventType(text: string) {
+  async function openEventTypes() {
     // Navigation mounts the filter before its independently fetched catalog is
     // ready. Observe readiness; never dispatch a click to a disabled control.
     await audit.eventually(() => audit.dom('button[aria-label="Event type"]:not(:disabled)'), {
       within: 30_000, label: "Event catalog is ready for selection", until: (value) => value.elements.length === 1,
     });
     await owner.click({ role: "button", label: "Event type" });
+  }
+
+  async function selectEventType(text: string, search?: string) {
+    await openEventTypes();
+    if (search) await owner.type({ label: "Search event types" }, search, { verify: true });
     // Target the displayed option text: the menu's enclosing label names the
     // whole field, and its text span receives the user's click on the option.
     await owner.click({ text });
+  }
+
+  async function filterAndFindOperation(eventType: string, search: string, rowLabel: string) {
+    await selectEventType(eventType, search);
+    await owner.click({ role: "button", label: "Apply filters" });
+    await historySettled();
+    await owner.see({ role: "button", label: `View changes for ${rowLabel}` }, { timeoutMs: 30_000 });
+  }
+
+  async function onlyOperationWith(action: string) {
+    const response = await probe.api(world.den.admin, `${operationsPath}&action=${encodeURIComponent(action)}`);
+    expect(response.response.status).toBe(200);
+    const history = auditOperationsResponseSchema.parse(response.body);
+    expect(history.operations).toHaveLength(1);
+    const operation = history.operations[0];
+    if (!operation) throw new Error(`No operation recorded ${action}`);
+    const eventsResponse = await probe.api(world.den.admin, `/v1/audit/operations/${encodeURIComponent(operation.id)}/events?limit=50`);
+    expect(eventsResponse.response.status).toBe(200);
+    const events = auditEventsResponseSchema.parse(eventsResponse.body).events.sort((a, b) => a.sequence - b.sequence);
+    return { operation, events, text: eventsResponse.text };
+  }
+
+  async function expandedTimeline(operation: { id: string }, count: number) {
+    const selector = `[id="audit-operation-${operation.id}"] [data-testid="audit-event"]`;
+    const events = await audit.eventually(() => audit.dom(selector), { within: 30_000, label: "Expanded operation lists every event", until: (value) => value.elements.length === count });
+    // Each event starts with two lines: title + result, then actor + time.
+    const heads = (await audit.dom(`${selector} > div > *`)).elements.map((element) => element.text);
+    const cells = (await audit.dom(`${selector} tbody td`)).elements.map((cell) => cell.text);
+    return {
+      events: events.elements.map((event, index) => ({ headline: heads.slice(index * 4, index * 4 + 3).join(" · "), text: event.text })),
+      changes: Array.from({ length: cells.length / 3 }, (_, index) => cells.slice(index * 3, index * 3 + 3).join(" | ")),
+    };
+  }
+
+  async function operationRow(operation: { id: string }) {
+    const row = await audit.dom(`tr:has(> td button[aria-controls="audit-operation-${operation.id}"]) > td`);
+    expect(row.elements).toHaveLength(7);
+    const [action = "", actor = "", origin = "", , result = ""] = row.elements.map((cell) => cell.text);
+    return { action, actor, origin, result, summary: `${action} · ${actor} · ${origin} · ${result}` };
   }
 
   async function seeGroupedOperation() {
@@ -440,6 +484,126 @@ test("a flagged owner records and filters audit history by default while an unfl
     expect(initialized.operations.map((operation) => operation.id)).toEqual([initializationOperationId]);
     expect(initialized.nextCursor).toBeNull();
     evidence.recordAssertionEvidence("The organization can resume recording", `Capture is ${on.captureOn}, effective recording is ${on.captureEnabled}, policy revision is ${on.policy?.revision}.`, on.captureOn && on.captureEnabled);
+    await owner.screenshot();
+  });
+
+  const roleName = "audit-reviewers";
+  let roleOperation: Awaited<ReturnType<typeof onlyOperationWith>> | null = null;
+
+  await step("the owner creates a custom role and types “role created” into the Event type search", async () => {
+    const created = await seed.api(world.den.admin, "/v1/roles", { method: "POST", body: JSON.stringify({ roleName, permission: { invitation: ["create"] } }) });
+    expect(created.response.status).toBe(201);
+    await owner.click({ text: "Capture and storage" });
+    await openEventTypes();
+    await owner.type({ label: "Search event types" }, "role created", { verify: true });
+    const options = await audit.eventually(() => audit.dom('[role="listbox"] [role="option"]'), { within: 10_000, label: "Search narrows the event types", until: (value) => value.elements.some((option) => option.text === "Role created") });
+    const labels = options.elements.map((option) => option.text);
+    expect(labels).toContain("Role created");
+    expect(labels.every((label) => label.toLowerCase().includes("role created"))).toBe(true);
+    evidence.recordAssertionEvidence("The searchable Event type select narrows the catalog", `POST /v1/roles returned ${created.response.status}; typing “role created” leaves ${labels.length} options: ${labels.join(", ")}.`, labels.includes("Role created"));
+    await owner.screenshot();
+  });
+
+  await step("after: picking Role created lists the owner's role creation as one operation", async () => {
+    await owner.click({ text: "Role created" });
+    await owner.see({ role: "button", label: "Event type" }, { text: "Role created" });
+    await owner.click({ role: "button", label: "Apply filters" });
+    await historySettled();
+    await owner.see({ role: "button", label: "View changes for Role create requested" }, { timeoutMs: 30_000 });
+    roleOperation = await onlyOperationWith("role.created");
+    const { operation, events } = roleOperation;
+    expect(operation.action).toBe("role.create.requested");
+    expect(operation.origin).toBe("api");
+    expect(events.map((event) => event.action)).toEqual(["role.create.requested", "role.created", "role.create.succeeded"]);
+    expect(new Set(events.map((event) => event.requestId)).size).toBe(1);
+    const row = await operationRow(operation);
+    expect(row).toMatchObject({ action: "Role create requested", actor: "Audit Owner", origin: "API" });
+    evidence.recordAssertionEvidence("One request, one operation, three events", `Operation ${operation.id} holds ${events.map((event) => event.action).join(" → ")} from one request; the row reads “${row.summary}”.`, events.length === 3);
+    await owner.screenshot();
+  });
+
+  await step("after: expanding it shows the role before (empty) and after, and the request's HTTP method, route and status", async () => {
+    if (!roleOperation) throw new Error("Role operation was not found");
+    const { operation, events } = roleOperation;
+    await owner.click({ role: "button", label: "View changes for Role create requested" });
+    const timeline = await expandedTimeline(operation, events.length);
+    expect(timeline.events[1]?.headline).toBe("Role created · Succeeded · Audit Owner");
+    expect(timeline.changes).toContain(`Role | None | ${roleName}`);
+    expect(timeline.changes).toContain("Permissions | None | invitation:create");
+    const change = events.find((event) => event.action === "role.created")?.changes;
+    expect(change?.before).toBeNull();
+    expect(change?.after).toMatchObject({ role: roleName, permissions: ["invitation:create"] });
+    const requested = events.find((event) => event.action === "role.create.requested");
+    const succeeded = events.findIndex((event) => event.action === "role.create.succeeded");
+    expect(requested?.http).toEqual({ method: "POST", route: "/v1/roles" });
+    expect(events[succeeded]?.http).toEqual({ method: "POST", route: "/v1/roles", status: 201 });
+    await owner.click({ text: "Technical details", nth: succeeded });
+    await owner.click({ text: "HTTP status" });
+    const details = await audit.dom(`[id="audit-operation-${operation.id}"] details[open] dd`);
+    const values = details.elements.map((value) => value.text);
+    expect(values).toContain("POST /v1/roles");
+    expect(values).toContain("201");
+    expect(values).toContain("role.create.succeeded");
+    evidence.recordAssertionEvidence("Readable change and request evidence", `Changes: ${timeline.changes.join("; ")}. Technical details of role.create.succeeded show “POST /v1/roles” and status 201 (the requested intent has no status).`, change?.before === null && values.includes("201"));
+    await owner.screenshot();
+    await owner.click({ role: "button", label: "Hide changes for Role create requested" });
+  });
+
+  await step("an ordinary team creation is one operation with a requested and a succeeded request event", async () => {
+    const team = await seed.api(world.den.admin, "/v1/teams", { method: "POST", body: JSON.stringify({ name: "Audit proof team" }) });
+    expect(team.response.ok).toBe(true);
+    await filterAndFindOperation("Team create succeeded", "team create", "Team create requested");
+    const { operation, events } = await onlyOperationWith("team.create.succeeded");
+    expect(events.map((event) => event.action)).toEqual(["team.create.requested", "team.create.succeeded"]);
+    expect(new Set(events.map((event) => event.requestId)).size).toBe(1);
+    expect(events.map((event) => event.outcome)).toEqual(["unknown", "succeeded"]);
+    expect(events[1]?.http).toMatchObject({ method: "POST", route: "/v1/teams", status: team.response.status });
+    await owner.click({ role: "button", label: "View changes for Team create requested" });
+    const timeline = await expandedTimeline(operation, 2);
+    expect(timeline.events.map((event) => event.headline)).toEqual(["Team create requested · Unknown · Audit Owner", "Team create succeeded · Succeeded · Audit Owner"]);
+    evidence.recordAssertionEvidence("Request-level evidence groups under one operation", `POST /v1/teams returned ${team.response.status}; operation ${operation.id} shows exactly: ${timeline.events.map((event) => event.headline).join(" / ")}, from one request.`, events.length === 2);
+    await owner.screenshot();
+    await owner.click({ role: "button", label: "Hide changes for Team create requested" });
+  });
+
+  await step("a teammate's denied attempt to create a role appears as a denied security event attributed to the teammate", async () => {
+    const denied = await seed.api(world.teammate, "/v1/roles", { method: "POST", body: JSON.stringify({ roleName: "teammate-escalation", permission: {} }) });
+    expect(denied.response.status).toBe(403);
+    await filterAndFindOperation("Role create attempted", "role create attempted", "Role create requested");
+    const { operation, events } = await onlyOperationWith("role.create.attempted");
+    expect(operation.initiatingActor).toMatchObject({ type: "user", id: world.teammateUserId });
+    const attempt = events.find((event) => event.action === "role.create.attempted");
+    expect(attempt).toMatchObject({ category: "security", outcome: "denied", reasonCode: "request_denied", actor: { type: "user", id: world.teammateUserId }, http: { method: "POST", route: "/v1/roles", status: 403 } });
+    expect(events.some((event) => event.action === "role.created")).toBe(false);
+    const row = await operationRow(operation);
+    expect(row).toMatchObject({ action: "Role create requested", actor: "Audit Teammate", origin: "API" });
+    await owner.click({ role: "button", label: "View changes for Role create requested" });
+    const timeline = await expandedTimeline(operation, events.length);
+    const shown = timeline.events.find((event) => event.headline.startsWith("Role create attempted"));
+    expect(shown?.headline).toBe("Role create attempted · Denied · Audit Teammate");
+    expect(shown?.text).toContain("Request denied");
+    evidence.recordAssertionEvidence("A denied admin-route attempt is retained for the owner", `The teammate's POST /v1/roles returned 403; the owner's row reads “${row.summary}” and the event reads “${shown?.headline} · Request denied” (category ${attempt?.category}, outcome ${attempt?.outcome}); no role was created.`, attempt?.outcome === "denied" && attempt.category === "security");
+    await owner.screenshot();
+    await owner.click({ role: "button", label: "Hide changes for Role create requested" });
+  });
+
+  await step("a platform administrator's DPA change shows actor Platform administrator and origin Platform admin", async () => {
+    const reason = "Synthetic countersigned DPA for the audit proof";
+    const dpa = await seed.api(world.platformAdmin, `/v1/admin/organizations/${encodeURIComponent(world.orgId)}/dpa`, { method: "PATCH", body: JSON.stringify({ dpaSigned: true, reason }) });
+    expect(dpa.response.status).toBe(200);
+    await filterAndFindOperation("Organization DPA signed updated", "dpa", "Organization DPA update requested");
+    const { operation, events, text } = await onlyOperationWith("organization.dpa_signed.updated");
+    expect(operation.origin).toBe("platform_admin");
+    expect(operation.initiatingActor.type).toBe("user");
+    expect(operation.initiatingActor.memberId).toBeUndefined();
+    expect(text).not.toContain(reason);
+    const row = await operationRow(operation);
+    expect(row).toMatchObject({ actor: "Platform administrator", origin: "Platform admin" });
+    await owner.click({ role: "button", label: "View changes for Organization DPA update requested" });
+    const timeline = await expandedTimeline(operation, events.length);
+    expect(timeline.changes).toContain("DPA signed | None | Yes");
+    await owner.notSee({ text: reason });
+    evidence.recordAssertionEvidence("Platform admin changes are attributed without a member identity", `PATCH /v1/admin/organizations/:id/dpa returned ${dpa.response.status}; the row reads “${row.summary}”; the change reads “${timeline.changes.join("; ")}” and the reason text is not retained.`, operation.origin === "platform_admin" && row.actor === "Platform administrator");
     await owner.screenshot();
   });
 

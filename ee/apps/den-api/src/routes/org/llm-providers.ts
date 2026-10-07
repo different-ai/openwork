@@ -20,6 +20,7 @@ import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../
 import { probeEndpoint, verifyModels } from "../../llm/endpoint-probe.js"
 import {
   ProviderCredentialError,
+  bedrockCredentialError,
   decodeProviderCredential,
   listConfiguredEnvKeys,
   readProviderEnvNames,
@@ -355,7 +356,7 @@ function resolveCredentialColumn(input: {
   apiKeys?: Record<string, string>
 }) {
   try {
-    return resolveProviderCredential({
+    const value = resolveProviderCredential({
       envNames: readProviderEnvNames(input.providerConfig),
       existing: input.existingProvider
         ? {
@@ -366,6 +367,11 @@ function resolveCredentialColumn(input: {
       apiKey: input.apiKey,
       apiKeys: input.apiKeys,
     })
+    // Only a credential change is checked, so unrelated edits still save.
+    const credentialChanged = input.apiKey !== undefined || input.apiKeys !== undefined
+    const settingsError = credentialChanged ? bedrockCredentialError(input.providerConfig, value) : null
+    if (settingsError) throw new ProviderCredentialError(settingsError)
+    return value
   } catch (error) {
     if (error instanceof ProviderCredentialError) {
       throw createFailure(400, "invalid_api_keys", error.message)

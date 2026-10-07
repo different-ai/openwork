@@ -4,17 +4,18 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { createDenDb } from "./client"
 import type { AuditActor, AuditCategory, AuditEventEnvelope, AuditPolicy } from "@openwork/types/den/audit"
 export type { AuditActor, AuditCategory, AuditEventEnvelope, AuditPolicy } from "@openwork/types/den/audit"
-import { AuditEventResourceTable, AuditOperationStepTable, AuditOperationTable, AuditPolicyTable, AuditStateTable, AuditUsageFactTable } from "./schema/audit"
+import { AuditEventResourceTable, AuditOperationStepTable, AuditOperationTable, AuditPolicyTable, AuditStateTable, AuditUsageFactTable, PlatformAuditEventTable } from "./schema/audit"
 import { AuditEventTable } from "./schema/workers"
 
 export type AuditDatabase = ReturnType<typeof createDenDb>["db"]
 export type AuditTx = Parameters<Parameters<AuditDatabase["transaction"]>[0]>[0]
+export type AuditOrigin = "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin"
 export type AuditContext = {
   organizationId: string
   actor: AuditActor
   principalKey: string
   initiatingActor?: AuditActor
-  origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin"
+  origin: AuditOrigin
   originTrust: "authenticated" | "reported"
   requestId: string | null
   correlationId?: string | null
@@ -33,11 +34,17 @@ export type AuditEventInput = {
   changes?: { before: Record<string, unknown> | null; after: Record<string, unknown> | null; changedFields: string[] }
   reasonCode?: string
   idempotencyKey?: string
+  /** Request template context; route is the registered template, never the concrete URL. */
+  http?: AuditHttpContext
 }
+export type AuditHttpContext = { method: string; route: string; status?: number }
 
 export const MAX_AUDIT_EVENT_BYTES = 262_144
 const categories: AuditCategory[] = ["change", "security", "execution", "access", "read", "request", "lifecycle"]
-const kinds = new Set(["provider.configuration", "audit.access", "audit.policy"])
+// Operation kinds are declared by den-api's route/domain registries; storage only
+// enforces their shape. Workflow correlation stays limited to AUDIT_WORKFLOW_REGISTRY.
+const kindPattern = /^[a-z][a-z0-9_.-]{0,127}$/
+const origins: AuditOrigin[] = ["api", "cloud_ui", "mcp", "scheduler", "webhook", "platform_admin"]
 export const AUDIT_WORKFLOW_REGISTRY = {
   "provider.configuration": {
     status: "pilot",
@@ -149,10 +156,10 @@ function actor(input: AuditActor): AuditActor {
 
 function validateContext(context: AuditContext) {
   const organizationId = normalizeDenTypeId("organization", context.organizationId)
-  if (!kinds.has(context.kind)) fail()
+  if (typeof context.kind !== "string" || !kindPattern.test(context.kind)) fail()
   text(context.principalKey, 512)
   text(context.scope, 512)
-  if (!["api", "cloud_ui", "mcp", "scheduler", "webhook", "platform_admin"].includes(context.origin) || !["authenticated", "reported"].includes(context.originTrust)) fail()
+  if (!origins.includes(context.origin) || !["authenticated", "reported"].includes(context.originTrust)) fail()
   if (context.requestId !== null) text(context.requestId, 128)
   if (context.jobRunId !== undefined) text(context.jobRunId, 128)
   if (context.causedByEventId !== undefined) normalizeDenTypeId("auditEvent", context.causedByEventId)
@@ -231,6 +238,14 @@ export function auditOperationBinding(context: AuditContext, useCorrelation = tr
   return digest(canonicalAuditJson([context.organizationId, context.principalKey, context.kind, context.scope, hint]))
 }
 
+function httpValue(input: AuditHttpContext): AuditHttpContext {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) fail()
+  if (typeof input.method !== "string" || !/^[A-Z]{1,16}$/.test(input.method)) fail()
+  text(input.route, 512)
+  if (input.status !== undefined) integer(input.status, 100, 599)
+  return { method: input.method, route: input.route, ...(input.status === undefined ? {} : { status: input.status }) }
+}
+
 function eventValue(input: AuditEventInput): Omit<AuditEventInput, "idempotencyKey"> {
   text(input.action, 128)
   if (!/^[a-z][a-z0-9_.-]*$/.test(input.action) || !categories.includes(input.category) || !["succeeded", "failed", "denied", "unknown"].includes(input.outcome)) fail()
@@ -265,7 +280,8 @@ function eventValue(input: AuditEventInput): Omit<AuditEventInput, "idempotencyK
     }
     changes = { before: snapshotCopy(input.changes.before), after: snapshotCopy(input.changes.after), changedFields }
   }
-  const event = { action: input.action, category: input.category, outcome: input.outcome, resources, ...(changes ? { changes } : {}), ...(input.reasonCode === undefined ? {} : { reasonCode: input.reasonCode }) }
+  const http = input.http === undefined ? undefined : httpValue(input.http)
+  const event = { action: input.action, category: input.category, outcome: input.outcome, resources, ...(changes ? { changes } : {}), ...(input.reasonCode === undefined ? {} : { reasonCode: input.reasonCode }), ...(http ? { http } : {}) }
   canonicalAuditJson(event)
   return event
 }
@@ -314,12 +330,24 @@ export async function setAuditCaptureState(tx: AuditTx, input: { context: AuditC
   } })
 }
 
-export async function appendAuditEvent(tx: AuditTx, input: { context: AuditContext; policy: AuditPolicy; event: AuditEventInput }): Promise<AuditEventEnvelope | null> {
+/** Operation outcome projection (audit_operation.outcome); never part of the event envelope or its content hash. */
+export type AuditOperationOutcome = "succeeded" | "failed" | "unknown"
+const operationOutcomes: AuditOperationOutcome[] = ["succeeded", "failed", "unknown"]
+type AppendAuditEventInput = { context: AuditContext; policy: AuditPolicy; event: AuditEventInput; operationOutcome?: AuditOperationOutcome }
+
+/**
+ * Appends one event. `operationOutcome` (request/service/job outcome events only)
+ * updates the operation's outcome projection in the same transaction; an
+ * idempotent replay of an existing event changes nothing.
+ */
+export async function appendAuditEvent(tx: AuditTx, input: AppendAuditEventInput): Promise<AuditEventEnvelope | null> {
   if (!input.policy.enabled || !input.policy.categories.includes(input.event.category)) return null
   return appendAuditEventCore(tx, input)
 }
 
-async function appendAuditEventCore(tx: AuditTx, input: { context: AuditContext; policy: AuditPolicy; event: AuditEventInput }): Promise<AuditEventEnvelope> {
+async function appendAuditEventCore(tx: AuditTx, input: AppendAuditEventInput): Promise<AuditEventEnvelope> {
+  const operationOutcome = input.operationOutcome
+  if (operationOutcome !== undefined && !operationOutcomes.includes(operationOutcome)) fail()
   const context = { ...input.context }
   const policy = { ...input.policy, categories: [...input.policy.categories] }
   validatePolicy(policy)
@@ -405,10 +433,11 @@ async function appendAuditEventCore(tx: AuditTx, input: { context: AuditContext;
       id: operationId, organization_id: identity.organizationId, binding_key: bindingKey, kind: context.kind, scope: context.scope, principal_key: context.principalKey,
       initiating_actor: identity.initiatingActor, origin: context.origin, origin_trust: context.originTrust, first_recorded_at: now,
       attachment_expires_at: new Date(now.getTime() + policy.attachmentWindowSeconds * 1000), event_count: operationEventCount, logical_bytes: operationBytes,
+      ...(operationOutcome ? { outcome: operationOutcome } : {}),
     })
     await tx.insert(AuditUsageFactTable).values({ id: createDenTypeId("auditUsageFact"), organization_id: identity.organizationId, operation_id: operationId, delta: 1, effective_at: now, policy_revision: policy.revision, allowance: policy.allowance, excess_mode: policy.excessMode })
   } else {
-    await tx.update(AuditOperationTable).set({ event_count: operationEventCount, logical_bytes: operationBytes }).where(and(eq(AuditOperationTable.organization_id, identity.organizationId), eq(AuditOperationTable.id, operationId)))
+    await tx.update(AuditOperationTable).set({ event_count: operationEventCount, logical_bytes: operationBytes, ...(operationOutcome ? { outcome: operationOutcome } : {}) }).where(and(eq(AuditOperationTable.organization_id, identity.organizationId), eq(AuditOperationTable.id, operationId)))
   }
   if (insertClaim && claim) await tx.insert(AuditOperationStepTable).values({ organization_id: identity.organizationId, operation_id: operationId, step_hash: claim.hash, workflow_step: claim.step, step_scope: claim.scope, request_id: claim.requestId })
   await tx.insert(AuditEventTable).values({
@@ -423,4 +452,61 @@ async function appendAuditEventCore(tx: AuditTx, input: { context: AuditContext;
   await tx.update(AuditStateTable).set({ last_sequence: envelope.sequence, retained_operations: retainedOperations, event_count: eventCount, logical_bytes: totalBytes, updated_at: now }).where(eq(AuditStateTable.organization_id, identity.organizationId))
   if (storedPolicy.capture_started_at === null) await tx.update(AuditPolicyTable).set({ capture_started_at: now }).where(eq(AuditPolicyTable.organization_id, identity.organizationId))
   return envelope
+}
+
+export type PlatformAuditEventInput = {
+  requestId: string | null
+  method: string
+  /** Registered route template, never a concrete URL. */
+  route: string
+  action: string
+  outcome: "succeeded" | "failed" | "denied" | "unknown"
+  status: number
+  reasonCode?: string | null
+  /** Only authenticated user/service ids; unknown requires a null id. */
+  actor: { type: "user" | "service" | "unknown"; id: string | null; credentialId?: string | null }
+  origin: AuditOrigin
+  /**
+   * Resource reference: the declared type with a validated path id, or a resource the
+   * handler named. Type organization only for an id taken from trusted authenticated
+   * context (never from untrusted input); there is no organization attribution column.
+   */
+  target?: { type: string; id: string | null } | null
+  occurredAt?: Date
+  /**
+   * Row id generated by the caller once per logical record, so a retried insert
+   * after an ambiguous commit collides on the primary key instead of duplicating.
+   */
+  id?: string
+}
+
+/** Tenantless request evidence: never an organization id, IP, user agent, header or body. */
+export async function appendPlatformAuditEvent(database: AuditDatabase | AuditTx, input: PlatformAuditEventInput): Promise<string> {
+  const http = httpValue({ method: input.method, route: input.route, status: input.status })
+  text(input.action, 128)
+  if (!kindPattern.test(input.action) || !["succeeded", "failed", "denied", "unknown"].includes(input.outcome) || !origins.includes(input.origin)) fail()
+  const reasonCode = input.reasonCode ?? null
+  if (reasonCode !== null && !kindPattern.test(reasonCode)) fail()
+  if (input.requestId !== null) text(input.requestId, 128)
+  if (!["user", "service", "unknown"].includes(input.actor.type)) fail()
+  if (input.actor.type === "unknown" ? input.actor.id !== null : input.actor.id === null) fail()
+  if (input.actor.id !== null) text(input.actor.id, 255)
+  if (input.actor.type === "user" && input.actor.id !== null) normalizeDenTypeId("user", input.actor.id)
+  const credentialId = input.actor.credentialId ?? null
+  if (credentialId !== null) text(credentialId, 255)
+  const target = input.target ?? null
+  if (target !== null) {
+    text(target.type, 64)
+    if (!kindPattern.test(target.type)) fail()
+    if (target.id !== null) text(target.id, 255)
+  }
+  const occurredAt = input.occurredAt ?? new Date()
+  if (!Number.isFinite(occurredAt.getTime())) fail()
+  const id = input.id === undefined ? createDenTypeId("platformAuditEvent") : normalizeDenTypeId("platformAuditEvent", input.id)
+  await database.insert(PlatformAuditEventTable).values({
+    id, occurred_at: occurredAt, request_id: input.requestId, method: http.method, route: http.route, action: input.action,
+    outcome: input.outcome, status: input.status, reason_code: reasonCode, actor_type: input.actor.type, actor_id: input.actor.id,
+    credential_id: credentialId, origin: input.origin, target_type: target?.type ?? null, target_id: target?.id ?? null,
+  })
+  return id
 }

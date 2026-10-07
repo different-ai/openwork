@@ -3,7 +3,9 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, transferOrganizationOwnership, updateOrganizationMemberRole } from "../../orgs.js"
@@ -71,7 +73,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     }
 
     if (updated.changed) {
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(auditChangeCapture(c), {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated,
@@ -81,7 +83,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
           previousRole: updated.previousRole,
           nextRole: updated.nextRole,
         },
-      })
+      }, updated.auditEventIds)
     }
 
     return c.json({ success: true })
@@ -131,7 +133,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       return c.json({ error: transfer.error, message: transfer.message }, 400)
     }
 
-    await recordOrganizationAuditEvent({
+    await finishLegacyAuditAction(auditChangeCapture(c), {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: ORGANIZATION_AUDIT_ACTIONS.memberOwnershipTransferred,
@@ -146,7 +148,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         newOwnerPreviousRole: transfer.newOwner.role,
         newOwnerRole: transfer.newOwnerRole,
       },
-    })
+    }, transfer.auditEventIds)
 
     return c.json({ success: true })
     },
@@ -196,7 +198,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       return c.json({ error: removed.error, message: removed.message }, 400)
     }
 
-    await recordOrganizationAuditEvent({
+    await finishLegacyAuditAction(auditChangeCapture(c), {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: ORGANIZATION_AUDIT_ACTIONS.memberRemoved,
@@ -205,7 +207,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         targetUserId: removed.member.userId,
         previousRole: removed.member.role,
       },
-    })
+    }, removed.auditEventIds)
 
     return c.body(null, 204)
     },

@@ -1,5 +1,6 @@
 # Certificate: bring your own (certificate_arn), or let the module create and
-# DNS-validate one when both hostnames live in route53_zone_id.
+# DNS-validate one when every hostname (web, API, and the OpenWork Web gateway
+# when enabled) lives in route53_zone_id.
 
 locals {
   create_certificate = var.certificate_arn == ""
@@ -10,7 +11,7 @@ resource "aws_acm_certificate" "this" {
   count = local.create_certificate ? 1 : 0
 
   domain_name               = var.domain_name
-  subject_alternative_names = [local.api_host]
+  subject_alternative_names = concat([local.api_host], local.web_enabled ? [local.gateway_host] : [])
   validation_method         = "DNS"
   tags                      = var.tags
 

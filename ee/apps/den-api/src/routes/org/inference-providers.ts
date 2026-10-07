@@ -5,7 +5,8 @@ import { AuthSessionTable, GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTab
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_CREDENTIAL_STATUSES, GATEWAY_PROVIDER_STATUSES, type GatewayAccessGrantWrite, type GatewayProviderConnectResponse, type GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { gatewayMemberConnectionsResponseSchema } from "@openwork/types/den/inference"
-import type { Hono, MiddlewareHandler } from "hono"
+import type { Context, Hono, MiddlewareHandler } from "hono"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import type {} from "hono/request-id"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
@@ -272,6 +273,14 @@ function liteLlmAudiences(input: { allMembers?: boolean; memberIds?: string[]; t
     ...[...new Set(input.memberIds ?? [])].map((memberId) => ({ type: "member" as const, memberId })),
     ...[...new Set(input.teamIds ?? [])].map((teamId) => ({ type: "team" as const, teamId })),
   ]
+}
+
+/** Member OAuth entry verified against the live browser session: provider org + initiating member. */
+async function attributeMemberOAuthEntry(c: Context, input: { organizationId: string; userId: string; memberId: string }) {
+  const attribution = auditSessionUserAttribution(input.userId, input.memberId)
+  if (!attribution) return null
+  const audited = await attributeAuditRequest(c, { organizationId: input.organizationId, ...attribution })
+  return audited.ok ? null : audited.response
 }
 
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -724,6 +733,10 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       oauthRedirect(entry.redirect_to ?? undefined)
       const liteLlmMode = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings)?.keySource ?? "personal" : null
       const method = liteLlmMode === "issued" ? "litellm_issued" as const : liteLlmMode ? "litellm_key" as const : "google" as const
+      // The live signed cookie matches the entry's initiating user: attribute to
+      // the provider's organization and the entry's member before any write.
+      const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
+      if (auditBlocked) return auditBlocked
       const status = await db.transaction(async (tx) => {
         if (!await lockMemberOAuthAuthorization(tx, provider, set, entry.org_membership_id, attempt.userId)) throw new GatewayWriteError(403, "forbidden")
         const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, session.id), eq(AuthSessionTable.token, session.token), eq(AuthSessionTable.userId, session.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
@@ -753,6 +766,10 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (provider && isLiteLlmProviderId(provider.provider_id)) throw new GatewayWriteError(400, "litellm_key_required", "This provider uses your own LiteLLM key, not Google sign-in.")
       if (!provider || !set?.oauth_client_id || !set.oauth_client_secret || attempt.clientBinding !== googleOAuthClientBinding(attempt.verifier, set.oauth_client_id, set.oauth_client_secret)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       oauthRedirect(entry.redirect_to ?? undefined)
+      // The live signed cookie matches the entry's initiating user: attribute to
+      // the provider's organization and the entry's member before any write.
+      const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
+      if (auditBlocked) return auditBlocked
       const { verifier, challenge } = createPkcePair()
       const state = `google.${randomBytes(32).toString("base64url")}`
       const nextAttempt = { verifier, userId: attempt.userId, clientBinding: googleOAuthClientBinding(verifier, set.oauth_client_id, set.oauth_client_secret) }
@@ -809,6 +826,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     if (!provider || !set?.oauth_client_id || !set.oauth_client_secret || attempt.clientBinding !== googleOAuthClientBinding(attempt.verifier, set.oauth_client_id, set.oauth_client_secret)) return fail("This credential set is no longer available.")
     let redirectTo: string | null = null
     try { redirectTo = oauthRedirect(state.redirect_to ?? undefined) } catch { return fail("The sign-in redirect is no longer allowed.") }
+    const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: attempt.userId, memberId: state.org_membership_id })
+    if (auditBlocked) return auditBlocked
     const claimed = await db.transaction(async (tx) => {
       if (!await lockMemberOAuthAuthorization(tx, provider, set, state.org_membership_id, attempt.userId)) return false
       const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, browserSession.id), eq(AuthSessionTable.token, browserSession.token), eq(AuthSessionTable.userId, browserSession.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
@@ -989,6 +1008,10 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (provider && isLiteLlmProviderId(provider.provider_id)) await requireLiteLlmFeature(provider.organization_id)
       if (!provider || !set || !isLiteLlmProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      // The live signed cookie matches the entry's initiating user: attribute to
+      // the provider's organization and the entry's member before any write.
+      const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
+      if (auditBlocked) return auditBlocked
       const adminKey = await liteLlmAdminKey(provider)
       const verified = await liteLlmCall(() => verifyLiteLlmKey(createLiteLlmClient(liteLlmEndpoints(provider)), input.apiKey, adminKey))
       const assignment = await db.transaction(async (tx) => {
@@ -1024,6 +1047,10 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (!provider || !set || provider.status !== "active" || !isLiteLlmProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       await requireLiteLlmFeature(provider.organization_id)
+      // The live signed cookie matches the entry's initiating user: attribute to
+      // the provider's organization and the entry's member before any write.
+      const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
+      if (auditBlocked) return auditBlocked
       await liteLlmCall(() => provisionLiteLlmMember(provider, entry.org_membership_id, { force: true }))
       const status = await liteLlmMemberIssueStatus(provider.id, entry.org_membership_id)
       if (status.keyCount > 0) await db.update(GatewayProviderOauthStateTable).set({ used_at: new Date() }).where(and(eq(GatewayProviderOauthStateTable.id, entry.id), isNull(GatewayProviderOauthStateTable.used_at)))

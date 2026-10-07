@@ -451,6 +451,9 @@ importers:
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
+      acorn:
+        specifier: 8.16.0
+        version: 8.16.0
       better-sqlite3:
         specifier: ^13.0.2
         version: 13.0.2

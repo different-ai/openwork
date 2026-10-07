@@ -206,11 +206,33 @@ function failureSummary(results: VisualExpectationResult[]): string {
     .join("; ")}`;
 }
 
-function visionModel(): string {
+export function visionModel(): string {
   const openAiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() ?? "";
   return process.env.OPENWORK_EVAL_VISION_MODEL?.trim()
     || (anthropicKey && !openAiKey ? ANTHROPIC_DEFAULT_MODEL : OPENAI_DEFAULT_MODEL);
+}
+
+/**
+ * The configured provider as a plain ask function (OpenAI first, then
+ * Anthropic), with one retry on timeout; null when no key is set.
+ */
+export function defaultVisionAsk(): ((req: VisionRequest) => Promise<string>) | null {
+  const openAiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
+  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() ?? "";
+  const askOnce = openAiKey
+    ? (req: VisionRequest) => askOpenAi(req, openAiKey)
+    : anthropicKey ? (req: VisionRequest) => askAnthropic(req, anthropicKey) : null;
+  if (!askOnce) return null;
+  return async (req) => {
+    try {
+      return await askOnce(req);
+    } catch (error) {
+      if (!isTimeoutError(error)) throw error;
+      await delay(10_000);
+      return askOnce(req);
+    }
+  };
 }
 
 export async function judgeVision(

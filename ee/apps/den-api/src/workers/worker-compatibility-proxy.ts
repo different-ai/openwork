@@ -11,9 +11,11 @@ import { resolveCloudRuntimeAccess } from "./worker-access.js"
 type WorkerId = typeof WorkerTable.$inferSelect.id
 type OrganizationId = typeof WorkerTable.$inferSelect.org_id
 type WorkerTokenScope = "client" | "host"
-type WorkerAuthorization = {
+export type WorkerAuthorization = {
   organizationId: OrganizationId
   scope: WorkerTokenScope
+  /** Matched worker token row id (never the token value), for audit attribution. */
+  tokenId?: string
 }
 
 type AuthenticateWorkerRequest = (input: {
@@ -29,6 +31,11 @@ export type CloudWorkerCompatibilityOptions = {
   resolveCloudAccess?: ResolveCloudAccess
   fetchImpl?: typeof fetch
   maxActiveRequestsPerWorker?: number
+  /**
+   * Runs once the worker token is verified and before any effect (web access
+   * recheck, upstream call); a returned Response (audit 503) is sent instead.
+   */
+  onAuthorized?: (authorization: WorkerAuthorization) => Promise<Response | null>
 }
 
 const DEFAULT_MAX_ACTIVE_REQUESTS_PER_WORKER = 16
@@ -100,6 +107,7 @@ async function authenticateWorkerRequest(input: {
     .select({
       organizationId: WorkerTable.org_id,
       scope: WorkerTokenTable.scope,
+      tokenId: WorkerTokenTable.id,
     })
     .from(WorkerTokenTable)
     .innerJoin(WorkerTable, eq(WorkerTable.id, WorkerTokenTable.worker_id))
@@ -111,9 +119,9 @@ async function authenticateWorkerRequest(input: {
     .limit(tokens.length)
 
   const host = rows.find((row) => row.scope === "host")
-  if (host) return { organizationId: host.organizationId, scope: "host" }
+  if (host) return { organizationId: host.organizationId, scope: "host", tokenId: host.tokenId }
   const client = rows.find((row) => row.scope === "client")
-  return client ? { organizationId: client.organizationId, scope: "client" } : null
+  return client ? { organizationId: client.organizationId, scope: "client", tokenId: client.tokenId } : null
 }
 
 function connectionNamedHeaders(headers: Headers) {
@@ -261,6 +269,8 @@ export async function proxyCloudWorkerCompatibilityRequest(input: {
   if (!authorization || (!isReadMethod(input.request.method.toUpperCase()) && authorization.scope !== "host")) {
     return jsonError(401, "unauthorized")
   }
+  const blocked = await options.onAuthorized?.(authorization)
+  if (blocked) return blocked
 
   // The stable /v1/cloud/workers/:id URL, token handling, and response shape are
   // unchanged. Published desktops connect here only after OpenWorkWebAccessGate

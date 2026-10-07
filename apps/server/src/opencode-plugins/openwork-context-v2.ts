@@ -1,19 +1,31 @@
+import { z } from "zod";
+import { server as browserTools } from "./openwork-chrome-devtools.js";
+
+const browserResult = z.object({
+  content: z.array(z.union([z.object({ type: z.literal("text"), text: z.string() }),
+    z.object({ type: z.literal("file"), uri: z.string(), mime: z.string() })])),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
 type Tool = {
   name: string;
   description: string;
   input: Record<string, unknown>;
   options: { codemode: boolean };
-  execute(input: unknown, context: { signal: AbortSignal }): Promise<{ content: { type: "text"; text: string }[] }>;
+  execute(input: unknown, context: { signal: AbortSignal; sessionID: string }): Promise<z.infer<typeof browserResult>>;
 };
 type Context = {
-  options: { url: string; token: string };
+  options: { url: string; token: string; browser?: { url: string; token: string } };
   tool: { transform(callback: (editor: { add(tool: Tool): void }) => void): Promise<{ dispose(): Promise<void> }> };
 };
 
-// The only credential here authorizes these two read tools, never general host APIs.
+// Separate credentials authorize app reads and conversation-scoped browser
+// operations. Neither grants arbitrary host APIs or OpenWork app commands.
 export default {
   id: "openwork.context",
   async setup(context: Context) {
+    const browser = context.options.browser;
+    const browserDefinitions = browser ? await browserTools() : undefined;
     const registration = await context.tool.transform(editor => {
       for (const name of ["openwork_context", "openwork_query"]) {
         editor.add({
@@ -34,6 +46,22 @@ export default {
             });
             if (!response.ok) throw new Error(`OpenWork read failed (${response.status})`);
             return { content: [{ type: "text", text: await response.text() }] };
+          },
+        });
+      }
+      if (browser && browserDefinitions) for (const [name, definition] of Object.entries(browserDefinitions.tool)) {
+        editor.add({
+          name, description: definition.description,
+          input: z.toJSONSchema(z.object(definition.args)),
+          options: { codemode: false },
+          async execute(input, call) {
+            const response = await fetch(browser.url, {
+              method: "POST", redirect: "error", signal: call.signal,
+              headers: { Authorization: `Bearer ${browser.token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ name, input, sessionId: call.sessionID }),
+            });
+            if (!response.ok) throw new Error(`Browser request failed (${response.status})`);
+            return browserResult.parse(await response.json());
           },
         });
       }

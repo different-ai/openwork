@@ -3,6 +3,19 @@ title: "Changelog"
 description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="October 7th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.57](https://github.com/different-ai/openwork/compare/v0.18.56...v0.18.57): Move your Claude Cowork setup to OpenWork with one prompt
+
+  - **Move your Cowork setup with one prompt.** Ask the agent you already use to follow `openworklabs.com/migrate.md` to bring your Claude Cowork and Claude Code plugins and skills into OpenWork. Re-running picks up changes without duplicates, reuses connections your organization already has, and explains when a connection still needs setup.
+  - **Give each teammate their own connector key.** For admins: external connections can use individual keys instead of one shared key. Members can add or replace their key from the Library or Den, using a masked entry form; desktop chat can guide them to add one when needed. For admins who use LiteLLM, connecting your own proxy is also available as a preview on request.
+  - **Auto and Apps are available to more organizations.** Free Auto no longer needs an organization-by-organization rollout, and every organization can build Apps without a platform admin enabling them. Auto can also read images you attach or that tools return, and signed-out Linux desktops no longer need a system keyring to use it.
+  - **Self-hosting gains a Google Cloud Run starting point.** For self-hosters: starter deployment files and instructions cover the Den API, Den web app, and migration job on Cloud Run. Old self-hosted Den settings that had no effect are no longer read.
+  - **Everyday work is clearer and more dependable.** Your first organization message now gets an answer before you have a workspace; videos made in a conversation's work folder play in chat; and stopping a run no longer leaves a bold “Step interrupted” row. Agent-led installs open on Setup complete without requiring Node first, and teammate invites survive workspace claiming. Model names and provider details are clearer. Workbot uses one quiet activity line and can react with emoji, while Slack runs wait for slow desktop work instead of reporting that they are stuck.
+  - **Some desktop options have changed or are gone.** Workspace sharing and remote-workspace connections have been removed. Organization Analytics is gone, while usage reporting remains in AI Gateway. Plugins now come from your organization's Library instead of being installed into workspaces, and the “From GitHub” plugin import is gone. The Library no longer has a card view. Automation choices now say Desktop or Cloud, and computer use has been removed from that editor.
+
+</Update>
+
 <Update label="October 3rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
   ## [v0.18.56](https://github.com/different-ai/openwork/compare/v0.18.55...v0.18.56): Find shared connectors that still need your sign-in

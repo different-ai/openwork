@@ -7,6 +7,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { verifyBotProtection } from "../../bot-protection.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
 import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
@@ -367,6 +368,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
+    // The invitation token proves its organization: served evidence there
+    // (category read), actor unknown; the token itself is never recorded.
+    await attributeAuditRequest(c, { organizationId: invitation.organization.id, actor: { type: "unknown", id: null }, principalKey: "unknown:invitation_token" })
+
     return c.json(invitation)
     },
   )
@@ -408,11 +413,22 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     let accepted: AcceptInvitationForUserResult | null = null
+    let auditBlocked: Response | null = null
     try {
       accepted = await acceptInvitationForUser({
         userId: normalizeDenTypeId("user", user.id),
         email,
         invitationId: input.id,
+        // The invitation matched the verified session user's email: its
+        // organization is the tenant; the invitee has no member id yet.
+        beforeEffect: async (invitation) => {
+          const attribution = auditSessionUserAttribution(user.id)
+          if (!attribution) return true
+          const audited = await attributeAuditRequest(c, { organizationId: invitation.organizationId, ...attribution })
+          if (audited.ok) return true
+          auditBlocked = audited.response
+          return false
+        },
       })
     } catch (error) {
       if (error instanceof OrganizationEmailDomainRestrictionError) {
@@ -428,6 +444,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     if (!accepted) {
       return c.json({ error: "invitation_not_found" }, 404)
+    }
+
+    if (accepted.status === "blocked") {
+      return auditBlocked ?? c.json({ error: "audit_unavailable" }, 503)
     }
 
     if (accepted.status === "membership_removed") {

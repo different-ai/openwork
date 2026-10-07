@@ -113,3 +113,48 @@ test("an older evidence deployment that is already inactive gets no new status",
   const statuses = f.writes.filter(w => /deployments\/\d+\/statuses$/.test(w.path));
   assert.deepEqual(statuses.map(w => w.path.match(/deployments\/(\d+)\//)[1]), ["29"]);
 });
+
+const designNote = {
+  rule: "layout.split-row", severity: "medium", source: "layout",
+  title: "Columns drift away from their rows",
+  detail: "9 rows leave a 405–845px hole between “What it does” … “Kind”.",
+  step: "after: at 1920 wide every row has its own columns",
+  spec: "evals/specs/library-list-on-wide-screens.e2e.test.ts",
+  anchors: ['[data-library-row="docs-helper"]'], classes: ["w-[150px] md:w-[190px]"],
+};
+
+test("advisory design notes ride in the same evidence check: what is wrong, where in the code, how to reproduce, and the verdict is unchanged", async () => {
+  const f = fixture();
+  f.input.receipt.design = { reviewed: 1, notes: [designNote] };
+  await presentEvidence(f.input, f.api);
+  const check = f.writes[0].body;
+  assert.equal(check.name, "Evidence preview");
+  assert.equal(check.conclusion, "success");
+  assert.match(check.output.summary, /Design review \(advisory\): 1 note, 1 worth fixing\./);
+  assert.match(check.output.text, /### 1\. Columns drift away from their rows/);
+  assert.match(check.output.text, /Where in the code: `\[data-library-row="docs-helper"\]` · class `w-\[150px\] md:w-\[190px\]`/);
+  assert.match(check.output.text, /Reproduce: `pnpm evals:e2e library-list-on-wide-screens --local && pnpm --dir evals design:review -- --test-run latest --json`/);
+  assert.match(check.output.text, /```json\n\[/);
+  assert.equal(f.writes.filter(write => write.path.endsWith("/check-runs")).length, 1, "no second check for design");
+});
+
+test("design note text from the page or the model is inert, and a malformed digest adds nothing", async () => {
+  const f = fixture();
+  f.input.receipt.design = { reviewed: 1, notes: [{ ...designNote, title: "[Approve](https://evil.example/x) @octocat <img src=x>",
+    detail: "``` break out", spec: "evals/specs/../../.github/x.test.ts" }, { ...designNote, rule: "not a rule" }] };
+  await presentEvidence(f.input, f.api);
+  const text = f.writes[0].body.output.text;
+  assert.doesNotMatch(text.split("<details>")[0], /\]\(https:\/\//);
+  assert.match(text, /\\\[Approve\\\]\\\(https:\u200b\/\/evil\.example\/x\\\)/);
+  assert.match(text, /@\u200boctocat/);
+  assert.match(text, /\\<img src=x\\>/);
+  assert.doesNotMatch(text, /``` break out/);
+  assert.doesNotMatch(text, /\.github\/x\.test\.ts/);
+  assert.equal((text.match(/^### /gm) ?? []).length, 1, "the note without a valid rule is dropped");
+  for (const design of ["1 note", { reviewed: "1", notes: [] }]) {
+    const g = fixture(); g.input.receipt.design = design;
+    await presentEvidence(g.input, g.api);
+    assert.equal(g.writes[0].body.conclusion, "success");
+    assert.equal(g.writes[0].body.output.text, undefined);
+  }
+});

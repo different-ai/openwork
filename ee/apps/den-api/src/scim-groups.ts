@@ -10,6 +10,9 @@ import {
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { appendDomainChanges } from "./audit/domain/legacy.js"
+import { scimGroupMappingUpdatedEvent } from "./audit/domain/scim.js"
+import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "./organization-team-roles.js"
 
@@ -586,13 +589,14 @@ export async function serializeScimGroup(group: ScimGroup, baseUrl: string): Pro
   return resource
 }
 
+/** Returns the scim_group_mapping.updated event ids (none when the mode did not change or capture is off). */
 export async function setScimGroupMappingMode(input: {
   provider: ScimProvider
   mode: ScimGroupMappingMode
-}) {
-  await withOrganizationMembershipUsageMutation(input.provider.organizationId, async (tx) => {
+}, capture: AuditChangeCapture | null = null): Promise<string[]> {
+  return withOrganizationMembershipUsageMutation(input.provider.organizationId, async (tx) => {
     const provider = await loadScimProvider(tx, input.provider)
-    if (!provider) return
+    if (!provider) return []
     if (provider.groupMappingMode !== input.mode) {
       const groups = await tx.select({ teamId: ScimGroupTable.teamId }).from(ScimGroupTable)
         .where(and(eq(ScimGroupTable.providerId, input.provider.providerId), eq(ScimGroupTable.organizationId, input.provider.organizationId)))
@@ -628,6 +632,8 @@ export async function setScimGroupMappingMode(input: {
         })
       }
     }
+    // Organization row locked FOR UPDATE by the mutation wrapper; append last.
+    return appendDomainChanges(tx, capture, [scimGroupMappingUpdatedEvent(provider.organizationId, provider, input.mode)])
   }, async (tx) => scimUsageMembers(tx, input.provider, await listScimGroups(input.provider, tx)))
 }
 

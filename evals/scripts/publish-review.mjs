@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { publishReviewPr } from "../packages/test-artifacts/src/publish-pr.ts";
 import { readTestRunDirectory } from "../packages/test-artifacts/src/scan.ts";
+import { designDigest } from "../packages/test-artifacts/src/review.ts";
 import { changedFiles, proofArtifact, selectProof } from "../../.github/scripts/pr-proof.mjs";
 
 // The only producer: the PR change proof run on the PR head.
@@ -117,7 +118,9 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
     const result = await publish({ pr: identity.pr, testRunDirs, gaps: [], automatic: true, replaceAutomatic: true,
       presentation: "native", title: `PR #${identity.pr} change proof` });
     log(result.posted ? result.urls.report : "PR proof review unchanged.");
-    return result;
+    // Advisory design notes for the Evidence preview check; never a reason to fail publication.
+    const design = await designDigest(testRunDirs).catch(() => undefined);
+    return design ? { ...result, design } : result;
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -153,7 +156,7 @@ export async function publicationJob(env, dependencies = {}) {
         !/^\/r\/[a-f0-9]{32}$/.test(reportUrl.pathname) || reportUrl.search || reportUrl.hash || reportUrl.username || reportUrl.password)
       throw new Error("Invalid published report URL");
     await summary(`## Evidence publication: published\n\n[Open private review report](${reportUrl.href})\n\nPublication succeeded; this is not a test verdict or human approval. The report shows the selected evidence and its limitations.\n`);
-    await receipt({ state: "published", reportUrl: reportUrl.href, evidence: result.evidence });
+    await receipt({ state: "published", reportUrl: reportUrl.href, evidence: result.evidence, ...(result.design ? { design: result.design } : {}) });
     return { state: "published", exitCode: 0 };
   } catch {
     await summary("## Evidence publication: failed\n\nNo new report link was confirmed. Existing evidence is not replaced by raw logs or public attachments. Check publisher configuration and the source run, then replay publication. No test pass is inferred.\n");

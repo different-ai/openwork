@@ -1,13 +1,14 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { DEN_MCP_OAUTH_RESOURCE } from "../auth.js"
 import { cloudAutomationRuntime } from "../automations/headless-runtime.js"
 import { db } from "../db.js"
-import { verifyMcpRequest } from "../mcp/auth.js"
+import { attributeAuditRequest, auditUserPrincipalKey } from "../audit/request-capture.js"
+import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
@@ -52,6 +53,8 @@ type Resolved = {
   user: { id: string; name: string | null; email: string }
   organization: Pick<typeof OrganizationTable.$inferSelect, "id" | "name" | "metadata">
   memberId: string
+  /** MCP grant/client id of the Workbot token (never token material). */
+  credentialId: string | null
 }
 
 function readBrandAppName(metadata: unknown): string | null {
@@ -119,7 +122,19 @@ async function resolve(headers: Headers): Promise<Resolved | Response> {
     user: { id: user.id, name: user.name?.trim() || null, email: user.email },
     organization,
     memberId: member.id,
+    credentialId: mcpPrincipalCredentialId(verified),
   }
+}
+
+/** Verified Workbot token + active membership: the token's organization and member are the audit tenant/actor. */
+async function attributeWorkbot(c: Context, resolved: Resolved) {
+  const credentialId = resolved.credentialId
+  const audited = await attributeAuditRequest(c, {
+    organizationId: resolved.organization.id,
+    actor: { type: "user", id: resolved.user.id, memberId: resolved.memberId, ...(credentialId ? { credentialId } : {}) },
+    principalKey: auditUserPrincipalKey({ userId: resolved.user.id, memberId: resolved.memberId, credentialId: `mcp:${credentialId ?? "token"}` }),
+  })
+  return audited.ok ? null : audited.response
 }
 
 export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono<T>) {
@@ -141,6 +156,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     async (c) => {
       const resolved = await resolve(c.req.raw.headers)
       if (resolved instanceof Response) return resolved
+      const auditBlocked = await attributeWorkbot(c, resolved)
+      if (auditBlocked) return auditBlocked
       const { organization, user, memberId } = resolved
       const canSchedule = (await cloudAutomationRuntime(organization.id).catch(() => "web")) === "headless"
       return c.json({
@@ -212,6 +229,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     async (c) => {
       const resolved = await resolve(c.req.raw.headers)
       if (resolved instanceof Response) return resolved
+      const auditBlocked = await attributeWorkbot(c, resolved)
+      if (auditBlocked) return auditBlocked
       const { principal, organization } = resolved
       const readOnly = c.req.valid("json").readOnly === true
       const requiredScopes = readOnly ? [DEN_MCP_READ_SCOPE] : [DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE]

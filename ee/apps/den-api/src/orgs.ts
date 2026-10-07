@@ -27,12 +27,16 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js"
+import { appendDomainChanges } from "./audit/domain/legacy.js"
+import { memberOwnershipTransferredEvent, memberRemovedEvent, memberRoleUpdatedEvent } from "./audit/domain/members.js"
+import { currentAuditChangeCapture } from "./audit/request-capture.js"
 import { cache } from "./cache.js"
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js"
 import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "./llm/inference-provider-lifecycle.js"
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { getOrganizationFeatures, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
   roleIncludesOwner as guardRoleIncludesOwner,
@@ -83,6 +87,10 @@ export type AcceptInvitationForUserResult = {
 } | {
   status: "scim_deprovisioned"
   invitation: InvitationRow
+} | {
+  /** beforeEffect refused (audit intent could not be recorded); nothing changed. */
+  status: "blocked"
+  invitation: InvitationRow
 }
 
 type MemberLifecycleValidationFailure = Extract<MemberLifecycleValidation, { ok: false }>
@@ -96,6 +104,8 @@ type MemberMutationFailure = {
 type MemberMutationResult = {
   ok: true
   member: MemberRow
+  /** Operation change events appended in the mutation transaction (capture active). */
+  auditEventIds?: string[]
 } | MemberMutationFailure
 
 type MemberRoleUpdateResult = {
@@ -104,6 +114,7 @@ type MemberRoleUpdateResult = {
   previousRole: string
   nextRole: string
   changed: boolean
+  auditEventIds?: string[]
 } | MemberMutationFailure
 
 type OwnershipTransferFailure = {
@@ -119,6 +130,7 @@ type OwnershipTransferResult = {
   previousOwnerRole: string
   newOwnerRole: string
   previousOwnerCount: number
+  auditEventIds: string[]
 } | OwnershipTransferFailure
 
 type OwnershipTransferCommitResult = {
@@ -129,6 +141,7 @@ type OwnershipTransferCommitResult = {
   newOwnerRole: string
   previousOwnerCount: number
   demotedOwners: MemberRow[]
+  auditEventIds: string[]
 } | OwnershipTransferFailure
 
 export type InvitationStatus = "pending" | "accepted" | "canceled" | "expired"
@@ -183,6 +196,8 @@ export type OrganizationContext = {
     createdAt: Date
     updatedAt: Date
   }
+  /** Effective features of the organization, read fresh in the same request (see features.ts). */
+  features: FeatureMap
   currentMember: {
     id: MemberId
     userId: UserId
@@ -926,6 +941,11 @@ export async function acceptInvitationForUser(input: {
   userId: UserId
   email: string
   invitationId: string | null
+  /**
+   * Called once the invitation is resolved and matched to the verified user's
+   * email, before any write. Returning false aborts with status "blocked".
+   */
+  beforeEffect?: (invitation: InvitationRow) => Promise<boolean>
 }): Promise<AcceptInvitationForUserResult | null> {
   if (!input.invitationId) {
     return null
@@ -939,6 +959,10 @@ export async function acceptInvitationForUser(input: {
 
   if (invitation.email.trim().toLowerCase() !== input.email.trim().toLowerCase()) {
     return null
+  }
+
+  if (input.beforeEffect && !(await input.beforeEffect(invitation))) {
+    return { status: "blocked", invitation }
   }
 
   const invitationStatus = getInvitationStatus(invitation)
@@ -1571,11 +1595,16 @@ export async function getOrganizationContextForUser(input: {
     return null
   }
 
-  const currentMemberRows = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organization.id), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-    .limit(1)
+  // Features are read fresh for this request alongside the membership, so
+  // per-request feature checks (audit capture) need no further query.
+  const [currentMemberRows, features] = await Promise.all([
+    db
+      .select()
+      .from(MemberTable)
+      .where(and(eq(MemberTable.organizationId, organization.id), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
+      .limit(1),
+    getOrganizationFeatures(organization.id),
+  ])
 
   const currentMember = currentMemberRows[0]
   if (!currentMember) {
@@ -1626,6 +1655,7 @@ export async function getOrganizationContextForUser(input: {
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
     },
+    features,
     currentMember: {
       id: currentMember.id,
       userId: currentMember.userId,
@@ -1792,6 +1822,8 @@ export async function updateOrganizationMemberRole(input: {
   memberId: MemberRow["id"]
   nextRole: string
 }): Promise<MemberRoleUpdateResult> {
+  // Organization row is locked FOR UPDATE first; the change event is appended last.
+  const capture = currentAuditChangeCapture(input.organizationId)
   const updated = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<MemberRoleUpdateResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
@@ -1832,6 +1864,7 @@ export async function updateOrganizationMemberRole(input: {
       .update(MemberTable)
       .set({ role: input.nextRole })
       .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
+    const auditEventIds = await appendDomainChanges(tx, capture, [memberRoleUpdatedEvent(input.organizationId, memberRow.member, input.nextRole)])
 
     return {
       ok: true,
@@ -1839,6 +1872,7 @@ export async function updateOrganizationMemberRole(input: {
       previousRole: memberRow.member.role,
       nextRole: input.nextRole,
       changed: true,
+      auditEventIds,
     }
   })
 
@@ -1852,6 +1886,7 @@ export async function updateOrganizationMemberRole(input: {
       organizationId: input.organizationId,
       orgMembershipId: updated.member.id,
       userId: updated.member.userId,
+      reason: "member_role_changed",
     })
     // Revocation prevents a live session from retaining access it just lost.
     // An upgrade removes no access, so there is nothing to revoke.
@@ -1859,6 +1894,8 @@ export async function updateOrganizationMemberRole(input: {
       await revokeMembershipSessionCredentials({
         organizationId: input.organizationId,
         userId: updated.member.userId,
+        memberId: updated.member.id,
+        reason: "role_changed",
       })
     }
   }
@@ -1902,6 +1939,7 @@ export async function transferOrganizationOwnership(input: {
     )
   }
 
+  const capture = currentAuditChangeCapture(input.organizationId)
   const transfer: OwnershipTransferCommitResult = await withOrganizationTeamMutation(input.organizationId, async (tx): Promise<OwnershipTransferCommitResult> => {
     const memberRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
@@ -1966,6 +2004,12 @@ export async function transferOrganizationOwnership(input: {
       .update(MemberTable)
       .set({ role: roles.newOwnerRole })
       .where(eq(MemberTable.id, targetRow.member.id))
+    const auditEventIds = await appendDomainChanges(tx, capture, [memberOwnershipTransferredEvent({
+      organizationId: input.organizationId,
+      newOwner: targetRow.member,
+      newOwnerRole: roles.newOwnerRole,
+      demoted: demotedOwnerRows.map((row) => ({ member: row.member, nextRole: demotedRoleByMemberId.get(row.member.id) ?? row.member.role })),
+    })])
 
     return {
       ok: true,
@@ -1975,6 +2019,7 @@ export async function transferOrganizationOwnership(input: {
       newOwnerRole: roles.newOwnerRole,
       previousOwnerCount: demotedOwnerRows.length,
       demotedOwners: demotedOwnerRows.map((row) => row.member),
+      auditEventIds,
     }
   })
 
@@ -1990,10 +2035,13 @@ export async function transferOrganizationOwnership(input: {
       organizationId: input.organizationId,
       orgMembershipId: ownerRow.id,
       userId: ownerRow.userId,
+      reason: "ownership_transferred",
     })
     await revokeMembershipSessionCredentials({
       organizationId: input.organizationId,
       userId: ownerRow.userId,
+      memberId: ownerRow.id,
+      reason: "ownership_transferred",
     })
   }
 
@@ -2001,10 +2049,13 @@ export async function transferOrganizationOwnership(input: {
     organizationId: input.organizationId,
     orgMembershipId: transfer.newOwner.id,
     userId: transfer.newOwner.userId,
+    reason: "ownership_transferred",
   })
   await revokeMembershipSessionCredentials({
     organizationId: input.organizationId,
     userId: transfer.newOwner.userId,
+    memberId: transfer.newOwner.id,
+    reason: "ownership_transferred",
   })
 
   return {
@@ -2014,6 +2065,7 @@ export async function transferOrganizationOwnership(input: {
     previousOwnerRole: transfer.previousOwnerRole,
     newOwnerRole: transfer.newOwnerRole,
     previousOwnerCount: transfer.previousOwnerCount,
+    auditEventIds: transfer.auditEventIds,
   }
 }
 
@@ -2023,6 +2075,9 @@ export async function removeOrganizationMember(input: {
   removedByOrgMemberId?: MemberRow["id"]
 }): Promise<MemberMutationResult> {
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
+  // Every removal path (members DELETE, invitation cancel, SCIM deprovisioning)
+  // appends member.removed here when the request's change capture is active.
+  const capture = currentAuditChangeCapture(input.organizationId)
   const removed = await withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
@@ -2153,8 +2208,9 @@ export async function removeOrganizationMember(input: {
       .update(MemberTable)
       .set({ removedAt, removedByOrgMember: input.removedByOrgMemberId ?? null })
       .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
+    const auditEventIds = await appendDomainChanges(tx, capture, [memberRemovedEvent({ organizationId: input.organizationId, member, removedByMemberId: input.removedByOrgMemberId })])
 
-    return { ok: true, member }
+    return { ok: true, member, auditEventIds }
   }, [input.memberId])
 
   if (!removed.ok) {
@@ -2167,10 +2223,13 @@ export async function removeOrganizationMember(input: {
     organizationId: input.organizationId,
     orgMembershipId: removed.member.id,
     userId: removed.member.userId,
+    reason: "member_removed",
   })
   await revokeMembershipSessionCredentials({
     organizationId: input.organizationId,
     userId: removed.member.userId,
+    memberId: removed.member.id,
+    reason: "member_removed",
   })
 
   await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: removed.member.id, change: "removed" })

@@ -6,6 +6,8 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
+import { recordProfileUpdated } from "../../audit/domain/account.js"
+import { recordSessionOrganizationEntered } from "../../audit/domain/sessions.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
@@ -292,6 +294,8 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         .set({ name, updatedAt })
         .where(eq(AuthUserTable.id, normalizeDenTypeId("user", user.id)))
       await cache.auth.deleteSessionsForUser(normalizeDenTypeId("user", user.id))
+      // account.profile_updated in every membership (direct update: no better-auth hook).
+      await recordProfileUpdated({ userId: user.id, before: user.name, after: name })
 
       return c.json({
         user: {
@@ -346,6 +350,10 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const sessionId = normalizeDenTypeId("session", session.id)
       await setSessionActiveOrganization(sessionId, activeOrg.id)
       c.set("session", { ...session, activeOrganizationId: activeOrg.id })
+      // session.organization_entered in the destination organization only.
+      if (session.activeOrganizationId !== activeOrg.id) {
+        await recordSessionOrganizationEntered({ userId: user.id, organizationId: activeOrg.id, sessionId })
+      }
 
       return c.json({ activeOrgId: activeOrg.id, activeOrgSlug: activeOrg.slug })
     },

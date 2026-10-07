@@ -22,6 +22,7 @@ import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
 import { automationRepository, runWorkspaceId } from "./repository.js"
+import { recordAutomationRunCompleted, recordAutomationRunStarted } from "./audit.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime, HEADLESS_AGENT_ENGINE_KIND, type CloudAutomationRuntime } from "./headless-runtime.js"
@@ -425,7 +426,7 @@ export class AutomationService {
         reason: { ...blocked, occurredAt: now },
         now,
       })
-      return automationRepository.recordSkippedManual({
+      const skipped = await automationRepository.recordSkippedManual({
         ...scope,
         automation: current.automation,
         revision,
@@ -434,7 +435,10 @@ export class AutomationService {
         message: blocked.message,
         now,
       })
+      await recordAutomationRunCompleted({ runId: skipped.id, terminalAt: now })
+      return skipped
     }
+    const claimedAt = Date.now()
     const claim = await automationRepository.claim({
       automation: { ...current.automation, state: "active" },
       revision,
@@ -444,8 +448,9 @@ export class AutomationService {
       leaseOwner: schedulerOwner,
       leaseMs: env.automations.leaseMs,
       claimDeadlineMs: AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
-      now: Date.now(),
+      now: claimedAt,
     })
+    if (claim.kind === "overlap") await recordAutomationRunCompleted({ runId: claim.run.id, terminalAt: claimedAt })
     if (claim.kind === "claimed" && claim.run.executionTarget === "cloud") {
       this.startCloudRun(claim.run.id)
     }
@@ -461,14 +466,20 @@ export class AutomationService {
   }
 
   async cancelRun(scope: OwnerScope, runId: string): Promise<AutomationRun | null> {
-    return automationRepository.requestCancellation({ ...scope, runId, now: Date.now() })
+    const now = Date.now()
+    const run = await automationRepository.requestCancellation({ ...scope, runId, now })
+    // A queued run is cancelled right here; running ones finish through their executor.
+    if (run?.status === "cancelled") await recordAutomationRunCompleted({ runId: run.id, terminalAt: now, actor: { kind: "owner" } })
+    return run
   }
 
   async tick(input: { now?: number; batchSize?: number } = {}): Promise<string[]> {
     const now = input.now ?? Date.now()
     const started: string[] = []
-    await automationRepository.recoverExpiredLeases({ now, limit: input.batchSize ?? env.automations.batchSize })
-    await automationRepository.expireUnclaimedDesktop({ now, limit: input.batchSize ?? env.automations.batchSize })
+    const recovered = await automationRepository.recoverExpiredLeases({ now, limit: input.batchSize ?? env.automations.batchSize })
+    const expired = await automationRepository.expireUnclaimedDesktop({ now, limit: input.batchSize ?? env.automations.batchSize })
+    // Only runs that ran out of attempts became terminal at `now`; re-queued ones record nothing.
+    for (const runId of [...recovered.map((run) => run.id), ...expired]) await recordAutomationRunCompleted({ runId, terminalAt: now })
     await this.pruneRunnerState(now)
 
     const queuedCloud = await automationRepository.listQueuedCloud({ limit: input.batchSize ?? env.automations.batchSize })
@@ -508,6 +519,9 @@ export class AutomationService {
         if (error instanceof Error && error.message === "automation_not_active") continue
         throw error
       }
+      // Scheduler-initiated work has no HTTP request: its start is service-layer evidence.
+      if (claim.kind !== "duplicate") await recordAutomationRunStarted(claim.run.id)
+      if (claim.kind === "overlap") await recordAutomationRunCompleted({ runId: claim.run.id, terminalAt: now })
       if (claim.kind !== "claimed") continue
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: item.revision.model,
@@ -516,7 +530,7 @@ export class AutomationService {
         // the work or a capable management client reconciles the Automation.
         modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud",
       })) {
-        await automationRepository.skipRun({ runId: claim.run.id, code: access.code, message: access.message, now })
+        await this.skipRun({ runId: claim.run.id, code: access.code, message: access.message, now })
         await automationRepository.markNeedsAttention({
           automationId: item.automation.id,
           expectedRevisionId: item.revision.id,
@@ -616,7 +630,7 @@ export class AutomationService {
       modelAttentionCapable: supportsModelAttention(scope),
     })) {
       const now = Date.now()
-      await automationRepository.skipRun({
+      await this.skipRun({
         runId: claimed.run.id,
         code: access.code,
         message: access.message,
@@ -687,6 +701,8 @@ export class AutomationService {
       attempt: result.attempt,
       now,
     })
+    // A retried callback returns the stored terminal run (older finished_at): no second event.
+    await recordAutomationRunCompleted({ runId, terminalAt: now, actor: { kind: "runner", runnerId: scope.runnerId, ownerMemberId: scope.ownerMemberId } })
     // A Cloud Automation run once on a desktop that lacks its model says
     // nothing about the cloud, so only the Automation's own placement pauses.
     if ((result.error?.code === "model_access_lost" || result.error?.code === "provider_unavailable")
@@ -765,6 +781,18 @@ export class AutomationService {
     }) ?? item
   }
 
+  /** completeCloud plus the run's single terminal audit outcome (only when this call made the transition). */
+  private async completeCloud(input: Parameters<typeof automationRepository.completeCloud>[0]) {
+    const completed = await automationRepository.completeCloud(input)
+    await recordAutomationRunCompleted({ runId: input.runId, terminalAt: input.now })
+    return completed
+  }
+
+  private async skipRun(input: Parameters<typeof automationRepository.skipRun>[0]) {
+    await automationRepository.skipRun(input)
+    await recordAutomationRunCompleted({ runId: input.runId, terminalAt: input.now })
+  }
+
   private async executeCloudRun(runId: string): Promise<void> {
     const leaseOwner = `${schedulerOwner}:cloud:${runId}`
     const target = await automationRepository.cloudRunTarget(runId)
@@ -793,7 +821,7 @@ export class AutomationService {
       : await this.getOpenWorkWebAccess(claimed.automation.organizationId)
     if (!webAccess.hasAccess) {
       const now = Date.now()
-      await automationRepository.skipRun({
+      await this.skipRun({
         runId: claimed.run.id,
         code: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
         message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
@@ -818,7 +846,7 @@ export class AutomationService {
     if (claimed.revision.action?.kind !== "saved_script") return
     const executor = cloudWorkflowExecutor
     if (!executor) {
-      await automationRepository.completeCloud({
+      await this.completeCloud({
         automationId: claimed.automation.id,
         runId,
         leaseOwner,
@@ -839,7 +867,7 @@ export class AutomationService {
       message: error instanceof Error ? error.message : "Workflow execution failed.",
       retryable: true,
     }))
-    await automationRepository.completeCloud({
+    await this.completeCloud({
       automationId: claimed.automation.id,
       runId,
       leaseOwner,
@@ -878,7 +906,7 @@ export class AutomationService {
     if (action?.kind !== "agent") return
     const executor = engineKind === HEADLESS_AGENT_ENGINE_KIND ? headlessAgentExecutor : cloudAgentExecutor
     if (!executor) {
-      await automationRepository.completeCloud({
+      await this.completeCloud({
         automationId: claimed.automation.id,
         runId: claimed.run.id,
         leaseOwner,
@@ -912,7 +940,7 @@ export class AutomationService {
     const heartbeatIntervalMs = Math.max(1_000, Math.min(10_000, Math.floor(env.automations.leaseMs / 3)))
     await monitor()
     if (controller.signal.aborted) {
-      await automationRepository.completeCloud({
+      await this.completeCloud({
         automationId: claimed.automation.id,
         runId: claimed.run.id,
         leaseOwner,
@@ -993,7 +1021,7 @@ export class AutomationService {
       })
     }
 
-    await automationRepository.completeCloud({
+    await this.completeCloud({
       automationId: claimed.automation.id,
       runId: claimed.run.id,
       leaseOwner,

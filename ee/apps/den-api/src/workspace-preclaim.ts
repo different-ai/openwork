@@ -18,6 +18,7 @@ import {
   DEN_MCP_RESOURCE_CLAIM,
   DEN_MCP_TOKEN_USE_CLAIM,
 } from "./auth.js"
+import { recordUserSessionsRevokedBySystem } from "./audit/domain/sessions.js"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -377,7 +378,7 @@ export async function revokePreclaimCredentials(bootstrapId: string, now = new D
   if (!bootstrap?.agentUserId) return
   const agentUserId = normalizeDenTypeId("user", bootstrap.agentUserId)
   const sessions = await db
-    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
+    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, agentUserId))
   await db.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, agentUserId))
@@ -385,6 +386,9 @@ export async function revokePreclaimCredentials(bootstrapId: string, now = new D
     await cache.auth.revokeSession(session.token)
     await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id))
   }
+  // Direct delete of the setup agent's sessions: session.revoked in the agent's
+  // active memberships (system actor; never fails the cleanup).
+  await recordUserSessionsRevokedBySystem({ userId: agentUserId, sessions, reasonCode: "bootstrap_credentials_revoked", system: "den-api.workspace-bootstrap" })
 }
 
 /**

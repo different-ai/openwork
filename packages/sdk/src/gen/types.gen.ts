@@ -152,7 +152,8 @@ export type AdminFeature = {
     | "slackAssistantHeadless"
     | "headlessAutomations"
     | "workbot"
-    | "litellm";
+    | "litellm"
+    | "platformAuditReads";
   label: string;
   description: string;
   since: string;
@@ -201,6 +202,7 @@ export type AdminOrganizationsPageResponse = {
       headlessAutomations: boolean;
       workbot: boolean;
       litellm: boolean;
+      platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -294,6 +296,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      platformAuditReads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -375,6 +386,7 @@ export type AdminOverviewResponse = {
       headlessAutomations: boolean;
       workbot: boolean;
       litellm: boolean;
+      platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -468,6 +480,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      platformAuditReads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1593,7 +1614,8 @@ export type CapabilityDisabledError = {
     | "slackAssistantHeadless"
     | "headlessAutomations"
     | "workbot"
-    | "litellm";
+    | "litellm"
+    | "platformAuditReads";
 };
 
 export type CreateInstallLinkRequest = {
@@ -5575,6 +5597,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       headlessAutomations: boolean;
       workbot: boolean;
       litellm: boolean;
+      platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5668,6 +5691,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      platformAuditReads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5737,6 +5769,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       headlessAutomations: boolean;
       workbot: boolean;
       litellm: boolean;
+      platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5830,6 +5863,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      platformAuditReads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -8757,6 +8799,11 @@ export type GetAuditOperationEventsResponses = {
         changedFields: Array<string>;
       };
       reasonCode?: string;
+      http?: {
+        method: string;
+        route: string;
+        status?: number;
+      };
       logicalBytes: number;
     }>;
     nextCursor: string | null;
