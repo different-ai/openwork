@@ -186,7 +186,9 @@ export function AuditUsageFacts({ usage, captureControl }: { usage: AuditUsageRe
     { label: "Recorded events", value: usage.eventCount.toLocaleString() },
     { label: "Oldest available history", value: <AuditTime value={usage.oldestAvailableAt} /> },
     { label: "Logical storage", value: `${usage.logicalBytes.toLocaleString()} bytes (not disk usage)` },
-    { label: "Measured", value: <AuditTime value={usage.measuredAt} /> },
+    // Retained operations, recorded events and logical storage are recomputed by a
+    // daily refresh (den-audit-usage), not on every write.
+    { label: "Totals last refreshed", value: usage.measuredAt ? <><AuditTime value={usage.measuredAt} />, refreshed daily</> : "Not yet, refreshed daily" },
     { label: "Policy source", value: policy ? policy.source === "operator" ? "Instance operator" : "Cloud" : "Not configured" },
     { label: "Categories", value: policy ? policy.categories.map(auditLabel).join(", ") || "None" : "Not configured" },
     { label: "Operation allowance", value: policy ? policy.allowance.toLocaleString() : "Not configured" },

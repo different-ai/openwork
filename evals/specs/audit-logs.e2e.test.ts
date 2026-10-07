@@ -180,6 +180,9 @@ test("a flagged owner records and filters audit history by default while an unfl
     expect(usage.policy?.captureStartedAt).toEqual(expect.any(String));
     expect(usage.retainedOperations).toBeGreaterThan(0);
     await owner.see({ text: "6,000,000" });
+    // Usage totals are not live: the panel says when the daily refresh last ran.
+    await owner.see({ text: "Totals last refreshed" });
+    await owner.see({ text: /refreshed daily/ });
     await owner.see({ text: "Instance operator" });
     await owner.see({ text: "Keep all" });
     expect((await audit.dom('[role="switch"][aria-label="Capture audit logs"][aria-checked="true"]')).elements).toHaveLength(1);
