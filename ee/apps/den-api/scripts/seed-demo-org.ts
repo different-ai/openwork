@@ -22,7 +22,6 @@ import { auth } from "../src/auth.js"
 import { db } from "../src/db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../src/desktop-policies.js"
 import { env } from "../src/env.js"
-import { seedDefaultOrganizationRoles } from "../src/orgs.js"
 import { updateOrganizationMetadata } from "../src/organization-metadata.js"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { calculateOrganizationSeatBillingCounts } from "../src/stripe-billing.js"
@@ -349,7 +348,6 @@ async function ensureOrganization(ownerUserId: UserId): Promise<OrganizationId> 
         updatedAt: new Date(),
       })
       .where(eq(OrganizationTable.id, existing[0].id))
-    await seedDefaultOrganizationRoles(existing[0].id)
     const ownerMemberId = await ensureMember(existing[0].id, ownerUserId, "owner")
     await ensureDefaultDesktopPolicyForOrganization({
       organizationId: existing[0].id,
@@ -367,7 +365,6 @@ async function ensureOrganization(ownerUserId: UserId): Promise<OrganizationId> 
     name: DEMO_ORG_NAME,
     slug: DEMO_ORG_SLUG,
   })
-  await seedDefaultOrganizationRoles(id)
   const ownerMemberId = await ensureMember(id, ownerUserId, "owner")
   await ensureDefaultDesktopPolicyForOrganization({
     organizationId: id,
