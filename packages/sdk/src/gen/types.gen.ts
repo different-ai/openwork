@@ -8387,10 +8387,10 @@ export type UpdateAuditCaptureErrors = {
     error: "audit_policy_changed" | "audit_policy_not_configured" | "audit_capture_unavailable";
   };
   /**
-   * Cursor expired or retained snapshot anchors/history are no longer available.
+   * Cursor expired.
    */
   410: {
-    error: "audit_cursor_expired" | "audit_history_unavailable";
+    error: "audit_cursor_expired";
   };
   /**
    * Audit storage or required access capture unavailable; no audit content is released.
@@ -8471,10 +8471,10 @@ export type GetAuditEventTypesErrors = {
     error: "organization_not_found" | "audit_operation_not_found";
   };
   /**
-   * Cursor expired or retained snapshot anchors/history are no longer available.
+   * Cursor expired.
    */
   410: {
-    error: "audit_cursor_expired" | "audit_history_unavailable";
+    error: "audit_cursor_expired";
   };
   /**
    * Audit storage or required access capture unavailable; no audit content is released.
@@ -8522,7 +8522,7 @@ export type GetAuditOperationsData = {
      */
     actorId?: string;
     /**
-     * Exact stable action of any child event within the snapshot watermark.
+     * Exact stable action of any child event within the snapshot.
      */
     action?: string;
     /**
@@ -8534,11 +8534,11 @@ export type GetAuditOperationsData = {
      */
     origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
     /**
-     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
      */
     searchId?: string;
     /**
-     * Exact case-sensitive stored reference ID from any child within the watermark.
+     * Exact case-sensitive stored reference ID from any child within the snapshot.
      */
     resourceId?: string;
     /**
@@ -8574,10 +8574,10 @@ export type GetAuditOperationsErrors = {
     error: "organization_not_found" | "audit_operation_not_found";
   };
   /**
-   * Cursor expired or retained snapshot anchors/history are no longer available.
+   * Cursor expired.
    */
   410: {
-    error: "audit_cursor_expired" | "audit_history_unavailable";
+    error: "audit_cursor_expired";
   };
   /**
    * Audit storage or required access capture unavailable; no audit content is released.
@@ -8619,7 +8619,7 @@ export type GetAuditOperationsResponses = {
       }>;
     }>;
     nextCursor: string | null;
-    snapshotSequence: number;
+    snapshotAt: string;
   };
 };
 
@@ -8668,10 +8668,10 @@ export type GetAuditOperationEventsErrors = {
     error: "organization_not_found" | "audit_operation_not_found";
   };
   /**
-   * Cursor expired or retained snapshot anchors/history are no longer available.
+   * Cursor expired.
    */
   410: {
-    error: "audit_cursor_expired" | "audit_history_unavailable";
+    error: "audit_cursor_expired";
   };
   /**
    * Audit storage or required access capture unavailable; no audit content is released.
@@ -8689,11 +8689,10 @@ export type GetAuditOperationEventsResponses = {
    */
   200: {
     events: Array<{
-      schemaVersion: 1;
+      schemaVersion: 2;
       id: string;
       organizationId: string;
       operationId: string;
-      sequence: number;
       operation: {
         kind: string;
         scope: string;
@@ -8745,7 +8744,7 @@ export type GetAuditOperationEventsResponses = {
       logicalBytes: number;
     }>;
     nextCursor: string | null;
-    snapshotSequence: number;
+    snapshotAt: string;
   };
 };
 
@@ -8783,10 +8782,10 @@ export type GetAuditUsageErrors = {
     error: "organization_not_found" | "audit_operation_not_found";
   };
   /**
-   * Cursor expired or retained snapshot anchors/history are no longer available.
+   * Cursor expired.
    */
   410: {
-    error: "audit_cursor_expired" | "audit_history_unavailable";
+    error: "audit_cursor_expired";
   };
   /**
    * Audit storage or required access capture unavailable; no audit content is released.
@@ -8800,7 +8799,7 @@ export type GetAuditUsageError = GetAuditUsageErrors[keyof GetAuditUsageErrors];
 
 export type GetAuditUsageResponses = {
   /**
-   * Current stored audit policy and usage, without a history scan.
+   * Current stored audit policy and the last computed usage totals, without a history scan.
    */
   200: {
     entitlement: {
@@ -8860,7 +8859,7 @@ export type GetAuditExportData = {
      */
     actorId?: string;
     /**
-     * Exact stable action of any child event within the snapshot watermark.
+     * Exact stable action of any child event within the snapshot.
      */
     action?: string;
     /**
@@ -8872,11 +8871,11 @@ export type GetAuditExportData = {
      */
     origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
     /**
-     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
      */
     searchId?: string;
     /**
-     * Exact case-sensitive stored reference ID from any child within the watermark.
+     * Exact case-sensitive stored reference ID from any child within the snapshot.
      */
     resourceId?: string;
     /**
@@ -8913,10 +8912,10 @@ export type GetAuditExportErrors = {
     error: "organization_not_found" | "audit_operation_not_found";
   };
   /**
-   * Cursor expired or retained snapshot anchors/history are no longer available.
+   * Cursor expired.
    */
   410: {
-    error: "audit_cursor_expired" | "audit_history_unavailable";
+    error: "audit_cursor_expired";
   };
   /**
    * Audit storage or required access capture unavailable; no audit content is released.

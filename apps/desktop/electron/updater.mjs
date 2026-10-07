@@ -80,8 +80,31 @@ async function writeElectronUpdaterChannel(app, channel, manifestChannel = "late
   return normalized;
 }
 
+const LOOPBACK_FEED_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * Release feed an eval serves on this machine, or null. The packaged-update
+ * journey installs a newer build from a local feed, and nothing else may
+ * redirect the updater: only plain-HTTP loopback URLs are honoured, so the
+ * override can never point an installation at a remote host. On macOS
+ * Squirrel still refuses any bundle whose signature does not satisfy the
+ * running app's designated requirement.
+ */
+export function evalUpdaterFeedUrl(env = process.env) {
+  const raw = typeof env.OPENWORK_EVAL_UPDATE_FEED_URL === "string" ? env.OPENWORK_EVAL_UPDATE_FEED_URL.trim() : "";
+  if (!raw) return null;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" || !LOOPBACK_FEED_HOSTS.has(url.hostname) || url.username || url.password) return null;
+  return url.href.replace(/\/+$/, "");
+}
+
 function electronUpdaterFeedUrl(channel, manifestChannel = "latest") {
-  return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel, manifestChannel)];
+  return evalUpdaterFeedUrl() ?? ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel, manifestChannel)];
 }
 
 function normalizeStableTargetVersion(value) {
@@ -812,6 +835,9 @@ export function registerUpdaterIpc({
       await downloadAndStageUpdate(updater, checkedUpdateVersion);
       stagedUpdate = { version: checkedUpdateVersion, channel: channelState.channel };
       updateDownloaded = true;
+      // The main-process log is the only place an installed app records this;
+      // support and the packaged-update journey read it.
+      console.info(`[updater] update ${checkedUpdateVersion} is staged and installs on quit`);
       return { ok: true };
     } catch (error) {
       updateDownloaded = false;

@@ -109,6 +109,33 @@ app.kubernetes.io/component: {{ .component }}
 {{ include "openwork-ee.fullname" . }}-inference
 {{- end -}}
 
+{{/* Secret and key holding DEN_MAINTENANCE_TOKEN for scheduled maintenance callers. */}}
+{{- define "openwork-ee.denMaintenanceTokenSecret" -}}
+{{- default (include "openwork-ee.secretName" .) .Values.denApi.auditUsage.tokenSecret -}}
+{{- end -}}
+
+{{- define "openwork-ee.denMaintenanceTokenKey" -}}
+{{- if .Values.denApi.auditUsage.tokenSecret -}}
+{{- .Values.denApi.auditUsage.tokenKey -}}
+{{- else -}}
+{{- .Values.secret.keys.maintenanceToken -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "openwork-ee.denAuditUsage.validate" -}}
+{{- $auditUsage := .Values.denApi.auditUsage -}}
+{{- $token := .Values.secret.values.maintenanceToken | default "" -}}
+{{- if and $token (lt (len $token) 24) -}}
+{{- fail "secret.values.maintenanceToken must contain at least 24 characters" -}}
+{{- end -}}
+{{- if and $auditUsage.enabled (not $auditUsage.tokenSecret) .Values.secret.create (not .Values.secret.existingSecret) (not $token) -}}
+{{- fail "denApi.auditUsage.enabled=true needs a maintenance token: set secret.values.maintenanceToken, or denApi.auditUsage.tokenSecret and tokenKey" -}}
+{{- end -}}
+{{- if and $auditUsage.enabled $auditUsage.tokenSecret (not $auditUsage.tokenKey) -}}
+{{- fail "denApi.auditUsage.tokenKey is required when denApi.auditUsage.tokenSecret is set" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "openwork-ee.denApiInternalUrl" -}}
 {{- default (printf "http://%s:%v" (include "openwork-ee.denApiServiceName" .) .Values.denApi.service.port) .Values.config.internal.apiBaseUrl -}}
 {{- end -}}

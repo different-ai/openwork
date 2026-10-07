@@ -31,9 +31,10 @@ export const auditPolicySchema = z.object({
 export const auditHttpContextSchema = z.object({
   method: z.string(), route: z.string(), status: z.number().int().min(100).max(599).optional(),
 }).strict()
+// Version 2 dropped the per-organization sequence: events are ordered by their
+// time-ordered TypeID. Stored version 1 envelopes are served as version 2.
 export const auditEventEnvelopeSchema = z.object({
-  schemaVersion: z.literal(1), id: z.string(), organizationId: z.string(), operationId: z.string(),
-  sequence: z.number().int().positive().safe(),
+  schemaVersion: z.literal(2), id: z.string(), organizationId: z.string(), operationId: z.string(),
   operation: z.object({
     kind: z.string(), scope: z.string(), origin: auditOriginSchema, originTrust: z.enum(["authenticated", "reported"]),
     initiatingActor: auditActorSchema, startedAt: z.string().datetime(),
@@ -50,13 +51,13 @@ export const auditOperationSummarySchema = z.object({
   resources: z.array(auditResourceSchema),
 }).strict()
 export const auditOperationsResponseSchema = z.object({
-  operations: z.array(auditOperationSummarySchema), nextCursor: z.string().nullable(), snapshotSequence: z.number().int().nonnegative().safe(),
+  operations: z.array(auditOperationSummarySchema), nextCursor: z.string().nullable(), snapshotAt: z.string().datetime(),
 }).strict()
 export const auditEventTypesResponseSchema = z.object({
   eventTypes: z.array(z.string().min(1).max(128).regex(/^[a-z][a-z0-9_.-]*$/)).refine((values) => new Set(values).size === values.length),
 }).strict()
 export const auditEventsResponseSchema = z.object({
-  events: z.array(auditEventEnvelopeSchema), nextCursor: z.string().nullable(), snapshotSequence: z.number().int().nonnegative().safe(),
+  events: z.array(auditEventEnvelopeSchema), nextCursor: z.string().nullable(), snapshotAt: z.string().datetime(),
 }).strict()
 export const auditEntitlementSchema = z.object({
   enabled: z.boolean(), source: z.enum(["enterprise_plan", "self_hosted", "none"]),

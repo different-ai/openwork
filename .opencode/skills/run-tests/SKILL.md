@@ -49,6 +49,9 @@ pnpm dev:den:mysql
   can fail.
 - If the checkout path contains spaces, set `OPENWORK_EVAL_SURFACES_DIR` to a
   space-free path before E2E tests. node-gyp and electron-rebuild require it.
+- Local Electron profiles, and the `electron.log` inside them, are removed when
+  a journey ends. Set `OPENWORK_EVAL_SURFACE_LOGS_DIR` to a directory outside
+  the surfaces directory to keep a copy of each log; the packaged smoke does.
 
 ## Choose one lane
 

@@ -908,7 +908,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Get resolved plugin",
-      description: "Lists active plugin memberships with the current config object projection for each item.",
+      description: "Lists active plugin memberships with the current config object projection for each item. Not recorded in organization audit logs: clients call it once per plugin on every load and sync, so it is excluded from audit capture as a high-volume read.",
       responses: {
         200: jsonResponse("Resolved plugin returned successfully.", pluginMembershipListResponseSchema),
         400: jsonResponse("The plugin path parameters were invalid.", invalidRequestSchema),

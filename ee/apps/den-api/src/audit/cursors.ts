@@ -3,41 +3,39 @@ import { typeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 
 export const AUDIT_CURSOR_TTL_MS = 24 * 60 * 60 * 1000
-const domain = "openwork.den.audit.cursor.v1\0"
-const sequence = z.number().int().nonnegative().safe()
+// v2: positions are time-ordered event/operation IDs; there is no sequence watermark.
+const domain = "openwork.den.audit.cursor.v2\0"
+const milliseconds = z.number().int().nonnegative().safe()
 const positionSchema = z.object({
   operationId: typeId.schema("auditOperation"),
   eventId: typeId.schema("auditEvent"),
-  sequence: sequence.positive(),
   startedAt: z.string().datetime(),
 }).strict()
 const cursorSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   organizationId: typeId.schema("organization"),
   mode: z.enum(["operations", "events", "export-ndjson", "export-csv"]),
   filterHash: z.string().regex(/^[a-f0-9]{64}$/),
   operationId: typeId.schema("auditOperation").nullable(),
-  watermark: sequence.positive(),
-  watermarkEventId: typeId.schema("auditEvent"),
-  removedEvents: sequence,
+  /** Events recorded after this instant are outside the page set. */
+  visibleBefore: milliseconds,
   position: positionSchema,
-  issuedAt: sequence,
-  expiresAt: sequence,
-}).strict().refine((value) => value.position.sequence <= value.watermark
-  && value.removedEvents <= value.watermark
+  issuedAt: milliseconds,
+  expiresAt: milliseconds,
+}).strict().refine((value) => value.visibleBefore <= value.issuedAt
   && value.expiresAt - value.issuedAt === AUDIT_CURSOR_TTL_MS
   && (value.mode === "events" ? value.operationId === value.position.operationId : value.operationId === null))
 
 export type AuditCursor = z.infer<typeof cursorSchema>
 export type AuditCursorBinding = Pick<AuditCursor, "organizationId" | "mode" | "filterHash" | "operationId">
 export class AuditReadError extends Error {
-  constructor(readonly code: "audit_feature_disabled" | "audit_invalid_query" | "audit_invalid_cursor" | "audit_cursor_expired" | "audit_history_unavailable" | "audit_operation_not_found" | "audit_storage_inconsistent") {
+  constructor(readonly code: "audit_feature_disabled" | "audit_invalid_query" | "audit_invalid_cursor" | "audit_cursor_expired" | "audit_operation_not_found" | "audit_storage_inconsistent") {
     super(code)
     this.name = "AuditReadError"
   }
   get status() {
     if (this.code === "audit_feature_disabled") return 403
-    if (this.code === "audit_cursor_expired" || this.code === "audit_history_unavailable") return 410
+    if (this.code === "audit_cursor_expired") return 410
     if (this.code === "audit_operation_not_found") return 404
     if (this.code === "audit_storage_inconsistent") return 503
     return 400

@@ -1,0 +1,62 @@
+{{- $auditUsage := .Values.denApi.auditUsage }}
+{{- if $auditUsage.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-den-audit-usage
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-audit-usage") | nindent 4 }}
+spec:
+  schedule: {{ $auditUsage.schedule | quote }}
+  timeZone: {{ $auditUsage.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: audit-usage
+              image: "{{ .Values.denApi.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.denApi.image.tag) }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["node", "--input-type=module", "-e"]
+              args:
+                - |
+                  try {
+                    const response = await fetch(process.env.REFRESH_URL, {
+                      method: "POST",
+                      headers: { authorization: `Bearer ${process.env.DEN_MAINTENANCE_TOKEN}` },
+                      signal: AbortSignal.timeout(600000),
+                    });
+                    const body = await response.text();
+                    if (!response.ok) throw new Error(String(response.status));
+                    console.log("Audit usage refresh completed", body);
+                  } catch (error) {
+                    console.error("Audit usage refresh failed", error instanceof Error ? error.message : "");
+                    process.exitCode = 1;
+                  }
+              env:
+                - name: REFRESH_URL
+                  value: "http://{{ include "openwork-ee.denApiServiceName" . }}:{{ .Values.denApi.service.port }}/internal/audit/usage/refresh"
+                - name: DEN_MAINTENANCE_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "openwork-ee.denMaintenanceTokenSecret" . | quote }}
+                      key: {{ include "openwork-ee.denMaintenanceTokenKey" . | quote }}
+                      optional: false
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+{{- end }}

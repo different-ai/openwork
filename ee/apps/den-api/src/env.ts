@@ -77,6 +77,7 @@ const EnvSchema = z.object({
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
+  DEN_MAINTENANCE_TOKEN: z.string().optional(),
   DEN_GATEWAY_KEY: z.string().optional(),
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -576,6 +577,11 @@ const diagnosticsBearerToken = optionalString(parsed.DEN_DIAGNOSTICS_BEARER_TOKE
 if (diagnosticsBearerToken && diagnosticsBearerToken.length < 24) {
   throw new Error("DEN_DIAGNOSTICS_BEARER_TOKEN must contain at least 24 characters.")
 }
+// Bearer token for scheduled maintenance callers (POST /internal/*). Unset hides those routes (404).
+const maintenanceToken = optionalString(parsed.DEN_MAINTENANCE_TOKEN)
+if (maintenanceToken && maintenanceToken.length < 24) {
+  throw new Error("DEN_MAINTENANCE_TOKEN must contain at least 24 characters.")
+}
 const derivedDenApiPublicUrl = configuredDenUrls && devMode && denBaseUrlIsLoopback(configuredDenUrls.web)
   ? `http://127.0.0.1:${port}`
   : configuredDenUrls?.api ?? deriveApiPublicUrlFromWebOrigin({ devMode, port, webOrigin: betterAuthPublicWebOrigin })
@@ -702,6 +708,7 @@ export const env = {
     origin: diagnosticsOrigin,
     bearerToken: diagnosticsBearerToken,
   },
+  maintenanceToken,
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,

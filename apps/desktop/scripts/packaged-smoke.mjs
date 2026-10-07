@@ -70,6 +70,9 @@ async function bootPackagedDesktop(name, journey, binary, timeout, display) {
       OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
       OPENWORK_EVAL_ENGINE: "v1",
       OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", name),
+      // Profiles are removed when a journey ends; keep each main-process log
+      // outside them so CI can upload it.
+      OPENWORK_EVAL_SURFACE_LOGS_DIR: join(output, "logs", name),
       ELECTRON_RUN_AS_NODE: "",
       NODE_PATH: "", NODE_OPTIONS: "",
     },
@@ -135,7 +138,7 @@ try {
   // instances. Running the quit contract beside the long egress observation can
   // make an unrelated attached surface disappear before its quiet window ends.
   // Linux has no crash reports to read, so the journey names that half skipped
-  // and the exit signal is the witness.
+  // and the exit signal is the witness; packaged-smoke-macos.mjs asserts it.
   if (selected("desktop-quit-path")) await bootPackagedDesktop(
     "desktop-quit-enterprise",
     "desktop-quit-path",

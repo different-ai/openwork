@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
 import { internalProofContributor } from "./internal-proof-contributor.mjs";
-import { CORE_SPECS, changedFiles, checkpointTagged, packagedJourney, proofKey, proofLanes, safePath, selectProof } from "./pr-proof.mjs";
+import { CORE_SPECS, changedFiles, checkpointTagged, packagedJourney, packagedProofOs, proofKey, proofLanes, safePath, selectProof } from "./pr-proof.mjs";
 
 const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
 if (!event.pull_request) throw new Error("Proof selection requires a pull request event.");
@@ -29,7 +29,7 @@ if (latest.head.sha !== current.head.sha) throw new Error("PR head changed durin
 const { coreSpecs, normalSpecs, liveSpecs, packagedSpecs, daytonaSpecs, checkpointSpecs } = proofLanes(specs, { ...trust, current: latest }, tagged);
 const internalContributor = internalProofContributor(event.pull_request, event.repository) && internalProofContributor(latest, event.repository);
 const matrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec) })) });
-const packagedMatrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec), journey: packagedJourney(spec) })) });
+const packagedMatrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec), journey: packagedJourney(spec), os: packagedProofOs(spec) })) });
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
   `internalContributor=${internalContributor}\ncoreMatrix=${matrix(coreSpecs)}\ncoreSelected=${coreSpecs.length > 0}\nmatrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\nliveMatrix=${matrix(liveSpecs)}\nliveSelected=${liveSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\ndaytonaMatrix=${matrix(daytonaSpecs)}\ndaytonaSelected=${daytonaSpecs.length > 0}\ncheckpointMatrix=${matrix(checkpointSpecs)}\ncheckpointSelected=${checkpointSpecs.length > 0}\n`);
 const running = [...coreSpecs, ...normalSpecs, ...liveSpecs, ...packagedSpecs, ...daytonaSpecs, ...checkpointSpecs].sort();

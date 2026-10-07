@@ -17,6 +17,15 @@ export function packagedJourney(spec) {
   return spec.slice("evals/specs/".length, -".e2e.test.ts".length);
 }
 
+// Packaged journeys that need a signed macOS bundle; packaged-smoke-macos.mjs
+// builds and runs them. Every other packaged journey runs on Linux.
+const MACOS_PACKAGED_JOURNEYS = new Set(["packaged-update-install"]);
+
+/** Runner operating system a packaged proof spec needs: "macos" or "linux". */
+export function packagedProofOs(spec) {
+  return MACOS_PACKAGED_JOURNEYS.has(packagedJourney(spec)) ? "macos" : "linux";
+}
+
 export function safePath(path) {
   return typeof path === "string" && path.length > 0 && path.length <= 240
     && !path.startsWith("/") && !/[\\\0-\x1f\x7f]/u.test(path)

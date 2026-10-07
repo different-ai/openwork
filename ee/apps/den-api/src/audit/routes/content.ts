@@ -2,7 +2,7 @@
 // dashboards, automations, automation runners, remote-session runner callbacks,
 // Workbot, resources, brand assets and the deprecated memory / skill-hub stubs.
 
-import type { AuditRouteAttribution, AuditRouteClass, AuditRouteDeclaration, AuditRouteMethod } from "./types.js"
+import { HIGH_VOLUME_EXCLUSIONS, type AuditRouteAttribution, type AuditRouteClass, type AuditRouteDeclaration, type AuditRouteMethod } from "./types.js"
 
 type Extra = Pick<AuditRouteDeclaration, "changeEvidence" | "external" | "jobOutcome" | "notes">
 
@@ -35,6 +35,12 @@ function runner(
 /** Public or session-only removed-feature stubs; no tenant and no state. */
 function stub(method: AuditRouteMethod, path: string, action: string, kind: string, type: string, idParam: string | null, notes: string): AuditRouteDeclaration {
   return route(method, path, "platform", action, kind, type, idParam, "none", { notes })
+}
+
+/** Bulk fan-out read excluded from audit logs; the reason lives in HIGH_VOLUME_EXCLUSIONS. */
+function highVolume(method: AuditRouteMethod, path: string, action: string, kind: string, type: string, idParam: string | null): AuditRouteDeclaration {
+  const exclusion = HIGH_VOLUME_EXCLUSIONS.find((entry) => entry.method === method && entry.path === path)
+  return route(method, path, "excluded_high_volume", action, kind, type, idParam, "none", { notes: exclusion?.reason ?? "High-volume read excluded from audit logs." })
 }
 
 function alias(method: AuditRouteMethod, path: string, action: string, notes: string): AuditRouteDeclaration {
@@ -127,7 +133,8 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/plugins/:pluginId/config-objects", "tenant_access", "plugin.config_object.list", "plugin.configuration", "plugin", "pluginId", { notes: `Memberships embed config objects with latest version source. ${MCP_NATIVE}` }),
   member("POST", "/v1/plugins/:pluginId/config-objects", "tenant_change", "plugin.config_object.add", "plugin.configuration", "plugin", "pluginId", { notes: `Duplicate route for the mutation behind POST /v1/config-objects/:configObjectId/plugins; MCP create_app/update_app attach directly. ${MCP_NATIVE}` }),
   member("DELETE", "/v1/plugins/:pluginId/config-objects/:configObjectId", "tenant_change", "plugin.config_object.remove", "plugin.configuration", "plugin", "pluginId", { notes: `Duplicate route for the mutation behind DELETE /v1/config-objects/:configObjectId/plugins/:pluginId. ${MCP_NATIVE}` }),
-  member("GET", "/v1/plugins/:pluginId/resolved", "tenant_access", "plugin.resolved.read", "plugin.configuration", "plugin", "pluginId", { notes: `Active memberships with config objects and latest version source. ${MCP_NATIVE}` }),
+  // Not audited: see HIGH_VOLUME_EXCLUSIONS in ./types.ts (ENG-683).
+  highVolume("GET", "/v1/plugins/:pluginId/resolved", "plugin.resolved.read", "plugin.configuration", "plugin", "pluginId"),
   member("GET", "/v1/plugins/:pluginId/access", "tenant_read", "plugin.access_grant.list", "plugin.configuration", "plugin", "pluginId", { notes: MCP_NATIVE }),
   member("POST", "/v1/plugins/:pluginId/access", "tenant_change", "plugin.access_grant.create", "plugin.configuration", "plugin", "pluginId", { notes: MCP_NATIVE }),
   member("DELETE", "/v1/plugins/:pluginId/access/:grantId", "tenant_change", "plugin.access_grant.revoke", "plugin.configuration", "plugin_access_grant", "grantId", { notes: MCP_NATIVE }),

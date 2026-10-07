@@ -3,7 +3,7 @@ import type { AuditTx } from "@openwork-ee/den-db/audit-log"
 import { AuditEventTable } from "@openwork-ee/den-db/schema"
 import { buildOrganizationAuditEvent, logOrganizationAuditAlert, logOrganizationAuditEvent, recordOrganizationAuditEvent, type OrganizationAuditEvent } from "../../audit-events.js"
 import { db } from "../../db.js"
-import { appendAuditChanges, fenceAuditChanges, logAuditOutcomeLost, type AuditChangeCapture, type AuditChangeEventInput } from "../request-capture.js"
+import { appendAuditChanges, logAuditOutcomeLost, type AuditChangeCapture, type AuditChangeEventInput } from "../request-capture.js"
 import { withAuditRetry } from "../retry.js"
 
 // Single-writer legacy bridge (design §5, LEGACY_ACTION_BRIDGE). With tenant
@@ -42,7 +42,6 @@ export async function appendDomainChangesAfterCommit(
   const callKey = randomUUID()
   try {
     return await withAuditRetry(() => db.transaction(async (tx) => {
-      await fenceAuditChanges(tx, capture)
       const events = (await build(tx)).map((event, index) => event && event.idempotencyKey === undefined ? { ...event, idempotencyKey: `${action}:after-commit:${callKey}:${index}` } : event)
       return appendDomainChanges(tx, capture, events)
     }), { label: action, idempotent: Boolean(capture.context.requestId || capture.context.jobRunId), requestId: capture.context.requestId ?? null, organizationId: capture.context.organizationId })

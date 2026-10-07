@@ -31,7 +31,6 @@ type Row = Record<string, unknown>;
 type Envelope = {
   id: string;
   operationId: string;
-  sequence: number;
   action: string;
   category: string;
   outcome: string;
@@ -68,7 +67,6 @@ function envelopeOf(value: unknown): Envelope {
   return {
     id: text(raw.id, "envelope.id"),
     operationId: text(raw.operationId, "envelope.operationId"),
-    sequence: Number(raw.sequence),
     action: text(raw.action, "envelope.action"),
     category: text(raw.category, "envelope.category"),
     outcome: text(raw.outcome, "envelope.outcome"),
@@ -81,7 +79,7 @@ function envelopeOf(value: unknown): Envelope {
   };
 }
 function summary(events: Envelope[]): string {
-  return events.map((event) => `${event.sequence}:${event.action}/${event.outcome}${event.reasonCode ? `(${event.reasonCode})` : ""}`).join(", ") || "(none)";
+  return events.map((event, index) => `${index + 1}:${event.action}/${event.outcome}${event.reasonCode ? `(${event.reasonCode})` : ""}`).join(", ") || "(none)";
 }
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -139,14 +137,15 @@ async function heldConnection(databaseUrl: string): Promise<HeldConnection> {
   return mysql.createConnection(databaseUrl);
 }
 
-async function tenantEvents(world: { dbUrl: string }, orgId: string, afterSequence = 0): Promise<Envelope[]> {
-  const rows = await sql(world, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND sequence > ? ORDER BY sequence", [orgId, afterSequence]);
+async function tenantEvents(world: { dbUrl: string }, orgId: string, afterId = ""): Promise<Envelope[]> {
+  const rows = await sql(world, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND id > ? ORDER BY id", [orgId, afterId]);
   return rows.map((row) => envelopeOf(row.envelope));
 }
 
-async function watermark(world: { dbUrl: string }, orgId: string): Promise<number> {
-  const rows = await sql(world, "SELECT COALESCE(MAX(sequence), 0) AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
-  return count(rows);
+async function watermark(world: { dbUrl: string }, orgId: string): Promise<string> {
+  // Newest event id: ids are time-ordered, so "after this id" means "recorded later".
+  const rows = await sql(world, "SELECT COALESCE(MAX(id), '') AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
+  return String(rows[0]?.n ?? "");
 }
 
 async function totalTenantRows(world: { dbUrl: string }, orgId: string): Promise<number> {
@@ -248,6 +247,9 @@ afterAll(async () => {
   await owned.disposeAsync();
 });
 
+// Synthetic token for the scratch deployment's maintenance endpoint (not a secret).
+const MAINTENANCE_TOKEN = "eval-maintenance-token-0123456789abcdef";
+
 function world(place: Place): Promise<World> {
   booted ??= (async () => {
     const stamp = `${Date.now().toString(36)}${process.pid.toString(36)}`;
@@ -267,6 +269,7 @@ function world(place: Place): Promise<World> {
         DEN_AUDIT_VISIBILITY_ENABLED: undefined,
         DEN_FEATURE_PLATFORM_AUDIT_READS: undefined,
         DEN_PLAN_GATING_ENABLED: "false",
+        DEN_MAINTENANCE_TOKEN: MAINTENANCE_TOKEN,
         RESEND_API_KEY: "",
         STRIPE_SECRET_KEY: "",
       },
@@ -592,10 +595,13 @@ test.skipIf(skip)(name("5b. a deadlock on the durable intent is retried: the cha
   try {
     const [idRows] = await holder.query("SELECT CONNECTION_ID() AS id");
     const holderId = Number(Array.isArray(idRows) && isRecord(idRows[0]) ? idRows[0].id : NaN);
+    const newestEvent = String((await sql(w, "SELECT COALESCE(MAX(id), '') AS n FROM audit_event"))[0]?.n ?? "");
     await holder.query("START TRANSACTION");
-    // Den's append locks audit_state, then audit_policy. Holding audit_policy
-    // first makes Den wait while it holds audit_state.
-    await holder.query("SELECT organization_id FROM audit_policy WHERE organization_id = ? FOR UPDATE", [w.orgId]);
+    // Audit appends take no locks of their own, so build the cycle from the
+    // rows Den writes: it inserts its operation, then its event. Holding the
+    // gap after the newest event id makes Den wait on its event insert while it
+    // holds its new, uncommitted operation row.
+    await holder.query("SELECT id FROM audit_event WHERE id > ? FOR UPDATE", [newestEvent]);
     await holder.query(`UPDATE ${ballast} SET n = n + 1`);
     const pending = call(w.den, "/v1/teams", { method: "POST", headers, body: { name: teamName } });
     const deadline = Date.now() + 20_000;
@@ -604,13 +610,13 @@ test.skipIf(skip)(name("5b. a deadlock on the durable intent is retried: the cha
       waiting = count(await sql(w, `SELECT COUNT(*) AS n FROM performance_schema.data_lock_waits lw
         JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID = lw.REQUESTING_ENGINE_LOCK_ID
         JOIN performance_schema.threads t ON t.THREAD_ID = lw.BLOCKING_THREAD_ID
-        WHERE t.PROCESSLIST_ID = ? AND l.OBJECT_SCHEMA = DATABASE() AND l.OBJECT_NAME = 'audit_policy'`, [holderId]));
+        WHERE t.PROCESSLIST_ID = ? AND l.OBJECT_SCHEMA = DATABASE() AND l.OBJECT_NAME = 'audit_event'`, [holderId]));
       if (waiting === 0) await sleep(25);
     }
-    expect(waiting, "Den's intent transaction waits on the held audit_policy lock").toBeGreaterThan(0);
+    expect(waiting, "Den's intent transaction waits on the held audit_event gap").toBeGreaterThan(0);
     // Close the cycle: this statement only returns once InnoDB rolled back
     // Den's intent transaction (ER_LOCK_DEADLOCK); were the holder chosen, it would throw.
-    await holder.query("SELECT organization_id FROM audit_state WHERE organization_id = ? FOR UPDATE", [w.orgId]);
+    await holder.query("SELECT id FROM audit_operation WHERE organization_id = ? FOR UPDATE", [w.orgId]);
     holderClosedCycle = true;
     await holder.query("ROLLBACK");
     created = await pending;
@@ -665,6 +671,35 @@ test.skipIf(skip)(name("5c. operational probes GET /, /health and /ready are exc
   );
 });
 
+test.skipIf(skip)(name("5d. GET /v1/plugins/:pluginId/resolved is not audited (high-volume read, ENG-683)"), STEP, async ({ evidence, place }) => {
+  const w = await world(place);
+  const headers = orgHeaders(w.admin, w.orgId);
+  const tenantBefore = await totalTenantRows(w, w.orgId);
+  const platformBefore = count(await sql(w, "SELECT COUNT(*) AS n FROM platform_audit_event WHERE route = ?", ["/v1/plugins/:pluginId/resolved"]));
+  const plugins = await call(w.den, "/v1/plugins?limit=5", { headers });
+  expect(plugins.response.status, plugins.text).toBe(200);
+  const items = Array.isArray(record(plugins.body, "plugins").items) ? record(plugins.body, "plugins").items : [];
+  const pluginId = Array.isArray(items) && isRecord(items[0]) && typeof items[0].id === "string" ? items[0].id : "plg_01m4bmd960e2c9d0nfxf5c339y";
+  const listed = count(await sql(w, "SELECT COUNT(*) AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [w.orgId]));
+  const statuses: number[] = [];
+  for (let index = 0; index < 5; index++) {
+    const resolved = await call(w.den, `/v1/plugins/${encodeURIComponent(pluginId)}/resolved`, { headers });
+    expect(resolved.response.status, resolved.text).toBeLessThan(500);
+    statuses.push(resolved.response.status);
+  }
+  const tenantAfter = await totalTenantRows(w, w.orgId);
+  const platformAfter = count(await sql(w, "SELECT COUNT(*) AS n FROM platform_audit_event WHERE route = ?", ["/v1/plugins/:pluginId/resolved"]));
+  const resolvedEvents = count(await sql(w, "SELECT COUNT(*) AS n FROM audit_event WHERE org_id = ? AND action LIKE 'plugin.resolved.read.%'", [w.orgId]));
+  expect(tenantAfter, "five /resolved calls add no tenant audit rows").toBe(listed);
+  expect(resolvedEvents).toBe(0);
+  expect(platformAfter).toBe(platformBefore);
+  evidence.recordAssertionEvidence(
+    "Five GET /v1/plugins/:pluginId/resolved calls record no tenant or platform audit row (declared excluded_high_volume)",
+    `plugin=${pluginId}; statuses=${statuses.join(",")}; tenant rows ${tenantBefore} → ${listed} after the plugin list → ${tenantAfter} after /resolved; plugin.resolved.read events=${resolvedEvents}; platform rows for the route ${platformBefore} → ${platformAfter}`,
+    true,
+  );
+});
+
 test.skipIf(skip)(name("6. capture OFF stops recording but keeps history readable, stays OFF, and ON resumes"), STEP, async ({ evidence, place }) => {
   const w = await world(place);
   const headers = orgHeaders(w.admin, w.orgId);
@@ -675,7 +710,6 @@ test.skipIf(skip)(name("6. capture OFF stops recording but keeps history readabl
   expect(record(off.body, "settings").captureOn).toBe(false);
 
   const rowsOff = await totalTenantRows(w, w.orgId);
-  const stateOff = await sql(w, "SELECT last_sequence, event_count, retained_operations FROM audit_state WHERE organization_id = ?", [w.orgId]);
   const offTeam = await createTeam(w.den, headers, `Audit while off ${w.stamp}`);
   const rename = await call(w.den, `/v1/teams/${offTeam}`, { method: "PATCH", headers, body: { name: `Audit while off renamed ${w.stamp}` } });
   expect(rename.response.status, rename.text).toBe(200);
@@ -692,7 +726,6 @@ test.skipIf(skip)(name("6. capture OFF stops recording but keeps history readabl
   expect(stillOff.captureOn).toBe(false);
   expect(stillOff.revision).toBe(before.revision + 1);
   expect(await totalTenantRows(w, w.orgId)).toBe(rowsOff);
-  expect(await sql(w, "SELECT last_sequence, event_count, retained_operations FROM audit_state WHERE organization_id = ?", [w.orgId])).toEqual(stateOff);
 
   const on = await call(w.den, "/v1/audit/settings", { method: "PATCH", headers, body: { captureOn: true, expectedRevision: stillOff.revision } });
   expect(on.response.status, on.text).toBe(200);
@@ -703,7 +736,7 @@ test.skipIf(skip)(name("6. capture OFF stops recording but keeps history readabl
   expect(resumedEvents.map((event) => event.action), summary(resumedEvents)).toEqual(["team.delete.requested", "team.delete.succeeded"]);
   evidence.recordAssertionEvidence(
     "Capture OFF records nothing for two mutations and reads, keeps history readable and stays OFF; ON resumes recording",
-    `revision ${before.revision} → OFF; tenant rows stayed ${rowsOff}, audit_state unchanged ${JSON.stringify(stateOff)}; history operations=${historyCount}; still OFF after a den-api restart=${!stillOff.captureOn} (revision ${stillOff.revision}); after ON → ${summary(resumedEvents)}`,
+    `revision ${before.revision} → OFF; tenant rows stayed ${rowsOff}; history operations=${historyCount}; still OFF after a den-api restart=${!stillOff.captureOn} (revision ${stillOff.revision}); after ON → ${summary(resumedEvents)}`,
     true,
   );
 });
@@ -802,7 +835,7 @@ test.skipIf(skip)(name("8. tenants are isolated: another organization's owner se
   );
 });
 
-test.skipIf(skip)(name("9. ten parallel team creations make ten operations with contiguous sequences and matching counters"), STEP, async ({ evidence, place }) => {
+test.skipIf(skip)(name("9. ten parallel team creations make ten separate operations without waiting on each other, and the usage refresh recomputes the totals"), STEP, async ({ evidence, place }) => {
   const w = await world(place);
   const headers = orgHeaders(w.admin, w.orgId);
   const mark = await watermark(w, w.orgId);
@@ -814,20 +847,30 @@ test.skipIf(skip)(name("9. ten parallel team creations make ten operations with 
   expect(byOperation.size, summary(events)).toBe(10);
   for (const actions of byOperation.values()) expect(actions).toEqual(["team.create.requested", "team.create.succeeded"]);
   expect(new Set(events.map((event) => event.requestId)).size).toBe(10);
+  // Envelopes no longer carry a per-organization sequence; ids order them.
+  const raw = await sql(w, "SELECT envelope, sequence FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND id > ?", [w.orgId, mark]);
+  const envelopes = raw.map((row) => record(json(row.envelope), "envelope"));
+  expect(envelopes.every((envelope) => envelope.schemaVersion === 2 && !("sequence" in envelope))).toBe(true);
+  expect(raw.every((row) => row.sequence === null)).toBe(true);
 
-  const sequences = (await sql(w, "SELECT sequence FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL ORDER BY sequence", [w.orgId])).map((row) => Number(row.sequence));
-  const contiguous = sequences.every((value, index) => value === index + 1);
-  const totals = (await sql(w, "SELECT COUNT(*) AS events, COALESCE(SUM(logical_bytes), 0) AS bytes FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [w.orgId]))[0] ?? {};
-  const operations = count(await sql(w, "SELECT COUNT(*) AS n FROM audit_operation WHERE organization_id = ?", [w.orgId]));
-  const counters = (await sql(w, "SELECT last_sequence, event_count, retained_operations, logical_bytes FROM audit_state WHERE organization_id = ?", [w.orgId]))[0] ?? {};
-  expect(contiguous, `sequences ${sequences.join(",")}`).toBe(true);
-  expect(Number(counters.last_sequence)).toBe(sequences.length);
+  // Totals are not maintained on the write path: the scheduled refresh recomputes them.
+  const denied = await denFetch(w.den.ref, "/internal/audit/usage/refresh", { method: "POST", headers: { authorization: "Bearer wrong-token-0123456789abcdef" }, signal: AbortSignal.timeout(60_000) });
+  expect(denied.response.status, denied.text).toBe(401);
+  const refreshed = await denFetch(w.den.ref, "/internal/audit/usage/refresh", { method: "POST", headers: { authorization: `Bearer ${MAINTENANCE_TOKEN}` }, signal: AbortSignal.timeout(60_000) });
+  expect(refreshed.response.status, refreshed.text).toBe(200);
+  expect(Number(record(refreshed.body, "refresh").organizations)).toBeGreaterThanOrEqual(1);
+  const totals = (await sql(w, "SELECT COUNT(*) AS events, COALESCE(SUM(logical_bytes), 0) AS bytes FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND operation_id IS NOT NULL", [w.orgId]))[0] ?? {};
+  const operations = count(await sql(w, "SELECT COUNT(*) AS n FROM audit_operation WHERE organization_id = ? AND retention_state = 'retained'", [w.orgId]));
+  const counters = (await sql(w, "SELECT event_count, retained_operations, logical_bytes FROM audit_state WHERE organization_id = ?", [w.orgId]))[0] ?? {};
   expect(Number(counters.event_count)).toBe(Number(totals.events));
   expect(Number(counters.retained_operations)).toBe(operations);
   expect(Number(counters.logical_bytes)).toBe(Number(totals.bytes));
+  const usage = await call(w.den, "/v1/audit/usage", { headers });
+  expect(usage.response.status, usage.text).toBe(200);
+  expect(Number(record(usage.body, "usage").eventCount)).toBe(Number(totals.events));
   evidence.recordAssertionEvidence(
-    "Ten concurrent creates give ten operations of exactly requested+succeeded; tenant sequences 1..N are contiguous and audit_state equals the row counts",
-    `operations=${byOperation.size}; sequences 1..${sequences.length} contiguous=${contiguous}; audit_state=${JSON.stringify(counters)} vs events=${String(totals.events)} bytes=${String(totals.bytes)} operations=${operations}`,
+    "Ten concurrent creates give ten operations of exactly requested+succeeded with version 2 envelopes (no sequence); POST /internal/audit/usage/refresh (401 without the token) recomputes audit_state to the row counts and /v1/audit/usage reports them",
+    `operations=${byOperation.size}; refresh=${refreshed.text}; audit_state=${JSON.stringify(counters)} vs events=${String(totals.events)} bytes=${String(totals.bytes)} operations=${operations}`,
     true,
   );
 });

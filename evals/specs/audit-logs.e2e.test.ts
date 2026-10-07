@@ -67,7 +67,7 @@ test("a flagged owner records and filters audit history by default while an unfl
     if (!operation) throw new Error(`No operation recorded ${action}`);
     const eventsResponse = await probe.api(world.den.admin, `/v1/audit/operations/${encodeURIComponent(operation.id)}/events?limit=50`);
     expect(eventsResponse.response.status).toBe(200);
-    const events = auditEventsResponseSchema.parse(eventsResponse.body).events.sort((a, b) => a.sequence - b.sequence);
+    const events = auditEventsResponseSchema.parse(eventsResponse.body).events.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     return { operation, events, text: eventsResponse.text };
   }
 
@@ -163,9 +163,12 @@ test("a flagged owner records and filters audit history by default while an unfl
     await owner.see({ role: "link", label: "Audit logs" });
     await owner.click({ text: "Capture and storage" });
     await owner.see({ text: "Recording" });
+    // Usage totals come from the scheduled refresh, not from each write.
+    await world.refreshAuditUsage();
     const usageResponse = await probe.api(world.den.admin, "/v1/audit/usage");
     expect(usageResponse.response.status).toBe(200);
     const usage = auditUsageResponseSchema.parse(usageResponse.body);
+    expect(usage.measuredAt).toEqual(expect.any(String));
     expect(usage.entitlement).toEqual({ enabled: true, source: "self_hosted" });
     expect(usage.captureAvailable).toBe(true);
     expect(usage.captureOn).toBe(true);
@@ -177,6 +180,9 @@ test("a flagged owner records and filters audit history by default while an unfl
     expect(usage.policy?.captureStartedAt).toEqual(expect.any(String));
     expect(usage.retainedOperations).toBeGreaterThan(0);
     await owner.see({ text: "6,000,000" });
+    // Usage totals are not live: the panel says when the daily refresh last ran.
+    await owner.see({ text: "Totals last refreshed" });
+    await owner.see({ text: /refreshed daily/ });
     await owner.see({ text: "Instance operator" });
     await owner.see({ text: "Keep all" });
     expect((await audit.dom('[role="switch"][aria-label="Capture audit logs"][aria-checked="true"]')).elements).toHaveLength(1);
