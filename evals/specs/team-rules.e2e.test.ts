@@ -1,8 +1,9 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { teamRules, type TeamRule } from "../worlds/team-rules.ts";
+import { teamRules, teamRulesEditor, type TeamRule } from "../worlds/team-rules.ts";
 
 const test = spec.world(teamRules, { timeout: 600_000, resources: { surfaces: [], services: ["den"] } });
+const editorTest = spec.world(teamRulesEditor, { timeout: 900_000, resources: { surfaces: ["web"], services: ["den"] } });
 
 const contractorRules: TeamRule[] = [
   { action: "shell", resource: "*", effect: "deny" },
@@ -52,5 +53,54 @@ test("an admin's rules in a team's permissions reach that team's members and nob
       && morgan.length === 1 && morgan[0]?.resource === "curl *";
     evidence.recordAssertionEvidence("rule order", `Riley: ${riley.slice(0, 3).map((rule) => `${String(rule.source)}: ${String(rule.resource)}`).join(", ")}…; Morgan: ${morgan.map((rule) => `${String(rule.source)}: ${String(rule.resource)}`).join(", ")}`, ok);
     expect(ok).toBe(true);
+  });
+});
+
+editorTest("an owner writes the Contractors team's command rules in its permissions and checks a command before saving", async ({ world, user, step, evidence }) => {
+  const owner = user.on(world.web);
+  const saved: TeamRule[] = [
+    { action: "shell", resource: "*", effect: "deny" },
+    { action: "shell", resource: "git status", effect: "allow" },
+  ];
+
+  await step("before: the Contractors permissions have no rules, so the team can run every command", async () => {
+    await owner.see({ text: "Contractors Permissions" }, { timeoutMs: 90_000 });
+    await owner.click({ role: "tab", label: "Rules" });
+    await owner.see({ testId: "permission-rule-block-shell" });
+    const received = await world.receivedRules("riley");
+    evidence.recordAssertionEvidence("Riley's rules", `${received.length} before the owner saves`, received.length === 0);
+    expect(received).toEqual([]);
+    await owner.screenshot();
+  });
+
+  await step("the owner blocks every command but git status, and trying git push shows the rule that blocks it", async () => {
+    await owner.click({ testId: "permission-rule-block-shell" });
+    await owner.type({ testId: "permission-rule-shell-0" }, "*");
+    await owner.click({ testId: "permission-rule-allow-shell" });
+    await owner.type({ testId: "permission-rule-shell-1" }, "git status");
+    await owner.type({ testId: "permission-rule-try-shell" }, "git push origin main");
+    await owner.see({ testId: "permission-rule-result-shell" }, { text: "Blocked by rule 1" });
+    await owner.type({ testId: "permission-rule-try-shell" }, "git status", { replace: true });
+    await owner.see({ testId: "permission-rule-result-shell" }, { text: "Allowed" });
+    evidence.recordAssertionEvidence("trying commands", "git push origin main → Blocked by rule 1 (*); git status → Allowed", true);
+    await owner.screenshot();
+  });
+
+  await step("after: the owner saves and the team's member receives exactly those rules", async () => {
+    await owner.click({ role: "button", label: "Save changes" });
+    await owner.see({ text: "Saved 1 rule list" }, { timeoutMs: 30_000 });
+    const received = await world.receivedRules("riley");
+    const expected = saved.map((rule) => ({ ...rule, source: "Contractors Permissions" }));
+    evidence.recordAssertionEvidence("Riley's rules", JSON.stringify(received), JSON.stringify(received) === JSON.stringify(expected));
+    expect(received).toEqual(expected);
+    await owner.screenshot();
+  });
+
+  await step("a member outside the team receives nothing, and the team's member cannot change the rules", async () => {
+    const outside = await world.receivedRules("morgan");
+    const status = await world.memberSaveStatus();
+    evidence.recordAssertionEvidence("boundaries", `Morgan: ${outside.length} rules; Riley saving the Contractors rules → HTTP ${status}`, outside.length === 0 && status === 403);
+    expect(outside).toEqual([]);
+    expect(status).toBe(403);
   });
 });
