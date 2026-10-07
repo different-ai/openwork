@@ -36,6 +36,8 @@ If you run containers on ECS Fargate rather than Kubernetes, a draft Terraform m
 
 You provide a VPC, two hostnames (the web host and `api.` plus the web host), and an ACM certificate or a Route 53 zone the module can use to create one. HTTPS is required: Den API does not start with a plain-HTTP public URL. Email is optional for setup and sign-in, but member invites and password reset need SMTP or Resend.
 
+The module can also run OpenWork Web, so members chat in the browser with each workspace in a [Daytona](https://www.daytona.io) sandbox: set `openwork_web_enabled = true` and provide a Daytona API key and sandbox snapshot.
+
 See the [module README](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs) for inputs, a complete example, and cost notes.
 
 Next: [Create the first administrator](/self-host/deploy-to-your-cloud/first-administrator).
