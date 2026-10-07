@@ -12,10 +12,11 @@ import { isRecord } from "./library.ts";
  * DEN_GOOGLE_API_BASE_URL / DEN_MICROSOFT_GRAPH_BASE_URL, after an OAuth sign-in against the mock identity
  * provider. The desktop reads meetings through Den exactly as with real accounts; nothing in the app is mocked.
  */
-const ALEX = "alex@acme.test";
+export const CALENDAR_ACCOUNT = "alex@acme.test";
+const ALEX = CALENDAR_ACCOUNT;
 const TENANT = "12345678-1234-1234-1234-123456789abc";
 
-async function connect(admin: DenSession, google: Awaited<ReturnType<typeof startMockGoogle>>, input: { providerKey: "google-workspace" | "microsoft-365"; name: string }) {
+export async function connectCalendarAccount(admin: DenSession, google: Awaited<ReturnType<typeof startMockGoogle>>, input: { providerKey: "google-workspace" | "microsoft-365"; name: string }) {
   const connection = await createNativeConnector(admin, {
     providerKey: input.providerKey, name: input.name, features: ["calendarRead"],
     clientId: `synthetic-${input.providerKey}`, clientSecret: "synthetic-calendar-secret",
@@ -39,6 +40,19 @@ async function connect(admin: DenSession, google: Awaited<ReturnType<typeof star
   return connection;
 }
 
+/** Den settings that send its native Google and Graph calendar calls to the calendar mock, signing in with the identity mock. */
+export function calendarDenEnv(identity: Awaited<ReturnType<typeof startMockGoogle>>, calendarBaseUrl: string): Record<string, string> {
+  return {
+    DEN_GOOGLE_OAUTH_AUTHORIZE_URL: identity.authorizeUrl,
+    DEN_GOOGLE_OAUTH_TOKEN_URL: identity.tokenUrl,
+    DEN_GOOGLE_OAUTH_USERINFO_URL: identity.userinfoUrl,
+    DEN_GOOGLE_API_BASE_URL: calendarBaseUrl,
+    DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: `${identity.authorizeUrl}?tenantId={tenantId}`,
+    DEN_MICROSOFT_OAUTH_TOKEN_URL: `${identity.tokenUrl}?tenantId={tenantId}`,
+    DEN_MICROSOFT_GRAPH_BASE_URL: `${calendarBaseUrl}/v1.0`,
+  };
+}
+
 export async function automationCalendar(seed: Seed, { place }: { place: Place }) {
   if (place.kind !== "local") throw new SkipError("the demo-org seed and the calendar mock run next to a local Den");
   if (!await localMysqlIsRunning()) throw new SkipError("local MySQL for a disposable openwork_eval_ database");
@@ -48,20 +62,11 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
   const identity = setup.use(await startMockGoogle({ accounts: [ALEX], port: 0 }));
   const den = await seed.den({
     web: true, seedProfile: "demo-org", seedAutomations: true,
-    env: {
-      RESEND_API_KEY: "", SMTP_HOST: "",
-      DEN_GOOGLE_OAUTH_AUTHORIZE_URL: identity.authorizeUrl,
-      DEN_GOOGLE_OAUTH_TOKEN_URL: identity.tokenUrl,
-      DEN_GOOGLE_OAUTH_USERINFO_URL: identity.userinfoUrl,
-      DEN_GOOGLE_API_BASE_URL: calendar.baseUrl,
-      DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: `${identity.authorizeUrl}?tenantId={tenantId}`,
-      DEN_MICROSOFT_OAUTH_TOKEN_URL: `${identity.tokenUrl}?tenantId={tenantId}`,
-      DEN_MICROSOFT_GRAPH_BASE_URL: `${calendar.baseUrl}/v1.0`,
-    },
+    env: { RESEND_API_KEY: "", SMTP_HOST: "", ...calendarDenEnv(identity, calendar.baseUrl) },
   });
   await enableOrganizationCapabilities(seed, den.admin, { automationCalendar: true });
-  await connect(den.admin, identity, { providerKey: "google-workspace", name: "Google Workspace" });
-  await connect(den.admin, identity, { providerKey: "microsoft-365", name: "Microsoft 365" });
+  await connectCalendarAccount(den.admin, identity, { providerKey: "google-workspace", name: "Google Workspace" });
+  await connectCalendarAccount(den.admin, identity, { providerKey: "microsoft-365", name: "Microsoft 365" });
   const desktop = await seed.desktop({ den, as: "admin", enterpriseActivated: true, name: "automation-calendar" });
   const resources = setup.move();
   return {

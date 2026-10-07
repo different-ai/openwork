@@ -32,18 +32,6 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.screenshot();
   });
 
-  await step("an Automation that needs HubSpot shows a lock, never a confirmed upcoming run", async () => {
-    await alex.click({ role: "button", label: /^Update launch deals, Blocked until fixed/ });
-    await alex.see({ text: "Needs attention" });
-    await alex.see({ text: /Needs HubSpot access/ });
-    const blocked = await blocks('[data-calendar-status="blocked"]');
-    const panel = await look.dom("[data-calendar-next-run]");
-    const nextRun = panel.elements[0]?.text ?? "";
-    evidence.recordAssertionEvidence("blocked slot is nominal", `${blocked} locked slot(s); panel says "${nextRun}"`, blocked >= 1 && nextRun === "Not scheduled until fixed");
-    expect(nextRun).toBe("Not scheduled until fixed");
-    await alex.screenshot();
-  });
-
   await step("Alex selects the weekly launch update and sees when it repeats, where it runs and its past runs", async () => {
     await alex.click({ role: "button", label: /^Weekly launch update, / });
     await alex.see({ text: /Every Friday at 3:00 PM/ });
@@ -55,8 +43,21 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.screenshot();
   });
 
-  await step("after: pausing it next week removes its upcoming slot", async () => {
+  await step("next week, an Automation that needs HubSpot shows a lock, never a confirmed upcoming run", async () => {
+    // Next week, so the slot is ahead of now whatever day the spec runs.
     await alex.click({ role: "button", label: "Next" });
+    await alex.click({ role: "button", label: /^Update launch deals, Blocked until fixed/ });
+    await alex.see({ text: "Needs attention" });
+    await alex.see({ text: /Needs HubSpot access/ });
+    const blocked = await blocks('[data-calendar-status="blocked"]');
+    const panel = await look.dom("[data-calendar-next-run]");
+    const nextRun = panel.elements[0]?.text ?? "";
+    evidence.recordAssertionEvidence("blocked slot is nominal", `${blocked} locked slot(s); panel says "${nextRun}"`, blocked >= 1 && nextRun === "Not scheduled until fixed");
+    expect(nextRun).toBe("Not scheduled until fixed");
+    await alex.screenshot();
+  });
+
+  await step("after: pausing the weekly launch update removes its slot next week", async () => {
     await alex.see({ role: "button", label: /^Weekly launch update, Scheduled/ });
     const before = await blocks('[data-calendar-status="upcoming"][aria-label^="Weekly launch update"]');
     await alex.click({ role: "button", label: /^Weekly launch update, Scheduled/ });
@@ -78,6 +79,7 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.click({ role: "button", label: "Calendar" });
     await alex.see({ text: "Reconnect Google Calendar" }, { timeoutMs: 60_000 });
     await alex.see({ role: "button", label: /, Outlook/ });
+    await alex.see({ role: "button", label: /^What's waiting on me, / });
     const google = await blocks('[data-calendar-provider="google"]');
     const automations = await blocks("[data-calendar-automation]");
     evidence.recordAssertionEvidence("one provider failing does not hide the others", `${google} Google meetings, ${automations} Automation blocks still shown`, google === 0 && automations > 0);

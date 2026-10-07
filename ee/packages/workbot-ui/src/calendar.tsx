@@ -34,7 +34,6 @@ import type { AutomationList, AutomationRun, AutomationSchedule } from "@openwor
 import { ChevronLeft, ChevronRight, Lock, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { calendarKey, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations } from "./calendar-data";
-import { workbotHost } from "./host";
 
 /**
  * Workbot's Calendar: the person's Automations next to their meetings, with the selected one's details and
@@ -631,8 +630,4 @@ export function WorkbotCalendar({ connectionsHref }: { connectionsHref: string |
       ) : null}
     </div>
   );
-}
-
-export function workbotConnectionsHref(): string | null {
-  return workbotHost().connectionsHref ?? null;
 }
