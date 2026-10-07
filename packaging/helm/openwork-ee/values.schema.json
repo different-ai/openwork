@@ -118,6 +118,16 @@
               ],
               "description": "Workbot: Members can use Workbot. Needs the deployment's Workbot app. Renders DEN_FEATURE_WORKBOT."
             },
+            "automationCalendar": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Calendar: Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. Renders DEN_FEATURE_AUTOMATION_CALENDAR."
+            },
             "litellm": {
               "enum": [
                 "",
