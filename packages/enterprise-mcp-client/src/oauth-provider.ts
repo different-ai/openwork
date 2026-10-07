@@ -164,6 +164,19 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     }
   }
 
+  // Some providers serve one MCP endpoint from several hosts and declare a
+  // single canonical resource, such as a regional API host. Like other MCP
+  // clients, request tokens for the declared resource instead of requiring it
+  // to share the configured URL's origin.
+  async validateResourceURL(_serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
+    if (!resource) return undefined
+    const declared = new URL(resource)
+    if (declared.protocol !== "https:" && declared.protocol !== "http:") {
+      throw new Error(`The protected resource ${resource} must use HTTP or HTTPS.`)
+    }
+    return declared
+  }
+
   private assertDiscoveryBinding(state: OAuthDiscoveryState): void {
     const selectedIssuer = this.authorizationServerIssuer
     if (!selectedIssuer) {
