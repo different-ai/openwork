@@ -12,7 +12,6 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConnectorQuickAddGrid } from "./connector-quick-add-grid";
 import { useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
-import { OrganizationDownloadCard } from "./organization-download-card";
 
 /* ── Helpers ── */
 
@@ -76,13 +75,6 @@ export function DashboardOverviewScreen() {
       <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">
         Run locally for free. Keep data on your machine and move to shared workflows when ready.
       </p>
-
-      {/* Download OpenWork */}
-      {activeOrg && orgContext?.capabilities.installLinks ? (
-        <div className="mt-4">
-          <OrganizationDownloadCard organizationId={activeOrg.id} organizationName={activeOrg.name} />
-        </div>
-      ) : null}
 
       {/* Live org data */}
       <div className="mt-5 grid gap-3.5 md:grid-cols-2">

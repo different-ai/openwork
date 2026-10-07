@@ -60,6 +60,7 @@ import { useDashboardPrefetch } from "./use-dashboard-prefetch";
 import { useLibraryNeedsSignInCount } from "./library-data";
 import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
+import { DownloadOpenWorkButton } from "./download-openwork-button";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
@@ -779,11 +780,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
+            <span className="truncate text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
           </div>
 
           <>
-              <div className="flex flex-1 justify-center px-4">
+              <div className="flex shrink-0 justify-center px-2 lg:min-w-0 lg:flex-1 lg:px-4">
                 <DenSearchBar
                   ref={searchBarRef}
                   onOpen={() => handleCommandPaletteOpenChange(true)}
@@ -811,6 +812,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   <FileText className="h-4 w-4" />
                   <span className="hidden sm:inline">Docs</span>
                 </a>
+                <DownloadOpenWorkButton
+                  key={`${activeOrg?.id}:${pathname}`}
+                  organization={access.isAdmin && orgContext?.capabilities.installLinks && activeOrg ? activeOrg : undefined}
+                />
               </div>
           </>
         </header>
