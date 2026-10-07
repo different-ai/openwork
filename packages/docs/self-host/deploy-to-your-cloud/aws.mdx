@@ -38,6 +38,8 @@ You provide a VPC, two hostnames (the web host and `api.` plus the web host), an
 
 The module can also run OpenWork Web, so members chat in the browser with each workspace in a [Daytona](https://www.daytona.io) sandbox: set `openwork_web_enabled = true` and provide a Daytona API key and sandbox snapshot.
 
+It can also run the headless runner, so the Slack assistant, headless Automations and Workbot (a chat app at `chat.` plus your web host) work on your deployment with your own model provider: set `headless_runner`, `workbot` and `slack_assistant_enabled`.
+
 See the [module README](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs) for inputs, a complete example, and cost notes.
 
 Next: [Create the first administrator](/self-host/deploy-to-your-cloud/first-administrator).
