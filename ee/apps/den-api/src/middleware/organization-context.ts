@@ -1,5 +1,6 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
+import { beginAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
@@ -112,5 +113,10 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   c.set("organizationContext", context)
   c.set("activeOrganizationId", context.organization.id)
   c.set("activeOrganizationSlug", context.organization.slug)
+  // Durable audit intent (when captured) before the handler; 503 if it cannot be recorded.
+  const auditBlocked = await beginAuditRequest(c)
+  if (auditBlocked) {
+    return auditBlocked as never
+  }
   await next()
 }

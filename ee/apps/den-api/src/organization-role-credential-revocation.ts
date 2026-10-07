@@ -52,11 +52,14 @@ export async function revokeCredentialsForOrganizationRoleMembers(input: {
       organizationId: input.organizationId,
       orgMembershipId: member.id,
       userId: member.userId,
+      reason: "role_permissions_changed",
     })
 
     const credentials = await revokeMembershipSessionCredentials({
       organizationId: input.organizationId,
       userId: member.userId,
+      memberId: member.id,
+      reason: "role_permissions_changed",
     })
     counts.sessions += credentials.sessions
     counts.oauthAccessTokens += credentials.oauthAccessTokens

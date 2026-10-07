@@ -22,6 +22,8 @@ const createSessionBody = z
     computer: z.boolean().optional(),
     /** Let the model react to the person's message with one emoji (the `react` tool). Off unless asked for. */
     reactions: z.boolean().optional(),
+    /** Let the conversation hand longer work to background tasks (start_task) and keep talking. Off unless asked for. */
+    tasks: z.boolean().optional(),
   })
   .strict()
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
@@ -124,9 +126,13 @@ export function createApp(input: {
       .filter((entry) => entry.messageId === target && entry.message.role === "assistant")
       .flatMap((entry) => (entry.message.role === "assistant" && entry.message.text ? [entry.message.text] : []))
       .join("\n\n")
+    // Busy means the conversation itself is answering; background tasks running alongside don't count.
+    const busy = windowed
+      ? store.activeTurn(session.id, { conversation: true }) !== null
+      : turns.some((turn) => ACTIVE.has(turn.status) && turn.kind !== "task")
     return c.json({
       session,
-      status: (windowed ? store.activeTurn(session.id) !== null : turns.some((turn) => ACTIVE.has(turn.status))) ? "busy" : "idle",
+      status: busy ? "busy" : "idle",
       turns,
       ...(windowed ? { hasEarlier: windowed.hasEarlier } : {}),
       // Image and PDF data stay in the store; callers poll this, so they get counts instead.
@@ -292,6 +298,18 @@ export function createApp(input: {
     const result = runner.send({ sessionId: c.req.param("id"), ...body.data })
     if (!result.ok) return c.json({ error: result.error }, result.error === "unknown_session" ? 404 : result.error === "unknown_file" ? 400 : 429)
     return c.json({ state: result.state, turn: result.turn }, 202)
+  })
+
+  // Removes a message and what it led to (its answer, tasks and reports); `after=1` removes every later message too,
+  // for editing a message. Refused while any of them is still queued or running.
+  app.delete("/v1/sessions/:id/turns/:messageId", (c) => {
+    const sessionId = c.req.param("id")
+    if (!store.getSession(sessionId)) return c.json({ error: "unknown_session" }, 404)
+    const messageId = messageIdSchema.safeParse(c.req.param("messageId"))
+    if (!messageId.success) return c.json({ error: "invalid_request" }, 400)
+    const removed = store.deleteTurns(sessionId, messageId.data, { andAfter: c.req.query("after") === "1" })
+    if (removed === null) return c.json({ error: "turn_busy" }, 409)
+    return c.json({ removed })
   })
 
   app.post("/v1/sessions/:id/abort", async (c) => {

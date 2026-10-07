@@ -80,6 +80,8 @@ export const turnCredentialsSchema = z
   .object({
     modelApiKey: z.string().min(1).max(4096).optional(),
     mcpToken: z.string().min(1).max(16_384).optional(),
+    /** Trusted caller policy, also enforced for the runner's local tools. */
+    readOnly: z.boolean().optional(),
   })
   .strict()
 export type TurnCredentials = z.infer<typeof turnCredentialsSchema>

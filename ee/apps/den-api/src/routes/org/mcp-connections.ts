@@ -23,6 +23,7 @@ import {
   type ExternalMcpToolPolicy,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { memberSignInLink } from "../../agent-links.js"
@@ -1312,6 +1313,8 @@ async function handleExternalMcpOAuthCallback(input: {
   request: Request
   requestId: string
   scopedConnectionId?: string
+  /** Audit attribution once the signed state, connection and member are verified; a Response (503) aborts. */
+  attribute?: (owner: { organizationId: string; memberId: string; userId: string | null }) => Promise<Response | null>
 }): Promise<Response> {
   const url = new URL(input.request.url)
   const state = url.searchParams.get("state")
@@ -1350,7 +1353,7 @@ async function handleExternalMcpOAuthCallback(input: {
       organizationId: statePayload.organizationId,
       connectionId,
     }),
-    db.select({ id: MemberTable.id })
+    db.select({ id: MemberTable.id, userId: MemberTable.userId })
       .from(MemberTable)
       .where(and(
         eq(MemberTable.id, statePayload.orgMembershipId),
@@ -1365,6 +1368,8 @@ async function handleExternalMcpOAuthCallback(input: {
   if (connection.kind !== "external_mcp") {
     return invalidMcpOAuthCallback("Native provider connectors do not use the external MCP OAuth callback.")
   }
+  const auditBlocked = await input.attribute?.({ organizationId: statePayload.organizationId, memberId: members[0].id, userId: members[0].userId })
+  if (auditBlocked) return auditBlocked
   const configuredIssuer = connection.oauthConfiguration?.authorizationServerIssuer ?? null
   const discovery = connection.oauthConfiguration?.discovery
   const currentResponseIssuerRequired = authorizationResponseIssuerRequired(connection)
@@ -3467,6 +3472,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     async (c) => handleExternalMcpOAuthCallback({
       request: c.req.raw,
       requestId: c.get("requestId"),
+      attribute: (owner) => attributeOAuthCallbackMember(c, owner),
     }),
   )
 
@@ -3535,6 +3541,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       request: c.req.raw,
       requestId: c.get("requestId"),
       scopedConnectionId: c.req.valid("param").connectionId,
+      attribute: (owner) => attributeOAuthCallbackMember(c, owner),
     }),
   )
 }

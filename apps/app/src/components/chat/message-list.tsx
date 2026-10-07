@@ -1762,7 +1762,10 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     active: activityActive && activityStatus !== "error", waiting, retrying: status === "retrying" || Boolean(retryStatus),
     disconnected: syncDegraded, lastProgressAt, now: Date.now(),
   })
-  const showLoading = !waiting && !noNewActivity && !showReconnecting
+  // Silence alone never hides the line: a slow first token or a quiet tool is
+  // still a busy run. The effect below re-checks status in the background, and
+  // Reconnecting takes over only when the run can no longer be confirmed.
+  const showLoading = !waiting && !showReconnecting
     && shouldShowMessageListLoading(status, messages.length)
   const baseUrl = workspace?.opencodeBaseUrl
   React.useEffect(() => {

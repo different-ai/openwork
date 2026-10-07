@@ -48,3 +48,9 @@ variable "ecs_cluster_arn" {
   type        = string
   default     = ""
 }
+
+variable "wait_for_steady_state" {
+  description = "Whether to wait for the ECS services to reach a steady state before completing terraform apply. When true, terraform blocks until tasks pass health checks and old tasks drain."
+  type        = bool
+  default     = false
+}

@@ -360,24 +360,6 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     await closeToasts();
   });
 
-  await step("card view: every card is the same size, says what it is, and only asks for something when it needs you", async () => {
-    await user.click({ role: "button", label: "Card view" });
-    const cards = await probe.eventually(async () => (await probe.dom("button[data-library-row]")).elements, {
-      within: 10_000, label: "the Library shows cards", until: (elements) => elements.length >= 6 && elements.every((element) => element.rect.height > 80),
-    });
-    const heights = [...new Set(cards.map((card) => Math.round(card.rect.height)))];
-    const saysConnected = cards.filter((card) => card.text.includes("Connected")).length;
-    await shot();
-    evidence.recordAssertionEvidence(
-      "Cards share one height, name their kind, and carry no Connected chip",
-      `${cards.length} cards; heights ${heights.join(", ")}px; cards saying Connected: ${saysConnected}`,
-      heights.length === 1 && saysConnected === 0,
-    );
-    expect(heights).toHaveLength(1);
-    expect(saysConnected).toBe(0);
-    await user.click({ role: "button", label: "List view" });
-  });
-
   // Lane 3 · Use
   await step("a new task uses the customer-briefing skill and the answer says so", async () => {
     await user.click({ role: "button", label: "New session" });

@@ -16,9 +16,25 @@ export function AuditChevron() {
   return <ChevronRight aria-hidden="true" strokeWidth={1.5} className="size-4 shrink-0 transition-transform duration-150 motion-reduce:transition-none group-open:rotate-90" />;
 }
 
+const auditAcronyms: Record<string, string> = {
+  api: "API", mcp: "MCP", sso: "SSO", scim: "SCIM", oauth: "OAuth", dpa: "DPA", oidc: "OIDC", saml: "SAML", url: "URL", id: "ID",
+};
+
 export function auditLabel(value: string): string {
-  const words = value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[._\-/]+/g, " ").trim();
-  return words ? words[0].toUpperCase() + words.slice(1) : "Not recorded";
+  const words = value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/[._\-/]+/g, " ").trim().split(/\s+/).filter(Boolean)
+    .map((word) => auditAcronyms[word.toLowerCase()] ?? (/^[A-Z0-9]{2,}$/.test(word) ? word : word.toLowerCase()));
+  if (!words.length) return "Not recorded";
+  const [first, ...rest] = words;
+  return [first[0].toUpperCase() + first.slice(1), ...rest].join(" ");
+}
+
+const auditCollectionPrefix = "collection:";
+
+export function auditResourceLabel(resource: AuditOperationSummary["resources"][number]) {
+  if (resource.label) return resource.label;
+  if (resource.id.startsWith(auditCollectionPrefix)) return `${auditLabel(resource.type)} collection`;
+  return `${auditLabel(resource.type)} (name unavailable)`;
 }
 
 export const auditOutcomeLabels: Record<AuditOperationSummary["outcome"] | AuditEventEnvelope["outcome"], string> = {
@@ -26,7 +42,7 @@ export const auditOutcomeLabels: Record<AuditOperationSummary["outcome"] | Audit
 };
 
 export const auditOriginLabels: Record<AuditOperationSummary["origin"], string> = {
-  api: "API", cloud_ui: "Cloud dashboard", mcp: "Connected agent", scheduler: "Scheduled automation", webhook: "Webhook", platform_admin: "Platform administrator",
+  api: "API", cloud_ui: "Cloud UI", mcp: "Agent (MCP)", scheduler: "Scheduler", webhook: "Webhook", platform_admin: "Platform admin",
 };
 
 export function AuditOutcome({ outcome }: { outcome: AuditOperationSummary["outcome"] | AuditEventEnvelope["outcome"] }) {
@@ -35,15 +51,13 @@ export function AuditOutcome({ outcome }: { outcome: AuditOperationSummary["outc
   </span>;
 }
 
-export function auditActorLabel(actor: AuditActor, members: readonly DenOrgMember[]): string {
+export function auditActorLabel(actor: AuditActor, members: readonly DenOrgMember[], origin?: AuditOperationSummary["origin"]): string {
   if (actor.type === "system") return "System";
-  if (actor.type === "service") return "Service account";
+  if (actor.type === "service") return actor.id ? `Service: ${auditLabel(actor.id.split(":")[0] ?? actor.id)}` : "Service account";
   if (actor.type === "unknown" || !actor.id) return "Unknown actor";
-  return members.find((member) => member.userId === actor.id || member.id === actor.memberId)?.user.name || "Unavailable member";
-}
-
-export function auditResourceLabel(resource: AuditOperationSummary["resources"][number]) {
-  return resource.label || `${auditLabel(resource.type)} (name unavailable)`;
+  const member = members.find((entry) => entry.userId === actor.id || (actor.memberId !== undefined && entry.id === actor.memberId));
+  if (member?.user.name) return member.user.name;
+  return !actor.memberId && origin === "platform_admin" ? "Platform administrator" : "Unavailable member";
 }
 
 export function AuditTime({ value }: { value: string | null }) {
@@ -137,7 +151,7 @@ export function AuditTimeline({ scope, operationId, members, onAccessError }: De
     <ol className="flex flex-col gap-4">
       {events.map((event) => <li key={event.id} className="flex flex-col gap-2 border-l border-[var(--dls-border)] pl-4" data-testid="audit-event">
         <div className="flex flex-wrap items-center justify-between gap-3"><span className="font-medium">{auditLabel(event.action)}</span><AuditOutcome outcome={event.outcome} /></div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--dls-text-secondary)]"><span>{auditActorLabel(event.actor, members)}</span><AuditTime value={event.occurredAt} /></div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--dls-text-secondary)]"><span>{auditActorLabel(event.actor, members, event.operation.origin)}</span><AuditTime value={event.occurredAt} /></div>
         {event.resources.length ? <p>{event.resources.map(auditResourceLabel).join(", ")}</p> : null}
         {event.reasonCode ? <p>{auditLabel(event.reasonCode)}</p> : null}
         <AuditChanges changes={event.changes} />
@@ -147,6 +161,8 @@ export function AuditTimeline({ scope, operationId, members, onAccessError }: De
             <div><dt>Action</dt><dd className="font-mono">{event.action}</dd></div>
             <div><dt>Actor</dt><dd className="font-mono">{event.actor.id ?? "Unknown"}</dd></div>
             <div><dt>Request</dt><dd className="font-mono">{event.requestId ?? "Not recorded"}</dd></div>
+            {event.http ? <div><dt>HTTP request</dt><dd className="font-mono">{event.http.method} {event.http.route}</dd></div> : null}
+            {event.http?.status !== undefined ? <div><dt>HTTP status</dt><dd className="font-mono">{event.http.status}</dd></div> : null}
             <div><dt>Sequence</dt><dd>{event.sequence}</dd></div>
             <div><dt>Recorded</dt><dd><AuditTime value={event.recordedAt} /></dd></div>
             {event.resources.map((resource) => <div key={`${resource.type}-${resource.id}-${resource.relationship}`}><dt>{auditLabel(resource.relationship)}</dt><dd className="font-mono">{resource.type}: {resource.id}</dd></div>)}

@@ -27,7 +27,6 @@ import {
   GatewayRequestLogTable,
   WorkerTable,
   AdminAllowlistTable,
-  AuditEventTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError, readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
@@ -66,7 +65,13 @@ import { DEFAULT_ORGANIZATION_LIMITS, normalizeOrganizationMetadata } from "../.
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
 import { env } from "../../env.js"
 import type { AuthContextVariables } from "../../session.js"
-import { buildOrganizationAuditEvent, logOrganizationAuditEvent, ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { appendDomainChangesAfterCommit, finishLegacyAuditAction, logLegacyOrChanges, writeLegacyOrChangesInTx } from "../../audit/domain/legacy.js"
+import { memberRemovedEvent, type MemberAuditRow } from "../../audit/domain/members.js"
+import { sessionRevokedEvent, type DirectlyDeletedSession } from "../../audit/domain/sessions.js"
+import { complimentaryAccessEvent, dpaSignedUpdatedEvent } from "../../audit/domain/organization-settings.js"
+import { auditChangeCapture, logAuditOutcomeLost } from "../../audit/request-capture.js"
+import { platformAdminChangeCapture } from "../../audit/service-capture.js"
 import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess, setOpenWorkWebComplimentaryAccess } from "../../openwork-web-access.js"
 import { isOpenWorkWebAvailable } from "../../openwork-web-availability.js"
 import { calculateOrganizationSeatBillingCounts, getOrganizationSeatBillingCounts, isEligibleOpenWorkWebSubscriptionStatus, isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkWebSubscription, refreshOrgSubscriptionFromStripe, syncSeatSubscriptionQuantityAfterMemberChange } from "../../stripe-billing.js"
@@ -398,6 +403,47 @@ function getManualPlanMetadata(tier: PlanTier): { tier: PlanTier; source: "manua
     source: "manual",
     ...(tier === "enterprise" ? { grantedAt: new Date().toISOString() } : {}),
   }
+}
+
+async function recordAdminMemberRemoval(member: MemberAuditRow & { organizationId: OrganizationId }, adminUserId: UserId) {
+  let capture: Awaited<ReturnType<typeof platformAdminChangeCapture>>
+  try {
+    capture = await platformAdminChangeCapture({ organizationId: member.organizationId, adminUserId, kind: "member.management", scope: member.id })
+  } catch (error) {
+    logAuditOutcomeLost({ requestId: null, organizationId: member.organizationId, action: "member.removed", error })
+    return
+  }
+  const ids = await appendDomainChangesAfterCommit(capture, "member.removed", async () => [memberRemovedEvent({ organizationId: member.organizationId, member, reasonCode: "user_deleted" })])
+  try {
+    await finishLegacyAuditAction(capture, {
+      organizationId: member.organizationId,
+      actorUserId: adminUserId,
+      action: ORGANIZATION_AUDIT_ACTIONS.memberRemoved,
+      payload: { targetOrgMembershipId: member.id, targetUserId: member.userId, previousRole: member.role },
+    }, ids)
+  } catch (error) {
+    logAuditOutcomeLost({ requestId: capture?.context.requestId ?? null, organizationId: member.organizationId, action: ORGANIZATION_AUDIT_ACTIONS.memberRemoved, error })
+  }
+}
+
+/**
+ * Admin user deletion deletes every session row directly (no better-auth hook):
+ * session.revoked (reasonCode admin_user_deleted) per live session in each
+ * organization the user was an active member of, actor = this admin, origin
+ * platform_admin. Appended after the commit; a failed append logs [audit-outcome-lost].
+ */
+async function recordAdminSessionsRevoked(member: { id: string; organizationId: OrganizationId }, sessions: readonly DirectlyDeletedSession[], adminUserId: UserId) {
+  const live = sessions.filter((session) => session.expiresAt.getTime() > Date.now())
+  if (live.length === 0) return
+  let capture: Awaited<ReturnType<typeof platformAdminChangeCapture>>
+  try {
+    capture = await platformAdminChangeCapture({ organizationId: member.organizationId, adminUserId, kind: "session.lifecycle", scope: member.id })
+  } catch (error) {
+    logAuditOutcomeLost({ requestId: null, organizationId: member.organizationId, action: "session.revoked", error })
+    return
+  }
+  const requestId = capture?.context.requestId ?? null
+  await appendDomainChangesAfterCommit(capture, "session.revoked", async () => live.map((session) => sessionRevokedEvent({ organizationId: member.organizationId, memberId: member.id, session, reasonCode: "admin_user_deleted", requestId })))
 }
 
 function isOrganizationId(value: string): value is OrganizationId {
@@ -1624,12 +1670,12 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       }
 
       const membershipRows = await db
-        .select({ id: MemberTable.id, organizationId: MemberTable.organizationId, removedAt: MemberTable.removedAt })
+        .select({ id: MemberTable.id, organizationId: MemberTable.organizationId, removedAt: MemberTable.removedAt, userId: MemberTable.userId, role: MemberTable.role, joinedAt: MemberTable.joinedAt, inviteId: MemberTable.inviteId })
         .from(MemberTable)
         .where(eq(MemberTable.userId, userId))
       const activeMembershipRows = membershipRows.filter((member) => !member.removedAt)
       const sessionRows = await db
-        .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
+        .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
         .from(AuthSessionTable)
         .where(eq(AuthSessionTable.userId, userId))
       // Grant tombstones must cover exactly the deleted consent set. Snapshot
@@ -1673,6 +1719,16 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
         return { oauthConsentRows: consentRows, gatewayCredentials: credentials }
       })
+      // Alternate member-removal path: each affected organization gets the same
+      // member.removed evidence as DELETE /v1/members/:memberId (members emitter,
+      // single writer), actor = this admin, origin platform_admin. Appended after
+      // the commit: one transaction cannot take several organizations' audit
+      // locks in order after the member row locks; a failed append logs
+      // [audit-outcome-lost].
+      for (const membership of activeMembershipRows) {
+        await recordAdminMemberRemoval(membership, currentUser.id)
+        await recordAdminSessionsRevoked(membership, sessionRows, currentUser.id)
+      }
       await revokeGoogleCredentials(gatewayCredentials)
       // Auth session cache hits intentionally avoid a DB liveness check; user deletion must clear
       // both token and session-id cache entries for every deleted session instead.
@@ -1838,6 +1894,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       const actorUserId = c.get("user")?.id
       if (!actorUserId) return c.json({ error: "unauthorized" }, 401)
 
+      const capture = auditChangeCapture(c)
       const result = await db.transaction(async (tx) => {
         const [organization] = await tx
           .select({ metadata: OrganizationTable.metadata })
@@ -1853,21 +1910,22 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         } catch {
           return "policy_unavailable"
         }
-        const auditEvent = buildOrganizationAuditEvent({
+        const previousDpaSigned = typeof metadata.dpaSigned === "boolean" ? metadata.dpaSigned : null
+        await tx.update(OrganizationTable)
+          .set({ metadata: { ...metadata, dpaSigned: body.dpaSigned } })
+          .where(eq(OrganizationTable.id, organizationId))
+        // Legacy row keeps its reason; the change event records only reasonProvided.
+        const audit = await writeLegacyOrChangesInTx(tx, capture, {
           organizationId,
           actorUserId,
           action: ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated,
           payload: {
-            previousDpaSigned: typeof metadata.dpaSigned === "boolean" ? metadata.dpaSigned : null,
+            previousDpaSigned,
             dpaSigned: body.dpaSigned,
             reason: body.reason,
           },
-        })
-        await tx.update(OrganizationTable)
-          .set({ metadata: { ...metadata, dpaSigned: body.dpaSigned } })
-          .where(eq(OrganizationTable.id, organizationId))
-        await tx.insert(AuditEventTable).values(auditEvent)
-        return { auditEvent }
+        }, [dpaSignedUpdatedEvent(organizationId, previousDpaSigned, body.dpaSigned, body.reason.trim().length > 0)])
+        return { audit }
       })
       if (result === "not_found") {
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
@@ -1876,7 +1934,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const error = new ManagedModelsPolicyError("managed_models_policy_unavailable")
         return c.json({ error: error.code, message: error.message }, error.status)
       }
-      logOrganizationAuditEvent(result.auditEvent)
+      logLegacyOrChanges(capture, result.audit)
       return c.json({ ok: true, organization: { id: organizationId, dpaSigned: body.dpaSigned } })
     },
   )
@@ -1915,6 +1973,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       }
 
       const actorUserId = c.get("user").id
+      const capture = auditChangeCapture(c)
       const result = await db.transaction(async (tx) => {
         const organizations = await tx
           .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })
@@ -1946,7 +2005,13 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         }
 
         const metadata = setOpenWorkWebComplimentaryAccess(organization.metadata, body.data.enabled)
-        const auditEvent = buildOrganizationAuditEvent({
+        const previousAccess = hasOpenWorkWebComplimentaryAccess(readOrganizationMetadata(organization.metadata))
+
+        await tx
+          .update(OrganizationTable)
+          .set({ metadata })
+          .where(eq(OrganizationTable.id, organizationId))
+        const audit = await writeLegacyOrChangesInTx(tx, capture, {
           organizationId,
           actorUserId,
           action: body.data.enabled
@@ -1956,15 +2021,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
             reason: body.data.reason,
             complimentaryAccess: body.data.enabled,
           },
-        })
+        }, [complimentaryAccessEvent(organizationId, previousAccess, body.data.enabled, body.data.reason.trim().length > 0)])
 
-        await tx
-          .update(OrganizationTable)
-          .set({ metadata })
-          .where(eq(OrganizationTable.id, organizationId))
-        await tx.insert(AuditEventTable).values(auditEvent)
-
-        return { metadata, webSubscription, auditEvent }
+        return { metadata, webSubscription, audit }
       })
 
       if (result === "not_found") {
@@ -1977,7 +2036,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         }, 409)
       }
 
-      logOrganizationAuditEvent(result.auditEvent)
+      logLegacyOrChanges(capture, result.audit)
       return c.json({
         ok: true,
         organization: {

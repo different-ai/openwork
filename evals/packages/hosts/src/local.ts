@@ -17,6 +17,7 @@ import { ensureDenStack } from "./den-stack.ts";
 import { selectedAppEnv } from "./app-env.ts";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChildProcess } from "node:child_process";
+import { MOUSE_POINTER_CHROME_ARG } from "./types.ts";
 import type { DisposableHost, SurfaceHandle, ElectronSurfaceOptions, ChromeSurfaceOptions, DenServiceOptions, DenServiceHandle, ShareLinks } from "./types.ts";
 
 type OrgMode = "single_org" | "multi_org";
@@ -339,7 +340,7 @@ function spawnDetached(command: string, args: string[], { cwd, env, logPath }: S
   return { child, pid: child.pid, exit };
 }
 
-function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean): string[] {
+function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean, mouse: boolean): string[] {
   const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
@@ -350,6 +351,7 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     ...(process.platform === "darwin" ? ["--use-mock-keychain", "--password-store=basic"] : []),
     // Avoid the Daytona preview h2 stall when ~28 dev chunks multiplex; h1.1 loads them, while plain-http local Den never negotiates h2.
     "--disable-http2",
+    ...(mouse ? [MOUSE_POINTER_CHROME_ARG] : []),
     startUrl,
   ];
   return headless ? ["--headless=new", ...args] : args;
@@ -956,7 +958,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const env: NodeJS.ProcessEnv = { ...process.env };
       const cdpUrl = `http://127.0.0.1:${cdpPort}`;
       const launch = async (headless: boolean): Promise<SpawnedDetached> => {
-        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless), { cwd: profileRoot, env, logPath });
+        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless, opts.mouse === true), { cwd: profileRoot, env, logPath });
         await writeFile(join(profileDir, "openwork-eval-chrome.pid"), `${spawned.pid}\n`, "utf8");
         try {
           await waitForCdpOrExit("Chrome", cdpUrl, spawned, logPath);

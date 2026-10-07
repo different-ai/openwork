@@ -90,6 +90,7 @@ import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../linear.js"
@@ -355,6 +356,10 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       },
     }),
     async (c) => {
+      // The purge removes this organization's tenant audit history, so the
+      // platform record (success or failure) carries it as the target; the id
+      // comes from the verified organizationContext, never request input.
+      addAuditRequestResource(c, { type: "organization", id: c.get("organizationContext").organization.id, relationship: "target" })
       const permission = ensureOwner(c)
       if (!permission.ok) {
         return c.json(permission.response, orgAccessFailureStatus(permission.response))

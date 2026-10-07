@@ -17,10 +17,7 @@ export function verifyStoredScimToken(input: {
   return storedBytes.length === expectedBytes.length && timingSafeEqual(storedBytes, expectedBytes)
 }
 
-export async function resolveStoredScimProvider<Provider extends { scimToken: string }>(
-  bearerToken: string,
-  lookup: (providerId: string, organizationId: string) => Promise<Provider | null>,
-): Promise<Provider | null> {
+function decodeScimBearerToken(bearerToken: string): { rawToken: string; providerId: string; organizationId: string } | null {
   let decoded: string
   try {
     const normalized = bearerToken.replace(/-/g, "+").replace(/_/g, "/")
@@ -31,9 +28,25 @@ export async function resolveStoredScimProvider<Provider extends { scimToken: st
   }
   const [rawToken, providerId, ...organizationParts] = decoded.split(":")
   const organizationId = organizationParts.join(":")
-  if (!rawToken || !providerId || !organizationId) return null
+  return rawToken && providerId && organizationId ? { rawToken, providerId, organizationId } : null
+}
+
+/**
+ * The organization id embedded in a SCIM bearer token, UNVERIFIED: only for
+ * selecting which organization's audit flag to read before verifying the token.
+ */
+export function scimTokenOrganizationId(bearerToken: string): string | null {
+  return decodeScimBearerToken(bearerToken)?.organizationId ?? null
+}
+
+export async function resolveStoredScimProvider<Provider extends { scimToken: string }>(
+  bearerToken: string,
+  lookup: (providerId: string, organizationId: string) => Promise<Provider | null>,
+): Promise<Provider | null> {
+  const decoded = decodeScimBearerToken(bearerToken)
+  if (!decoded) return null
   // Decoded identifiers only select a row. No caller may use them as authority
   // until the stored token's hash matches in constant time.
-  const provider = await lookup(providerId, organizationId)
-  return provider && verifyStoredScimToken({ storedToken: provider.scimToken, rawToken }) ? provider : null
+  const provider = await lookup(decoded.providerId, decoded.organizationId)
+  return provider && verifyStoredScimToken({ storedToken: provider.scimToken, rawToken: decoded.rawToken }) ? provider : null
 }

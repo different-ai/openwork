@@ -12,6 +12,7 @@ import {
   type BrandAssetStorage,
   type BrandAssetStorageKey,
 } from "../../brand-assets.js"
+import { attributeAuditRequest } from "../../audit/request-capture.js"
 import { databaseBrandAssetStorage } from "../../brand-asset-storage.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
@@ -142,6 +143,12 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       if (!verifyBrandAssetSignature(key, signature, signingSecret)) {
         return c.json({ error: "not_found" }, 404)
       }
+      // The HMAC binds the organization in the path: attribute the download to
+      // it; the holder of a capability URL is anonymous.
+      const audited = await attributeAuditRequest(c, {
+        organizationId: key.organizationId, actor: { type: "unknown", id: null }, principalKey: "anonymous:signed_brand_asset_url",
+      })
+      if (!audited.ok) return audited.response
 
       const bytes = await storage.read(key)
       if (!bytes) return c.json({ error: "not_found" }, 404)

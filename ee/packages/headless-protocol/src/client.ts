@@ -41,7 +41,7 @@ export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
   /** `messageId` is the turn the token is minted for, so a caller can remember which run it belongs to. */
-  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string }) => Promise<{ token: string }>
+  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string; readOnly?: boolean }) => Promise<{ token: string }>
   /** The longest a minted MCP token may live; a turn asking for longer gets this. */
   maxTokenTtlMs: number
 }
@@ -57,6 +57,14 @@ export const runnerTurnSchema = z.object({
   usage: z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number() }).optional(),
   createdAt: z.number().optional(),
   updatedAt: z.number().optional(),
+  /**
+   * `task` for a background task (`parent` is the turn that started it, `title` its name), `report` for the turn that
+   * brings a finished task back to the conversation (`parent` is the task). Absent for turns a caller sent. Kept open
+   * like `status`.
+   */
+  kind: z.string().optional(),
+  parent: z.string().optional(),
+  title: z.string().optional(),
 })
 export type RunnerTurn = z.infer<typeof runnerTurnSchema>
 
@@ -162,16 +170,18 @@ const sessionPath = (sessionId: string) => `/v1/sessions/${encodeURIComponent(se
 export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?: number }
 
 /**
- * What a conversation may use beyond chat: kept files, a Linux computer, and emoji reactions to the person's
- * message. All are off unless asked for (files and the computer must be configured on the runner too), so a caller
- * that never asks (Slack, Automations) never gets any of them.
+ * What a conversation may use beyond chat: kept files, a Linux computer, emoji reactions to the person's message,
+ * and background tasks it can hand longer work to while it keeps talking. All are off unless asked for (files and
+ * the computer must be configured on the runner too), so a caller that never asks (Slack, Automations) never gets
+ * any of them.
  */
-export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean }
+export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
 
 const capabilityFields = (input: RunnerCapabilities) => ({
   ...(input.files !== undefined ? { files: input.files } : {}),
   ...(input.computer !== undefined ? { computer: input.computer } : {}),
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
+  ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
 })
 
 export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
@@ -230,16 +240,16 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      */
     async sendTurn(
       actor: HeadlessRunnerActor,
-      input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[] },
+      input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[]; readOnly?: boolean },
     ): Promise<RunnerResult<{ state: string }>> {
       const ttlMs = Math.min(input.ttlMs ?? deps.maxTokenTtlMs, deps.maxTokenTtlMs)
-      const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId })
+      const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
       const { status, payload } = await request(deps, "POST", `${sessionPath(input.sessionId)}/turns`, {
         messageId: input.messageId,
         prompt: input.prompt,
         ...(input.model ? { model: input.model } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
-        credentials: { mcpToken: token },
+        credentials: { mcpToken: token, ...(input.readOnly ? { readOnly: true } : {}) },
       })
       if (status !== 202) return { ok: false, status, error: errorCode(payload, `headless_send_${status}`) }
       const accepted = z.object({ state: z.string() }).safeParse(payload)
@@ -371,6 +381,17 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      * the session. `reached` is the runner answering; `stopped` is whether
      * anything was still running or queued to stop.
      */
+    /**
+     * Removes a message and what it led to; `andAfter` removes every later message too (editing replays from there).
+     * Fails with `turn_busy` (409) while one of them is still queued or running.
+     */
+    async deleteTurns(sessionId: string, messageId: string, options: { andAfter?: boolean } = {}): Promise<RunnerResult<{ removed: string[] }>> {
+      const { status, payload } = await request(deps, "DELETE", `${sessionPath(sessionId)}/turns/${encodeURIComponent(messageId)}${options.andAfter ? "?after=1" : ""}`)
+      const parsed = z.object({ removed: z.array(z.string()) }).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false, status, error: errorCode(payload, "runner_unavailable") }
+      return { ok: true, value: parsed.data }
+    },
+
     async abort(sessionId: string, messageId?: string): Promise<{ reached: boolean; stopped: boolean }> {
       const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/abort`, messageId ? { messageId } : {})
       const parsed = z.object({ accepted: z.boolean() }).safeParse(payload)

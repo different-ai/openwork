@@ -21,9 +21,10 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, parseSkillMarkdown } from "@openwork-ee/utils"
 import { createHash, randomBytes } from "node:crypto"
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../../desktop-policies.js"
 import { env } from "../../env.js"
@@ -182,6 +183,19 @@ async function readPreclaimAssertion(headers: Headers, bootstrapId: string) {
     return { ok: false as const, body: { error: "invalid_token", error_description: "The pre-claim assertion is invalid for this workspace." } }
   }
   return { ok: true as const, bootstrap: checked.bootstrap, revoked: checked.revoked }
+}
+
+/**
+ * Audit attribution for a verified bootstrap credential: the provisional
+ * organization it is bound to, actor = the authenticated user (the setup agent
+ * with its setup member for pre-claim assertions; the claiming person, not
+ * yet a member, for claim codes/links).
+ */
+async function attributeBootstrap(c: Context, input: { organizationId: string; userId: string | null; memberId?: string | null }) {
+  const attribution = input.userId ? auditSessionUserAttribution(input.userId, input.memberId) : null
+  if (!attribution) return null
+  const audited = await attributeAuditRequest(c, { organizationId: input.organizationId, ...attribution })
+  return audited.ok ? null : audited.response
 }
 
 function sha256(value: string) {
@@ -627,6 +641,18 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       const tokenHash = sha256(input.token)
       const normalizedUserId = normalizeDenTypeId("user", user.id)
 
+      // Resolve the claim's organization (no lock) to record the intent before
+      // the locking transfer transaction below.
+      const [pendingClaim] = await db
+        .select({ organizationId: WorkspaceClaimTable.organizationId })
+        .from(WorkspaceClaimTable)
+        .where(and(eq(WorkspaceClaimTable.tokenHash, tokenHash), eq(WorkspaceClaimTable.status, "pending"), gt(WorkspaceClaimTable.expiresAt, now)))
+        .limit(1)
+      if (pendingClaim) {
+        const auditBlocked = await attributeBootstrap(c, { organizationId: pendingClaim.organizationId, userId: normalizedUserId })
+        if (auditBlocked) return auditBlocked
+      }
+
       const result = await db.transaction(async (tx) => {
         const [claim] = await tx
           .select({
@@ -724,6 +750,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (checked.revoked) {
         return c.json({ error: "invalid_token", error_description: "This workspace was already claimed or expired." }, 401)
       }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: checked.bootstrap.organizationId, userId: checked.bootstrap.agentUserId, memberId: checked.bootstrap.setupMemberId })
+      if (auditBlocked) return auditBlocked
       c.header("Cache-Control", "no-store")
       return c.json(await issueClaimCode(checked.bootstrap))
     },
@@ -746,6 +774,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
     async (c) => {
       const checked = await readPreclaimAssertion(c.req.raw.headers, c.req.valid("param").bootstrapId)
       if (!checked.ok) return c.json(checked.body, 401)
+      const auditBlocked = await attributeBootstrap(c, { organizationId: checked.bootstrap.organizationId, userId: checked.bootstrap.agentUserId, memberId: checked.bootstrap.setupMemberId })
+      if (auditBlocked) return auditBlocked
       c.header("Cache-Control", "no-store")
       return c.json(await readClaimState(checked.bootstrap))
     },
@@ -772,6 +802,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (!lookup.ok) {
         return c.json({ error: "invalid_user_code", message: "This code is invalid or has expired. Ask your agent for a new one." }, 404)
       }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: lookup.organizationId, userId: c.get("user").id })
+      if (auditBlocked) return auditBlocked
       return c.json({ organization: { id: lookup.organizationId, name: lookup.organizationName } })
     },
   )
@@ -807,6 +839,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (!lookup.ok) {
         return c.json({ error: "invalid_user_code", message: "This code is invalid or has expired. Ask your agent for a new one." }, 404)
       }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: lookup.organizationId, userId: normalizedUserId })
+      if (auditBlocked) return auditBlocked
 
       const result = await db.transaction(async (tx) => {
         const [code] = await tx

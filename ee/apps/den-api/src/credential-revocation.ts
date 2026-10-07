@@ -6,6 +6,7 @@ import {
   OAuthConsentTable,
   OAuthRefreshTokenTable,
 } from "@openwork-ee/den-db/schema"
+import { recordOrganizationSessionsRevoked } from "./audit/domain/sessions.js"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 
@@ -18,16 +19,22 @@ export type MembershipCredentialRevocationCounts = {
   oauthRefreshTokens: number
 }
 
+/** Why an organization change revoked the user's sessions (session.revoked reasonCode). */
+export type MembershipSessionRevocationReason = "member_removed" | "role_changed" | "role_permissions_changed" | "ownership_transferred"
+
 export async function revokeMembershipSessionCredentials(input: {
   organizationId: OrganizationId
   userId: UserId | null
+  /** The affected membership (removed or changed), for the audit event. */
+  memberId: string | null
+  reason: MembershipSessionRevocationReason
 }): Promise<MembershipCredentialRevocationCounts> {
   if (!input.userId) {
     return { sessions: 0, oauthAccessTokens: 0, oauthRefreshTokens: 0 }
   }
 
   const sessions = await db
-    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
+    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, input.userId))
 
@@ -42,6 +49,9 @@ export async function revokeMembershipSessionCredentials(input: {
       cache.auth.revokeSession(session.token),
       cache.auth.revokeSessionId(session.id),
     ]))
+    // Direct delete: no better-auth hook fires. session.revoked in the affected
+    // organization (never blocks or rolls back the revocation).
+    await recordOrganizationSessionsRevoked({ organizationId: input.organizationId, memberId: input.memberId, userId: input.userId, sessions, reasonCode: input.reason })
   }
 
   const oauthAccessTokens = await db

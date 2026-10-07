@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { allocateFreePort } from "@openwork/cdp";
-import { localMysqlIsRunning, localRedisIsRunning, queryDenDatabase, SkipError, type Den, type Place, type Seed } from "@openwork/env";
+import { createAdmin, localMysqlIsRunning, localRedisIsRunning, queryDenDatabase, SkipError, type Den, type Place, type Seed } from "@openwork/env";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
 const execFileAsync = promisify(execFile);
@@ -102,6 +102,18 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   const providerId = identifier(record(record(created.body).inferenceProvider).id);
   const warmed = await seed.api(den.admin, `/v1/inference-providers/${encodeURIComponent(providerId)}/models`);
   if (!warmed.response.ok) throw new Error(`Synthetic model setup failed: ${warmed.response.status}`);
+  const teammateOrg = await seed.api(teammate, "/v1/org");
+  if (!teammateOrg.response.ok) throw new Error(`Synthetic teammate lookup failed: ${teammateOrg.response.status}`);
+  const teammateUserId = identifier(record(record(teammateOrg.body).currentMember).userId);
+  // A platform administrator who is not a member of the audited organization,
+  // so its admin change is attributed to "Platform administrator", not a member name.
+  const platformAdminEmail = "audit-platform-admin@example.test";
+  const granted = await seed.api(den.admin, "/v1/admin/admins", { method: "POST", body: JSON.stringify({ email: platformAdminEmail, note: "Synthetic audit proof admin" }) });
+  if (!granted.response.ok) throw new Error(`Synthetic platform admin grant failed: ${granted.response.status}`);
+  const owner = den.admin;
+  const platformAdmin = await createAdmin(den, { name: "Audit Platform Admin", email: platformAdminEmail });
+  // createAdmin also replaces den.admin; the organization owner stays the primary session.
+  den.admin = owner;
   // Seed only the auditLogs feature override, leaving every other feature alone.
   // Provider setup predates the grant; browser/API traffic initializes the real
   // default policy and records access events before the user's provider save.
@@ -110,5 +122,5 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: teammate, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const unflaggedWeb = await seed.web({ den, signedInAs: unflaggedOwner, startPath: "/dashboard", headless: true, viewport });
-  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, orgId, providerId, originalCredential, replacementCredential, viewport };
+  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, viewport };
 }

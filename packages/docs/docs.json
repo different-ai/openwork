@@ -192,6 +192,8 @@
             "group": "Connections",
             "pages": [
               "cloud/share-with-your-team/shared-mcp-connections",
+              "cloud/share-with-your-team/microsoft-365",
+              "cloud/share-with-your-team/google-cloud-cli",
               "cloud/share-with-your-team/mcp-server-compatibility"
             ]
           },

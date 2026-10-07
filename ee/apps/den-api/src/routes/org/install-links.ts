@@ -12,6 +12,7 @@ import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
 import { organizationFeatureEnabled } from "../../features.js"
+import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { mintDesktopConnectLink } from "../../desktop-connect-link.js"
 import { resolveInstallerReleaseTag } from "../../desktop-releases.js"
@@ -313,8 +314,22 @@ async function resolveInstallConfigForToken(token: string, request: Request) {
   return {
     ...await resolveInstallConfigForOrganization({ organization: row.organization, request }),
     installLinkId: row.installLink.id,
+    organizationId: row.organization.id,
     organizationSlug: row.organization.slug,
   }
+}
+
+/**
+ * The verified install-link token (or a connect grant issued from it) names
+ * the organization; actor service install_link:<installLinkId>. Never the
+ * token, code or a hash of either.
+ */
+async function attributeInstallLink(c: Context, owner: { organizationId: string; installLinkId: string }) {
+  const audited = await attributeAuditRequest(c, {
+    organizationId: owner.organizationId,
+    ...auditServiceAttribution("install_link", owner.installLinkId),
+  })
+  return audited.ok ? null : audited.response
 }
 
 async function serveInstallerArtifact<
@@ -530,6 +545,8 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       if (!resolved) {
         return c.json({ error: "install_link_not_found" }, 404)
       }
+      const auditBlocked = await attributeInstallLink(c, resolved)
+      if (auditBlocked) return auditBlocked
 
       const { handoff, exchangeHandoff } = await mintInstallHandoff(installer, {
         installLinkId: resolved.installLinkId,
@@ -574,6 +591,8 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
 
       const result = await installer.inspectConnectGrant(c.req.valid("json").code)
       if (result.ok) {
+        const auditBlocked = await attributeInstallLink(c, result)
+        if (auditBlocked) return auditBlocked
         return c.json({
           status: result.status,
           claims: result.claims,
@@ -617,9 +636,14 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         }
 
         const input = c.req.valid("json")
-        const result = mode === "preview"
-          ? await installer.previewConnectGrant(input.code)
-          : await installer.consumeConnectGrant(input.code)
+        // Resolve the grant's organization without consuming it, attribute,
+        // then perform the (possibly one-time) exchange.
+        const preview = await installer.previewConnectGrant(input.code)
+        if (preview.ok) {
+          const auditBlocked = await attributeInstallLink(c, preview)
+          if (auditBlocked) return auditBlocked
+        }
+        const result = mode === "preview" ? preview : await installer.consumeConnectGrant(input.code)
         if (result.ok) {
           return c.json({ claims: result.claims })
         }
@@ -668,6 +692,8 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       if (!resolved) {
         return c.json({ error: "install_link_not_found" }, 404)
       }
+      const auditBlocked = await attributeInstallLink(c, resolved)
+      if (auditBlocked) return auditBlocked
 
       return serveInstallerArtifact(c, installer, platformResult.data.platform, resolved.installerReleaseTag)
     },

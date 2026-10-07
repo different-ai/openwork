@@ -12,20 +12,9 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "alb_subnet_ids" {
-  description = "Subnets for the load balancer (public subnets for an internet-facing ALB). At least two AZs."
-  type        = list(string)
-}
-
 variable "service_subnet_ids" {
   description = "Subnets for the Fargate tasks. Private subnets need a NAT gateway or VPC endpoints to pull images from ghcr.io; public subnets need assign_public_ip = true."
   type        = list(string)
-}
-
-variable "database_subnet_ids" {
-  description = "Subnets for RDS and ElastiCache. At least two AZs. Ignored when create_database = false and create_redis = false."
-  type        = list(string)
-  default     = []
 }
 
 variable "owner_emails" {
@@ -36,6 +25,68 @@ variable "owner_emails" {
     condition     = length(var.owner_emails) > 0
     error_message = "Set at least one owner email so the first administrator can be created."
   }
+}
+
+# ---------------------------------------------------------------------------
+# Load Balancer
+# ---------------------------------------------------------------------------
+
+variable "load_balancer_arn" {
+  description = "ARN of an existing Application Load Balancer. The module adds its HTTPS (443) and HTTP (80) listeners to it, so the ALB must not already listen on those ports; for a shared ALB, use alb_listener_arn instead. Requires alb_security_group_id. Empty creates an ALB (<name>-den) in alb_subnet_ids."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.load_balancer_arn == "" || can(regex("^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/app/.+$", var.load_balancer_arn))
+    error_message = "load_balancer_arn must be a full Application Load Balancer ARN (arn:aws:elasticloadbalancing:<region>:<account>:loadbalancer/app/<name>/<id>) or empty."
+  }
+}
+
+variable "alb_subnet_ids" {
+  description = "Subnets for the load balancer (public subnets for an internet-facing ALB). At least two AZs. Required when creating an ALB (load_balancer_arn is empty)."
+  type        = list(string)
+  default     = []
+}
+
+variable "internal_alb" {
+  description = "Create an internal ALB, reachable only inside the VPC (VPN/private network deployments). Used when creating an ALB."
+  type        = bool
+  default     = false
+}
+
+variable "alb_listener_arn" {
+  description = "ARN of an existing ALB HTTPS listener (for example on a shared ALB). The module adds host-header rules for domain_name and the API host to it instead of creating listeners, and creates no DNS records. Takes precedence over load_balancer_arn. Requires alb_security_group_id."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.alb_listener_arn == "" || can(regex("^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener/app/.+$", var.alb_listener_arn))
+    error_message = "alb_listener_arn must be a full ALB listener ARN (arn:aws:elasticloadbalancing:<region>:<account>:listener/app/<name>/<id>/<id>) or empty."
+  }
+}
+
+variable "alb_security_group_id" {
+  description = "Security group of the load balancer. Required with load_balancer_arn or alb_listener_arn so the tasks accept traffic from it. When the module creates the ALB, empty creates a security group allowing 80/443 from allowed_ingress_cidrs; set it to attach your own instead."
+  type        = string
+  default     = ""
+}
+
+variable "api_listener_rule_priority" {
+  description = "Priority of the den-api host rule on the HTTPS listener. Must be unique on that listener; change it when using alb_listener_arn on a listener that already has rules."
+  type        = number
+  default     = 10
+}
+
+variable "web_listener_rule_priority" {
+  description = "Priority of the den-web host rule, created only with alb_listener_arn. Must be unique on that listener."
+  type        = number
+  default     = 20
+}
+
+variable "attach_listener_certificate" {
+  description = "With alb_listener_arn, also add the certificate (certificate_arn, or the one the module creates) to that listener. Leave false when the listener's certificates already cover both hostnames."
+  type        = bool
+  default     = false
 }
 
 # ---------------------------------------------------------------------------
@@ -61,6 +112,12 @@ variable "tags" {
 
 variable "den_api_image" {
   description = "Full den-api image reference. Empty uses ghcr.io/different-ai/openwork-den-api:<openwork_version>. Set this to an ECR mirror if tasks cannot reach ghcr.io."
+  type        = string
+  default     = ""
+}
+
+variable "den_gateway_image" {
+  description = "Full den-gateway image reference. Empty uses ghcr.io/different-ai/openwork-den-gateway:<openwork_version>."
   type        = string
   default     = ""
 }
@@ -114,7 +171,7 @@ variable "api_domain_name" {
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate (same region) covering domain_name and api_domain_name. Empty creates and DNS-validates one in route53_zone_id."
+  description = "ACM certificate (same region) covering domain_name, api_domain_name, and openwork_web_domain_name when openwork_web_enabled. Empty creates and DNS-validates one in route53_zone_id."
   type        = string
   default     = ""
 }
@@ -123,12 +180,6 @@ variable "route53_zone_id" {
   description = "Route 53 hosted zone for both hostnames. When set, the module creates alias records and, if certificate_arn is empty, the ACM certificate. Leave empty when DNS is elsewhere; point both names at the alb_dns_name output."
   type        = string
   default     = ""
-}
-
-variable "internal_alb" {
-  description = "Create an internal ALB, reachable only inside the VPC (VPN/private network deployments)."
-  type        = bool
-  default     = false
 }
 
 variable "allowed_ingress_cidrs" {
@@ -191,21 +242,62 @@ variable "dashboards_enabled" {
 }
 
 variable "openwork_web_enabled" {
-  description = "Enable OpenWork Web (cloud chat sessions). Needs a sandbox provider: set provisioner_mode = \"daytona\" and pass DAYTONA_API_KEY through extra_secrets."
+  description = "Run OpenWork Web (chat in the browser, one Daytona sandbox per member) on this deployment: adds the den-gateway service at openwork_web_domain_name and points the dashboard's OpenWork Web button at it. Requires daytona_api_key and daytona.snapshot."
   type        = bool
   default     = false
 }
 
-variable "openwork_web_url" {
-  description = "URL the dashboard's OpenWork Web button opens (DEN_WEB_OPENWORK_WEB_URL). Empty keeps den-web's default, which is the hosted https://web.openworklabs.com, not your deployment."
+variable "openwork_web_domain_name" {
+  description = "Public hostname for OpenWork Web (den-gateway). Empty uses web.<domain_name>. Must be covered by certificate_arn; a module-created certificate includes it."
   type        = string
   default     = ""
 }
 
-variable "provisioner_mode" {
-  description = "Sandbox provider for OpenWork Web: stub (none), daytona or render."
+variable "openwork_web_url" {
+  description = "URL the dashboard's OpenWork Web button opens (DEN_WEB_OPENWORK_WEB_URL). Empty uses this deployment's gateway when openwork_web_enabled, otherwise den-web's default (the hosted https://web.openworklabs.com)."
   type        = string
-  default     = "stub"
+  default     = ""
+}
+
+variable "openwork_web_listener_rule_priority" {
+  description = "Priority of the den-gateway host rule on the HTTPS listener (created with openwork_web_enabled). Must be unique on that listener."
+  type        = number
+  default     = 30
+}
+
+variable "provisioner_mode" {
+  description = "Sandbox provider (PROVISIONER_MODE): stub (none) or daytona. Empty picks daytona when openwork_web_enabled, otherwise stub."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "stub", "daytona"], var.provisioner_mode)
+    error_message = "provisioner_mode must be empty, stub or daytona."
+  }
+}
+
+variable "daytona_api_key" {
+  description = "Daytona API key for OpenWork Web sandboxes. Required with openwork_web_enabled; stored in Secrets Manager."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "daytona" {
+  description = <<-EOT
+    Daytona settings for OpenWork Web sandboxes (daytona.io or a self-hosted Daytona).
+    snapshot: required with openwork_web_enabled; a snapshot in the API key's Daytona
+    organization built from the OpenWork sandbox image for openwork_version (see the
+    README). name_prefix: prefix for sandbox and volume names; empty uses <name>, so
+    deployments sharing one Daytona organization stay apart.
+  EOT
+  type = object({
+    api_url     = optional(string, "https://app.daytona.io/api")
+    snapshot    = optional(string, "")
+    target      = optional(string, "")
+    name_prefix = optional(string, "")
+  })
+  default = {}
 }
 
 variable "extra_environment" {
@@ -260,6 +352,12 @@ variable "create_database" {
   default     = true
 }
 
+variable "database_subnet_ids" {
+  description = "Subnets for RDS and ElastiCache. At least two AZs. Ignored when create_database = false and create_redis = false."
+  type        = list(string)
+  default     = []
+}
+
 variable "database_url" {
   description = "mysql:// URL of an existing database. Used only when create_database = false."
   type        = string
@@ -310,6 +408,16 @@ variable "den_api" {
   default = {}
 }
 
+variable "den_gateway" {
+  description = "den-gateway (OpenWork Web) task size and count. Created only with openwork_web_enabled."
+  type = object({
+    cpu           = optional(number, 256)
+    memory        = optional(number, 512)
+    desired_count = optional(number, 1)
+  })
+  default = {}
+}
+
 variable "den_web" {
   description = "den-web task size and count."
   type = object({
@@ -318,6 +426,12 @@ variable "den_web" {
     desired_count = optional(number, 1)
   })
   default = {}
+}
+
+variable "wait_for_steady_state" {
+  description = "Whether to wait for the ECS services to reach a steady state before completing terraform apply. When true, terraform blocks until tasks pass health checks and old tasks drain."
+  type        = bool
+  default     = false
 }
 
 variable "log_retention_days" {

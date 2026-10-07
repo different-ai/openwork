@@ -33,7 +33,8 @@ import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.j
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
 import { type BuiltCodemodeTools } from "./codemode-tools.js"
-import { executeWorkflow } from "./workflow-service.js"
+import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError } from "../audit/mcp-service-audit.js"
+import { executeWorkflow, type WorkflowExecutionResult } from "./workflow-service.js"
 import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
 import { scoreText, tokenize } from "./search.js"
@@ -178,7 +179,7 @@ export type MarketplaceCapabilityExecutePayload = {
 
 export type MarketplaceCapabilityExecuteResult =
   | { ok: true; result: MarketplaceCapabilityExecutePayload }
-  | { ok: false; error: "unknown_capability" | "forbidden"; message: string }
+  | { ok: false; error: "unknown_capability" | "forbidden" | "audit_unavailable"; message: string }
   | {
       ok: false
       error: "invalid_capability_arguments"
@@ -204,6 +205,9 @@ export type MarketplaceCapabilityExecuteResult =
       toolCalls: Array<{ name: string }>
       receiptId?: string | null
     }
+
+/** Wraps one saved Workflow run in service-layer audit capture (MCP callers only; see src/audit/service-actions.ts). */
+export type MarketplaceWorkflowAudit = (configObjectId: string, run: () => Promise<WorkflowExecutionResult>) => Promise<WorkflowExecutionResult>
 
 export type MarketplaceConfigObjectExecutionMode = "codemode" | "desktop_only" | "instructional" | "mcp"
 
@@ -1578,6 +1582,8 @@ export async function executeMarketplaceCapability(input: {
   redirectUriBase?: string
   validateScriptOutput?: boolean
   liveRuntime?: { timeZone?: string }
+  /** MCP callers record the run as workflow.execute; route and Automation callers omit it. */
+  auditWorkflowExecution?: MarketplaceWorkflowAudit
 }): Promise<MarketplaceCapabilityExecuteResult> {
   const liveRuntime = input.liveRuntime === undefined ? undefined : artifactRunInputSchema.safeParse(input.liveRuntime)
   if (liveRuntime && (!liveRuntime.success || input.body !== undefined)) {
@@ -1642,10 +1648,11 @@ export async function executeMarketplaceCapability(input: {
   }
 
   if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
-    const execution = await executeWorkflow({
+    const orgMembershipId = input.member.orgMembershipId
+    const runWorkflow = () => executeWorkflow({
       database: db,
       organizationId,
-      orgMembershipId: input.member.orgMembershipId,
+      orgMembershipId,
       pluginId: row.plugin.id,
       configObjectId: row.configObject.id,
       configObjectVersionId: version.id,
@@ -1657,6 +1664,13 @@ export async function executeMarketplaceCapability(input: {
       validateOutput: liveRuntime?.success === true || input.validateScriptOutput === true,
       buildTools: input.buildTools ?? (async () => ({ tools: {}, manifest: [] })),
     })
+    let execution: WorkflowExecutionResult
+    try {
+      execution = input.auditWorkflowExecution ? await input.auditWorkflowExecution(row.configObject.id, runWorkflow) : await runWorkflow()
+    } catch (error) {
+      if (error instanceof AuditUnavailableError) return { ok: false, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
+      throw error
+    }
     if (!execution.ok && execution.error === "unsupported") {
       return {
         ok: true,

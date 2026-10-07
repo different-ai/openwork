@@ -30,8 +30,11 @@ a{display:inline-block;background:#011627;color:#fff;text-decoration:none;font-s
 
 export function createAuth(input: { config: Config; store: Store; den: Den }) {
   const { config, store, den } = input
-  const sessionCookie = config.secureCookies ? "__Host-workbot" : "workbot_session"
-  const loginCookie = config.secureCookies ? "__Host-workbot-login" : "workbot_login"
+  // Over plain http (local), cookies are shared by every port of a host, so each Workbot names its own by port:
+  // two local Workbots on 127.0.0.1 must never read or replace each other's sign-in.
+  const local = new URL(config.publicUrl).port
+  const sessionCookie = config.secureCookies ? "__Host-workbot" : `workbot_session${local ? `_${local}` : ""}`
+  const loginCookie = config.secureCookies ? "__Host-workbot-login" : `workbot_login${local ? `_${local}` : ""}`
   const cookieOptions = { httpOnly: true, secure: config.secureCookies, sameSite: "Lax" as const, path: "/" }
   const refreshing = new Map<string, Promise<Tokens>>()
   const denSessions = new Map<string, { at: number; value: DenSession }>()

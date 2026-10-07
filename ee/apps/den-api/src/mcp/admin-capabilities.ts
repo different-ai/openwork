@@ -3,6 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { CapabilityMatch } from "./search.js"
 import { scoreText, tokenize } from "./search.js"
+import type { PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
 import { normalizeToolRecord } from "./invoke.js"
 
@@ -15,9 +16,9 @@ type AdminToolResult = {
   content: { type: "text"; text: string }[]
 }
 
-async function withAdminClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
+async function withAdminClient<T>(admin: PlatformAdminAuditActor | null, run: (client: Client) => Promise<T>): Promise<T> {
   const server = new McpServer({ name: "den-admin-agent-bridge", version: DEN_ADMIN_MCP_VERSION })
-  registerAdminMcpTools(server)
+  registerAdminMcpTools(server, admin)
   const client = new Client({ name: "openwork-agent", version: "1.0.0" })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
 
@@ -39,7 +40,7 @@ export function parseAdminCapabilityName(name: string): string | null {
 
 async function listAdminCapabilityMatches(query?: string): Promise<CapabilityMatch[]> {
   const queryTokens = query === undefined ? undefined : tokenize(query)
-  const { tools } = await withAdminClient((client) => client.listTools())
+  const { tools } = await withAdminClient(null, (client) => client.listTools())
 
   return tools
     .map((tool) => {
@@ -105,11 +106,12 @@ function resultIsError(result: unknown): boolean {
   return typeof result === "object" && result !== null && "isError" in result && result.isError === true
 }
 
-export async function executeAdminCapability(name: string, body: unknown): Promise<AdminToolResult | null> {
+/** `admin` is the verified platform admin; org-mutating tools are audited for it. */
+export async function executeAdminCapability(name: string, body: unknown, admin: PlatformAdminAuditActor): Promise<AdminToolResult | null> {
   const toolName = parseAdminCapabilityName(name)
   if (!toolName) return null
 
-  return withAdminClient(async (client) => {
+  return withAdminClient(admin, async (client) => {
     const result = await client.callTool({ name: toolName, arguments: normalizeToolRecord(body) ?? {} })
     const content = resultTextContent(result)
     return {
@@ -123,6 +125,7 @@ export async function executeAvailableAdminCapability(
   platformAdmin: boolean,
   name: string,
   body: unknown,
+  admin: PlatformAdminAuditActor,
 ): Promise<AdminToolResult | null> {
   if (!parseAdminCapabilityName(name)) return null
   if (!platformAdmin) {
@@ -137,5 +140,5 @@ export async function executeAvailableAdminCapability(
       }],
     }
   }
-  return executeAdminCapability(name, body)
+  return executeAdminCapability(name, body, admin)
 }

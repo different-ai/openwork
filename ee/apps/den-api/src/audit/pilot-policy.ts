@@ -143,7 +143,7 @@ Reads a coherent state/policy/operation snapshot under a state share lock, with
 at most 10000 operations. Larger/inconsistent snapshots fail explicitly as
 incomplete. At most 1000 candidates are returned, with selectionComplete and
 remainingEligibleDeletions. The digest/confirmation is informational only.
-No job/delivery protection integration exists yet; unknown operation kinds fail
+No job/delivery protection integration exists yet; malformed operation kinds fail
 closed. Legacy rows are excluded, unchanged and not counted retroactively.
 On an uncertain database/commit failure, inspect policy/history before retrying.
 `
@@ -241,7 +241,7 @@ export async function previewPilotRetention(database: AuditDatabase, inputOrgani
       firstRecordedAt: AuditOperationTable.first_recorded_at, outcome: AuditOperationTable.outcome,
       attachmentExpiresAt: AuditOperationTable.attachment_expires_at, kind: AuditOperationTable.kind,
     }).from(AuditOperationTable).where(retained).orderBy(asc(AuditOperationTable.first_recorded_at), asc(AuditOperationTable.id)).limit(MAX_AUDIT_RETENTION_OPERATIONS).for("share")
-    if (rows.length !== state.retainedOperations || rows.some((row) => !["provider.configuration", "audit.access", "audit.policy"].includes(row.kind))) throw new AuditPilotError("audit_pilot_retention_incomplete_snapshot")
+    if (rows.length !== state.retainedOperations || rows.some((row) => !/^[a-z][a-z0-9_.-]{0,127}$/.test(row.kind))) throw new AuditPilotError("audit_pilot_retention_incomplete_snapshot")
     const preview = previewAuditRetention({
       organizationId, now: new Date().toISOString(),
       policy: { revision: policy.revision, allowance: policy.allowance, excessMode: policy.excessMode, maxAgeMs: null },

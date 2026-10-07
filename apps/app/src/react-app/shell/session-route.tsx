@@ -25,13 +25,14 @@ import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { composeNativeSessionHistory, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
 import {
+  resolveEngineRootEndpoint,
   resolveWorkspaceEndpoint,
   type ResolvedWorkspaceEndpoint,
 } from "@/app/lib/workspace-endpoint";
@@ -202,7 +203,6 @@ import { commandPaletteModelTarget, createCommandPaletteModelControls } from "./
 import { requestRenameSession } from "./session-actions-bus";
 import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
-import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
 import { useBootState } from "./boot-state";
 import {
   forgetWorkspaceMemory,
@@ -360,6 +360,8 @@ function focusPromptSoon() {
 }
 
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
+/** Bound on the first chat waiting for the organization provider sync. */
+const FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS = 20_000;
 
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
   return {
@@ -925,6 +927,23 @@ export function SessionRoute() {
     });
   const newTaskBehavior = useMemo(() => getModelBehaviorSummary(newTaskModel?.providerID ?? "",
     newTaskModel ? providerCatalog[newTaskModel.providerID]?.[newTaskModel.modelID] : undefined, newTaskVariant), [newTaskModel, newTaskVariant, providerCatalog]);
+  // Same as Settings: a member who signed in before creating a workspace
+  // still has the local server's managed engine, so organization providers
+  // sync at sign-in instead of racing the first chat's workspace creation.
+  const engineRootEndpoint = useMemo(
+    () => (isDesktopRuntime() && !loading && workspaces.length === 0
+      ? resolveEngineRootEndpoint({ baseUrl, token })
+      : null),
+    [baseUrl, loading, token, workspaces.length],
+  );
+  const providerAuthClient = useMemo(() => {
+    if (opencodeClient || !engineRootEndpoint) return opencodeClient;
+    return createClient(engineRootEndpoint.opencodeBaseUrl, undefined, { token: engineRootEndpoint.token, mode: "openwork" });
+  }, [engineRootEndpoint, opencodeClient]);
+  const engineRootServer = useMemo(
+    () => (engineRootEndpoint && client ? { baseUrl, token, client } : null),
+    [baseUrl, client, engineRootEndpoint, token],
+  );
   const {
     store: sessionProviderAuthStore,
     snapshot: sessionProviderAuthSnapshot,
@@ -932,8 +951,8 @@ export function SessionRoute() {
     cloudProviderList,
     refreshCloudProviderSync,
   } = useSessionProviderAuth({
-    opencodeClient,
-    opencodeBaseUrl,
+    opencodeClient: providerAuthClient,
+    opencodeBaseUrl: opencodeBaseUrl || (engineRootEndpoint?.opencodeBaseUrl ?? ""),
     providers,
     providerDefaults,
     providerConnectedIds,
@@ -942,6 +961,7 @@ export function SessionRoute() {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     selectedWorkspaceId,
+    engineRootServer,
     localServerHostToken: openworkServerHostInfoState?.hostToken?.trim() ?? "",
     localServerGeneration: openworkServerHostInfoState?.generation ?? null,
     setProviders,
@@ -3115,25 +3135,12 @@ export function SessionRoute() {
     assignSessionToGroup(selectedWorkspaceId, selectedSessionId, groupId);
   }, [assignSessionToGroup, selectedSessionId, selectedWorkspaceId]);
 
-  const sessionSearchFetcher = useMemo<SessionMessageFetcher | null>(() => {
-    if (!client) return null;
-    // Cap the transcript fetch to keep multi-workspace scans fast; matches in
-    // anything older than the most recent 400 messages are traded away for
-    // responsiveness.
-    return async (workspaceId: string, sessionId: string) => {
-      const workspace = workspaces.find((item) => item.id === workspaceId);
-      const endpoint = endpointForWorkspace(workspace);
-      if (!endpoint) throw new Error("Workspace runtime is not connected.");
-      return getNativeSessionMessages(endpoint, sessionId, { limit: 400 });
-    };
-  }, [client, endpointForWorkspace, workspaces]);
-
   const sessionSearchPaletteItem = useMemo<PaletteItem>(() => ({
     id: "session-search.open",
-    title: "Search session messages",
-    detail: "Deep search every session, including message content",
+    title: "Search sessions",
+    detail: "Find a session by title in any workspace",
     meta: "Cmd/Ctrl+Shift+F",
-    searchText: "search find sessions messages history transcript content",
+    searchText: "search find sessions titles history",
     action: () => {
       setCommandPaletteOpen(false);
       setSessionSearchOpen(true);
@@ -3466,6 +3473,18 @@ export function SessionRoute() {
           if (canCreateWorkspaces()) handleOpenCreateWorkspace();
           throw new Error("Choose a workspace before retrying this message.");
         }
+        // The first workspace's engine instance reads its providers when this
+        // chat starts. Let the organization provider sync begun at sign-in
+        // finish first (bounded; on timeout the send proceeds as before).
+        if (newTaskModel && isCloudManagedProviderKey(newTaskModel.providerID)) {
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS);
+            void sessionProviderAuthStore.runCloudProviderSync("new_chat").finally(() => {
+              window.clearTimeout(timer);
+              resolve();
+            });
+          });
+        }
         const home = await getDesktopHomeDir().catch(() => "");
         const folder = home ? await joinDesktopPath(home, "OpenWork Chat").catch(() => "") : "";
         if (!folder) throw new Error("Choose a workspace before retrying this message.");
@@ -3479,7 +3498,7 @@ export function SessionRoute() {
       const current = usePendingConversationStore.getState().conversations[pending.id];
       if (current) publishCreatedConversation(current, created, newTaskAgent, prepared?.title);
     });
-  }, [endpointForWorkspace, handleCreateWorkspace, handleOpenCreateWorkspace, navigate, newTaskAgent, publishCreatedConversation, sessionDraftScope, workspacesRef]);
+  }, [endpointForWorkspace, handleCreateWorkspace, handleOpenCreateWorkspace, navigate, newTaskAgent, newTaskModel, publishCreatedConversation, sessionDraftScope, sessionProviderAuthStore, workspacesRef]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.create",
@@ -3978,7 +3997,6 @@ export function SessionRoute() {
       open={sessionSearchOpen}
       onClose={() => setSessionSearchOpen(false)}
       sessions={paletteSessionOptions}
-      fetchMessages={sessionSearchFetcher}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
     <ModelPickerModal

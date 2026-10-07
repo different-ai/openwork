@@ -467,10 +467,6 @@ import type {
   GetV1TeamsByTeamIdPluginAccessErrors,
   GetV1TeamsByTeamIdPluginAccessResponses,
   GetV1TeamsByTeamIdResponses,
-  GetV1WorkersByIdErrors,
-  GetV1WorkersByIdResponses,
-  GetV1WorkersByIdRuntimeErrors,
-  GetV1WorkersByIdRuntimeResponses,
   GetV1WorkersErrors,
   GetV1WorkersResponses,
   GetV1WorkflowsByConfigObjectIdErrors,
@@ -508,6 +504,8 @@ import type {
   ListGmailDraftsResponses,
   ListGmailLabelsErrors,
   ListGmailLabelsResponses,
+  ListWorkbotConnectionsErrors,
+  ListWorkbotConnectionsResponses,
   Microsoft365CalendarCancelBody,
   Microsoft365CalendarDeleteBody,
   Microsoft365CalendarEventBody,
@@ -582,8 +580,6 @@ import type {
   PatchV1SkillHubsBySkillHubIdErrors,
   PatchV1TeamsByTeamIdErrors,
   PatchV1TeamsByTeamIdResponses,
-  PatchV1WorkersByIdErrors,
-  PatchV1WorkersByIdResponses,
   PostApiAuthOauth2RegisterErrors,
   PostApiAuthOauth2RegisterResponses,
   PostApiAuthScimV2GroupsErrors,
@@ -856,12 +852,6 @@ import type {
   PostV1WebhooksConnectorsGithubResponses,
   PostV1WorkersByIdActivityHeartbeatErrors,
   PostV1WorkersByIdActivityHeartbeatResponses,
-  PostV1WorkersByIdRuntimeUpgradeErrors,
-  PostV1WorkersByIdRuntimeUpgradeResponses,
-  PostV1WorkersByIdTokensErrors,
-  PostV1WorkersByIdTokensResponses,
-  PostV1WorkersErrors,
-  PostV1WorkersResponses,
   PostV1WorkflowsByConfigObjectIdRunErrors,
   PostV1WorkflowsByConfigObjectIdRunResponses,
   PostV1WorkflowsByConfigObjectIdVersionsErrors,
@@ -14470,6 +14460,19 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * The everyday apps the person can connect for Workbot
+   *
+   * For the Workbot app only. The Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account.
+   */
+  public listWorkbotConnections<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      ListWorkbotConnectionsResponses,
+      ListWorkbotConnectionsErrors,
+      ThrowOnError
+    >({ url: "/v1/workbot/connections", ...options });
+  }
+
+  /**
    * A short-lived token for one Workbot turn
    *
    * For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.
@@ -14477,10 +14480,21 @@ export class DenClient extends HeyApiClient {
   public createWorkbotRunToken<ThrowOnError extends boolean = false>(
     parameters?: {
       ttlMs?: number;
+      readOnly?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "ttlMs" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "ttlMs" },
+            { in: "body", key: "readOnly" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).post<
       CreateWorkbotRunTokenResponses,
       CreateWorkbotRunTokenErrors,
@@ -14610,49 +14624,6 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Create worker
-   *
-   * Creates a local worker or cloud worker for the active organization and returns the initial tokens needed to connect to it.
-   */
-  public postV1Workers<ThrowOnError extends boolean = false>(
-    parameters: {
-      name: string;
-      description?: string;
-      destination: "local" | "cloud";
-      workspacePath?: string;
-      sandboxBackend?: string;
-      imageVersion?: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "body", key: "name" },
-            { in: "body", key: "description" },
-            { in: "body", key: "destination" },
-            { in: "body", key: "workspacePath" },
-            { in: "body", key: "sandboxBackend" },
-            { in: "body", key: "imageVersion" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<PostV1WorkersResponses, PostV1WorkersErrors, ThrowOnError>({
-      url: "/v1/workers",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
    * Delete worker
    *
    * Deletes a worker and cascades cleanup for its tokens, runtime records, and provider-specific resources. Only the creator can delete a cloud worker.
@@ -14672,147 +14643,6 @@ export class DenClient extends HeyApiClient {
       url: "/v1/workers/{id}",
       ...options,
       ...params,
-    });
-  }
-
-  /**
-   * Get worker
-   *
-   * Returns one worker from the active organization together with its latest provisioned instance details.
-   */
-  public getV1WorkersById<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
-    return (options?.client ?? this.client).get<GetV1WorkersByIdResponses, GetV1WorkersByIdErrors, ThrowOnError>({
-      url: "/v1/workers/{id}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Update worker
-   *
-   * Renames a worker, but only when the caller is the user who originally created that worker.
-   */
-  public patchV1WorkersById<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      name: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { in: "body", key: "name" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).patch<PatchV1WorkersByIdResponses, PatchV1WorkersByIdErrors, ThrowOnError>({
-      url: "/v1/workers/{id}",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
-    });
-  }
-
-  /**
-   * Get worker connection tokens
-   *
-   * Returns connection tokens and the resolved OpenWork connect URL for an existing worker. Cloud workers require the caller to be their creator, including API-key callers.
-   */
-  public postV1WorkersByIdTokens<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
-    return (options?.client ?? this.client).post<
-      PostV1WorkersByIdTokensResponses,
-      PostV1WorkersByIdTokensErrors,
-      ThrowOnError
-    >({
-      url: "/v1/workers/{id}/tokens",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Get worker runtime status
-   *
-   * Fetches runtime version and status information from a specific worker's runtime endpoint. Only the creator can access a cloud worker's runtime.
-   */
-  public getV1WorkersByIdRuntime<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
-    return (options?.client ?? this.client).get<
-      GetV1WorkersByIdRuntimeResponses,
-      GetV1WorkersByIdRuntimeErrors,
-      ThrowOnError
-    >({
-      url: "/v1/workers/{id}/runtime",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Upgrade worker runtime
-   *
-   * Forwards a runtime upgrade request to a specific worker and returns the worker runtime's response. Only the creator can upgrade a cloud worker's runtime.
-   */
-  public postV1WorkersByIdRuntimeUpgrade<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      body: {
-        [key: string]: unknown;
-      };
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "id" },
-            { key: "body", map: "body" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<
-      PostV1WorkersByIdRuntimeUpgradeResponses,
-      PostV1WorkersByIdRuntimeUpgradeErrors,
-      ThrowOnError
-    >({
-      url: "/v1/workers/{id}/runtime/upgrade",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
     });
   }
 

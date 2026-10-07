@@ -15,14 +15,26 @@ import type { Den } from "./den.js"
  */
 
 const fileIdSchema = z.string().regex(/^fl_[a-f0-9]{32}$/)
+/** The runner's own limit on one message; anything longer goes as a file. */
+const MAX_MESSAGE_CHARS = 100_000
 const sendSchema = z
   .object({
     id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
-    text: z.string().trim().max(20_000),
+    text: z.string().trim().max(MAX_MESSAGE_CHARS),
     timeZone: z.string().max(64).optional(),
     attachments: z.array(fileIdSchema).max(20).optional(),
   })
   .strict()
+const editSchema = z
+  .object({
+    newId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+    text: z.string().trim().max(MAX_MESSAGE_CHARS),
+    timeZone: z.string().max(64).optional(),
+    attachments: z.array(fileIdSchema).max(20).optional(),
+  })
+  .strict()
+const messageTooLong = { error: "message_too_long", message: "That's too long for one message. Send it as a file instead." } as const
+const tooLong = (error: z.ZodError) => error.issues.some((issue) => issue.path[0] === "text" && issue.code === "too_big")
 const uploadQuerySchema = z.object({ name: z.string().trim().min(1).max(255), timeZone: z.string().max(64).optional() })
 const threadQuerySchema = z.object({ turns: z.coerce.number().int().min(1).max(200).optional() })
 /** Raster images open inline (thumbnails); everything else always downloads, so no file renders as a page. */
@@ -59,7 +71,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       client: createHeadlessRunnerClient({
         config: config.runner,
         fetch,
-        mintToken: async () => ({ token: await den.runToken(member.accessToken) }),
+        mintToken: async ({ readOnly }) => ({ token: await den.runToken(member.accessToken, { readOnly }) }),
         maxTokenTtlMs: RUN_TOKEN_TTL_MS,
       }),
       canSchedule: async () => member.den.canSchedule,
@@ -91,6 +103,36 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     })
   })
 
+  /** Leaving the welcome screen: Workbot starts the conversation with its own hello. */
+  app.post("/v1/workbot/hello", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const body = z.object({ timeZone: z.string().min(1).max(100).optional() }).safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    const member = c.get("member")
+    try {
+      return c.json(await workbotFor(member).hello(actorOf(member), body.data))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** The everyday apps to connect on the welcome screen; connecting happens in Den, in a new tab. */
+  app.get("/v1/workbot/connections", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    const connections = await den.connections(member.accessToken).catch(() => null)
+    if (!connections) return c.json({ connections: [] })
+    const denWeb = config.denWebUrl ?? (await den.webUrl().catch(() => null))
+    return c.json({
+      connections: connections.map((connection) => ({
+        ...connection,
+        // Den's own link, at the Den web origin this Workbot is configured with.
+        connectUrl: connection.ready || !denWeb ? connection.connectUrl : `${denWeb}/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`,
+      })),
+    })
+  })
+
   app.get("/v1/workbot", async (c) => {
     if (!enabled(c)) return c.json({ available: false as const, reason: "workbot_not_enabled" as const })
     const query = threadQuerySchema.safeParse(c.req.query())
@@ -106,7 +148,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.post("/v1/workbot/messages", async (c) => {
     const body = sendSchema.safeParse(await c.req.json().catch(() => null))
-    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    if (!body.success) return c.json(tooLong(body.error) ? messageTooLong : { error: "invalid_request" }, 400)
     if (!body.data.text && !body.data.attachments?.length) return c.json({ error: "invalid_request", message: "Send text or a file." }, 400)
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const member = c.get("member")
@@ -127,6 +169,53 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const member = c.get("member")
     try {
       return c.json(await workbotFor(member).stop(actorOf(member)))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** Deletes one of the person's messages and Workbot's answer to it. */
+  app.delete("/v1/workbot/messages/:id", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    try {
+      const result = await workbotFor(member).deleteMessage(actorOf(member), c.req.param("id"))
+      if (!result.ok) return c.json({ error: result.code }, result.code === "busy" ? 409 : 404)
+      return c.json({ ok: true as const })
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  /** Edits one of the person's messages: what came after it is replaced by Workbot's answer to the edit. */
+  app.post("/v1/workbot/messages/:id/edit", async (c) => {
+    const body = editSchema.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json(tooLong(body.error) ? messageTooLong : { error: "invalid_request" }, 400)
+    if (!body.data.text && !body.data.attachments?.length) return c.json({ error: "invalid_request", message: "Send text or a file." }, 400)
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    const retryAfter = rateLimited(member.den.memberId)
+    if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
+    try {
+      const result = await workbotFor(member).editMessage(actorOf(member), { id: c.req.param("id"), ...body.data })
+      if (!result.ok) {
+        const status = result.code === "busy" ? 409 : result.code === "unknown_message" ? 404 : result.code === "unknown_file" ? 400 : 429
+        return c.json({ error: result.code }, status)
+      }
+      return c.json({ ok: true as const }, 202)
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      throw error
+    }
+  })
+
+  app.post("/v1/workbot/tasks/:taskId/stop", async (c) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    const member = c.get("member")
+    try {
+      return c.json(await workbotFor(member).stopTask(actorOf(member), c.req.param("taskId")))
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
       throw error

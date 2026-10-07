@@ -11,10 +11,11 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 | Database migrations | Init container in each den-api task; den-api starts only if it succeeds |
 | MySQL 8.4 | RDS, encrypted, private (or bring your own `database_url`) |
 | Cache (optional) | ElastiCache Redis with TLS (`create_redis = true`) |
-| HTTPS | ALB: `domain_name` → den-web, `api.<domain_name>` → den-api, HTTP redirects |
+| HTTPS | ALB: `domain_name` → den-web, `api.<domain_name>` → den-api, HTTP redirects (or your existing ALB / listener) |
 | Certificate | Your ACM ARN, or created and DNS-validated in a Route 53 zone |
 | Secrets | One Secrets Manager secret, injected as ECS `secrets` |
 | Logs | CloudWatch `/ecs/<name>/den-api` and `/ecs/<name>/den-web` |
+| OpenWork Web (optional) | `den-gateway` Fargate service at `web.<domain_name>`, sandboxes in your Daytona organization (`openwork_web_enabled = true`) |
 
 It sets the same environment the [`openwork-ee` Helm chart](../../../../packaging/helm/openwork-ee)
 sets on Kubernetes, so the chart's README and `ee/apps/den-api/.env.example`
@@ -23,13 +24,15 @@ document every setting you can add through `extra_environment`.
 > **Status: draft.** Applied end to end in an AWS test account with
 > `examples/complete` (release 0.18.54): HTTPS on both hosts, migrations,
 > the one-time `/setup` administrator flow, sign-in, and the optional Redis.
+> OpenWork Web was applied end to end the same way: sign-in through the
+> gateway, a Daytona sandbox per member, and a chat that edits files.
 > Not yet exercised: private subnets behind NAT, multiple den-api replicas,
-> SMTP/SES delivery, upgrades across releases, OpenWork Web sandboxes.
+> SMTP/SES delivery, upgrades across releases.
 
 ## Before you start
 
 - A VPC with subnets in at least two AZs.
-  - **ALB**: public subnets (or private with `internal_alb = true`).
+  - **ALB**: public subnets (`alb_subnet_ids`, or private with `internal_alb = true`), or bring your own ALB / listener (`load_balancer_arn` or `alb_listener_arn`).
   - **Tasks**: private subnets with a NAT gateway (they pull images from
     `ghcr.io` and call model providers), or public subnets with
     `assign_public_ip = true`. To avoid `ghcr.io`, mirror the images to ECR
@@ -61,9 +64,10 @@ module "openwork" {
   database_subnet_ids = ["subnet-private-a", "subnet-private-b"]
 
   # Optional
-  ecs_cluster_arn = "arn:aws:ecs:us-east-1:123456789012:cluster/platform" # empty creates <name>-den
-  create_redis    = false
-  email_from   = "OpenWork <no-reply@example.com>"
+  ecs_cluster_arn       = "arn:aws:ecs:us-east-1:123456789012:cluster/platform" # empty creates <name>-den
+  create_redis          = false
+  wait_for_steady_state = true # apply waits until the new tasks are healthy
+  email_from            = "OpenWork <no-reply@example.com>"
   smtp = {
     host     = "email-smtp.us-east-1.amazonaws.com"
     username = var.ses_smtp_user
@@ -93,9 +97,30 @@ After `terraform apply`:
   services are named `den-api` and `den-web`, so they must not collide with
   services already in that cluster. They use `launch_type = "FARGATE"`,
   which overrides the cluster's default capacity provider strategy. The
-  module still creates its own Cloud Map namespace (`<name>.internal`), ALB,
-  security groups and IAM roles.
+  module still creates its own Cloud Map namespace (`<name>.internal`), ALB
+  (unless you bring one, below), security groups and IAM roles.
+- **Existing load balancer.** By default the module creates an ALB
+  (`<name>-den`) in `alb_subnet_ids`, a security group allowing 80/443 from
+  `allowed_ingress_cidrs` (or attaches `alb_security_group_id` instead), the
+  HTTPS and HTTP-redirect listeners, and, with `route53_zone_id`, DNS records
+  for both hostnames. To use a load balancer you already run, set
+  `alb_security_group_id` to its security group and one of:
+  - `alb_listener_arn`: an HTTPS listener, for example on a shared ALB. The
+    module adds host-header rules for `domain_name` and the API host
+    (`web_listener_rule_priority`, `api_listener_rule_priority`; pick
+    priorities that are free on that listener). Set
+    `attach_listener_certificate = true` unless the listener's certificates
+    already cover both hostnames.
+  - `load_balancer_arn`: an ALB with nothing on ports 80 and 443. The module
+    adds its own listeners to it.
 
+  In both cases the module creates no DNS records: point both hostnames at
+  your load balancer. `route53_zone_id` is then only used to validate a
+  certificate the module creates.
+- **Wait for steady state.** With `wait_for_steady_state = true`,
+  `terraform apply` waits until the new tasks pass health checks and the old
+  ones drain, so a crash or failed migration fails the apply. The default
+  (`false`) returns as soon as ECS accepts the update.
 - **Migrations** run in each den-api task before the app starts, like the Helm
   chart's pre-upgrade Job. They are idempotent but not locked, so keep
   `den_api.desired_count = 1` until you need more, and scale after a deploy
@@ -112,13 +137,58 @@ After `terraform apply`:
   `email_not_configured` and no invite link) and password reset is
   unavailable. To add a second user during a test, either configure email
   or set `allow_public_signup = true` for a while.
-- **OpenWork Web** (cloud chat sessions) is off by default. The dashboard's
-  OpenWork Web button points at the hosted service unless you set
-  `openwork_web_url`. It needs a sandbox
-  provider; none runs inside this stack. Set `openwork_web_enabled = true`,
-  `provisioner_mode = "daytona"`, and pass `DAYTONA_API_KEY` via `extra_secrets`.
+- **OpenWork Web** (chat in the browser, each member's workspace in a
+  Daytona sandbox) is off by default; see [OpenWork Web](#openwork-web).
 - **Anything else** (SSO, proxies, Gateway, observability): add env vars with
   `extra_environment` and secrets with `extra_secrets`.
+
+## OpenWork Web
+
+OpenWork Web lets members chat with OpenWork in the browser. Each member gets
+their own workspace in a [Daytona](https://www.daytona.io) sandbox (daytona.io
+or a self-hosted Daytona); nothing runs on member machines. With
+`openwork_web_enabled = true` the module adds:
+
+- a `den-gateway` service at `openwork_web_domain_name` (default
+  `web.<domain_name>`), which serves the web app, forwards `/api/den` to
+  den-api, and proxies each signed-in member to their sandbox;
+- that hostname on the HTTPS listener, the certificate (when the module
+  creates it) and Route 53 (when the module manages DNS);
+- the den-api settings Web needs: the gateway origin and a shared gateway key,
+  Daytona, sandbox activity reports to the public API URL, and the dashboard's
+  OpenWork Web button pointing at your gateway.
+
+You provide:
+
+1. **A Daytona API key** (`daytona_api_key`) for the organization the
+   sandboxes run in.
+2. **A sandbox snapshot** in that organization (`daytona.snapshot`), built
+   from this repository at the same release as `openwork_version`:
+
+   ```bash
+   git checkout v<openwork_version>
+   DAYTONA_API_KEY=... ./scripts/create-daytona-openwork-snapshot.sh openwork-<openwork_version>
+   ```
+
+   It needs Docker and the Daytona CLI.
+3. **An internet-facing ALB.** Sandboxes report activity to the public API
+   URL, so `internal_alb = true` is not supported with Web.
+
+```hcl
+  openwork_web_enabled = true
+  daytona_api_key      = var.daytona_api_key
+  daytona = {
+    snapshot = "openwork-0.18.57"
+  }
+```
+
+After `terraform apply`, sign in to `web_url` as the administrator you
+created at `/setup`, open **Admin**, find your organization, and turn on
+**OpenWork Web** access. Then add a model provider for members, and they can
+use the `openwork_web_url` output (also the dashboard's OpenWork Web button).
+
+Sandbox and volume names start with `daytona.name_prefix` (default `name`), so
+several deployments can share one Daytona organization.
 
 ## Rough cost (us-east-1, defaults)
 

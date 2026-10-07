@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "audit:pilot": "tsx --conditions=development scripts/audit-pilot.ts",
+    "audit:coverage": "tsx --conditions=development scripts/check-audit-route-coverage.ts",
     "dev": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/main.ts",
     "dev:local": "pnpm run build:workspace-dependencies && OPENWORK_DEV_MODE=1 OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" PORT=${DEN_API_PORT:-8790} tsx watch src/main.ts",
     "build": "node ./scripts/build.mjs",
@@ -16,7 +17,8 @@
     "backfill:desktop-policies": "pnpm run build:den-db && tsx scripts/backfill-desktop-policies.ts",
     "migrate:skills-to-plugins": "pnpm run build:den-db && tsx scripts/migrate-skills-to-plugins.ts",
     "seed:demo-org": "pnpm run build:den-db && OPENWORK_DEV_MODE=${OPENWORK_DEV_MODE:-1} DATABASE_URL=${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den} DEN_DB_ENCRYPTION_KEY=${DEN_DB_ENCRYPTION_KEY:-local-dev-db-encryption-key-please-change-1234567890} BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-local-dev-secret-not-for-production-use!!} BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${DEN_WEB_PORT:-3005}} tsx --conditions=development scripts/seed-demo-org.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "test": "node --conditions=development --test test/*.test.ts"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.0-beta.10",
@@ -43,7 +45,6 @@
     "@opentelemetry/sdk-trace-node": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.42.0",
     "@openwork-ee/cloud-runtime": "workspace:*",
-    "@openwork-ee/cloud-runtime-daytona": "workspace:*",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
@@ -58,6 +59,8 @@
     "@openwork/headless-threads": "workspace:*",
     "@openwork/install-config": "workspace:*",
     "@openwork/mcp-apps": "workspace:*",
+    "@openwork/sandbox": "workspace:*",
+    "@openwork/sandbox-daytona": "workspace:*",
     "@openwork/types": "workspace:*",
     "@sentry/hono": "10.64.0",
     "@sentry/node": "10.64.0",

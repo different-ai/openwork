@@ -1,4 +1,4 @@
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { streamSSE } from "hono/streaming"
@@ -50,7 +50,8 @@ import type { AuthContextVariables } from "../../session.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { automationRunnerComputerIds } from "../../automations/repository.js"
-import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
+import { automationRunnerAudienceFromRequest, automationRunnerAuth, type AutomationRunnerIdentity } from "../../automations/runner-auth.js"
+import { addAuditRequestResource, attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { env } from "../../env.js"
 import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
 import { databaseRemoteSessionCommandStore, type RemoteSessionCommandStore } from "../../remote-sessions/commands.js"
@@ -255,6 +256,14 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     return (await service.isActiveRunnerOwner(identity)) ? identity : null
   }
 
+  // Audit tenant = the verified token's organization (owner membership just
+  // re-checked); actor is the runner service carrying its owner member. Must
+  // run before the route's effect: `{ ok: false }` is the 503 to return.
+  const attributeRunner = (c: Context, identity: AutomationRunnerIdentity) => attributeAuditRequest(c, {
+    organizationId: identity.organizationId,
+    ...auditServiceAttribution("automation-runner", identity.runnerId, { memberId: identity.ownerMemberId }),
+  })
+
   // Runner protocol routes are spoken only by the signed-in desktop runner.
   // They are tagged Internal so the published snapshot excludes them while the
   // served document keeps them for debugging.
@@ -298,6 +307,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const audited = await attributeRunner(c, identity)
+    if (!audited.ok) return audited.response
     const requestedCursor = Number(c.req.header("Last-Event-ID") ?? "0")
     let cursor = Number.isSafeInteger(requestedCursor) && requestedCursor >= 0 ? requestedCursor : 0
     return streamSSE(c, async (stream) => {
@@ -356,6 +367,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const audited = await attributeRunner(c, identity)
+    if (!audited.ok) return audited.response
     // Automation run items keep their long-standing wire shape untouched;
     // remote-session command items are only appended for runners that
     // registered the remote_session_v1 capability, so released runners never
@@ -400,6 +413,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       const stored = await service.saveDesktopRunnerInventory(identity, c.req.valid("json"))
       if (!stored) return c.json({ error: "runner_not_registered" }, 404)
       return c.json(desktopRunnerInventoryResponseSchema.parse({ ok: true, updatedAt: Date.now() }))
@@ -420,6 +435,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const audited = await attributeRunner(c, identity)
+    if (!audited.ok) return audited.response
     if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
       return c.json({ error: "runner_capability_missing" }, 403)
     }
@@ -462,6 +479,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
         return c.json({ error: "runner_capability_missing" }, 403)
       }
@@ -497,6 +516,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
         return c.json({ error: "runner_capability_missing" }, 403)
       }
@@ -524,6 +545,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       return c.json(remoteSessionRequestPendingResponseSchema.parse({ items: await pendingRequestItems(identity) }))
     },
   )
@@ -542,6 +565,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) {
         return c.json({ error: "runner_capability_missing" }, 403)
       }
@@ -583,6 +608,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) {
         return c.json({ error: "runner_capability_missing" }, 403)
       }
@@ -618,6 +645,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const audited = await attributeRunner(c, identity)
+    if (!audited.ok) return audited.response
     const assignment = await service.claimDesktopRunner(identity, c.req.valid("param").id)
     return c.json(runnerClaimResponseSchema.parse({ assignment }))
     },
@@ -637,6 +666,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    const audited = await attributeRunner(c, identity)
+    if (!audited.ok) return audited.response
     const heartbeat = await service.heartbeatDesktopRunner(identity, c.req.valid("param").id, c.req.valid("json").attempt)
     return heartbeat
       ? c.json(automationRunnerHeartbeatResponseSchema.parse(heartbeat))
@@ -658,6 +689,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       try {
         return c.json({ event: await service.appendDesktopRunnerEvent(
           identity,
@@ -690,6 +723,8 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => {
       const identity = await authenticateRunner(c)
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const audited = await attributeRunner(c, identity)
+      if (!audited.ok) return audited.response
       try {
         return c.json({ run: await service.completeDesktopRunner(
           identity,
@@ -896,7 +931,9 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
           ...placementOptions(c),
           executionTarget: body.data.executionTarget,
         })
-        return run ? c.json({ run }, 202) : c.json({ error: "automation_not_found" }, 404)
+        if (!run) return c.json({ error: "automation_not_found" }, 404)
+        addAuditRequestResource(c, { type: "automation_run", id: run.id })
+        return c.json({ run }, 202)
       } catch (error) {
         const mapped = failure(error)
         if (mapped) return c.json(mapped.body, mapped.status)

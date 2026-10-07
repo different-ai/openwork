@@ -186,7 +186,7 @@ function RemoveButton({ onClick, label }: { onClick: () => void; label: string }
       type="button"
       onClick={onClick}
       aria-label={label}
-      className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-[var(--wb-surface)] text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)] [@media(hover:none)]:opacity-100"
+      className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-[var(--wb-surface)] text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] [@media(hover:none)]:opacity-100"
     >
       <X size={10} strokeWidth={2.5} aria-hidden />
     </button>
@@ -246,7 +246,7 @@ export function AttachButton({ enabled, onFiles }: { enabled: boolean; onFiles: 
           onBlur={() => setShowLock(false)}
           onMouseEnter={() => setShowLock(true)}
           onMouseLeave={() => setShowLock(false)}
-          className="grid h-9 w-9 place-items-center rounded-full bg-[var(--wb-chip)] text-[var(--wb-disabled)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+          className="grid h-9 w-9 place-items-center rounded-full bg-[var(--wb-chip)] text-[var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           <Paperclip size={18} strokeWidth={1.75} aria-hidden />
         </button>
@@ -266,7 +266,7 @@ export function AttachButton({ enabled, onFiles }: { enabled: boolean; onFiles: 
         onClick={() => input.current?.click()}
         aria-label="Attach files"
         title="Attach files"
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
       >
         <Paperclip size={18} strokeWidth={1.75} aria-hidden />
       </button>
@@ -304,7 +304,7 @@ function SentImage({ attachment, localUrl }: { attachment: WorkbotAttachment; lo
       onClick={() => !attachment.id.startsWith("local-") && open(attachment)}
       title={attachment.name}
       aria-label={`Open ${attachment.name}`}
-      className="overflow-hidden rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+      className="overflow-hidden rounded-2xl focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
     >
       <Thumbnail src={localUrl ?? remote} className="h-24 w-[132px] rounded-2xl shadow-[inset_0_0_0_1px_var(--wb-hairline)]" />
     </button>
@@ -318,7 +318,7 @@ export function FileChip({ attachment, detail, onClick }: { attachment: WorkbotA
       type="button"
       onClick={onClick ?? (() => !attachment.id.startsWith("local-") && open(attachment))}
       title={`Open ${attachment.name}`}
-      className="flex h-14 max-w-[300px] items-center gap-2.5 rounded-2xl bg-[var(--wb-surface)] pl-2.5 pr-3.5 text-left shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)]"
+      className="flex h-14 max-w-[300px] items-center gap-2.5 rounded-2xl bg-[var(--wb-surface)] pl-2.5 pr-3.5 text-left shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
     >
       <FileBadge name={attachment.name} mediaType={attachment.mediaType} />
       <span className="flex min-w-0 flex-col gap-0.5">
@@ -353,7 +353,7 @@ export function FilesButton({ open, onOpen }: { open: boolean; onOpen: () => voi
       type="button"
       onClick={onOpen}
       aria-pressed={open}
-      className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium leading-4 transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--wb-ink)] ${open ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)]"}`}
+      className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${open ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)]"}`}
     >
       <FileText size={15} strokeWidth={1.75} aria-hidden />
       Files
@@ -368,7 +368,7 @@ function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistant
   return (
     <li className="group flex h-14 items-center gap-3 border-b border-[var(--wb-row-line)] pl-1 pr-1">
       {isImage(file.mediaType) ? <Thumbnail src={thumb} className="h-9 w-8 shrink-0 rounded-[7px] shadow-[inset_0_0_0_1px_var(--wb-hairline)]" /> : <FileBadge name={file.name} mediaType={file.mediaType} />}
-      <button type="button" onClick={() => onOpen(file)} className="flex min-w-0 flex-1 flex-col gap-0.5 rounded text-left focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]">
+      <button type="button" onClick={() => onOpen(file)} className="flex min-w-0 flex-1 flex-col gap-0.5 rounded text-left focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
         <span className="truncate text-[13px] font-medium leading-4 text-[var(--wb-text)] group-hover:underline group-hover:decoration-[var(--wb-disabled)] group-hover:underline-offset-2">{file.name}</span>
         <span className="truncate text-[12px] leading-4 text-[var(--wb-muted)]">
           {file.source === "agent" ? `Made by ${assistantName} · ` : ""}{when} · {formatSize(file.size)}
@@ -380,7 +380,7 @@ function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistant
         disabled={remove.isPending}
         aria-label={`Delete ${file.name}`}
         title="Delete"
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] opacity-0 transition-opacity duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-danger)] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)] [@media(hover:none)]:opacity-100"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] opacity-0 transition-opacity duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-danger)] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] [@media(hover:none)]:opacity-100"
       >
         <Trash2 size={15} strokeWidth={1.75} aria-hidden />
       </button>
@@ -389,7 +389,7 @@ function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistant
         onClick={() => void downloadWorkbotFile(file)}
         aria-label={`Download ${file.name}`}
         title="Download"
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
       >
         <Download size={15} strokeWidth={1.75} aria-hidden />
       </button>
@@ -408,7 +408,7 @@ export function FilesPanel({ open, onClose, assistantName, onOpenFile }: { open:
         <Dialog.Popup className="workbot fixed inset-y-0 right-0 z-50 flex w-full max-w-[400px] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:translate-x-full data-[starting-style]:translate-x-full motion-reduce:transition-none">
           <div className="flex h-15 shrink-0 items-center justify-between border-b border-[var(--wb-hairline)] pl-6 pr-4">
             <Dialog.Title className="text-[15px] font-semibold leading-[18px] tracking-[-0.01em] text-[var(--wb-text)]">Files</Dialog.Title>
-            <Dialog.Close aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] focus-visible:outline-2 focus-visible:outline-[var(--wb-ink)]">
+            <Dialog.Close aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
               <X size={14} strokeWidth={2} aria-hidden />
             </Dialog.Close>
           </div>

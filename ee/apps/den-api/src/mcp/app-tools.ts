@@ -13,6 +13,7 @@ import {
   type CapabilityRegistryContext,
   type ExecuteCapabilityToolResult,
   type ParsedCapability,
+  workflowExecutionAudit,
 } from "./capability-registry.js"
 import { describeExternalCapability } from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
@@ -218,6 +219,7 @@ export async function callMcpAppTool(
       enabled: ctx.externalMcpConnectionsEnabled,
       redirectUriBase: ctx.redirectUriBase,
       liveRuntime: timeZone ? { timeZone } : {},
+      auditWorkflowExecution: workflowExecutionAudit(ctx),
     })
     if (!result.ok) {
       const payload = Object.fromEntries(Object.entries(result).filter(([key]) => key !== "ok"))

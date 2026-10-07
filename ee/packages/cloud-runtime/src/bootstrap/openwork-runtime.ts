@@ -6,9 +6,9 @@
  * command.
  */
 
-export function shellQuote(value: string) {
-  return `'${value.replace(/'/g, `'"'"'`)}'`
-}
+import { shellQuote } from "@openwork/sandbox"
+
+export { shellQuote }
 
 export type OpenWorkCheckpointConfig = {
   /** Persistent mount that receives `checkpoints/ckpt-*.tar`. */

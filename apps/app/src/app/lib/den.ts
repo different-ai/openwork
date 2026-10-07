@@ -49,7 +49,7 @@ import {
 } from "./desktop";
 import { enterpriseActivationRequired } from "./enterprise-activation";
 import { observeDenRequest } from "./den-request-diagnostics";
-import { getOpenworkGatewayOrigin } from "./gateway-runtime";
+import { getOpenworkGatewayOrigin, readOpenworkGatewayDenBaseUrl } from "./gateway-runtime";
 import { clearDesktopSignInIntent, clearOrgSelectionPending } from "./den-sign-in-intent";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
 import { isDesktopRuntime } from "./runtime-env";
@@ -92,6 +92,7 @@ const ORG_SCOPE_HEADER = "x-openwork-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
 const BUILD_DEN_BASE_URL =
+  readOpenworkGatewayDenBaseUrl() ||
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
     : "").trim() || "https://app.openworklabs.com";
@@ -130,8 +131,6 @@ export const DEN_INFERENCE_PATH = "/dashboard/inference";
 export type * from "./den-types";
 import type {
   DenAssignedMarketplaceCapability,
-  DenDashboardElement,
-  DenGrantedDashboard,
   DenMeLibraryPlugin,
   DenOrgExtensionProjection,
   DenOrgMarketplace,
@@ -280,24 +279,6 @@ export function formatDenOrgRoleLabel(roleValue: string) {
     })
     .join(", ");
 }
-
-export type DenWorkerSummary = {
-  workerId: string;
-  workerName: string;
-  status: string;
-  instanceUrl: string | null;
-  provider: string | null;
-  isMine: boolean;
-  createdAt: string | null;
-};
-
-export type DenWorkerTokens = {
-  clientToken: string | null;
-  ownerToken: string | null;
-  hostToken: string | null;
-  openworkUrl: string | null;
-  workspaceId: string | null;
-};
 
 export type DenCloudInstance = {
   status: "provisioning" | "waking" | "ready" | "failed";
@@ -1882,95 +1863,6 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
   });
 }
 
-function getDashboardElement(entry: unknown): DenDashboardElement | null {
-  if (!isRecord(entry)) return null;
-  if (
-    typeof entry.serverName !== "string"
-    || typeof entry.toolName !== "string"
-    || typeof entry.projectedToolName !== "string"
-    || typeof entry.resourceUri !== "string"
-    || typeof entry.title !== "string"
-  ) {
-    return null;
-  }
-  return {
-    serverName: entry.serverName,
-    ...(typeof entry.connectionId === "string" ? { connectionId: entry.connectionId } : {}),
-    toolName: entry.toolName,
-    projectedToolName: entry.projectedToolName,
-    resourceUri: entry.resourceUri,
-    title: entry.title,
-    ...(isRecord(entry.launchArguments) ? { launchArguments: entry.launchArguments } : {}),
-    ...(entry.requiresApproval === true ? { requiresApproval: true } : {}),
-    ...(entry.organizationAutoLaunch === true ? { organizationAutoLaunch: true } : {}),
-  };
-}
-
-function getGrantedDashboards(payload: unknown): DenGrantedDashboard[] {
-  if (!isRecord(payload) || !Array.isArray(payload.items)) {
-    return [];
-  }
-
-  return payload.items.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
-    const elements = Array.isArray(entry.elements)
-      ? entry.elements.flatMap((element) => {
-          const parsed = getDashboardElement(element);
-          return parsed ? [parsed] : [];
-        })
-      : [];
-    return [
-      {
-        id: entry.id,
-        name: entry.name,
-        elements,
-        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : null,
-      } satisfies DenGrantedDashboard,
-    ];
-  });
-}
-
-function getWorkers(payload: unknown): DenWorkerSummary[] {
-  if (!isRecord(payload) || !Array.isArray(payload.workers)) {
-    return [];
-  }
-
-  return payload.workers.flatMap((entry) => {
-    if (!isRecord(entry)) return [];
-    const instance = isRecord(entry.instance) ? entry.instance : null;
-    if (typeof entry.id !== "string" || typeof entry.name !== "string") {
-      return [];
-    }
-    return [
-      {
-        workerId: entry.id,
-        workerName: entry.name,
-        status: typeof entry.status === "string" ? entry.status : "unknown",
-        instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
-        provider: instance && typeof instance.provider === "string" ? instance.provider : null,
-        isMine: Boolean(entry.isMine),
-        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
-      } satisfies DenWorkerSummary,
-    ];
-  });
-}
-
-function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
-  if (!isRecord(payload) || !isRecord(payload.tokens)) {
-    return null;
-  }
-
-  const tokens = payload.tokens;
-  const connect = isRecord(payload.connect) ? payload.connect : null;
-  return {
-    clientToken: typeof tokens.client === "string" ? tokens.client : null,
-    ownerToken: typeof tokens.owner === "string" ? tokens.owner : null,
-    hostToken: typeof tokens.host === "string" ? tokens.host : null,
-    openworkUrl: connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null,
-    workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
-  };
-}
-
 function parseCloudInstance(payload: unknown): DenCloudInstance | null {
   if (
     !isRecord(payload) ||
@@ -3123,39 +3015,6 @@ export function createDenClient(options: {
       });
     },
 
-    /** Organization-managed dashboards granted to the signed-in member. */
-    async listGrantedDashboards(orgId: string): Promise<DenGrantedDashboard[]> {
-      const context = await requestJson<unknown>(baseUrls, "/v1/org", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      const capabilities = isRecord(context) && isRecord(context.capabilities)
-        ? context.capabilities
-        : null;
-      // Missing means unsupported. This makes a newer Desktop safe against a
-      // Den deployment that predates the managed-dashboard API.
-      if (capabilities?.orgManagedDashboards !== true) return [];
-
-      const payload = await requestJson<unknown>(baseUrls, "/v1/me/dashboards", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getGrantedDashboards(payload);
-    },
-
-    async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {
-      const params = new URLSearchParams();
-      params.set("limit", String(limit));
-      const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getWorkers(payload);
-    },
-
     async mintMcpToken(orgId: string): Promise<DenMcpToken> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
         method: "POST",
@@ -3168,20 +3027,6 @@ export function createDenClient(options: {
         throw new DenApiError(500, "invalid_mcp_token_payload", "MCP token response was missing required values.");
       }
       return minted;
-    },
-
-    async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens`, {
-        method: "POST",
-        token,
-        organizationId: orgId,
-        body: {},
-      });
-      const tokens = getWorkerTokens(payload);
-      if (!tokens) {
-        throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
-      }
-      return tokens;
     },
 
     async getCloudInstance(orgId: string): Promise<DenCloudInstance> {

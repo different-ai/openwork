@@ -36,11 +36,11 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
-| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions? }` | session (`hs_…`). `files`, `computer` and `reactions` are off unless set to `true` (see [Isolation](#isolation)) |
+| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions?, tasks? }` | session (`hs_…`). `files`, `computer`, `reactions` and `tasks` are off unless set to `true` (see [Isolation](#isolation)) |
 | `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated; settings left out keep their value. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Den's Workbot derives one per member |
 | `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
-| `GET` | `/v1/sessions/:id` | `?messageId=&limit=&outputs=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }`. `outputs=none` returns each tool result's `outputLength` instead of its output, for callers that poll a long turn |
-| `POST` | `/v1/sessions/:id/abort` | `{ messageId? }` | `{ accepted }`. With a `messageId`, stops only that turn (running or queued); without one, stops the running turn and every follow-up queued behind it |
+| `GET` | `/v1/sessions/:id` | `?messageId=&limit=&outputs=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }`. `outputs=none` returns each tool result's `outputLength` instead of its output, for callers that poll a long turn. `busy` means the conversation is answering; background tasks don't count. A task's turn has `kind: task`, `parent` (the turn that started it) and `title`; its report has `kind: report` and `parent` (the task) |
+| `POST` | `/v1/sessions/:id/abort` | `{ messageId? }` | `{ accepted }`. With a `messageId`, stops only that turn (running or queued); without one, stops the running turn and every follow-up queued behind it (background tasks keep going) |
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
 | `DELETE` | `/v1/sessions/:id` | | `204` (also deletes its saved files' bytes) |
@@ -80,6 +80,11 @@ The model sees these tools:
 - In a session with `files: true` (and files configured): `list_saved_files`, `open_file` (brings a kept file back into view), `save_file` (hands a scratch file to the person)
 - In a session with `computer: true` (and a computer configured): `bash` and `look` (see below)
 - In a session with `reactions: true`: `react { emoji, final? }`, one emoji on the person's latest message, the way a colleague reacts in chat. The runner checks it is exactly one emoji and keeps the call in the transcript; the caller shows it (Workbot puts it on the person's message). A step that only reacts with `final: true` ends the turn: the reaction is the whole reply
+- In a session with `tasks: true`, for a person's message: `start_task { title, brief }` and `stop_task { task }` (see below)
+
+### Background tasks
+
+A session with `tasks: true` can hand longer work to a background task and keep talking. `start_task` admits a task turn (`<messageId>.t1`, `.t2`, …) that runs in its own lane, alongside the conversation: up to 3 per session at once and 5 unfinished, within the global limit. The task inherits the starting turn's credentials and model; it sees the session's instructions, memory and tools, plus its brief, but not the conversation, whose context in turn leaves tasks' work out. When a task completes or fails, the runner queues its report (`<taskId>.r`, `kind: report`) in the conversation; the model tells the person the result. A person's queued message goes before a report. The conversation's system prompt lists its recent tasks with their ids and states, so it can answer "how's it going?" or call `stop_task`. Abort a task by its `messageId`; a stopped task doesn't report. Like any turn, a task or report pauses for fresh credentials (`interrupted`, `credentials_refresh`), counted from when its starting turn's credentials were issued, and resumes when the caller re-sends its `messageId`.
 
 ## Isolation
 

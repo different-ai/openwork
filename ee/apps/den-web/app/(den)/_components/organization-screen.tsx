@@ -180,7 +180,7 @@ export function OrganizationScreen() {
     {createError ? <p role="alert" className="text-sm text-rose-600">{createError}</p> : null}
     {createdOrg && createError && desktopSetup === "restricted" ? <button type="button" onClick={() => { setDesktopSetup("flexible"); setCreateError(null); }} className="justify-self-start text-sm text-neutral-500 underline underline-offset-4 hover:text-neutral-900">Use Flexible instead</button> : null}
     {createdOrg && intent === "team" && desktopSetup === "restricted" ? <p role="status" className="text-sm text-gray-600">Your team is saved. We’ll finish applying its settings before continuing.</p> : null}
-    <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="w-full rounded-xl bg-gray-950 px-5 py-3.5 text-sm font-medium text-white hover:bg-gray-800 focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2 disabled:opacity-50">
+    <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="w-full rounded-xl bg-gray-950 px-5 py-3.5 text-sm font-medium text-white hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-gray-900/10 disabled:opacity-50">
       {createBusy ? "Setting up…" : createdOrg && desktopSetup === "restricted" ? "Retry setup" : intent === "join" ? "Review invitation" : "Continue"}
     </button>
   </form>;

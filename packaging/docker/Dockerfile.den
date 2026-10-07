@@ -41,7 +41,8 @@ COPY evals/packages/matchers/package.json /app/evals/packages/matchers/package.j
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protocol/package.json
 COPY ee/packages/cloud-runtime/package.json /app/ee/packages/cloud-runtime/package.json
-COPY ee/packages/cloud-runtime-daytona/package.json /app/ee/packages/cloud-runtime-daytona/package.json
+COPY packages/sandbox/package.json /app/packages/sandbox/package.json
+COPY packages/sandbox-daytona/package.json /app/packages/sandbox-daytona/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
 COPY ee/packages/telemetry-contracts/package.json /app/ee/packages/telemetry-contracts/package.json
 COPY ee/packages/telemetry/package.json /app/ee/packages/telemetry/package.json
@@ -65,7 +66,8 @@ COPY packages/browser-tabs /app/packages/browser-tabs
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
 COPY ee/packages/cloud-runtime /app/ee/packages/cloud-runtime
-COPY ee/packages/cloud-runtime-daytona /app/ee/packages/cloud-runtime-daytona
+COPY packages/sandbox /app/packages/sandbox
+COPY packages/sandbox-daytona /app/packages/sandbox-daytona
 COPY ee/packages/den-db /app/ee/packages/den-db
 COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts
 COPY ee/packages/telemetry /app/ee/packages/telemetry

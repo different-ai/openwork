@@ -202,11 +202,12 @@ resource "aws_ecs_task_definition" "web" {
 # Services -------------------------------------------------------------------
 
 resource "aws_ecs_service" "api" {
-  name            = "den-api"
-  cluster         = local.cluster_arn
-  task_definition = aws_ecs_task_definition.api.arn
-  desired_count   = var.den_api.desired_count
-  launch_type     = "FARGATE"
+  name                  = "den-api"
+  cluster               = local.cluster_arn
+  task_definition       = aws_ecs_task_definition.api.arn
+  desired_count         = var.den_api.desired_count
+  launch_type           = "FARGATE"
+  wait_for_steady_state = var.wait_for_steady_state
 
   # Migrations run before den-api listens; allow for a cold start.
   health_check_grace_period_seconds = 300
@@ -235,15 +236,16 @@ resource "aws_ecs_service" "api" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener_rule.api_host]
+  depends_on = [aws_lb_listener_rule.api_host, aws_secretsmanager_secret_version.app]
 }
 
 resource "aws_ecs_service" "web" {
-  name            = "den-web"
-  cluster         = local.cluster_arn
-  task_definition = aws_ecs_task_definition.web.arn
-  desired_count   = var.den_web.desired_count
-  launch_type     = "FARGATE"
+  name                  = "den-web"
+  cluster               = local.cluster_arn
+  task_definition       = aws_ecs_task_definition.web.arn
+  desired_count         = var.den_web.desired_count
+  launch_type           = "FARGATE"
+  wait_for_steady_state = var.wait_for_steady_state
 
   health_check_grace_period_seconds = 120
   propagate_tags                    = "SERVICE"
@@ -266,5 +268,5 @@ resource "aws_ecs_service" "web" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener.https]
+  depends_on = [aws_lb_listener.https, aws_lb_listener_rule.web_host, aws_secretsmanager_secret_version.app]
 }

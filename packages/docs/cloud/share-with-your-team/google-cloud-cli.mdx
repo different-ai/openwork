@@ -1,0 +1,168 @@
+---
+title: "Connect Google Cloud CLI"
+description: "Let your team use Google Cloud from OpenWork with their own Google accounts."
+keywords: ["Google Cloud", "GCP", "gcloud", "BigQuery", "MCP", "OAuth"]
+---
+
+Connect Google's official hosted Cloud CLI MCP server to OpenWork to inspect
+projects and work with cloud resources from a chat. You don't need to install
+the Google Cloud CLI on each computer.
+
+An OpenWork owner or admin sets up the connection once. Each team member then
+signs in with their own Google account.
+
+## Connect your account
+
+If your administrator has already added **Google Cloud CLI**:
+
+1. Open **Your Connections** in OpenWork Cloud.
+2. Find **Google Cloud CLI** and click **Connect**.
+3. Choose your work Google account and review the requested access.
+4. Finish signing in, then return to OpenWork.
+5. Check that the connection shows **Connected as you**.
+
+In the desktop app, open **Settings › Library**, choose **Connectors**, and
+click **Sign in** on Google Cloud CLI instead.
+
+Your agent uses your Google Cloud permissions. Signing in doesn't give you
+access to projects you couldn't already use. If the connection shows **Waiting
+for an admin to finish setup**, ask your administrator to complete the steps
+below.
+
+## Try it in a chat
+
+Start with a request that reads information. Replace `YOUR_PROJECT_ID` with
+your Google Cloud project ID:
+
+> Use Google Cloud CLI to describe YOUR_PROJECT_ID. Use this project for both
+> the Cloud CLI execution project and the command's target project. Show me
+> what you find.
+
+You can also ask:
+
+- “List the APIs enabled in this project.”
+- “Show me the Cloud Run services in this project.”
+- “Explain what permissions I need for this task.”
+
+Before asking the agent to create or change resources, check which project it
+will use. Creating resources can incur Google Cloud charges. Connecting this
+MCP doesn't apply for or redeem cloud credits.
+
+## Set up the connection for your team
+
+You need an OpenWork owner or admin account and permission to configure your
+Google Cloud project and OAuth application.
+
+### 1. Prepare Google Cloud
+
+Select a project with billing enabled. Enable the **Cloud CLI Execution API**
+(`cloudcli.googleapis.com`) and the APIs for the services your team will use.
+
+Ensure callers have **MCP Tool User** (`roles/mcp.toolUser`) on the execution
+project, plus the permissions needed for the resources they will access.
+
+### 2. Create a Google OAuth app
+
+In **Google Cloud Console › Google Auth Platform**, configure the app name,
+support email, and developer contact. Choose **Internal** if only users in
+your Google Workspace organization should sign in. For outside accounts,
+choose **External** and follow Google's testing and verification requirements.
+
+Review Google's policies before accepting them.
+
+Under **Clients**, click **Create client**:
+
+1. Choose **Web application**.
+2. Give it a name such as **OpenWork Google Cloud CLI**.
+3. Add OpenWork's exact OAuth redirect URL under **Authorized redirect URIs**.
+4. Click **Create** and keep the client ID and secret for the next step.
+
+For OpenWork Cloud, new connections use:
+
+```text
+https://api.openworklabs.com/v1/mcp-connections/oauth/callback
+```
+
+For self-hosted deployments and older connections, use the
+[redirect URL for your deployment or connection](/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url).
+Don't substitute your desktop's callback or the web dashboard address.
+
+Keep the client secret out of chats, screenshots, and source control.
+
+### 3. Add Google Cloud CLI in OpenWork
+
+1. Open **Manage › Connectors** and click **Add connector**.
+2. Click **Add any MCP**, or paste the server URL into the filter box.
+3. Use the settings below.
+
+| Setting | Value |
+| --- | --- |
+| Name | Google Cloud CLI |
+| MCP server URL | `https://cloudcli.googleapis.com/mcp` |
+| Authentication | OAuth |
+| Requested OAuth scope | `https://www.googleapis.com/auth/cloud-platform` |
+| Client ID and client secret | The Google web client you created |
+| How people sign in | Each person signs in |
+
+<Frame caption="An example organization connection page. Add a custom MCP server to connect a service by its URL.">
+  ![Example OpenWork organization page for adding a custom MCP server](/images/cloud-mcp-connections-admin.png)
+</Frame>
+
+Enter the client ID and secret when OpenWork asks for the provider's OAuth app,
+then click **Save app**. Finish the sign-in check.
+
+Under **Who can use it**, choose the people or teams who need access, or enable
+**Everyone in the organization**. Click **Add Google Cloud CLI**.
+
+The Cloud Platform scope covers Google Cloud services. Google IAM still
+controls what each signed-in person can do.
+
+### 4. Check that it works
+
+Connect your own account and try the read-only project prompt above. Admins
+can also open the connector's **⋯ › Test tools** menu to try its tools.
+
+For each request, the execution project and the command's target project are
+separate choices. Include both in your prompt. Successful sign-in alone
+doesn't prove you have permission for every resource operation.
+
+Once a read request succeeds, ask your team to connect their own accounts.
+See [Sharing MCP connections](/cloud/share-with-your-team/shared-mcp-connections)
+for access settings and use in other MCP clients.
+
+## Troubleshooting
+
+### OpenWork asks for a pre-registered OAuth client
+
+Finish the Google OAuth app setup, then save its client ID and secret in the
+connector's **Settings**. Repeating member sign-in won't fix missing admin
+configuration.
+
+### Google reports a redirect URI mismatch
+
+Compare the address registered in Google with the exact OpenWork callback for
+this connection. The scheme, hostname, path, and trailing slash must match.
+
+### Google won't accept my account
+
+An Internal OAuth app accepts accounts in its Google Workspace organization.
+Choose your work account, or ask the administrator whether outside accounts
+should be supported.
+
+### A tool returns permission denied
+
+Ask your Google Cloud administrator to check the execution project, MCP Tool
+User permission, resource permissions, enabled APIs, and organization policies.
+
+### A command isn't supported
+
+The hosted server supports a subset of `gcloud` and `bq` commands. Ask the
+agent to check Google's supported commands before trying an alternative.
+
+## Google documentation
+
+- [Cloud CLI remote MCP server, permissions, and supported commands](https://docs.cloud.google.com/sdk/use-gcloud-mcp)
+- [Set up Google MCP authentication](https://docs.cloud.google.com/mcp/set-up-authentication-mcp-servers)
+
+This connection manages cloud resources. To use Gemini or Vertex AI as your
+chat model, see [Use Gemini and Vertex AI](/start-here/connect-your-stack/use-gemini-and-vertex-ai).

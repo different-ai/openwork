@@ -3,6 +3,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
 import { env } from "../../env.js"
 import {
   jsonValidator,
@@ -657,6 +658,10 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       ) {
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
       }
+      // Signed state + resolved member credential + pending verifier prove the
+      // organization and initiating member: attribute before the token exchange.
+      const auditBlocked = await attributeOAuthCallbackMember(c, { organizationId: statePayload.organizationId, memberId: statePayload.orgMembershipId })
+      if (auditBlocked) return auditBlocked
 
       try {
         const tokens = await exchangeCodeForTokens({

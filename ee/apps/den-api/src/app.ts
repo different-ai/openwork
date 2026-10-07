@@ -51,10 +51,10 @@ import { registerSlackAppHomeRoutes } from "./routes/slack-app-home.js"
 import { getSlackHomeToken } from "./capability-sources/slack-installations.js"
 import { slackHomePolicyError } from "./capability-sources/slack-policy.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
-import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
+import { auditRequestMiddleware } from "./audit/request-capture.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
 
@@ -158,10 +158,6 @@ if (!env.corsHandledByEdge) {
   )
 }
 
-// This bearer-token-only compatibility surface must accept native/file-origin
-// preflights before the credentialed browser allowlist can intercept OPTIONS.
-registerCloudWorkerCompatibilityPreflightRoute(app)
-
 const corsLogger = appLogger.child({ component: "cors" })
 const WEB_ORIGIN_LOOKUP_FAILURE_LOG_INTERVAL_MS = 60_000
 let lastWebOriginLookupFailureLoggedAt = 0
@@ -201,6 +197,11 @@ if (!env.corsHandledByEdge) {
 }
 
 app.use("*", sessionMiddleware)
+// Generic operation audit capture (src/audit/request-capture.ts); every route is
+// declared in src/audit/routes and checked by scripts/check-audit-route-coverage.ts.
+// Registered before preclaimScopeMiddleware so its 403 denials are recorded
+// (platform store) against the endpoint they refused.
+app.use("*", auditRequestMiddleware)
 app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(
@@ -412,8 +413,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Inference Providers", description: "Organization inference Gateway providers, model groups, credential sets, access grants, member connections, and usage." },
       { name: "Gateway Usage Limits", description: "Estimated-cost policies, independent member calendar buckets, assignments, and audited usage-extension requests." },
       { name: "Cloud", description: "Organization Cloud instance lifecycle and browser gateway resolution." },
-      { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
-      { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
+      { name: "Workers", description: "List and delete the organization's workers, including OpenWork Web instances." },
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },

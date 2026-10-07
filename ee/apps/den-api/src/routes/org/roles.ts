@@ -4,7 +4,10 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { appendDomainChanges, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { roleCreatedEvent, roleDeletedEvent, roleUpdatedEvent } from "../../audit/domain/roles.js"
+import { auditChangeCapture, fenceAuditChanges } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
@@ -81,14 +84,21 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     const roleId = createRoleId()
-    await db.insert(OrganizationRoleTable).values({
-      id: roleId,
-      organizationId: payload.organization.id,
-      role: roleName,
-      permission: serializePermissionRecord(input.permission),
+    const capture = auditChangeCapture(c)
+    const auditEventIds = await db.transaction(async (tx) => {
+      await fenceAuditChanges(tx, capture)
+      await tx.insert(OrganizationRoleTable).values({
+        id: roleId,
+        organizationId: payload.organization.id,
+        role: roleName,
+        permission: serializePermissionRecord(input.permission),
+      })
+      if (!capture) return []
+      const [created] = await tx.select().from(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleId)).limit(1)
+      return created ? appendDomainChanges(tx, capture, [roleCreatedEvent(payload.organization.id, created)]) : []
     })
 
-    await recordOrganizationAuditEvent({
+    await finishLegacyAuditAction(capture, {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: ORGANIZATION_AUDIT_ACTIONS.roleCreated,
@@ -96,7 +106,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
         organizationRoleId: roleId,
         role: roleName,
       },
-    })
+    }, auditEventIds)
 
     return c.json({ success: true }, 201)
     },
@@ -163,7 +173,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       }
     }
 
-    let nextPermission = roleRow.permission
+    let requestedPermission: string | null = null
     if (input.permission !== undefined) {
       const validPermission = validateAssignableOrganizationPermissionRecord({
         permission: input.permission,
@@ -173,71 +183,92 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       if (!validPermission.ok) {
         return c.json({ error: validPermission.error, message: validPermission.message }, 400)
       }
-      nextPermission = serializePermissionRecord(input.permission)
-    }
-    const permissionChanged = nextPermission !== roleRow.permission
-
-    await db
-      .update(OrganizationRoleTable)
-      .set({ role: nextRoleName, permission: nextPermission })
-      .where(eq(OrganizationRoleTable.id, roleRow.id))
-
-    if (nextRoleName !== roleRow.role) {
-      const members = await db
-        .select()
-        .from(MemberTable)
-        .where(and(eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
-
-      for (const member of members) {
-        if (!splitRoles(member.role).includes(roleRow.role)) {
-          continue
-        }
-
-        await db
-          .update(MemberTable)
-          .set({ role: replaceRoleValue(member.role, roleRow.role, nextRoleName) })
-          .where(eq(MemberTable.id, member.id))
-      }
-
-      const invitations = await db
-        .select()
-        .from(InvitationTable)
-        .where(and(
-          eq(InvitationTable.organizationId, payload.organization.id),
-          eq(InvitationTable.status, "pending"),
-        ))
-
-      for (const invitation of invitations) {
-        if (!splitRoles(invitation.role).includes(roleRow.role)) {
-          continue
-        }
-
-        await db
-          .update(InvitationTable)
-          .set({ role: replaceRoleValue(invitation.role, roleRow.role, nextRoleName) })
-          .where(eq(InvitationTable.id, invitation.id))
-      }
+      requestedPermission = serializePermissionRecord(input.permission)
     }
 
-    if (permissionChanged) {
+    // One transaction for the role row and its rename cascade; the organization
+    // share fence (when captured) precedes the role/member/invitation row locks.
+    const capture = auditChangeCapture(c)
+    const update = await db.transaction(async (tx) => {
+      await fenceAuditChanges(tx, capture)
+      const [locked] = await tx
+        .select()
+        .from(OrganizationRoleTable)
+        .where(and(eq(OrganizationRoleTable.id, roleRow.id), eq(OrganizationRoleTable.organizationId, payload.organization.id)))
+        .limit(1)
+        .for("update")
+      if (!locked) return null
+      const roleName = input.roleName ? nextRoleName : locked.role
+      const permissionValue = requestedPermission ?? locked.permission
+
+      await tx
+        .update(OrganizationRoleTable)
+        .set({ role: roleName, permission: permissionValue })
+        .where(eq(OrganizationRoleTable.id, locked.id))
+
+      if (roleName !== locked.role) {
+        const members = await tx
+          .select()
+          .from(MemberTable)
+          .where(and(eq(MemberTable.organizationId, payload.organization.id), isNull(MemberTable.removedAt)))
+
+        for (const member of members) {
+          if (!splitRoles(member.role).includes(locked.role)) {
+            continue
+          }
+
+          await tx
+            .update(MemberTable)
+            .set({ role: replaceRoleValue(member.role, locked.role, roleName) })
+            .where(eq(MemberTable.id, member.id))
+        }
+
+        const invitations = await tx
+          .select()
+          .from(InvitationTable)
+          .where(and(
+            eq(InvitationTable.organizationId, payload.organization.id),
+            eq(InvitationTable.status, "pending"),
+          ))
+
+        for (const invitation of invitations) {
+          if (!splitRoles(invitation.role).includes(locked.role)) {
+            continue
+          }
+
+          await tx
+            .update(InvitationTable)
+            .set({ role: replaceRoleValue(invitation.role, locked.role, roleName) })
+            .where(eq(InvitationTable.id, invitation.id))
+        }
+      }
+
+      const auditEventIds = await appendDomainChanges(tx, capture, [roleUpdatedEvent(payload.organization.id, locked, { ...locked, role: roleName, permission: permissionValue })])
+      return { previousRole: locked.role, nextRole: roleName, permissionChanged: permissionValue !== locked.permission, auditEventIds }
+    })
+    if (!update) {
+      return c.json({ error: "role_not_found" }, 404)
+    }
+
+    if (update.permissionChanged) {
       await revokeCredentialsForOrganizationRoleMembers({
         organizationId: payload.organization.id,
-        role: nextRoleName,
+        role: update.nextRole,
       })
     }
 
-    await recordOrganizationAuditEvent({
+    await finishLegacyAuditAction(capture, {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: ORGANIZATION_AUDIT_ACTIONS.roleUpdated,
       payload: {
         organizationRoleId: roleRow.id,
-        previousRole: roleRow.role,
-        nextRole: nextRoleName,
-        roleRenamed: nextRoleName !== roleRow.role,
-        permissionChanged,
+        previousRole: update.previousRole,
+        nextRole: update.nextRole,
+        roleRenamed: update.nextRole !== update.previousRole,
+        permissionChanged: update.permissionChanged,
       },
-    })
+    }, update.auditEventIds)
 
     return c.json({ success: true })
     },
@@ -313,8 +344,16 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
       }, 400)
     }
 
-    await db.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleRow.id))
-    await recordOrganizationAuditEvent({
+    const capture = auditChangeCapture(c)
+    const auditEventIds = await db.transaction(async (tx) => {
+      await fenceAuditChanges(tx, capture)
+      const [locked] = capture
+        ? await tx.select().from(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleRow.id)).limit(1).for("update")
+        : []
+      await tx.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleRow.id))
+      return locked ? appendDomainChanges(tx, capture, [roleDeletedEvent(payload.organization.id, locked)]) : []
+    })
+    await finishLegacyAuditAction(capture, {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: ORGANIZATION_AUDIT_ACTIONS.roleDeleted,
@@ -322,7 +361,7 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
         organizationRoleId: roleRow.id,
         role: roleRow.role,
       },
-    })
+    }, auditEventIds)
     return c.body(null, 204)
     },
   )

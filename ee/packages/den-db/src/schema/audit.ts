@@ -1,4 +1,4 @@
-import { bigint, boolean, char, index, int, mysqlEnum, mysqlTable, primaryKey, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, boolean, char, index, int, mysqlEnum, mysqlTable, primaryKey, smallint, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { compatJsonColumn, denTypeIdColumn, timestamps } from "../columns"
 import type { AuditActor, AuditCategory } from "../audit-log"
 
@@ -84,4 +84,31 @@ export const AuditUsageFactTable = mysqlTable("audit_usage_fact", {
 }, (table) => [
   uniqueIndex("audit_usage_operation_transition").on(table.organization_id, table.operation_id, table.delta),
   index("audit_usage_org_time").on(table.organization_id, table.effective_at, table.id),
+])
+
+// Requests without a trustworthy tenant (public, authentication, session-only or
+// failed-before-attribution routes). No organization column by design: an
+// untrusted organization id is never stored, nor IP, user agent, headers or bodies.
+// Not billed, not counted and not tenant-visible.
+export const PlatformAuditEventTable = mysqlTable("platform_audit_event", {
+  id: denTypeIdColumn("platformAuditEvent", "id").notNull().primaryKey(),
+  occurred_at: timestamp("occurred_at", { fsp: 3 }).notNull(),
+  request_id: varchar("request_id", { length: 128 }),
+  method: varchar("method", { length: 16 }).notNull(),
+  route: varchar("route", { length: 512 }).notNull(),
+  action: varchar("action", { length: 128 }).notNull(),
+  outcome: mysqlEnum("outcome", ["succeeded", "failed", "denied", "unknown"]).notNull(),
+  status: smallint("status", { unsigned: true }).notNull(),
+  reason_code: varchar("reason_code", { length: 128 }),
+  actor_type: mysqlEnum("actor_type", ["user", "service", "unknown"]).notNull(),
+  actor_id: varchar("actor_id", { length: 255 }),
+  credential_id: varchar("credential_id", { length: 255 }),
+  origin: mysqlEnum("origin", ["api", "cloud_ui", "mcp", "scheduler", "webhook", "platform_admin"]).notNull(),
+  // Resource reference (declared type + validated path id or handler-named resource).
+  // A target of type organization is only ever an id from trusted authenticated context.
+  target_type: varchar("target_type", { length: 64 }),
+  target_id: varchar("target_id", { length: 255 }),
+}, (table) => [
+  index("platform_audit_event_time").on(table.occurred_at, table.id),
+  index("platform_audit_event_actor_time").on(table.actor_id, table.occurred_at),
 ])

@@ -1,0 +1,39 @@
+import type { Seed } from "@openwork/env";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+/** Skills a member wrote in this workspace: enough rows to read lanes across. */
+export const librarySkills = [
+  { name: "weekly-update", description: "Drafts the Friday team update from this week's sessions, merged work and calendar." },
+  { name: "brand-voice", description: "Tone, words we use and words we avoid in anything customer-facing." },
+  { name: "invoice-cleanup", description: "Renames and sorts vendor invoices in a folder by vendor and month." },
+  { name: "release-notes", description: "Turns merged pull requests into short customer-facing release notes." },
+  { name: "research-brief", description: "Web research with source notes and a cited one-page summary." },
+] as const;
+
+/** MCP servers written by hand into opencode.json; off, so no process starts. */
+const handWrittenServers = {
+  "docs-helper": { type: "local", command: ["python3", "-m", "http.server", "8321"], enabled: false },
+  "files-helper": { type: "local", command: ["npx", "-y", "@modelcontextprotocol/server-filesystem"], enabled: false },
+  "tickets-helper": { type: "remote", url: "https://mcp.example.test/sse", enabled: false },
+};
+
+/**
+ * One member's workspace with a handful of skills and MCP servers, opened in
+ * the real app in headless Chrome. No Den: everything lives on this computer,
+ * which is enough to read the Library's list at several window widths.
+ */
+export async function libraryListWide(seed: Seed) {
+  const workspacePath = seed.tmpPath("library-list-wide");
+  for (const skill of librarySkills) {
+    const directory = join(workspacePath, ".opencode", "skills", skill.name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "SKILL.md"), `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\nFollow the description.\n`);
+  }
+  await writeFile(
+    join(workspacePath, "opencode.json"),
+    `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: handWrittenServers }, null, 2)}\n`,
+  );
+  const app = await seed.appWeb({ name: "library-list-wide", workspacePath });
+  return { app, workspacePath, skills: librarySkills.map((skill) => skill.name), servers: Object.keys(handWrittenServers) };
+}

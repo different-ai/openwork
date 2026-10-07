@@ -5,7 +5,10 @@ import {
   ConnectorSyncEventTable,
   ConnectorTargetTable,
 } from "@openwork-ee/den-db/schema"
+import type { AuditActor, AuditEventInput } from "@openwork-ee/den-db/audit-log"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { recordAuditJobOutcome } from "../audit/job-capture.js"
+import { CONNECTOR_SYNC_JOB_KIND } from "../audit/job-outcomes.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -175,9 +178,58 @@ export async function processDueGithubSyncEvents(now = new Date()) {
         retrying: shouldRetry,
       })
     }
+    await recordConnectorSyncCompleted(event.id)
   }
 
   return { checked: events.length, claimed }
+}
+
+const GITHUB_SYNC_ACTOR_ID = "den-api.github-sync"
+const GITHUB_SYNC_ACTOR: AuditActor = { type: "system", id: GITHUB_SYNC_ACTOR_ID }
+const TERMINAL_SYNC_STATUSES: ReadonlySet<string> = new Set(["completed", "partial", "ignored", "failed"])
+
+function countField(summary: Record<string, unknown> | null, key: string): number | null {
+  const value = summary?.[key]
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+/**
+ * `connector_sync.completed` once the event is terminal (job operation, jobRunId
+ * = sync event id). Counts and status only: never repository names, paths,
+ * file contents, plugin names or error messages. Never throws into the worker.
+ */
+async function recordConnectorSyncCompleted(connectorSyncEventId: (typeof ConnectorSyncEventTable.$inferSelect)["id"]) {
+  if (!env.auditCaptureEnabled) return
+  try {
+    const [event] = await db.select().from(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.id, connectorSyncEventId)).limit(1)
+    if (!event || !TERMINAL_SYNC_STATUSES.has(event.status) || !event.completedAt) return
+    const summary = isRecord(event.summaryJson) ? event.summaryJson : null
+    const after = {
+      status: event.status,
+      attemptCount: event.attemptCount,
+      discoveredPluginCount: countField(summary, "discoveredPluginCount"),
+      createdPluginCount: countField(summary, "createdPluginCount"),
+      materializedConfigObjectCount: countField(summary, "materializedConfigObjectCount"),
+    }
+    const resources: AuditEventInput["resources"] = [
+      { type: "connector_sync_event", id: event.id, relationship: "target" },
+      { type: "connector_instance", id: event.connectorInstanceId, relationship: "parent" },
+      { type: "organization", id: event.organizationId, relationship: "parent" },
+    ]
+    if (event.connectorTargetId) resources.push({ type: "connector_target", id: event.connectorTargetId, relationship: "related" })
+    await recordAuditJobOutcome({
+      organizationId: event.organizationId, jobRunId: event.id, kind: CONNECTOR_SYNC_JOB_KIND, action: "connector_sync.completed",
+      actor: GITHUB_SYNC_ACTOR, principalKey: `system:${GITHUB_SYNC_ACTOR_ID}`,
+      origin: summary?.trigger === "reconcile" ? "scheduler" : event.eventType === "manual_resync" ? "api" : "webhook",
+      resources,
+      outcome: event.status === "failed" ? "failed" : "succeeded",
+      reasonCode: event.status,
+      changes: { before: { status: "running" }, after, changedFields: Object.keys(after) },
+      idempotencyKey: `connector_sync:${event.id}:completed:${event.completedAt.getTime()}`,
+    })
+  } catch (error) {
+    logger.warn("github connector sync outcome audit skipped", { connector_sync_event_id: connectorSyncEventId, error_name: error instanceof Error ? error.name : typeof error })
+  }
 }
 
 function githubTargetConfig(target: typeof ConnectorTargetTable.$inferSelect) {

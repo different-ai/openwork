@@ -202,25 +202,18 @@ test("create, preview, save and reopen an app without changing already-open resu
   evidence.recordAssertionEvidence("MCP tool descriptions advertise direct artifact creation and mode-specific prerequisites", "The live tools/list response includes save_artifact_view. Its descriptions require an output schema, default new apps to live and restrict snapshots to dependency-free workflows; search no longer says Always search first. These assertions verify advertised guidance, not model tool selection. The conversation below uses a prescribed snapshot workload with deterministic data to verify the artifact integration.", true);
   const viewsPath = `/v1/workflows/${world.configObjectId}/views`;
   expect(record((await probe.api(world.den.admin, viewsPath)).body).items).toEqual([]);
-  await step("only offer sharing when the server supports it", async () => {
-    for (const body of [{ enabled: true, items: [] }, { enabled: true, sharingEnabled: false, items: [] }]) {
-      await world.proxy.faults.status("/v1/apps", 200, { times: 100, body });
-      await world.proxy.faults.status("/api/den/v1/apps", 200, { times: 100, body });
-      await world.open("/dashboard");
-      await user.reload();
-      await user.see({ role: "button", label: "Add" });
-      expect((await world.proxy.requestLog()).some((request) => request.path.endsWith("/v1/apps") && request.faulted)).toBe(true);
-      await user.notSee({ role: "button", label: "Share" });
-      await world.resetProxy();
-    }
-    await user.reload();
-    await user.see({ role: "button", label: "Share" });
-    expect(record((await probe.api(world.den.admin, "/v1/apps")).body).sharingEnabled).toBe(true);
+  await step("before: an empty personal dashboard has nothing to share", async () => {
+    await world.open("/dashboard");
+    await user.see({ role: "button", label: "Add to dashboard" });
+    await user.notSee({ role: "button", label: "Share" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("An empty dashboard offers creation without sharing", "Add to dashboard is available, but there is no Share action until a personal artifact is added.", true);
   });
-  evidence.recordAssertionEvidence("Sharing requires explicit server support", "Older and disabled capability responses keep Add available but hide Share; the real supporting server exposes Share after reload.", true);
   await step("create an app through the Dashboard conversation", async () => {
     await world.open("/dashboard");
-    await user.click({ role: "button", label: "Add" });
+    await user.click({ role: "button", label: "Add to dashboard" });
+    await user.click("Create with OpenWork");
+    await user.see({ text: "Add to your dashboard" });
     await user.click("Create with OpenWork");
     await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     expect(creationPrompt).not.toContain(world.configObjectId);
@@ -228,6 +221,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Run task");
     try {
       await user.see({ text: creationReply }, { timeoutMs: 90_000 });
+      await user.click("Open preview");
       await user.see("Save", { timeoutMs: 60_000 });
     } finally {
       await user.screenshot();
@@ -239,6 +233,11 @@ test("create, preview, save and reopen an app without changing already-open resu
   if (!Array.isArray(drafts) || drafts.length !== 1) throw new Error("The conversation must create exactly one draft.");
   const view = record(drafts[0]);
   const appId = field(view, "id");
+  const revealPersonalTileControls = async () => {
+    // Hover host chrome outside the iframe after the loading overlay clears.
+    await user.hover({ testId: `dashboard-artifact-status-${appId}` });
+    await user.see({ role: "button", label: "Artifact options for Team briefing" });
+  };
   if (!Array.isArray(view.revisions) || !view.revisions[0]) throw new Error("The conversation draft has no revision.");
   const revisionId = field(view.revisions[0], "id");
   const requests = await world.den.mocks.tracker.agentRequests({ promptMarker: creationPrompt });
@@ -260,7 +259,7 @@ test("create, preview, save and reopen an app without changing already-open resu
 
   await step("try a draft and cancel saving", async () => {
     await user.see("Save", { timeoutMs: 60_000 });
-    await user.see({ text: "App draft" });
+    await user.see({ text: "Artifact draft" });
     try {
       const preview = await probe.eventually(() => world.previewText(), { within: 30_000, label: "generated preview rendered", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
       expect(preview).not.toContain("could not render");
@@ -271,7 +270,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     }
     await user.click("Save");
     await user.see({ text: "Save to your dashboard" });
-    await user.see({ label: "App name" }, { value: "Briefing app" });
+    await user.see({ label: "Artifact name" }, { value: "Briefing app" });
     await user.screenshot();
     await user.click("Cancel");
     expect(record((await readApp(originalPath)).view).activeRevisionId).toBeNull();
@@ -294,9 +293,9 @@ test("create, preview, save and reopen an app without changing already-open resu
 
   await step("save the workflow and app to the dashboard", async () => {
     await user.click("Save");
-    await user.type({ label: "App name" }, "Team briefing", { replace: true });
+    await user.type({ label: "Artifact name" }, "Team briefing", { replace: true });
     await user.click({ role: "button", label: "Save", nth: 1 });
-    await user.see({ text: "Saved to your dashboard. The workflow and app are ready to use together." }, { timeoutMs: 30_000 });
+    await user.see({ text: "Saved to your dashboard. Your artifact is ready to use." }, { timeoutMs: 30_000 });
     const saved = record((await readApp()).view);
     expect(saved).toMatchObject({ title: "Team briefing", activeRevisionId: revisionId, useInWorkflow: true });
     expect(record((await world.render())._meta).viewRevisionId).toBe(revisionId);
@@ -310,6 +309,26 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
   });
   evidence.recordAssertionEvidence("Drafts stay off the dashboard until saved, and Cancel does not save them", "Draft list was empty; Cancel retained a null active revision; Save persisted the exact revision, workflow link, and personal dashboard placement without executing or scheduling a run.", true);
+
+  await step("only offer sharing for personal artifacts when the server supports it", async () => {
+    const items = record((await probe.api(world.den.admin, "/v1/apps")).body).items;
+    for (const body of [{ enabled: true, items }, { enabled: true, sharingEnabled: false, items }]) {
+      await world.proxy.faults.status("/v1/apps", 200, { times: 100, body, method: "GET" });
+      await world.proxy.faults.status("/api/den/v1/apps", 200, { times: 100, body, method: "GET" });
+      await world.open("/dashboard");
+      await user.reload();
+      await user.see({ role: "button", label: "Add to dashboard" });
+      expect((await world.proxy.requestLog()).some((request) => request.path.endsWith("/v1/apps") && request.faulted)).toBe(true);
+      await user.notSee({ role: "button", label: "Share" });
+      await world.resetProxy();
+    }
+    await user.reload();
+    await user.see({ role: "button", label: "Share" });
+    expect(record((await probe.api(world.den.admin, "/v1/apps")).body).sharingEnabled).toBe(true);
+  });
+  evidence.recordAssertionEvidence("Sharing requires explicit server support", "Older and disabled capability responses keep Add to dashboard available but hide Share; the real supporting server exposes Share after reload.", true);
+  await world.open(dashboardAppPath);
+  await user.see({ text: "Saved artifact" });
 
   await step("saved app header stays readable in a narrow preview", async () => {
     await seed.evalIn(world.app, () => { const parent = document.querySelector<HTMLElement>('[data-app-header]')?.parentElement; if (!parent) throw new Error('Missing app header parent'); parent.style.width = '320px'; });
@@ -328,10 +347,10 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(record(header).buttonLabels).not.toContain("Saved");
     expect(record(header).buttonLabels).not.toContain("Delete");
     await user.screenshot();
-    await user.click("App options for Team briefing");
+    await user.click("Artifact options for Team briefing");
     await user.see("Delete Team briefing");
     await user.screenshot();
-    await user.click("App options for Team briefing");
+    await user.click("Artifact options for Team briefing");
     await seed.evalIn(world.app, () => (document.querySelector<HTMLElement>('[data-app-header]')?.parentElement?.style.removeProperty('width')));
   });
   evidence.recordAssertionEvidence("The saved app header preserves the title at a 320px panel width", "The real preview header remains under 72px tall with over 180px for the fully visible title. Saved is status text and Delete remains reachable in the options menu.", true);
@@ -339,41 +358,44 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("reopen the saved app after a reload", async () => {
     await world.open("/dashboard");
     await user.reload();
-    await user.click("App options for Team briefing");
+    await revealPersonalTileControls();
+    await user.click("Artifact options for Team briefing");
     await user.click("Open Team briefing");
-    await user.see({ text: "Saved app" }, { timeoutMs: 30_000 });
-    await user.click("App options for Team briefing");
+    await user.see({ text: "Saved artifact" }, { timeoutMs: 30_000 });
+    await user.click("Artifact options for Team briefing");
     await user.see("Run again");
     await user.see("Ask for changes");
     await user.see("Delete Team briefing");
     await user.screenshot();
-    await user.click("App options for Team briefing");
+    await user.click("Artifact options for Team briefing");
   });
 
   const companyBefore = (await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body;
   await step("remove a personal card and add the saved app again", async () => {
     await world.open("/dashboard");
-    await user.see({ text: "Project updates" });
-    await user.see({ text: "From your company" });
-    await user.click("App options for Team briefing");
+    await revealPersonalTileControls();
+    await user.click("Artifact options for Team briefing");
     await user.click("Remove Team briefing from dashboard");
-    await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Pin the artifacts you check every day" }, { timeoutMs: 30_000 });
     expect(await readApp()).toMatchObject({ onDashboard: false, view: { activeRevisionId: revisionId } });
-    await user.click({ role: "button", label: "Add" });
-    await user.see("Create with OpenWork");
-    await user.click("Choose an existing app");
+    await user.click({ role: "button", label: "Add to dashboard" });
+    await user.click("Other saved artifacts");
+    await user.see({ label: "Search artifacts" });
     await user.click("Add Team briefing");
     await probe.eventually(readApp, { within: 30_000, label: "personal dashboard placement restored", until: (app) => app.onDashboard === true });
     await user.screenshot();
     await world.open("/dashboard");
     await user.reload();
-    await user.see("App options for Team briefing", { timeoutMs: 30_000 });
+    await revealPersonalTileControls();
+    await user.see("Artifact options for Team briefing", { timeoutMs: 30_000 });
     await probe.eventually(() => world.previewText(), { within: 30_000, label: "saved app rendered on dashboard", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
-    await user.see({ text: "Project updates" });
+    // The granted company dashboard stays in Den but no longer renders on Desktop.
+    await user.notSee({ text: "From your company" });
+    await user.notSee({ text: "Project updates" });
     expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
     await user.screenshot();
   });
-  evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Choose an existing app added the personal card again and it survived reload beside Project updates.", true);
+  evidence.recordAssertionEvidence("Removing and adding an existing app changes dashboard placement without deleting the app", "Remove kept the saved revision and company dashboard; Other saved artifacts added the personal card again and it survived reload, while the granted company dashboard did not render.", true);
 
   await step("a saved snapshot reserves its measured tile size while reloading", async () => {
     const saved = await readApp();
@@ -413,10 +435,11 @@ test("create, preview, save and reopen an app without changing already-open resu
     const detailPath = `/v1/apps/${appId}`;
     const requestCount = (await world.proxy.requestLog()).length;
     try {
-      await world.proxy.faults.latency(detailPath, 15_000, { times: 1 });
-      await world.proxy.faults.latency(`/api/den${detailPath}`, 15_000, { times: 1 });
+      // Keep the loading witness below the Den client's 12-second deadline.
+      await world.proxy.faults.latency(detailPath, 8_000, { times: 1, method: "GET" });
+      await world.proxy.faults.latency(`/api/den${detailPath}`, 8_000, { times: 1, method: "GET" });
       await user.reload();
-      await user.see({ text: "Loading app…" }, { timeoutMs: 30_000 });
+      await user.see({ text: "Loading artifact…" }, { timeoutMs: 30_000 });
       const loading = await probe.dom(tileSelector);
       expect(loading.elements).toHaveLength(1);
       expect(loading.viewportWidth).toBe(before.viewportWidth);
@@ -431,8 +454,10 @@ test("create, preview, save and reopen an app without changing already-open resu
         until: (size) => size.viewportWidth === before.viewportWidth && Math.abs(size.width - before.width) <= 1
           && Math.abs(size.height - before.height) <= 1 && Math.abs(size.frameWidth - before.frameWidth) <= 1
           && Math.abs(size.frameHeight - before.frameHeight) <= 1 });
-      expect((await world.proxy.requestLog()).slice(requestCount).filter((request) => request.method === "GET"
-        && request.path.endsWith(detailPath) && request.faulted && request.status === 200)).toHaveLength(1);
+      const reloadRequests = (await world.proxy.requestLog()).slice(requestCount);
+      expect(reloadRequests.filter((request) => request.method === "GET"
+        && new URL(request.path, "http://fixture.invalid").pathname.endsWith(detailPath) && request.faulted && request.status === 200),
+      JSON.stringify(reloadRequests.filter((request) => new URL(request.path, "http://fixture.invalid").pathname.endsWith(detailPath)))).toHaveLength(1);
       expect((await readApp()).revision).toMatchObject({ id: revisionId });
       expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
       evidence.recordAssertionEvidence("Saved snapshot loading preserves measured dashboard geometry", JSON.stringify({ before, loading: tile.rect, restored,
@@ -596,82 +621,13 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click({ role: "checkbox", label: "Private planning" });
     await user.screenshot();
     await user.type({ label: "Teammate’s email" }, "unknown@openwork.test");
-    await user.click("Share apps");
+    await user.click("Share artifacts");
     await user.see({ text: /No teammate with that email belongs to this organization/ });
     expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
     await user.type({ label: "Teammate’s email" }, colleague.email, { replace: true });
-    await world.ageAdminSession();
-    const staleShare = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
-      method: "POST", body: JSON.stringify({ email: colleague.email }),
-    });
-    expect(staleShare.response.status, staleShare.text).toBe(403);
-    expect(staleShare.body).toMatchObject({ error: "reauth" });
-    await user.click("Share apps");
-    await user.see({ text: "Confirm your identity to share apps" });
-    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
-    await user.click("Cancel verification");
-    expect(await probe.eval(() => document.querySelector<HTMLInputElement>('input[type="email"]')?.value)).toBe(colleague.email);
-    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
-    await user.click("Share apps");
-    await user.see({ text: "Confirm your identity to share apps" });
-    const verificationUrl = await probe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification address"]')?.value);
-    if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
-    const nonce = new URL(verificationUrl).searchParams.get("nonce");
-    if (!nonce) throw new Error("Missing verification nonce");
-    expect(new URL(verificationUrl).searchParams.has("email")).toBe(false);
-    expect(new URL(verificationUrl).searchParams.has("userId")).toBe(false);
-    expect(new URLSearchParams(new URL(verificationUrl).hash.slice(1)).has("email")).toBe(false);
-    expect(verificationUrl).not.toContain(encodeURIComponent(world.den.admin.email));
-    const wrongGrant = await seed.api(colleague, "/v1/auth/desktop-handoff", { method: "POST", body: "{}" });
-    expect(wrongGrant.response.status, wrongGrant.text).toBe(200);
-    const wrongLink = `openwork://den-reauth?nonce=${nonce}&grant=${field(wrongGrant.body, "grant")}`;
-    await user.type({ label: "Or paste your verification link" }, wrongLink);
-    await user.click("Confirm and share");
-    await user.see({ text: `Sign in as ${world.den.admin.email} to confirm this share.` });
-    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
-    await user.screenshot();
-    const webUser = user.on(world.web);
-    const webProbe = probe.on(world.web);
-    // Follow the address offered by the app; authentication and the returned grant are real.
-    await webUser.navigate(verificationUrl);
-    await webUser.type({ label: "OpenWork email" }, world.den.admin.email);
-    await webUser.click("Continue");
-    await webUser.see({ text: "Confirm your identity to share apps" }, { timeoutMs: 90_000 });
-    await webUser.type({ label: "Password" }, "wrong-password");
-    await webUser.click("Verify password");
-    await webUser.see({ text: /invalid.*(email|password)|incorrect.*password/i });
-    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
-    await webUser.type({ label: "Password" }, world.den.admin.password, { replace: true });
-    await webUser.click("Verify password");
-    await webUser.see({ text: "Return to OpenWork to finish sharing" }, { timeoutMs: 60_000 });
-    const verifiedLink = await webProbe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification link"]')?.value);
-    if (typeof verifiedLink !== "string") throw new Error("Browser did not provide a verification link");
-    // Use a fresh grant for the correct account so only attempt binding can
-    // reject this return. The original link must remain usable afterward.
-    const unrelatedLink = new URL(verifiedLink);
-    unrelatedLink.searchParams.set("nonce", "unrelated-check");
-    await world.returnVerification(unrelatedLink.toString());
-    await user.see({ text: "Confirm your identity to share apps" });
-    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
-    await webUser.screenshot();
-    await user.type({ label: "Or paste your verification link" }, verifiedLink, { replace: true });
-    await user.click("Confirm and share");
+    await user.click("Share artifacts");
     await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
-    // Check server-side single use independently of the unmounted UI listener.
-    const replay = await seed.api(world.den.admin, "/v1/auth/desktop-handoff/exchange", {
-      method: "POST", body: JSON.stringify({ grant: new URL(verifiedLink).searchParams.get("grant") }),
-    });
-    expect(replay.response.status, replay.text).toBe(404);
-    expect(replay.body).toMatchObject({ error: "grant_not_found" });
-    // A late callback must also leave the completed share on the dashboard.
-    await world.returnVerification(verifiedLink);
-    expect(await probe.hash()).toBe("#/dashboard");
-    const stillStale = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
-      method: "POST", body: JSON.stringify({ email: colleague.email }),
-    });
-    expect(stillStale.response.status).toBe(403);
-    expect(stillStale.body).toMatchObject({ error: "reauth" });
-    await world.refreshFixtureAdmin();
+    await user.notSee({ text: "Confirm your identity to share apps" });
     const sharedApp = await probe.api(colleague, `/v1/apps/${appId}`);
     expect(sharedApp.response.status, sharedApp.text).toBe(200);
     expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
@@ -702,53 +658,40 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Done");
   });
   evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
-  evidence.recordAssertionEvidence("An expired admin can verify and resume sharing without losing their selection", "A real 20-minute-old session was rejected. Cancelling, an unrelated callback, a different account’s grant, and a wrong password left the app private. Browser password verification produced a real one-time link; pasting it shared only the selected app with the preserved recipient. A second exchange of its consumed grant returned 404 grant_not_found. The original stale session still could not share, and a late callback did not duplicate the dashboard entry.", true);
   evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
 
-  await step("return from browser verification and keep subsequent sharing uninterrupted", async () => {
-    const browserRecipient = world.den.members.browserRecipient;
-    if (!browserRecipient) throw new Error("The browser-return recipient was not provisioned.");
-    expect((await probe.api(browserRecipient, `/v1/apps/${appId}`)).response.status).toBe(403);
-    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
-    await world.ageAdminSession();
+  await step("share with another teammate without duplicating placement or exposing private artifacts", async () => {
+    const recipient = world.den.members.browserRecipient;
+    if (!recipient) throw new Error("The second recipient was not provisioned.");
+    expect((await probe.api(recipient, `/v1/apps/${appId}`)).response.status).toBe(403);
+    expect((await probe.api(recipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
     await user.click({ role: "button", label: "Share" });
     await user.click({ role: "checkbox", label: "Private planning" });
-    await user.type({ label: "Teammate’s email" }, browserRecipient.email);
-    await user.click("Share apps");
-    await user.see({ text: "Confirm your identity to share apps" });
-    expect((await probe.api(browserRecipient, `/v1/apps/${appId}`)).response.status).toBe(403);
-    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
-    const verificationUrl = await probe.eval(() => document.querySelector<HTMLInputElement>('[aria-label="Verification address"]')?.value);
-    if (typeof verificationUrl !== "string") throw new Error("Missing verification address");
-    const webUser = user.on(world.web);
-    await webUser.navigate(verificationUrl);
-    await webUser.type({ label: "Password" }, world.den.admin.password);
-    await webUser.click("Verify password");
-    await webUser.see({ text: "Return to OpenWork to finish sharing" }, { timeoutMs: 60_000 });
-    const returned = await probe.on(world.web).eval(() => document.querySelector<HTMLAnchorElement>('a[href^="openwork://den-reauth"]')?.href);
-    if (typeof returned !== "string") throw new Error("Missing Return to OpenWork link");
-    await world.returnVerification(returned);
-    await user.see({ text: `Shared 1 app with ${browserRecipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
-    const granted = await probe.api(browserRecipient, `/v1/apps/${appId}`);
+    await user.type({ label: "Teammate’s email" }, recipient.email);
+    await user.click("Share artifacts");
+    await user.see({ text: `Shared 1 app with ${recipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    await user.notSee({ text: "Confirm your identity to share apps" });
+    const granted = await probe.api(recipient, `/v1/apps/${appId}`);
     expect(granted.response.status, granted.text).toBe(200);
     expect(granted.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
-    expect((await probe.api(browserRecipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(200);
-    expect((await probe.api(browserRecipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    expect((await probe.api(recipient, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(200);
+    expect((await probe.api(recipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
     await user.click("Done");
     await user.click({ role: "button", label: "Share" });
     await user.click({ role: "checkbox", label: "Private planning" });
-    await user.type({ label: "Teammate’s email" }, browserRecipient.email);
-    await user.click("Share apps");
-    await user.see({ text: `Shared 1 app with ${browserRecipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
-    await user.notSee({ text: "Confirm your identity to share apps" });
-    const listed = record((await probe.api(browserRecipient, "/v1/apps")).body).items;
+    await user.type({ label: "Teammate’s email" }, recipient.email);
+    await user.click("Share artifacts");
+    await user.see({ text: `Shared 1 app with ${recipient.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    const listed = record((await probe.api(recipient, "/v1/apps")).body).items;
     if (!Array.isArray(listed)) throw new Error("Expected the recipient app list");
     expect(listed.filter((item) => record(item).onDashboard).map((item) => field(record(item).view, "id"))).toEqual([appId]);
-    expect((await probe.api(browserRecipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    expect((await probe.api(recipient, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    expect((await probe.api(recipient, `/v1/workflows/${privateWorkflowId}`)).response.status).toBe(403);
+    expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
+    await user.screenshot();
     await user.click("Done");
-    await world.refreshFixtureAdmin();
   });
-  evidence.recordAssertionEvidence("Browser return grants new access and the fresh session avoids another prompt", "A separate recipient received 403 for the app and workflow before verification, including while the share waited for verification. Navigating the real return link in an Electron browser tab exercised main-process interception, native IPC, preload forwarding, and the renderer startup bridge. The recipient then received 200 with the app's saved result, view-only access, dashboard placement, and workflow access. Sharing again immediately completed without verification, kept exactly the selected app on their dashboard, and left the unchecked private app inaccessible. OS protocol registration is outside this container journey.", true);
+  evidence.recordAssertionEvidence("Sharing stays scoped and repeated shares do not duplicate placement", "The second recipient initially received 403 for the app and workflow. Explicit sharing granted view-only access and exactly one personal dashboard placement. Sharing again kept one placement, while the unchecked private app and its separate workflow remained inaccessible and the company dashboard stayed unchanged.", true);
 
   const cleanupCompanion = await seed.api(world.den.admin, `/v1/artifact-views/${companionAppId}/retire`, { method: "POST" });
   expect(cleanupCompanion.response.status, cleanupCompanion.text).toBe(200);
@@ -764,13 +707,13 @@ test("create, preview, save and reopen an app without changing already-open resu
     const previewNotice = "The workflow’s results have changed. Ask OpenWork to update this app to match.";
     const body = { ...saved, html: null, payload: null, previewNotice };
     try {
-      await world.proxy.faults.status(`/v1/apps/${appId}`, 200, { times: 100, body });
-      await world.proxy.faults.status(`/api/den/v1/apps/${appId}`, 200, { times: 100, body });
+      await world.proxy.faults.status(`/v1/apps/${appId}`, 200, { times: 100, body, method: "GET" });
+      await world.proxy.faults.status(`/api/den/v1/apps/${appId}`, 200, { times: 100, body, method: "GET" });
       await world.open("/dashboard");
       await user.reload();
       await user.see({ text: previewNotice }, { timeoutMs: 30_000 });
-      expect((await world.proxy.requestLog()).some((request) => request.path.endsWith(`/v1/apps/${appId}`) && request.faulted)).toBe(true);
-      await user.click({ role: "button", label: "Update app" });
+      expect((await world.proxy.requestLog()).some((request) => new URL(request.path, "http://fixture.invalid").pathname.endsWith(`/v1/apps/${appId}`) && request.faulted)).toBe(true);
+      await user.click({ role: "button", label: "Update artifact" });
       const composer = await probe.eventually(() => probe.composer(), {
         within: 30_000, label: "existing app update prompt ready for review",
         until: (value) => value.composerEditable && value.draftText.includes(`artifactViewId: ${appId}, configObjectId: ${world.configObjectId})`),
@@ -797,20 +740,21 @@ test("create, preview, save and reopen an app without changing already-open resu
   const beforeDeleteSnapshots = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;
   await step("an admin cancels deletion in the app and confirms it on the dashboard", async () => {
     await world.open(dashboardAppPath);
-    await user.click("App options for Team briefing");
+    await user.click("Artifact options for Team briefing");
     await user.click("Delete Team briefing");
     await user.see({ text: "Delete “Team briefing”?" });
-    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Past results stay available." });
+    await user.see({ text: "This removes the saved artifact from everyone’s dashboards and the artifact list. Past results stay available." });
     await user.screenshot();
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
     await world.open("/dashboard");
-    await user.click("App options for Team briefing");
+    await revealPersonalTileControls();
+    await user.click("Artifact options for Team briefing");
     await user.click("Delete Team briefing");
-    await user.click("Delete app");
-    await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
+    await user.click("Delete artifact");
+    await user.see({ text: "Pin the artifacts you check every day" }, { timeoutMs: 30_000 });
     await user.reload();
-    await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Pin the artifacts you check every day" }, { timeoutMs: 30_000 });
     expect(record((await probe.api(world.den.admin, "/v1/apps")).body).items).toEqual([]);
     expect((await readApp(originalPath))).toMatchObject({ onDashboard: false, view: { status: "retired", activeRevisionId: null }, payload: { data: { topic: "Launch briefing" } } });
     expect((await readWorkflow()).currentVersion).toEqual(beforeDelete.currentVersion);
@@ -824,9 +768,11 @@ test("create, preview, save and reopen an app without changing already-open resu
 
   await step("Dashboard Add opens a creation conversation", async () => {
     await world.open("/dashboard");
-    await user.click({ role: "button", label: "Add" });
-    await user.see("Choose an existing app");
+    await user.click({ role: "button", label: "Add to dashboard" });
+    await user.see({ label: "Search artifacts" });
     await user.screenshot();
+    await user.click("Create with OpenWork");
+    await user.see({ text: "Add to your dashboard" });
     await user.click("Create with OpenWork");
     await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create one live app for my dashboard in one shot.") });
     await user.screenshot();

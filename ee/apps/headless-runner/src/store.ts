@@ -31,6 +31,7 @@ const sessionOptions = z.object({
   files: z.boolean().optional(),
   computer: z.boolean().optional(),
   reactions: z.boolean().optional(),
+  tasks: z.boolean().optional(),
 })
 type SessionOptions = z.infer<typeof sessionOptions>
 const tableColumns = z.array(z.object({ name: z.string() }).loose())
@@ -45,6 +46,9 @@ const turnRow = z.object({
   output_tokens: z.number(),
   created_at: z.number(),
   updated_at: z.number(),
+  kind: z.enum(["task", "report"]).nullable().optional(),
+  parent: z.string().nullable().optional(),
+  title: z.string().nullable().optional(),
 })
 const messageRow = z.object({ seq: z.number(), message_id: z.string(), body: z.string(), created_at: z.number().optional() })
 const fileRow = z.object({ path: z.string(), size: z.number(), updated_at: z.number() })
@@ -66,19 +70,22 @@ export type Session = {
   computer: boolean
   /** Whether the model may react to the person's message with an emoji (the caller shows it). */
   reactions: boolean
+  /** Whether the conversation may hand work to background tasks (start_task) and keep talking meanwhile. */
+  tasks: boolean
   createdAt: number
   updatedAt: number
 }
 /** What a caller may set on a session: its text, and its settings (stored together as JSON). */
-export type SessionInput = { title?: string; instructions?: string; repeats?: RepeatLimits; files?: boolean; computer?: boolean; reactions?: boolean }
+export type SessionInput = { title?: string; instructions?: string; repeats?: RepeatLimits; files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
 
 /** The settings part of a session, leaving out what the caller didn't set. */
-function optionsOf(input: { repeats?: RepeatLimits | null; files?: boolean; computer?: boolean; reactions?: boolean }): SessionOptions {
+function optionsOf(input: { repeats?: RepeatLimits | null; files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }): SessionOptions {
   return {
     ...(input.repeats ? { repeats: input.repeats } : {}),
     ...(input.files !== undefined ? { files: input.files } : {}),
     ...(input.computer !== undefined ? { computer: input.computer } : {}),
     ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
+    ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   }
 }
 
@@ -89,6 +96,7 @@ function serializeOptions(options: SessionOptions) {
     ...(options.files ? { files: true } : {}),
     ...(options.computer ? { computer: true } : {}),
     ...(options.reactions ? { reactions: true } : {}),
+    ...(options.tasks ? { tasks: true } : {}),
   }
   return Object.keys(ordered).length ? JSON.stringify(ordered) : null
 }
@@ -102,6 +110,14 @@ export type Turn = {
   usage: Usage
   createdAt: number
   updatedAt: number
+  /**
+   * Set for turns the runner started itself: a background `task` (its own lane; `parent` is the turn that started
+   * it, `title` its name) and the `report` that brings a finished task back to the conversation (`parent` is the
+   * task). Turns a caller sends have none of these.
+   */
+  kind?: "task" | "report"
+  parent?: string
+  title?: string
 }
 export type StoredMessage = { seq: number; messageId: string; message: Message; createdAt?: number }
 export type FileEntry = { path: string; size: number; updatedAt: number }
@@ -169,8 +185,14 @@ function toTurn(row: unknown): Turn {
     usage: { inputTokens: value.input_tokens, cachedInputTokens: value.cached_input_tokens, outputTokens: value.output_tokens },
     createdAt: value.created_at,
     updatedAt: value.updated_at,
+    ...(value.kind ? { kind: value.kind } : {}),
+    ...(value.parent ? { parent: value.parent } : {}),
+    ...(value.title ? { title: value.title } : {}),
   }
 }
+
+/** Leaves out background tasks' own transcripts: the conversation hears from a task through its report. */
+const CONVERSATION_ROWS = "message_id NOT IN (SELECT message_id FROM turns WHERE session_id = ? AND kind = 'task')"
 
 /**
  * Durable state in one SQLite file (WAL mode). Every transcript step is written
@@ -246,6 +268,11 @@ export class Store {
     if (!columnsOf("turns").includes("attachments")) this.db.exec("ALTER TABLE turns ADD COLUMN attachments TEXT")
     // A saved file the agent revises keeps its id; this is when its bytes last changed.
     if (!columnsOf("saved_files").includes("updated_at")) this.db.exec("ALTER TABLE saved_files ADD COLUMN updated_at INTEGER")
+    // Background tasks and their reports (see Turn.kind).
+    const turnColumns = columnsOf("turns")
+    for (const column of ["kind", "parent", "title"]) {
+      if (!turnColumns.includes(column)) this.db.exec(`ALTER TABLE turns ADD COLUMN ${column} TEXT`)
+    }
   }
 
   close() {
@@ -275,6 +302,7 @@ export class Store {
       files: options.files ?? false,
       computer: options.computer ?? false,
       reactions: options.reactions ?? false,
+      tasks: options.tasks ?? false,
       createdAt: at,
       updatedAt: at,
     }
@@ -327,6 +355,7 @@ export class Store {
       files: options?.success ? (options.data.files ?? false) : false,
       computer: options?.success ? (options.data.computer ?? false) : false,
       reactions: options?.success ? (options.data.reactions ?? false) : false,
+      tasks: options?.success ? (options.data.tasks ?? false) : false,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
     }
@@ -334,6 +363,36 @@ export class Store {
 
   deleteSession(id: string) {
     return Number(this.db.prepare("DELETE FROM sessions WHERE id = ?").run(id).changes) > 0
+  }
+
+  /**
+   * Removes a message from the conversation with everything it led to: its transcript, the background tasks it
+   * started and their reports. With `andAfter`, every message sent after it goes too (editing a message replays the
+   * conversation from there). Returns the removed message ids; null when one of them is still queued or running,
+   * so nothing is removed from under a live answer.
+   */
+  deleteTurns(sessionId: string, messageId: string, options: { andAfter?: boolean } = {}): string[] | null {
+    const turns = this.listTurns(sessionId)
+    const rootOf = (id: string) => id.split(".")[0] ?? id
+    const index = turns.findIndex((turn) => turn.messageId === messageId)
+    if (index === -1) return []
+    // The conversation's own messages from here on; tasks and reports go with the message that started them.
+    const roots = new Set(
+      options.andAfter ? turns.slice(index).filter((turn) => turn.kind === undefined).map((turn) => turn.messageId) : [rootOf(messageId)],
+    )
+    const removed = turns.filter((turn) => roots.has(rootOf(turn.messageId)))
+    if (removed.some((turn) => ACTIVE.has(turn.status))) return null
+    const ids = removed.map((turn) => turn.messageId)
+    this.transaction(() => {
+      const deleteMessages = this.db.prepare("DELETE FROM messages WHERE session_id = ? AND message_id = ?")
+      const deleteTurn = this.db.prepare("DELETE FROM turns WHERE session_id = ? AND message_id = ?")
+      for (const id of ids) {
+        deleteMessages.run(sessionId, id)
+        deleteTurn.run(sessionId, id)
+      }
+    })
+    for (const id of ids) this.onChange?.(sessionId, id)
+    return ids
   }
 
   getTurn(sessionId: string, messageId: string): Turn | null {
@@ -348,11 +407,37 @@ export class Store {
       .map(toTurn)
   }
 
-  activeTurn(sessionId: string): Turn | null {
+  /** The first queued or running turn; with `conversation`, background tasks don't count. */
+  activeTurn(sessionId: string, options: { conversation?: boolean } = {}): Turn | null {
     const row = this.db
-      .prepare(`SELECT * FROM turns WHERE session_id = ? AND status IN (${[...ACTIVE].map(() => "?").join(", ")}) ORDER BY rowid LIMIT 1`)
+      .prepare(
+        `SELECT * FROM turns WHERE session_id = ? AND status IN (${[...ACTIVE].map(() => "?").join(", ")})${options.conversation ? " AND kind IS NOT 'task'" : ""} ORDER BY rowid LIMIT 1`,
+      )
       .get(sessionId, ...ACTIVE)
     return row ? toTurn(row) : null
+  }
+
+  /** The session's newest background tasks, oldest first. */
+  recentTasks(sessionId: string, limit: number): Turn[] {
+    return this.db
+      .prepare("SELECT * FROM turns WHERE session_id = ? AND kind = 'task' ORDER BY rowid DESC LIMIT ?")
+      .all(sessionId, limit)
+      .map(toTurn)
+      .reverse()
+  }
+
+  /** Tasks that haven't finished: waiting, running, or paused to be resumed. */
+  openTaskCount(sessionId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM turns WHERE session_id = ? AND kind = 'task' AND status IN ('queued', 'running', 'interrupted')")
+      .get(sessionId)
+    return countRow.parse(row).n
+  }
+
+  /** How many tasks a turn has started. */
+  taskCount(sessionId: string, parent: string): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM turns WHERE session_id = ? AND kind = 'task' AND parent = ?").get(sessionId, parent)
+    return countRow.parse(row).n
   }
 
   /**
@@ -360,13 +445,33 @@ export class Store {
    * when the turn starts, so a follow-up queued behind a running turn is never
    * interleaved into that turn's transcript.
    */
-  admitTurn(input: { sessionId: string; messageId: string; prompt: string; model: string | null; attachments?: Attachment[] }): Turn {
+  admitTurn(input: {
+    sessionId: string
+    messageId: string
+    prompt: string
+    model: string | null
+    attachments?: Attachment[]
+    kind?: "task" | "report"
+    parent?: string
+    title?: string
+  }): Turn {
     const at = this.now()
     this.db
       .prepare(
-        "INSERT INTO turns (session_id, message_id, status, prompt, model, error, attachments, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?, NULL, ?, ?, ?)",
+        "INSERT INTO turns (session_id, message_id, status, prompt, model, error, attachments, kind, parent, title, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
       )
-      .run(input.sessionId, input.messageId, input.prompt, input.model, input.attachments?.length ? JSON.stringify(input.attachments) : null, at, at)
+      .run(
+        input.sessionId,
+        input.messageId,
+        input.prompt,
+        input.model,
+        input.attachments?.length ? JSON.stringify(input.attachments) : null,
+        input.kind ?? null,
+        input.parent ?? null,
+        input.title ?? null,
+        at,
+        at,
+      )
     const turn = this.getTurn(input.sessionId, input.messageId)
     if (!turn) throw new Error("turn_admission_failed")
     return turn
@@ -466,8 +571,8 @@ export class Store {
     let used = 0
     let seenCurrent = false
     for (const row of this.db
-      .prepare("SELECT seq, message_id, body FROM messages WHERE session_id = ? ORDER BY seq DESC")
-      .iterate(sessionId)) {
+      .prepare(`SELECT seq, message_id, body FROM messages WHERE session_id = ? AND ${CONVERSATION_ROWS} ORDER BY seq DESC`)
+      .iterate(sessionId, sessionId)) {
       const entry = parseMessageRow(row)
       rows.push(entry)
       if (entry.messageId === currentMessageId) {

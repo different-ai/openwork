@@ -398,7 +398,7 @@ const CLOUD_NOT_AVAILABLE_MESSAGE =
   "OpenWork Cloud is not available on this deployment; remote sessions targeting Cloud cannot run."
 
 function cloudRemoteSessionsAvailable(): boolean {
-  return cloudHostingAvailable({ orgMode: env.orgMode }) && cloudRuntimeAvailable()
+  return cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled }) && cloudRuntimeAvailable()
 }
 
 export function remoteSessionCapabilitiesEnabled(

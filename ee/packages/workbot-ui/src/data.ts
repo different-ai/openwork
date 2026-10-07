@@ -22,6 +22,16 @@ const partSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("steps"), steps: z.array(stepSchema) }),
 ]);
 export type WorkbotPart = z.infer<typeof partSchema>;
+const taskSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.enum(["queued", "working", "paused", "done", "failed", "stopped"]),
+  startedAt: z.number().nullable(),
+  finishedAt: z.number().nullable(),
+  update: z.string().nullable().default(null),
+  updates: z.array(z.string()).default([]),
+});
+export type WorkbotTask = z.infer<typeof taskSchema>;
 const turnSchema = z.object({
   id: z.string(),
   text: z.string(),
@@ -36,6 +46,12 @@ const turnSchema = z.object({
   parts: z.array(partSchema),
   modelSteps: z.number(),
   error: z.string().nullable(),
+  /** Bigger jobs this message handed to background tasks: shown where they started until they report back. */
+  tasks: z.array(taskSchema).default([]),
+  /** Workbot's first hello: it spoke first, so there is no message from the person above it. */
+  greeting: z.boolean().default(false),
+  /** Things the person could ask next, offered as buttons under the hello. */
+  suggestions: z.array(z.string()).default([]),
 });
 export type WorkbotTurn = z.infer<typeof turnSchema>;
 
@@ -200,10 +216,14 @@ export class WorkbotSendError extends Error {
   }
 }
 
+/** The most one message can carry (the runner's limit); longer text goes as a file. */
+export const MAX_MESSAGE_CHARS = 100_000;
+
 export function useSendWorkbotMessage() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { id: string; text: string; attachments?: string[] }) => {
+      if (input.text.length > MAX_MESSAGE_CHARS) throw new WorkbotSendError("That's too long for one message. Send it as a file instead.", 400);
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson("/v1/workbot/messages", {
         method: "POST",
@@ -225,6 +245,104 @@ export function useStopWorkbot() {
     mutationFn: async () => {
       const { response, payload } = await requestJson("/v1/workbot/stop", { method: "POST" }, 15_000);
       if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't stop."));
+    },
+    onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
+  });
+}
+
+const connectionsSchema = z.object({
+  connections: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    app: z.enum(["gmail", "slack", "microsoft"]),
+    ready: z.boolean(),
+    connectUrl: z.string().nullable(),
+  })),
+});
+export type WorkbotConnection = z.infer<typeof connectionsSchema>["connections"][number];
+
+/**
+ * The Gmail, Slack and Microsoft 365 connections the person's admins set up, for the welcome screen. While the
+ * person is connecting one in another tab it is re-read every two seconds, until it is ready.
+ */
+export function useWorkbotConnections(input: { enabled: boolean; waiting: boolean }) {
+  return useQuery({
+    queryKey: ["workbot", "connections"],
+    enabled: input.enabled,
+    queryFn: async () => {
+      const { response, payload } = await requestJson("/v1/workbot/connections", { method: "GET" }, 15_000);
+      // Hosts without this route just have nothing to connect here.
+      if (!response.ok) return [];
+      const parsed = connectionsSchema.safeParse(payload);
+      return parsed.success ? parsed.data.connections : [];
+    },
+    refetchInterval: input.waiting ? 2_000 : false,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  });
+}
+
+/** Leaving the welcome screen: Workbot starts the conversation with its own hello. */
+export function useStartWorkbot() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const { response, payload } = await requestJson("/v1/workbot/hello", { method: "POST", body: JSON.stringify({ timeZone }) }, 30_000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't start."));
+      const parsed = z.object({ started: z.boolean() }).safeParse(payload);
+      if (!parsed.success) throw new Error("Couldn't start.");
+      return parsed.data;
+    },
+    onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
+  });
+}
+
+/** What went wrong deleting or editing a message, in the person's words. */
+function messageChangeError(status: number, payload: unknown, fallback: string) {
+  if (status === 409 && typeof payload === "object" && payload !== null && "error" in payload && payload.error === "busy") {
+    return "Workbot is still working on this. Stop it first.";
+  }
+  return getErrorMessage(payload, fallback);
+}
+
+/** Deletes one of the person's messages and Workbot's answer to it. */
+export function useDeleteWorkbotMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { response, payload } = await requestJson(`/v1/workbot/messages/${encodeURIComponent(id)}`, { method: "DELETE" }, 15_000);
+      if (!response.ok) throw new Error(messageChangeError(response.status, payload, "Couldn't delete it."));
+    },
+    onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
+  });
+}
+
+/** Edits one of the person's messages; Workbot answers the edited message fresh, from that point on. */
+export function useEditWorkbotMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; newId: string; text: string; attachments?: string[] }) => {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const { id, ...body } = input;
+      const { response, payload } = await requestJson(
+        `/v1/workbot/messages/${encodeURIComponent(id)}/edit`,
+        { method: "POST", body: JSON.stringify({ ...body, timeZone }) },
+        30_000,
+      );
+      if (!response.ok) throw new Error(messageChangeError(response.status, payload, "That didn't send."));
+    },
+    onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
+  });
+}
+
+/** Stops one background task from its card. */
+export function useStopWorkbotTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (taskId: string) => {
+      const { response, payload } = await requestJson(`/v1/workbot/tasks/${encodeURIComponent(taskId)}/stop`, { method: "POST" }, 15_000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't stop it."));
     },
     onSettled: async () => queryClient.invalidateQueries({ queryKey: workbotQueryKey }),
   });

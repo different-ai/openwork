@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -11,6 +11,7 @@ import {
   MemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { attributeAuditRequest, auditServiceAttribution, auditSessionUserAttribution } from "../audit/request-capture.js"
 import { appLogger } from "../observability/logger.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
@@ -138,6 +139,18 @@ const webhookResponses = {
   401: jsonResponse("Missing installation or invalid Slack signature.", rejectedWebhookSchema),
   403: jsonResponse("Slack workspace or app does not match this installation.", rejectedWebhookSchema),
   413: textResponse("Slack payload exceeds the request size limit."),
+}
+
+/**
+ * A request signed with this installation's Slack signing secret proves the
+ * installation, whose organization is the audit tenant (origin webhook).
+ */
+async function attributeSlackInstallation(c: Context, installation: { organizationId: string; connectionId: string }) {
+  const audited = await attributeAuditRequest(c, {
+    organizationId: installation.organizationId, origin: "webhook",
+    ...auditServiceAttribution("slack_installation", installation.connectionId),
+  })
+  return audited.ok ? null : audited.response
 }
 
 export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -346,6 +359,14 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       })
       const admin = ensureOrganizationAdminRole({ get: () => context ?? undefined }, "Access denied.")
       if (!admin.ok) return c.text("Access denied.", 403)
+      // Single-use state consumed and the installing admin re-verified: the
+      // installation's organization is the tenant (state consumption precedes
+      // attribution; nothing else has happened yet).
+      const installer = auditSessionUserAttribution(member.userId, member.id)
+      if (installer) {
+        const audited = await attributeAuditRequest(c, { organizationId: installation.organizationId, ...installer })
+        if (!audited.ok) return audited.response
+      }
       const connection = await getExternalMcpConnection({
         organizationId: installation.organizationId,
         connectionId: installation.connectionId,
@@ -433,6 +454,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         )
       )
         return c.json({ ok: false }, 401)
+      const auditBlocked = await attributeSlackInstallation(c, installation)
+      if (auditBlocked) return auditBlocked
       let json: unknown
       try {
         json = JSON.parse(raw)
@@ -516,6 +539,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           )
         )
           return c.json({ ok: false }, 401)
+        const auditBlocked = await attributeSlackInstallation(c, installation)
+        if (auditBlocked) return auditBlocked
         const form = new URLSearchParams(raw)
         if (
           action === "commands" &&

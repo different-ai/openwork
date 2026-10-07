@@ -1,3 +1,6 @@
+import { aiSdkEnvSetting } from "@openwork-ee/utils/ai-sdk-env-settings"
+import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
+
 type JsonRecord = Record<string, unknown>
 
 /**
@@ -101,13 +104,46 @@ export function runtimeProviderEnvNames(provider: RuntimeEnvProvider): string[] 
 }
 
 /**
+ * OpenCode passes a provider's credential to its SDK only when the provider
+ * declares exactly one env name. With several (Bedrock's keys and region,
+ * Azure's resource name) the SDK reads the bare declared names from the
+ * process, and scoped runtime names never match them. So each delivered name
+ * an SDK reads is bound to that SDK option as an `{env:RUNTIME_NAME}`
+ * reference, which OpenCode resolves when it loads the config: the value
+ * itself never enters the config. Names without a value are left unbound,
+ * because an empty option would replace the SDK's own fallback.
+ */
+export function runtimeProviderSdkOptions(
+  provider: RuntimeEnvProvider,
+  apiKeys: Record<string, string> | null | undefined,
+): JsonRecord {
+  const declaredNames = readProviderEnvNames(provider.providerConfig)
+  if (!usesRuntimeProviderEnvTag(provider) || declaredNames.length < 2 || !apiKeys) return {}
+  const options: JsonRecord = {}
+  for (const name of declaredNames) {
+    const setting = aiSdkEnvSetting(name)
+    if (!setting || Object.hasOwn(options, setting) || !apiKeys[name]?.trim()) continue
+    options[setting] = `{env:${runtimeProviderEnvName(provider, name)}}`
+  }
+  return options
+}
+
+/**
  * Rewrite a provider's declared env names (and the keys of a decoded multi-env
- * credential) to their runtime names. Stored rows are never rewritten; this is
- * applied where a provider leaves Den for a machine or worker.
+ * credential) to their runtime names, binding SDK options to them where
+ * OpenCode would not (see runtimeProviderSdkOptions). Stored rows are never
+ * rewritten; this is applied where a provider leaves Den for a machine or worker.
  */
 export function toRuntimeProviderEnv<T extends RuntimeEnvProvider & { apiKeys?: Record<string, string> | null }>(provider: T): T {
   if (!usesRuntimeProviderEnvTag(provider) || provider.providerConfig.env === undefined) return provider
-  const providerConfig: JsonRecord = { ...provider.providerConfig, env: runtimeProviderEnvNames(provider) }
+  const sdkOptions = runtimeProviderSdkOptions(provider, provider.apiKeys)
+  const declaredOptions = isRecord(provider.providerConfig.options) ? provider.providerConfig.options : {}
+  const providerConfig: JsonRecord = {
+    ...provider.providerConfig,
+    env: runtimeProviderEnvNames(provider),
+    // An option the provider already sets explicitly keeps precedence.
+    ...(Object.keys(sdkOptions).length > 0 ? { options: { ...sdkOptions, ...declaredOptions } } : {}),
+  }
   if (!provider.apiKeys) return { ...provider, providerConfig }
   const apiKeys = Object.fromEntries(
     Object.entries(provider.apiKeys).map(([name, value]) => [runtimeProviderEnvName(provider, name), value]),
@@ -156,6 +192,18 @@ export function decodeProviderCredential(stored: string | null): DecodedProvider
   }
 
   return { apiKey: trimmed, apiKeys: null }
+}
+
+/**
+ * The Bedrock SDK cannot reach any endpoint without a region, so a Bedrock
+ * credential without a valid AWS_REGION is rejected when saved rather than
+ * failing on every request.
+ */
+export function bedrockCredentialError(providerConfig: JsonRecord, storedCredential: string | null): string | null {
+  if (providerConfig.npm !== "@ai-sdk/amazon-bedrock" || !storedCredential) return null
+  return isAwsRegion(decodeProviderCredential(storedCredential).apiKeys?.AWS_REGION)
+    ? null
+    : "Amazon Bedrock requires AWS_REGION set to an AWS region code such as us-east-1."
 }
 
 export function listConfiguredEnvKeys(stored: string | null, envNames: string[]): string[] {

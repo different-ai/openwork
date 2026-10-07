@@ -19,7 +19,8 @@ import { connectorCatalogForQuery } from "./connector-catalog.js"
 import { registerAgentConnectionActionApp } from "./connection-action-app.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
-import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
+import { getMcpResourceContext, mcpPrincipalCredentialId, verifyMcpRequest } from "./auth.js"
+import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, auditUnavailableToolResult, mcpAuditPrincipal, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus } from "../audit/mcp-service-audit.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
@@ -60,6 +61,7 @@ import {
   externalCapabilityErrorToolResult,
   externalCapabilitySuccessToolResult,
   searchCapabilityRegistry,
+  workflowExecutionAuditStatus,
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
 import { executeWorkflowAuthoringTest, workflowAuthoringTestInputSchema } from "./workflow-authoring-test.js"
@@ -484,6 +486,14 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const requestInfo = await mcpRequestInfo(c.req.raw)
     const method = requestInfo.method
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
+    // Direct service mutations below are audited for the verified token caller
+    // (organization claim + active member), never for tool arguments.
+    const auditPrincipal = mcpAuditPrincipal({
+      organizationId,
+      userId: principal.userId,
+      memberId: memberIdentity?.orgMembershipId,
+      credentialId: mcpPrincipalCredentialId(principal),
+    })
     const capabilityContext = createCapabilityRegistryContext({
       app: app as unknown as Hono,
       env: c.env,
@@ -494,6 +504,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       redirectUriBase,
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures,
+      audit: auditPrincipal,
     })
     const { externalMcpConnectionsEnabled } = capabilityContext
     // Building your own Apps is per-organization and default-off; MCP Apps
@@ -570,10 +581,15 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         if (!libraryContext) throw new AppBuilderError("mcp_membership_revoked", "The OpenWork Cloud membership for this connection is unavailable.")
         return libraryContext
       }
+      const appAuditPrincipal = () => {
+        if (!auditPrincipal) throw new AppBuilderError("mcp_membership_revoked", "The OpenWork Cloud membership for this connection is unavailable.")
+        return auditPrincipal
+      }
       const appOperation = async <Result,>(run: () => Promise<Result>): Promise<Result> => {
         try {
           return await run()
         } catch (error) {
+          if (error instanceof AuditUnavailableError) throw new AppBuilderError("audit_unavailable", AUDIT_UNAVAILABLE_TOOL_MESSAGE)
           if (error instanceof McpAppError) throw new AppBuilderError(error.code, error.message)
           if (error instanceof PluginArchAuthorizationError) throw new AppBuilderError(error.error, error.message, error.reason)
           if (error instanceof PluginArchRouteFailure) {
@@ -594,8 +610,14 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             appActor()
             return appAuthoringStarter(request, tools)
           }),
-          create: (request) => appOperation(() => createMcpApp({ ...request, context: appActor(), resolveTools })),
-          update: (request) => appOperation(() => updateMcpApp({ ...request, context: appActor(), resolveTools })),
+          create: (request) => appOperation(() => {
+            const context = appActor()
+            return runMcpServiceAction("mcp_app.create", appAuditPrincipal(), null, () => createMcpApp({ ...request, context, resolveTools }))
+          }),
+          update: (request) => appOperation(() => {
+            const context = appActor()
+            return runMcpServiceAction("mcp_app.update", appAuditPrincipal(), serviceAuditResourceId(request.appId), () => updateMcpApp({ ...request, context, resolveTools }))
+          }),
           read: (request) => appOperation(() => readMcpApp({ ...request, context: appActor() })),
         },
         canOpen: async (appId) => (await loadOpenableApps()).some((app) => app.appId === appId),
@@ -781,7 +803,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             message: `Creating a skill requires the ${DEN_MCP_WRITE_SCOPE} scope.`,
           }
         }
-        if (!libraryContext) {
+        const skillContext = libraryContext
+        if (!skillContext || !auditPrincipal) {
           return {
             ok: false,
             error: "mcp_membership_revoked",
@@ -789,15 +812,17 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }
         }
         try {
-          await requirePluginArchCapability(libraryContext, "plugin.create")
-          await requirePluginArchCapability(libraryContext, "config_object.create")
-          const plugin = await createPluginBundle({
-            context: libraryContext,
-            name: pluginName,
-            components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+          const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
+            await requirePluginArchCapability(skillContext, "plugin.create")
+            await requirePluginArchCapability(skillContext, "config_object.create")
+            return createPluginBundle({
+              context: skillContext,
+              name: pluginName,
+              components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+            })
           })
           const memberships = await listPluginMemberships({
-            context: libraryContext,
+            context: skillContext,
             pluginId: plugin.id,
             includeConfigObjects: true,
             onlyActive: true,
@@ -827,6 +852,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             },
           }
         } catch (error) {
+          if (error instanceof AuditUnavailableError) return { ok: false, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
           if (error instanceof PluginArchRouteFailure || error instanceof PluginArchAuthorizationError) {
             return { ok: false, error: error.error, message: error.message }
           }
@@ -841,7 +867,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             message: `Updating a skill requires the ${DEN_MCP_WRITE_SCOPE} scope.`,
           }
         }
-        if (!libraryContext) {
+        const skillContext = libraryContext
+        if (!skillContext || !auditPrincipal) {
           return {
             ok: false,
             error: "mcp_membership_revoked",
@@ -850,21 +877,28 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
         try {
           const configObjectId = normalizeDenTypeId("configObject", skillId)
-          const existing = await getConfigObjectDetail(libraryContext, configObjectId)
-          if (existing.objectType !== "skill") {
+          const versioned = await runMcpServiceAction("skill.version.create", auditPrincipal, serviceAuditResourceId(configObjectId), async () => {
+            const existing = await getConfigObjectDetail(skillContext, configObjectId)
+            if (existing.objectType !== "skill") return { created: false as const, objectType: existing.objectType }
+            return {
+              created: true as const,
+              detail: await createConfigObjectVersion({
+                context: skillContext,
+                configObjectId,
+                reason,
+                value: { rawSourceText: skillMarkdown },
+              }),
+            }
+          }, { result: (value) => value.created ? null : 400 })
+          if (!versioned.created) {
             return {
               ok: false,
               error: "not_a_skill",
-              message: `Config object "${skillId}" is a ${existing.objectType}, not a skill.`,
+              message: `Config object "${skillId}" is a ${versioned.objectType}, not a skill.`,
             }
           }
-          const detail = await createConfigObjectVersion({
-            context: libraryContext,
-            configObjectId,
-            reason,
-            value: { rawSourceText: skillMarkdown },
-          })
-          const memberships = await listConfigObjectPlugins({ context: libraryContext, configObjectId })
+          const detail = versioned.detail
+          const memberships = await listConfigObjectPlugins({ context: skillContext, configObjectId })
           const pluginId = memberships.items.find((membership) => membership.removedAt === null)?.pluginId
             ?? memberships.items[0]?.pluginId
           if (!pluginId) {
@@ -897,6 +931,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             },
           }
         } catch (error) {
+          if (error instanceof AuditUnavailableError) return { ok: false, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
           if (error instanceof PluginArchRouteFailure || error instanceof PluginArchAuthorizationError) {
             return { ok: false, error: error.error, message: error.message }
           }
@@ -920,7 +955,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       dataMode?: "live" | "snapshot"
       timeZone?: string
     }) => {
-      if (!artifactContext) {
+      if (!artifactContext || !auditPrincipal) {
         return {
           ok: false as const,
           error: "workflow_not_found",
@@ -932,11 +967,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           if (receiptId || !expectedOutputSchemaDigest) {
             return { ok: false as const, error: "invalid_arguments", message: "Live apps require a view schema and do not accept receipt overrides." }
           }
-          const execution = await executeLiveArtifactWorkflow({
+          const execution = await runMcpServiceAction("workflow.execute", auditPrincipal, serviceAuditResourceId(configObjectId), () => executeLiveArtifactWorkflow({
             context: artifactContext, configObjectId, expectedOutputSchemaDigest, timeZone,
             buildTools: () => buildCapabilityToolTree(capabilityContext),
             describeUnavailable: (missing) => liveArtifactConnectionFailure(capabilityContext, missing),
-          })
+          }), { result: workflowExecutionAuditStatus, error: serviceErrorStatus })
           if (!execution.ok) return execution
           if (!execution.receiptId) return { ok: false as const, error: "workflow_receipt_unavailable", message: "The live result could not be retained." }
           receiptId = execution.receiptId
@@ -1006,6 +1041,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           },
         }
       } catch (error) {
+        if (error instanceof AuditUnavailableError) {
+          return { ok: false as const, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
+        }
         if (error instanceof PluginArchAuthorizationError) {
           return {
             ok: false as const,
@@ -1045,7 +1083,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     // This server deploys independently from Desktop. Do not advertise or
     // serve bridge-dependent generated views until the compatible Desktop
     // MCP Apps host has been released and the operator enables the rollout.
-    if (artifactContext && env.generatedArtifactViewsEnabled) {
+    if (artifactContext && auditPrincipal && env.generatedArtifactViewsEnabled) {
+      const artifactAuditPrincipal = auditPrincipal
       const loadGeneratedResource = async ({ artifactViewId, revisionId }: { artifactViewId: string; revisionId: string }) => {
         const { revision } = await loadArtifactViewRevision({ context: artifactContext, artifactViewId, revisionId })
         if (revision.build_status !== "ready" || !revision.compiled_html || !revision.resource_digest) {
@@ -1060,9 +1099,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         loadResource: loadGeneratedResource,
         loadData: loadWorkflowArtifact,
         readSource: (request) => readArtifactViewSource({ context: artifactContext, ...request }),
-        save: (request) => saveArtifactViewRevision({ context: artifactContext, ...request }),
-        activate: (request) => activateArtifactViewRevision({ context: artifactContext, ...request }),
-        retire: (request) => retireArtifactView({ context: artifactContext, ...request }),
+        save: (request) => runMcpServiceAction("artifact_view.save", artifactAuditPrincipal, serviceAuditResourceId(request.artifactViewId),
+          () => saveArtifactViewRevision({ context: artifactContext, ...request }), { error: serviceErrorStatus }),
+        activate: (request) => runMcpServiceAction("artifact_view.activate", artifactAuditPrincipal, serviceAuditResourceId(request.artifactViewId),
+          () => activateArtifactViewRevision({ context: artifactContext, ...request }), { error: serviceErrorStatus }),
+        retire: (request) => runMcpServiceAction("artifact_view.deactivate", artifactAuditPrincipal, serviceAuditResourceId(request.artifactViewId),
+          () => retireArtifactView({ context: artifactContext, ...request }), { error: serviceErrorStatus }),
         notifyCatalogChanged: () => {
           handlers.notify.toolsChanged(notificationScope)
           handlers.notify.resourcesChanged(notificationScope)
@@ -1100,12 +1142,22 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       },
       async (request) => executeCapabilityWithBudget({
         capability: EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
-        invoke: () => executeWorkflowAuthoringTest(request, {
-          organizationId,
-          orgMembershipId: memberIdentity?.orgMembershipId,
-          buildTools: () => buildCapabilityToolTree(capabilityContext),
-          recordRun: (receipt) => recordWorkflowRun(db, receipt),
-        }),
+        invoke: async (): Promise<ExecuteCapabilityToolResult> => {
+          if (!auditPrincipal) {
+            return { isError: true, content: textContent(JSON.stringify({ error: "membership_required", message: "Workflow tests require an active organization membership." })) }
+          }
+          try {
+            return await runMcpServiceAction("workflow_run.record", auditPrincipal, null, () => executeWorkflowAuthoringTest(request, {
+              organizationId,
+              orgMembershipId: memberIdentity?.orgMembershipId,
+              buildTools: () => buildCapabilityToolTree(capabilityContext),
+              recordRun: (receipt) => recordWorkflowRun(db, receipt),
+            }), { result: toolResultStatus })
+          } catch (error) {
+            if (error instanceof AuditUnavailableError) return auditUnavailableToolResult()
+            throw error
+          }
+        },
       }),
     )
 

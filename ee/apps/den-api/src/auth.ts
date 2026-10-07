@@ -35,6 +35,9 @@ import {
 } from "./session-lifetime.js";
 import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
+import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
+import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, recordIdentityLinked, recordIdentityUnlinked } from "./audit/domain/account.js";
+import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
 import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
@@ -275,6 +278,7 @@ async function revokeOrganizationMemberCredentials(input: {
   organizationId: string;
   orgMembershipId: string;
   userId: string | null;
+  reason: "member_removed" | "member_role_changed";
 }) {
   const organizationId = normalizeDenTypeId("organization", input.organizationId);
   const orgMembershipId = normalizeDenTypeId("member", input.orgMembershipId);
@@ -284,10 +288,13 @@ async function revokeOrganizationMemberCredentials(input: {
     organizationId,
     orgMembershipId,
     userId,
+    reason: input.reason,
   });
   await revokeMembershipSessionCredentials({
     organizationId,
     userId,
+    memberId: orgMembershipId,
+    reason: input.reason === "member_removed" ? "member_removed" : "role_changed",
   });
 }
 
@@ -314,6 +321,31 @@ async function deleteOrganizationMemberConnectedAccounts(input: {
 
 function throwMemberLifecycleError(message: string): never {
   throw new APIError("BAD_REQUEST", { message });
+}
+
+const auditHookLogger = appLogger.child({ component: "better_auth_audit" });
+
+/** The cookie session of a better-auth request, for audit attribution hooks. */
+async function readAuditHookSession(token: unknown): Promise<BetterAuthHookSession> {
+  const session = typeof token === "string" ? await cache.auth.session(token) : null;
+  if (!session?.user.id) return null;
+  return {
+    userId: session.user.id,
+    email: typeof session.user.email === "string" ? session.user.email : null,
+    sessionId: session.session.id,
+    activeOrganizationId: typeof session.session.activeOrganizationId === "string" ? session.session.activeOrganizationId : null,
+    activeTeamId: session.session.activeTeamId,
+  };
+}
+
+/** Session/account audit events never fail the auth flow that triggered them. */
+async function runAuditHook(name: string, run: () => Promise<void>): Promise<void> {
+  if (!env.auditCaptureEnabled) return;
+  try {
+    await run();
+  } catch (error) {
+    auditHookLogger.warn("better-auth session/account audit hook failed", { audit_hook: name, error_name: error instanceof Error ? error.name : typeof error });
+  }
 }
 
 function removedMemberIdentity(value: unknown): { id: string; organizationId: string } | null {
@@ -610,6 +642,32 @@ async function getOrganizationMemberRole(input: {
   };
 }
 
+type StoredOAuthTokenRow = { clientId?: unknown; userId?: unknown; referenceId?: unknown; scopes?: unknown };
+
+/**
+ * /oauth2/revoke audit: the organization (consent referenceId) of the stored
+ * refresh or opaque access token being revoked, found by the same storage hash
+ * better-auth uses. JWT access tokens are stateless and are not looked up.
+ */
+async function noteRevokedOAuthToken(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
+  const token = readStringProperty(ctx.body, "token");
+  if (!token) return;
+  const refreshSecret = stripMcpRefreshTokenPrefix(token);
+  const accessSecret = token.startsWith(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX) ? token.slice(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX.length) : null;
+  const secret = refreshSecret ?? accessSecret;
+  if (!secret) return;
+  const tokenType = refreshSecret ? "refresh_token" : "access_token";
+  const row = await ctx.context.adapter.findOne<StoredOAuthTokenRow>({
+    model: tokenType === "refresh_token" ? "oauthRefreshToken" : "oauthAccessToken",
+    where: [{ field: "token", value: hashOAuthProviderToken(secret) }],
+  });
+  const clientId = typeof row?.clientId === "string" ? row.clientId : null;
+  const userId = typeof row?.userId === "string" ? row.userId : null;
+  const referenceId = typeof row?.referenceId === "string" ? row.referenceId : null;
+  if (!clientId || !userId || !referenceId) return;
+  noteOAuthRevocation({ clientId, userId, referenceId, scopes: stringArray(row?.scopes), tokenType });
+}
+
 function getEnterpriseAuthRedirectUrl(input: {
   signInPath: string;
   email: string;
@@ -681,19 +739,42 @@ export const auth = betterAuth({
         },
       },
       update: {
-        before: async (user) => ({
-          data: typeof user.email === "string"
-            ? {
-              ...user,
-              email: normalizeLoginEmail(user.email),
-            }
-            : user,
-        }),
-        after: async (user) => {
+        before: async (user, context) => {
+          // Audit: remember which profile fields change (src/audit/domain/account.ts).
+          if (env.auditCaptureEnabled) auditUserUpdateBefore(user, context);
+          return {
+            data: typeof user.email === "string"
+              ? {
+                ...user,
+                email: normalizeLoginEmail(user.email),
+              }
+              : user,
+          };
+        },
+        after: async (user, context) => {
           if (typeof user.id === "string") {
             // User profile changes can stale cached auth payloads; clear all sessions here.
             await cache.auth.deleteSessionsForUser(normalizeDenTypeId("user", user.id));
           }
+          await runAuditHook("user.update", () => auditUserUpdateAfter(user, context));
+        },
+      },
+      delete: {
+        // Memberships still exist here; delete-user is not enabled in Den today.
+        before: async (user) => {
+          await runAuditHook("user.delete", () => recordAccountDeleted(user));
+        },
+      },
+    },
+    account: {
+      create: {
+        after: async (account, context) => {
+          await runAuditHook("account.create", () => recordIdentityLinked(account, context));
+        },
+      },
+      delete: {
+        after: async (account) => {
+          await runAuditHook("account.delete", () => recordIdentityUnlinked(account));
         },
       },
     },
@@ -738,6 +819,7 @@ export const auth = betterAuth({
             organizationId: member.organizationId,
             orgMembershipId: member.id,
             userId: member.userId,
+            reason: "member_removed",
           });
           await revokeMemberGatewayCredentials({
             organizationId: normalizeDenTypeId("organization", member.organizationId),
@@ -776,6 +858,11 @@ export const auth = betterAuth({
             },
           };
         },
+        // Every sign-in path that creates a session row: session.created in
+        // the session's organization (src/audit/domain/sessions.ts).
+        after: async (session, context) => {
+          await runAuditHook("session.create", () => recordSessionCreated(session, auditSessionMethod(context)));
+        },
       },
       update: {
         after: async (session) => {
@@ -789,7 +876,7 @@ export const auth = betterAuth({
         },
       },
       delete: {
-        after: async (session) => {
+        after: async (session, context) => {
           if (typeof session.token === "string") {
             // Sign-out deletes the backing session row, so cached hits must be cleared here.
             await cache.auth.revokeSession(session.token);
@@ -797,6 +884,8 @@ export const auth = betterAuth({
           if (typeof session.id === "string") {
             await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id));
           }
+          // Fires per row, also for bulk deletes (revoke-sessions, password change).
+          await runAuditHook("session.delete", () => recordSessionRevoked(session, auditSessionRevokeReason(context)));
         },
       },
     },
@@ -844,7 +933,53 @@ export const auth = betterAuth({
       if (ctx.request) {
         const deniedMutation = getRawBetterAuthMutationDenial(ctx.path);
         if (deniedMutation) {
+          // Audit the refused attempt in the caller's own organization (src/audit/better-auth.ts).
+          // Never throws and writes no intent, so the 403 below is unchanged.
+          if (env.auditCaptureEnabled) {
+            await auditBetterAuthRefusal({
+              body: ctx.body,
+              session: async () => readAuditHookSession(await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null)),
+            });
+          }
           throw new APIError("FORBIDDEN", { message: deniedMutation.message });
+        }
+
+        // Audit: the organization an MCP token being revoked belongs to (its
+        // stored row, looked up by the storage hash; nothing is kept).
+        if (env.auditCaptureEnabled && ctx.path === "/oauth2/revoke") {
+          await runAuditHook("oauth2.revoke", () => noteRevokedOAuthToken(ctx));
+        }
+
+        // Tenant audit intent before the endpoint runs (src/audit/better-auth.ts).
+        // Nothing runs while deployment capture is off; refused with 503 only
+        // when an intent append failed (a lookup error means no attribution).
+        if (env.auditCaptureEnabled && BETTER_AUTH_AUDIT_BEFORE_PATHS.has(ctx.path)) {
+          let audited = true;
+          try {
+            audited = (await auditBetterAuthBefore({
+              path: ctx.path, request: ctx.request, body: ctx.body, query: ctx.query,
+              session: async () => readAuditHookSession(await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null)),
+            })).ok;
+          } catch (error) {
+            auditHookLogger.warn("better-auth audit attribution failed; continuing without attribution", { auth_path: ctx.path, error_name: error instanceof Error ? error.name : typeof error });
+          }
+          if (!audited) {
+            throw new APIError("SERVICE_UNAVAILABLE", { message: "audit_unavailable", code: "audit_unavailable" });
+          }
+        }
+
+        // User-scoped session/account audit (src/audit/better-auth.ts): prior
+        // session organization/team, or the account a reset token names.
+        if (env.auditCaptureEnabled && BETTER_AUTH_SESSION_BEFORE_PATHS.has(ctx.path)) {
+          await auditBetterAuthSessionBefore({
+            path: ctx.path, request: ctx.request,
+            session: async () => readAuditHookSession(await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null)),
+            resetPasswordUserId: async () => {
+              const token = readStringProperty(ctx.body, "token") ?? readStringProperty(ctx.query, "token");
+              const verification = token ? await ctx.context.internalAdapter.findVerificationValue(`reset-password:${token}`) : null;
+              return verification && verification.expiresAt > new Date() ? verification.value : null;
+            },
+          });
         }
 
         if (ctx.path === "/organization/leave") {
@@ -963,6 +1098,27 @@ export const auth = betterAuth({
       });
     }),
     after: createAuthMiddleware(async (ctx) => {
+      if (env.auditCaptureEnabled && ctx.request && BETTER_AUTH_AUDIT_AFTER_PATHS.has(ctx.path)) {
+        try {
+          await auditBetterAuthAfter({
+            path: ctx.path, request: ctx.request, body: ctx.body, query: ctx.query, params: ctx.params,
+            session: async () => readAuditHookSession(await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null)),
+            returned: ctx.context.returned,
+            newSessionUserId: ctx.context.newSession?.user.id ?? null,
+          });
+        } catch (error) {
+          auditHookLogger.warn("better-auth audit attribution after the endpoint failed", { auth_path: ctx.path, error_name: error instanceof Error ? error.name : typeof error });
+        }
+      }
+
+      if (env.auditCaptureEnabled && ctx.request && BETTER_AUTH_SESSION_AFTER_PATHS.has(ctx.path)) {
+        const request = ctx.request;
+        await runAuditHook(ctx.path, () => auditBetterAuthSessionAfter({
+          path: ctx.path, request, body: ctx.body, returned: ctx.context.returned,
+          sessionUserId: ctx.context.session?.user.id ?? null, sessionId: ctx.context.session?.session.id ?? null,
+        }));
+      }
+
       if (ctx.path === "/device/token") {
         const deviceCode = readStringProperty(ctx.body, "device_code");
         if (deviceCode) {
@@ -1033,7 +1189,7 @@ export const auth = betterAuth({
     }),
   },
   advanced: {
-    cookiePrefix: "openwork-den",
+    cookiePrefix: env.authCookiePrefix,
     ...(env.betterAuthCookieDomain
       ? {
         crossSubDomainCookies: {
@@ -1304,6 +1460,7 @@ export const auth = betterAuth({
             organizationId: member.organizationId,
             orgMembershipId: member.id,
             userId: member.userId,
+            reason: "member_removed",
           });
         },
         beforeUpdateMemberRole: async ({ member, newRole }) => {
@@ -1334,6 +1491,7 @@ export const auth = betterAuth({
               organizationId: member.organizationId,
               orgMembershipId: member.id,
               userId: member.userId,
+              reason: "member_role_changed",
             });
           }
         },
@@ -1376,20 +1534,35 @@ export const auth = betterAuth({
       },
       extensions: [{
         claims: {
-          accessToken: ({ ctx, client, user, referenceId }) => contributeMcpGrantClaim({
-            claimName: DEN_MCP_GRANT_ID_CLAIM,
-            clientId: client.clientId,
-            userId: user?.id,
-            referenceId,
-            findConsent: ({ clientId, userId, referenceId: consentReferenceId }) => ctx.context.adapter.findOne<{ id: string }>({
-              model: "oauthConsent",
-              where: [
-                { field: "clientId", value: clientId },
-                { field: "userId", value: userId },
-                { field: "referenceId", value: consentReferenceId },
-              ],
-            }),
-          }),
+          accessToken: async ({ ctx, client, user, referenceId, scopes, grantType, resources }) => {
+            const claims = await contributeMcpGrantClaim({
+              claimName: DEN_MCP_GRANT_ID_CLAIM,
+              clientId: client.clientId,
+              userId: user?.id,
+              referenceId,
+              findConsent: ({ clientId, userId, referenceId: consentReferenceId }) => ctx.context.adapter.findOne<{ id: string }>({
+                model: "oauthConsent",
+                where: [
+                  { field: "clientId", value: clientId },
+                  { field: "userId", value: userId },
+                  { field: "referenceId", value: consentReferenceId },
+                ],
+              }),
+            });
+            // Audit (oauth_token.issued in the consent organization, after the
+            // token endpoint succeeds): identifiers only, never token material.
+            const resource = resources?.[0];
+            noteOAuthTokenIssuance({
+              clientId: client.clientId,
+              userId: user?.id ?? null,
+              referenceId: referenceId ?? null,
+              scopes: [...scopes],
+              grantType: typeof grantType === "string" ? grantType : null,
+              resource: typeof resource === "string" ? normalizeMcpOAuthResource(resource) : null,
+              grantId: claims[DEN_MCP_GRANT_ID_CLAIM] ?? null,
+            });
+            return claims;
+          },
         },
       }],
       postLogin: {
@@ -1415,7 +1588,9 @@ export const auth = betterAuth({
             });
           }
 
-          return normalizeDenTypeId("organization", activeOrganizationId);
+          const referenceId = normalizeDenTypeId("organization", activeOrganizationId);
+          if (typeof session.userId === "string") noteOAuthConsentReference({ userId: session.userId, referenceId });
+          return referenceId;
         },
       },
       customAccessTokenClaims: ({ referenceId, resources, scopes }) => {

@@ -9,7 +9,9 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -143,23 +145,24 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
         return c.json({ error: "invalid_web_origin" as const, message: INVALID_WEB_ORIGIN_MESSAGE }, 400)
       }
 
+      const capture = auditChangeCapture(c)
       const result = await approveOrganizationWebOrigin({
         organizationId: payload.organization.id,
         origin,
         createdByOrgMemberId: payload.currentMember.id,
-      })
+      }, capture)
       if (!result.ok) {
         return result.reason === "already_approved"
           ? c.json({ error: "web_origin_already_approved" as const, message: WEB_ORIGIN_ALREADY_APPROVED_MESSAGE }, 409)
           : c.json({ error: "web_origin_limit_reached" as const, message: WEB_ORIGIN_LIMIT_REACHED_MESSAGE }, 409)
       }
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.webOriginApproved,
         payload: { origin },
-      })
+      }, result.auditEventIds)
       return c.json(serializeWebOrigin(result.webOrigin), 201)
     },
   )
@@ -185,20 +188,21 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
 
       const payload = c.get("organizationContext")
-      const removedOrigin = await removeOrganizationWebOrigin({
+      const capture = auditChangeCapture(c)
+      const removed = await removeOrganizationWebOrigin({
         organizationId: payload.organization.id,
         id: normalizeDenTypeId("organizationWebOrigin", c.req.valid("param").webOriginId),
-      })
-      if (!removedOrigin) {
+      }, capture)
+      if (!removed) {
         return c.json({ error: "web_origin_not_found" as const, message: WEB_ORIGIN_NOT_FOUND_MESSAGE }, 404)
       }
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved,
-        payload: { origin: removedOrigin },
-      })
+        payload: { origin: removed.origin },
+      }, removed.auditEventIds)
       return c.body(null, 204)
     },
   )

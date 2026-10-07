@@ -3,6 +3,9 @@ import { AuthAccountTable, ExternalIdentityTable, SsoConnectionTable, SsoProvide
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "./auth.js"
+import { appendDomainChanges } from "./audit/domain/legacy.js"
+import { ssoConnectionDeletedEvent, type SsoConnectionAuditState } from "./audit/domain/sso.js"
+import { fenceAuditChanges, type AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
 import { env } from "./env.js"
@@ -306,18 +309,33 @@ async function cleanupLegacySsoProvider(
   await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.providerId, connection.providerId))
 }
 
-export async function deleteOrganizationSsoConnection(organizationId: OrganizationId) {
+/** Connection plus provider verification state for audit snapshots (never provider configuration). */
+export async function getOrganizationSsoAuditState(organizationId: OrganizationId): Promise<SsoConnectionAuditState | null> {
+  const connection = await getOrganizationSsoConnection(organizationId)
+  if (!connection) return null
+  const [provider] = await db.select({ domainVerified: SsoProviderTable.domainVerified }).from(SsoProviderTable)
+    .where(and(eq(SsoProviderTable.providerId, connection.providerId), eq(SsoProviderTable.organizationId, organizationId))).limit(1)
+  return { connection, provider: provider ?? null }
+}
+
+/** null when there is no connection; otherwise the sso_connection.deleted event ids (capture active). */
+export async function deleteOrganizationSsoConnection(organizationId: OrganizationId, capture: AuditChangeCapture | null = null) {
   const connection = await getOrganizationSsoConnection(organizationId)
   if (!connection) {
-    return false
+    return null
   }
 
-  await db.transaction(async (tx) => {
+  const auditEventIds = await db.transaction(async (tx) => {
+    await fenceAuditChanges(tx, capture)
+    const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
+    const [provider] = before ? await tx.select({ domainVerified: SsoProviderTable.domainVerified }).from(SsoProviderTable)
+      .where(and(eq(SsoProviderTable.providerId, connection.providerId), eq(SsoProviderTable.organizationId, organizationId))).limit(1) : []
     await cleanupExternalIdentitiesForDeletedSsoConnection(tx, connection)
     await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id))
     await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.providerId, connection.providerId))
+    return before ? appendDomainChanges(tx, capture, [ssoConnectionDeletedEvent(organizationId, { connection: before, provider: provider ?? null })]) : []
   })
-  return true
+  return { auditEventIds }
 }
 
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput) {

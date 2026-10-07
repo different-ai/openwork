@@ -1,37 +1,41 @@
 import type { Seed } from "@openwork/env";
 import { isRecord } from "./library.ts";
 
-/**
- * An organization member who signs in on a managed desktop before creating
- * any workspace, with one organization LLM provider assigned to them. The
- * installation carries a Den bootstrap, so the desktop does not create its
- * public first-launch folder: the member really has zero workspaces.
- */
-export async function providersBeforeFirstWorkspace(seed: Seed) {
-  const organizationName = `Providers before workspace ${Date.now()}`;
-  const providerName = "Pilot inference";
+type OrganizationProviderOptions = {
+  label: string;
+  providerName: string;
+  modelName: string;
+  /** Deterministic model witness the organization provider points at. */
+  mock?: ReturnType<Seed["mock"]>;
+};
+
+async function signedInBeforeFirstWorkspace(seed: Seed, options: OrganizationProviderOptions) {
+  const organizationName = `${options.label} ${Date.now()}`;
   const den = await seed.den({
     org: {
       name: organizationName,
       admin: { name: "Pilot Admin" },
       members: { member: { name: "Pilot Member" } },
     },
+    ...(options.mock ? { mocks: { agent: options.mock } } : {}),
   });
   const member = den.members.member;
   if (!member) throw new Error("seed.den() did not provision the pilot member session");
+  const agent = options.mock ? den.mocks.agent : undefined;
+  if (options.mock && !agent) throw new Error("seed.den() did not boot the model witness");
 
   const created = await seed.api(den.admin, "/v1/llm-providers", {
     method: "POST",
     body: JSON.stringify({
-      name: providerName,
+      name: options.providerName,
       source: "custom",
       customConfig: {
         id: "pilot-inference",
-        name: providerName,
+        name: options.providerName,
         npm: "@ai-sdk/openai-compatible",
-        api: "https://inference.eval.invalid/v1",
+        api: agent ? `${agent.url}/v1` : "https://inference.eval.invalid/v1",
         env: ["PILOT_INFERENCE_API_KEY"],
-        models: [{ id: "pilot-model", name: "Pilot model" }],
+        models: [{ id: "pilot-model", name: options.modelName }],
       },
       apiKey: "sk-pilot-inference-eval-only",
       allMembers: true,
@@ -51,8 +55,41 @@ export async function providersBeforeFirstWorkspace(seed: Seed) {
     member,
     app,
     organizationName,
-    providerName,
+    providerName: options.providerName,
+    modelName: options.modelName,
     providerId: llmProvider.id,
     firstWorkspacePath: seed.tmpPath("first-workspace"),
   };
+}
+
+/**
+ * An organization member who signs in on a managed desktop before creating
+ * any workspace, with one organization LLM provider assigned to them. The
+ * installation carries a Den bootstrap, so the desktop does not create its
+ * public first-launch folder: the member really has zero workspaces.
+ */
+export async function providersBeforeFirstWorkspace(seed: Seed) {
+  return signedInBeforeFirstWorkspace(seed, {
+    label: "Providers before workspace",
+    providerName: "Pilot inference",
+    modelName: "Pilot model",
+  });
+}
+
+export const ORGANIZATION_MODEL_REPLY = "ORG-MODEL-FIRST-MESSAGE-REPLY-OK";
+
+/**
+ * The same member, but the organization provider serves a deterministic model
+ * that answers any prompt, so the first message typed before any workspace
+ * exists can be answered end to end.
+ */
+export async function organizationModelBeforeFirstWorkspace(seed: Seed) {
+  const mock = seed.mock({ agentWorkloads: [{ promptMarker: "hello", matchAll: true, finalReply: ORGANIZATION_MODEL_REPLY, steps: [] }] });
+  const world = await signedInBeforeFirstWorkspace(seed, {
+    label: "Organization model before workspace",
+    providerName: "Pilot inference",
+    modelName: "Pilot model",
+    mock,
+  });
+  return { ...world, reply: ORGANIZATION_MODEL_REPLY };
 }
