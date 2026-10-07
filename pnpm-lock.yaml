@@ -1210,6 +1210,15 @@ importers:
 
   ee/packages/headless-computer:
     dependencies:
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../../../packages/sandbox
+      '@openwork/sandbox-daytona':
+        specifier: workspace:*
+        version: link:../../../packages/sandbox-daytona
+      '@openwork/sandbox-freestyle':
+        specifier: workspace:*
+        version: link:../../../packages/sandbox-freestyle
       freestyle:
         specifier: 0.2.13
         version: 0.2.13
@@ -1217,6 +1226,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@daytonaio/sdk':
+        specifier: ^0.201.0
+        version: 0.201.0
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3

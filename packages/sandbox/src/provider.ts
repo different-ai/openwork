@@ -22,7 +22,7 @@
  *    either return the existing instance or throw `conflict`, never make two.
  */
 
-import type { SandboxBlocks, SandboxPlatform } from "./blocks"
+import type { SandboxBlocks, SandboxPlatform } from "./blocks.js"
 
 export type ProviderEndpointKind = "signed-expiring" | "stable" | "den-tunnel"
 

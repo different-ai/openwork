@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
-import { withBlocks } from "../lifecycle"
-import type { SandboxBlocks } from "../blocks"
-import type { SandboxProvider, SandboxSpec } from "../provider"
-import type { ConformanceCase } from "./conformance"
+import { withBlocks } from "../lifecycle.js"
+import type { SandboxBlocks } from "../blocks.js"
+import type { SandboxProvider, SandboxSpec } from "../provider.js"
+import type { ConformanceCase } from "./conformance.js"
 
 /** Explicitly select blocks. Missing selected blocks fail; unselected blocks are not reported as passed. */
 export function sandboxBlockConformanceCases(factory: () => SandboxProvider | Promise<SandboxProvider>, blocks: readonly (keyof SandboxBlocks)[]): ConformanceCase[] {

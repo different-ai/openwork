@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { withBlocks } from "@openwork/sandbox"
-import { createDaytonaProvider, type DaytonaClient, type DaytonaSandboxClient } from "./index"
+import { createDaytonaProvider, type DaytonaClient, type DaytonaSandboxClient } from "./index.js"
 function fixture(hang = false) {
   const paths: string[] = []
   let launches = 0

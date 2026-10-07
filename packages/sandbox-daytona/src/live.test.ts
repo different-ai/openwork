@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { sandboxBlockConformanceCases } from "@openwork/sandbox/testing"
-import { createDaytonaProvider } from "./index"
+import { createDaytonaProvider } from "./index.js"
 const key = process.env.DAYTONA_API_KEY
 if (!key) throw new Error("test:live requires DAYTONA_API_KEY (creates and deletes real sandboxes)")
 for (const c of sandboxBlockConformanceCases(() => createDaytonaProvider({

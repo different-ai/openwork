@@ -1,4 +1,4 @@
-import type { SandboxProvider } from "./provider"
+import type { SandboxProvider } from "./provider.js"
 
 export type SandboxOperationEvent = { providerId: string; operation: string; durationMs: number; outcome: "ok" | "error" }
 /** No commands, env, file contents, tokens or endpoints are emitted. Observer failures cannot change a result. */

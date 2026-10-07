@@ -1,5 +1,5 @@
-import type { RunSpec, RunResult } from "../blocks"
-import { RuntimeProviderError } from "../errors"
+import type { RunSpec, RunResult } from "../blocks.js"
+import { RuntimeProviderError } from "../errors.js"
 import type {
   Endpoint,
   ExecHandle,
@@ -15,7 +15,7 @@ import type {
   SandboxState,
   SandboxStorage,
   VolumeRef,
-} from "../provider"
+} from "../provider.js"
 
 export type FakeExecResult = {
   exitCode: number | null

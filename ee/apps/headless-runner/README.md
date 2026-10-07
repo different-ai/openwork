@@ -187,3 +187,36 @@ On den-api, set `DEN_HEADLESS_RUNNER_URL` to the private service address (for ex
 - **Single instance.** State is one SQLite file. Scale by sharding sessions across instances, each with its own volume.
 - **Credentials come from the caller.** For Slack, Den mints a short-lived, run-scoped MCP token (client `openwork-headless-run`, at most 60 minutes) for the linked member on every admitted run, and a fresh one each time it resumes a turn that paused for `credentials_refresh`. A run can last hours while no token outlives an hour, and a run nobody supervises loses its tools within the hour.
 - **Callers.** Slack replies and cloud agent Automations (`den-api/src/automations/headless-agent-executor.ts`) both use Den's one client, `den-api/src/headless-runner/client.ts`. Each Automation run is one turn in its own session; its session and message id are saved before the turn is sent, so a Den restart resumes the same turn.
+
+## Computer providers
+
+`HEADLESS_COMPUTER=off` remains the default. `freestyle` keeps the existing
+snapshot default and `hc-<session hash>` names, so existing conversations adopt
+their current computers. The runtime now uses `@openwork/sandbox` run/files
+blocks rather than embedding a provider SDK client.
+
+For Daytona, build a **computer** snapshot in your own Daytona organization:
+
+```sh
+DAYTONA_API_KEY=… pnpm --filter @openwork-ee/headless-computer snapshot:build:daytona
+```
+
+The script prints the `HEADLESS_COMPUTER_SNAPSHOT` to set. It installs the same
+Python, Office and media tools as the Freestyle computer; an OpenWork Web
+snapshot is not interchangeable with it. The build uses the Daytona CLI and
+needs it installed; runtime operations use the shared SDK adapter.
+
+Set `HEADLESS_COMPUTER=daytona`, `DAYTONA_API_KEY`, and that
+`HEADLESS_COMPUTER_SNAPSHOT`. Optional: `DAYTONA_API_URL`, `DAYTONA_TARGET`,
+`HEADLESS_COMPUTER_SCOPE`. Neither your model key nor Den token enters the
+computer image or sandbox. Daytona uses stop/start when memory-preserving pause
+is unavailable. Disk survives; do not depend on in-memory background processes
+surviving a stop. The job checks for background work before stopping an idle
+computer. An unknown command timeout is reported honestly and never retried.
+
+Opt-in verification, creating and cleaning one real computer:
+
+```sh
+HEADLESS_COMPUTER=daytona DAYTONA_API_KEY=… HEADLESS_COMPUTER_SNAPSHOT=… pnpm --filter @openwork-ee/headless-computer proof:live
+HEADLESS_COMPUTER=freestyle FREESTYLE_API_KEY=… pnpm --filter @openwork-ee/headless-computer proof:live
+```

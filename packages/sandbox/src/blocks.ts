@@ -1,4 +1,4 @@
-import type { ImageRef, ProviderTimeout, SandboxHandle } from "./provider"
+import type { ImageRef, ProviderTimeout, SandboxHandle } from "./provider.js"
 
 /** A completed process; a timeout throws SandboxError, never implies it was killed. */
 export type RunResult = { exitCode: number; stdout: string; stderr: string }

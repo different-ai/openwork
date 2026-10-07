@@ -28,12 +28,14 @@ const blobs =
         : null
 const files = blobs ? new SavedFiles(store, blobs, config.fileLimits) : undefined
 // The computer and its provider SDK load only when configured, so a runner without one never imports them.
-const computer: SessionComputer | undefined = config.computer
-  ? new (await import("@openwork-ee/headless-computer")).Computers(config.computer, {
-      files,
-      readFile: (file, counts) => readToolFile({ name: file.name, mimeType: mediaTypeFor(file.name), data: Buffer.from(file.bytes).toString("base64") }, counts),
-    })
-  : undefined
+let computer: SessionComputer | undefined
+if (config.computer) {
+  const { Computers, createComputerProvider } = await import("@openwork-ee/headless-computer")
+  computer = new Computers({ ...config.computer, provider: await createComputerProvider(config.computer) }, {
+    files,
+    readFile: (file, counts) => readToolFile({ name: file.name, mimeType: mediaTypeFor(file.name), data: Buffer.from(file.bytes).toString("base64") }, counts),
+  })
+}
 store.onChange = (sessionId, messageId, status) => events.emit(sessionId, { type: "changed", messageId, ...(status ? { status } : {}) })
 
 const runner = new Runner({
@@ -82,7 +84,7 @@ async function models() {
 
 const server = serve({ fetch: createApp({ store, runner, apiToken: config.apiToken, models, events, files, computer }).fetch, port: config.port }, (info) => {
   console.log(
-    `[headless-runner] listening on :${info.port} (${recovered} interrupted turn(s) recovered, files: ${blobs?.kind ?? "off"}, computer: ${computer ? `freestyle ${computer.image}` : "off"})`,
+    `[headless-runner] listening on :${info.port} (${recovered} interrupted turn(s) recovered, files: ${blobs?.kind ?? "off"}, computer: ${computer ? `${config.computer?.kind} ${computer.image}` : "off"})`,
   )
 })
 

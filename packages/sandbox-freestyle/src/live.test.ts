@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import { sandboxBlockConformanceCases } from "@openwork/sandbox/testing"
-import { createFreestyleProvider } from "./index"
+import { createFreestyleProvider } from "./index.js"
 const key = process.env.FREESTYLE_API_KEY
 if (!key) throw new Error("test:live requires FREESTYLE_API_KEY (creates and deletes real VMs)")
 for (const c of sandboxBlockConformanceCases(() => createFreestyleProvider({

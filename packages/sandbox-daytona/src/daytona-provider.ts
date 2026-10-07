@@ -19,7 +19,7 @@ import {
   type SandboxStorage,
   type SandboxPlatform,
 } from "@openwork/sandbox"
-import { toRuntimeProviderError } from "./errors"
+import { toRuntimeProviderError } from "./errors.js"
 
 export const DAYTONA_PROVIDER_ID = "daytona"
 

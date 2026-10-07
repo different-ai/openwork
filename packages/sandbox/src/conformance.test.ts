@@ -1,5 +1,5 @@
 import { test } from "node:test"
-import { createFakeProvider, sandboxProviderConformanceCases } from "./testing"
+import { createFakeProvider, sandboxProviderConformanceCases } from "./testing/index.js"
 
 // The fake is the reference provider: every case must hold for it, so the
 // cases themselves stay honest before they run against a real provider.
@@ -8,7 +8,7 @@ for (const conformanceCase of sandboxProviderConformanceCases(() => createFakePr
 }
 
 import assert from "node:assert/strict"
-import { sandboxBlockConformanceCases } from "./testing"
+import { sandboxBlockConformanceCases } from "./testing/index.js"
 for (const c of sandboxBlockConformanceCases(() => createFakeProvider({
   onRun(spec) {
     assert.equal(spec.cwd, "/tmp")

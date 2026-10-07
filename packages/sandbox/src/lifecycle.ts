@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
-import { SandboxError, isSandboxError } from "./errors"
-import type { SandboxBlocks } from "./blocks"
-import type { ProviderTimeout, SandboxHandle, SandboxProvider, SandboxSpec } from "./provider"
+import { SandboxError, isSandboxError } from "./errors.js"
+import type { SandboxBlocks } from "./blocks.js"
+import type { ProviderTimeout, SandboxHandle, SandboxProvider, SandboxSpec } from "./provider.js"
 
 export const SCOPE_LABEL = "openwork.sandbox.scope"
 

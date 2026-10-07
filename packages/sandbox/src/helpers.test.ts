@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { SandboxError, RuntimeProviderError, sandboxName, ensure, ensureRunning, destroyScope, SCOPE_LABEL, withBlocks, instrument, type SandboxSpec } from "./index"
-import { createFakeProvider } from "./testing"
+import { SandboxError, RuntimeProviderError, sandboxName, ensure, ensureRunning, destroyScope, SCOPE_LABEL, withBlocks, instrument, type SandboxSpec } from "./index.js"
+import { createFakeProvider } from "./testing/index.js"
 
 const opts = { timeoutMs: 3000 }
 const spec = (key: string, scope = "tests"): SandboxSpec => ({ workerId: "", idempotencyKey: key, image: null, env: {}, labels: { [SCOPE_LABEL]: scope }, storage: [], exposePorts: [] })

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { FreestyleApiError } from "freestyle"
-import { createFreestyleProvider, freestyleError } from "./index"
+import { createFreestyleProvider, freestyleError } from "./index.js"
 const p = createFreestyleProvider({ apiKey: "not-used", snapshot: "freestyle/ubuntu-sm", firewall: { rules: [] } })
 test("unsupported create-time configuration fails before provisioning", async () => {
   const spec = { workerId: "", idempotencyKey: "test", image: null, env: { KEY: "value" }, labels: {}, storage: [], exposePorts: [] }

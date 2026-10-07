@@ -1,4 +1,4 @@
-export * from "./conformance"
-export * from "./fake-provider"
+export * from "./conformance.js"
+export * from "./fake-provider.js"
 
-export * from "./blocks-conformance"
+export * from "./blocks-conformance.js"

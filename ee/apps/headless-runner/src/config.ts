@@ -1,3 +1,4 @@
+import type { ComputerProviderConfig } from "@openwork-ee/headless-computer"
 import { dirname, join } from "node:path"
 import { z } from "zod"
 
@@ -68,7 +69,11 @@ const configSchema = z.object({
   HEADLESS_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   HEADLESS_S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
   /** A Linux computer per conversation (bash and look tools): off, or a Freestyle VM. */
-  HEADLESS_COMPUTER: z.enum(["off", "freestyle"]).default("off"),
+  HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona"]).default("off"),
+  DAYTONA_API_KEY: z.string().min(1).optional(),
+  DAYTONA_API_URL: safeUrl.default("https://app.daytona.io/api"),
+  DAYTONA_TARGET: z.string().min(1).optional(),
+  HEADLESS_COMPUTER_SCOPE: z.string().min(1).optional(),
   FREESTYLE_API_KEY: z
     .string()
     .optional()
@@ -105,7 +110,7 @@ export type Config = {
     | { kind: "s3"; endpoint: string; region: string; bucket: string; accessKeyId: string; secretAccessKey: string; forcePathStyle: boolean }
     | { kind: "vercel"; token: string }
   fileLimits: { maxFileBytes: number; maxSessionBytes: number }
-  computer?: { apiKey: string; snapshot?: string; idlePauseMs: number; keepDays: number }
+  computer?: ComputerProviderConfig & { scope?: string; idlePauseMs: number; keepDays: number }
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -145,9 +150,15 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
 function computerConfig(value: z.infer<typeof configSchema>): Config["computer"] {
   if (value.HEADLESS_COMPUTER === "off") return undefined
-  if (!value.FREESTYLE_API_KEY) throw new Error("Invalid headless-runner configuration:\nHEADLESS_COMPUTER=freestyle needs FREESTYLE_API_KEY")
+  const apiKey = value.HEADLESS_COMPUTER === "daytona" ? value.DAYTONA_API_KEY : value.FREESTYLE_API_KEY
+  if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${value.HEADLESS_COMPUTER === "daytona" ? "DAYTONA_API_KEY" : "FREESTYLE_API_KEY"}`)
+  if (value.HEADLESS_COMPUTER === "daytona" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Daytona computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:daytona)")
   return {
-    apiKey: value.FREESTYLE_API_KEY,
+    kind: value.HEADLESS_COMPUTER,
+    apiKey,
+    apiUrl: value.DAYTONA_API_URL,
+    target: value.DAYTONA_TARGET,
+    scope: value.HEADLESS_COMPUTER_SCOPE,
     snapshot: value.HEADLESS_COMPUTER_SNAPSHOT,
     idlePauseMs: value.HEADLESS_COMPUTER_PAUSE_SECONDS * 1000,
     keepDays: value.HEADLESS_COMPUTER_KEEP_DAYS,

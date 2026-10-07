@@ -1,7 +1,7 @@
-export * from "./errors"
-export * from "./provider"
-export * from "./shell"
+export * from "./errors.js"
+export * from "./provider.js"
+export * from "./shell.js"
 
-export * from "./blocks"
-export * from "./lifecycle"
-export * from "./instrument"
+export * from "./blocks.js"
+export * from "./lifecycle.js"
+export * from "./instrument.js"

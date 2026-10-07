@@ -2,7 +2,7 @@
   "name": "@openwork-ee/headless-computer",
   "private": true,
   "type": "module",
-  "description": "An optional Linux computer per headless conversation (Freestyle VMs): bash and look tools, file hand-off, page previews.",
+  "description": "A provider-neutral Linux computer per headless conversation: commands, file hand-off and previews.",
   "types": "./src/index.ts",
   "exports": {
     ".": {
@@ -12,18 +12,25 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:freestyle --external:zod",
+    "build": "pnpm --filter \"@openwork-ee/headless-computer^...\" --if-present run build && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:@openwork/sandbox --external:@openwork/sandbox-freestyle --external:@openwork/sandbox-daytona --external:zod",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "snapshot:build": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-snapshot.ts"
+    "snapshot:build": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-snapshot.ts",
+    "test": "tsx --test src/*.test.ts",
+    "snapshot:build:daytona": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-daytona-snapshot.ts",
+    "proof:live": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/prove-computer.ts"
   },
   "dependencies": {
     "freestyle": "0.2.13",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@openwork/sandbox": "workspace:*",
+    "@openwork/sandbox-freestyle": "workspace:*",
+    "@openwork/sandbox-daytona": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "esbuild": "0.25.12",
     "tsx": "^4.23.1",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "@daytonaio/sdk": "^0.201.0"
   }
 }

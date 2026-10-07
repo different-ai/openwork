@@ -1,30 +1,15 @@
 import { createHash } from "node:crypto"
 import { posix } from "node:path"
-import { Freestyle, FreestyleApiError, type Vm } from "freestyle"
+import { ensureRunning, isSandboxError, SCOPE_LABEL, withBlocks, type RunSpec, type SandboxHandle, type SandboxProvider, type SandboxSpec } from "@openwork/sandbox"
 import { z } from "zod"
-import { computerSnapshotSlug } from "./image.js"
 import type { ComputerFile, ComputerFiles, FileReader, ToolResult, ToolSpec } from "./types.js"
 
-/**
- * One Linux computer per conversation: a Freestyle VM booted from the prepared snapshot (see image.ts).
- * The model drives it directly with shell commands; there is no agent, server or protocol inside the VM.
- *
- * - Created on first use (about half a second from the snapshot), addressed by a slug derived from the session,
- *   so every runner process finds the same VM without storing anything.
- * - Paused a few minutes after the conversation goes quiet. A paused VM keeps its memory and disk, and the next
- *   command wakes it (about a tenth of a second).
- * - Deleted by Freestyle after `keepDays` without running, or when the conversation is deleted.
- * - Files the person sends are copied into /workspace/files; files written to /workspace/out are added to their
- *   Files after each command.
- */
-
+/** One provider-neutral Linux computer per conversation. Jobs own idle policy and files; adapters own transport. */
 export type ComputerOptions = {
-  apiKey: string
-  /** Snapshot id or slug to boot from; defaults to the one built from image.ts. */
-  snapshot?: string
-  /** Pause a conversation's VM after it has been unused this long. */
+  provider: SandboxProvider
+  /** Existing Freestyle computers keep their hc-<hash> identity. */
+  scope?: string
   idlePauseMs: number
-  /** Freestyle deletes a VM that has not run for this many days. */
   keepDays: number
 }
 
@@ -35,6 +20,7 @@ const OUT_DIR = `${WORKSPACE}/out`
 const EXPORTED_MANIFEST = `${WORKSPACE}/.jobs/.exported.json`
 const MANIFEST_MARKER = "---computer-exported---"
 /** What a login shell would set, so `pip install --user` and npm globals are found without the slow profile. */
+function computerBlocks(provider: SandboxProvider) { return withBlocks(provider, ["run", "files"], "Workbot computer") }
 const GUEST_PATH = "/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 /** The longest a single command may run; Freestyle's exec limit. Longer work goes through `background`. */
 const MAX_COMMAND_SECONDS = 300
@@ -51,12 +37,11 @@ export const canPreview = (name: string) => PREVIEWABLE.test(name)
 /** What renders those previews; part of the prepared image, installed on older computers when first needed. */
 const OFFICE_PACKAGES = "fonts-liberation fonts-noto-core libreoffice-impress-nogui libreoffice-writer-nogui libreoffice-calc-nogui"
 
-const isApiError = (error: unknown, status: number) => error instanceof FreestyleApiError && error.status === status
-
 export class Computers {
-  private readonly api: Freestyle
+  private readonly provider: SandboxProvider
+  private readonly blocks: ReturnType<typeof computerBlocks>
   /** Sessions whose VM this process has resolved: the handle, so later calls skip the lookup. */
-  private readonly vms = new Map<string, Promise<Vm>>()
+  private readonly vms = new Map<string, Promise<SandboxHandle>>()
   private readonly pauseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   /** Saved file ids already copied into each session's VM by this process. */
   private readonly copied = new Map<string, Set<string>>()
@@ -75,8 +60,9 @@ export class Computers {
    * `readFile` turns a file into what the model can see (images, PDFs, text), the same way tool results are read.
    */
   constructor(private readonly options: ComputerOptions, deps: { files?: ComputerFiles; readFile: FileReader }) {
-    this.api = new Freestyle({ apiKey: options.apiKey })
-    this.snapshot = options.snapshot ?? computerSnapshotSlug()
+    this.provider = options.provider
+    this.blocks = computerBlocks(this.provider)
+    this.snapshot = this.provider.currentImage()?.id ?? "configured image"
     this.files = deps.files
     this.readFile = deps.readFile
   }
@@ -104,77 +90,55 @@ export class Computers {
   /** Starts (or wakes) the conversation's VM in the background, so the first command doesn't wait for it. */
   prewarm(sessionId: string) {
     void this.vm(sessionId)
-      .then((vm) => vm.exec({ command: "true", timeoutMs: 10_000 }))
+      .then((box) => this.execute(box, { command: "true", timeoutMs: 10_000 }))
       .catch(() => undefined)
   }
 
   /** The conversation's VM, created from the snapshot on first use. A paused VM wakes on its next command. */
-  vm(sessionId: string): Promise<Vm> {
+  async vm(sessionId: string): Promise<SandboxHandle> {
     this.cancelPause(sessionId)
     let pending = this.vms.get(sessionId)
     if (!pending) {
       pending = this.resolve(sessionId)
       this.vms.set(sessionId, pending)
       pending.catch(() => this.vms.delete(sessionId))
+      return pending
     }
-    return pending
+    const current = await this.provider.inspect(await pending)
+    if (current.state === "running") return current
+    if (current.state === "missing") this.copied.delete(sessionId)
+    const waking = this.resolve(sessionId)
+    this.vms.set(sessionId, waking)
+    return waking
   }
 
-  private async resolve(sessionId: string): Promise<Vm> {
-    const slug = this.slug(sessionId)
-    try {
-      await this.api.vms.get(slug)
-      return this.api.vms.ref(slug)
-    } catch (error) {
-      if (!isApiError(error, 404)) throw error
-    }
-    try {
-      const { vm } = await this.api.vms.create({
-        snapshotId: this.snapshot,
-        slug,
-        displayName: `Computer ${sessionId.slice(0, 40)}`,
-        metadata: { kind: "headless-computer" },
-        // A backstop only: the runner pauses idle VMs itself. Freestyle's idle clock counts network traffic,
-        // not commands, so a short value would freeze a quiet ffmpeg run.
-        idleTimeoutSeconds: 3600,
-        autoDeleteSeconds: this.options.keepDays * 86_400,
-        firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
-      })
-      return vm
-    } catch (error) {
-      // Another turn or runner created it first: the slug is the lock, so adopt that VM.
-      if (isApiError(error, 409)) return this.api.vms.ref(slug)
-      throw error
+  private spec(sessionId: string): SandboxSpec {
+    return {
+      idempotencyKey: this.slug(sessionId), image: this.provider.currentImage(),
+      labels: { kind: "headless-computer", ...(this.options.scope ? { [SCOPE_LABEL]: this.options.scope } : {}) },
+      env: {}, storage: [], exposePorts: [],
+      // The job's own timer checks background jobs. Keep the provider's idle
+      // backstop long enough that a quiet rendering job does not get stopped.
+      lifecycle: { autoStopMinutes: 60, autoDeleteMinutes: this.options.keepDays * 1440 },
     }
   }
 
-  /**
-   * Runs one command. When the VM is gone (deleted after a long idle) or stopped, the command never ran, so it is
-   * safe to recreate or start the VM and run it once more.
-   */
+  private resolve(sessionId: string): Promise<SandboxHandle> {
+    return ensureRunning(this.provider, this.spec(sessionId), { timeoutMs: 120_000 })
+  }
+
+  private execute(box: SandboxHandle, spec: RunSpec) {
+    return this.blocks.run(box, spec)
+  }
+
+  /** Recover before launching work; never retry an unknown command outcome. */
   private async exec(sessionId: string, command: string, timeoutSeconds: number) {
-    const run = async () =>
-      (await this.vm(sessionId)).exec({
-        // The command goes in an environment variable, so no quoting can break it, and runs in bash from /workspace.
-        // Not a login shell: sourcing the profile costs up to two seconds per command.
-        command: `cd ${WORKSPACE} 2>/dev/null || cd ~; exec bash -c "$WORKBOT_COMMAND"`,
-        env: { WORKBOT_COMMAND: command, PATH: GUEST_PATH, HOME: "/home/ubuntu", LANG: "C.UTF-8" },
-        timeoutMs: timeoutSeconds * 1000,
-      })
-    try {
-      return await run()
-    } catch (error) {
-      if (isApiError(error, 404)) {
-        this.vms.delete(sessionId)
-        this.copied.delete(sessionId)
-        return run()
-      }
-      const vm = await this.vm(sessionId)
-      const state = await vm.data().then((data) => data.state, () => null)
-      if (state !== "stopped") throw error
-      await vm.start()
-      return run()
-    }
+    const box = await this.vm(sessionId)
+    return this.execute(box, {
+      command: `cd ${WORKSPACE} 2>/dev/null || cd ~; exec bash -c "$WORKBOT_COMMAND"`,
+      env: { WORKBOT_COMMAND: command, PATH: GUEST_PATH, HOME: "/home/ubuntu", LANG: "C.UTF-8" },
+      timeoutMs: timeoutSeconds * 1000,
+    })
   }
 
   /** Pauses the VM once the conversation has been quiet for a while, unless a background job is still running. */
@@ -192,9 +156,9 @@ export class Computers {
     if (!pending) return
     try {
       const vm = await pending
-      const jobs = await vm.exec({ command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, timeoutMs: 10_000 })
+      const jobs = await this.execute(vm, { command: `ls ${WORKSPACE}/.jobs/*.running 2>/dev/null | wc -l`, timeoutMs: 10_000 })
       if (Number(jobs.stdout?.trim() ?? "0") > 0) return this.release(sessionId)
-      await vm.pause()
+      await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: 30_000 }) : this.provider.stop(vm, { timeoutMs: 30_000 }))
     } catch {
       // Not fatal: Freestyle's own idle timeout pauses it later.
     }
@@ -211,8 +175,9 @@ export class Computers {
     this.cancelPause(sessionId)
     this.vms.delete(sessionId)
     this.copied.delete(sessionId)
-    await this.api.vms.delete(this.slug(sessionId)).catch((error: unknown) => {
-      if (!isApiError(error, 404)) throw error
+    const box = await this.provider.find({ idempotencyKey: this.slug(sessionId), labels: this.spec(sessionId).labels })
+    if (box) await this.provider.destroy(box, { timeoutMs: 30_000 }).catch((error: unknown) => {
+      if (!isSandboxError(error) || error.code !== "not_found") throw error
     })
   }
 
@@ -236,7 +201,7 @@ export class Computers {
         done.add(file.id)
         continue
       }
-      await vm.fs.writeFile(path.path, found.bytes)
+      await this.blocks.files.write(vm, path.path, found.bytes, { timeoutMs: 30_000 })
       done.add(file.id)
       copied.push(path.path)
     }
@@ -244,13 +209,13 @@ export class Computers {
   }
 
   /** `/workspace/files/<name>`, or a variant when a different file already has that name. */
-  private async uploadPath(vm: Vm, name: string, size: number) {
+  private async uploadPath(vm: SandboxHandle, name: string, size: number) {
     const base = posix.basename(name) || "file"
     const extension = posix.extname(base)
     const stem = base.slice(0, base.length - extension.length)
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const path = `${FILES_DIR}/${attempt === 0 ? base : `${stem} (${attempt + 1})${extension}`}`
-      const stat = await vm.fs.stat(path).catch(() => null)
+      const stat = await this.blocks.files.stat(vm, path, { timeoutMs: 10_000 })
       if (!stat) return { path, exists: false }
       if (stat.size === size) return { path, exists: true }
     }
@@ -263,7 +228,7 @@ export class Computers {
     if (!this.files) return { saved: [], skipped: [] }
     const maxBytes = Math.min(MAX_EXPORT_BYTES, this.files.maxFileBytes)
     const vm = await this.vm(sessionId)
-    const listing = await vm.exec({
+    const listing = await this.execute(vm, {
       command: `find ${OUT_DIR} -type f -not -name '.*' -printf '%P\\t%s\\t%T@\\n' 2>/dev/null; echo '${MANIFEST_MARKER}'; cat ${EXPORTED_MANIFEST} 2>/dev/null || echo '{}'`,
       timeoutMs: 30_000,
     })
@@ -292,7 +257,7 @@ export class Computers {
         notKept(`${formatBytes(size)}; the most a kept file can be is ${formatBytes(maxBytes)}`)
         continue
       }
-      const bytes = new Uint8Array(await vm.fs.readFile(`${OUT_DIR}/${relative}`))
+      const bytes = new Uint8Array(await this.blocks.files.read(vm, `${OUT_DIR}/${relative}`, { timeoutMs: 30_000 }))
       // A new version of a file already handed over updates it in place: one file in their Files, and anything
       // showing it (the answer's card, an open preview) moves to the new version.
       let file: ComputerFile | null = null
@@ -315,7 +280,7 @@ export class Computers {
       // Slides, documents and PDFs get page images for the preview panel, made in the background.
       if (canPreview(relative)) void this.renderPreview(sessionId, file.id, `${OUT_DIR}/${relative}`).catch(() => undefined)
     }
-    if (changed) await vm.fs.writeFile(EXPORTED_MANIFEST, JSON.stringify(manifest))
+    if (changed) await this.blocks.files.write(vm, EXPORTED_MANIFEST, new TextEncoder().encode(JSON.stringify(manifest)), { timeoutMs: 30_000 })
     return { saved, skipped }
   }
 
@@ -327,8 +292,8 @@ export class Computers {
     const vm = await this.vm(sessionId)
     const extension = posix.extname(found.file.name).toLowerCase()
     const path = `/tmp/computer-preview/source/${fileId}${extension}`
-    await vm.exec({ command: "mkdir -p /tmp/computer-preview/source", timeoutMs: 10_000 })
-    await vm.fs.writeFile(path, found.bytes)
+    await this.execute(vm, { command: "mkdir -p /tmp/computer-preview/source", timeoutMs: 10_000 })
+    await this.blocks.files.write(vm, path, found.bytes, { timeoutMs: 30_000 })
     await this.renderPreview(sessionId, fileId, path)
   }
 
@@ -340,9 +305,9 @@ export class Computers {
     const vm = await this.vm(sessionId)
     // A computer made from an older image has no LibreOffice yet: install it once, quietly, instead of
     // replacing the computer and its files.
-    const has = await vm.exec({ command: "command -v soffice >/dev/null && echo yes", timeoutMs: 10_000 })
+    const has = await this.execute(vm, { command: "command -v soffice >/dev/null && echo yes", timeoutMs: 10_000 })
     if (has.stdout?.trim() !== "yes" && !path.toLowerCase().endsWith(".pdf")) {
-      await vm.exec({
+      await this.execute(vm, {
         command: `sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ${OFFICE_PACKAGES} >/dev/null 2>&1`,
         timeoutMs: 290_000,
       })
@@ -350,8 +315,8 @@ export class Computers {
     const outDir = `/tmp/computer-preview/${fileId}`
     // PDFs are paged as they are; Office files go through LibreOffice first.
     const rendered = path.toLowerCase().endsWith(".pdf")
-      ? await vm.exec({ command: `mkdir -p "$OUT" && echo "$SRC"`, env: { OUT: outDir, SRC: path }, timeoutMs: 10_000 })
-      : await vm.exec({
+      ? await this.execute(vm, { command: `mkdir -p "$OUT" && echo "$SRC"`, env: { OUT: outDir, SRC: path }, timeoutMs: 10_000 })
+      : await this.execute(vm, {
           command: `mkdir -p "$OUT" && timeout 120 soffice --headless --norestore --convert-to pdf --outdir "$OUT" "$SRC" >/dev/null 2>&1; ls "$OUT"/*.pdf 2>/dev/null | head -1`,
           env: { OUT: outDir, SRC: path, HOME: "/tmp/computer-preview", PATH: GUEST_PATH },
           timeoutMs: 150_000,
@@ -359,36 +324,38 @@ export class Computers {
     const pdfPath = rendered.stdout?.trim()
     if (!pdfPath) return
     // One image per page (at most 60), 1600px on the long side: the panel lays them out like a deck.
-    const paged = await vm.exec({
+    const paged = await this.execute(vm, {
       command: `pdftoppm -png -l ${MAX_PREVIEW_PAGES} -scale-to 1600 "$PDF" "$OUT/page" && ls "$OUT"/page-*.png | sort -V`,
       env: { OUT: outDir, PDF: pdfPath, PATH: GUEST_PATH },
       timeoutMs: 120_000,
     })
     const pagePaths = (paged.stdout ?? "").split("\n").map((line) => line.trim()).filter(Boolean)
     const pages: Array<Uint8Array<ArrayBuffer>> = []
-    for (const pagePath of pagePaths) pages.push(new Uint8Array(await vm.fs.readFile(pagePath)))
+    for (const pagePath of pagePaths) pages.push(new Uint8Array(await this.blocks.files.read(vm, pagePath, { timeoutMs: 30_000 })))
     const size = pngSize(pages[0])
     const current = this.files.list(sessionId).find((file) => file.id === fileId)?.updatedAt
     if (size && current === version) await this.files.putPreview(sessionId, fileId, pages, size)
-    await vm.exec({ command: `rm -rf "$OUT"`, env: { OUT: outDir }, timeoutMs: 10_000 }).catch(() => undefined)
+    await this.execute(vm, { command: `rm -rf "$OUT"`, env: { OUT: outDir }, timeoutMs: 10_000 }).catch(() => undefined)
   }
 
   async bash(sessionId: string, command: string, timeoutSeconds: number): Promise<ToolResult> {
     const copied = await this.copyUploads(sessionId)
-    const result = await this.exec(sessionId, command, timeoutSeconds)
+    let result
+    try { result = await this.exec(sessionId, command, timeoutSeconds) }
+    catch (error) {
+      if (!isSandboxError(error) || error.code !== "timeout") throw error
+      return { output: `[No confirmed result after ${timeoutSeconds}s. The command may still be running; do not repeat side effects. Use background for long jobs.]`, isError: true }
+    }
     const { saved, skipped } = await this.exportOutputs(sessionId).catch(() => ({ saved: [], skipped: [] }))
-    const killed = result.statusCode === null || result.statusCode === undefined
     const parts = [
       copied.length ? `[Copied the person's files to: ${copied.join(", ")}]` : "",
-      killed
-        ? `[Stopped after ${timeoutSeconds}s; it may have done part of its work. For long jobs use: background <name> '<command>']`
-        : `[exit ${result.statusCode}]`,
+      `[exit ${result.exitCode}]`,
       tail(result.stdout ?? ""),
       result.stderr?.trim() ? `[stderr]\n${tail(result.stderr)}` : "",
       saved.length ? `[Added to their Files: ${saved.join(", ")}]` : "",
       skipped.length ? `[Not added to their Files: ${skipped.join("; ")}. Make it smaller, or tell them it is too big to hand over.]` : "",
     ]
-    return { output: parts.filter(Boolean).join("\n"), isError: killed || result.statusCode !== 0 }
+    return { output: parts.filter(Boolean).join("\n"), isError: result.exitCode !== 0 }
   }
 
   async look(sessionId: string, paths: string[]): Promise<ToolResult> {
@@ -399,8 +366,8 @@ export class Computers {
     const result: ToolResult = { output: "", isError: false, images: [], documents: [] }
     for (const raw of paths) {
       const path = posix.resolve(WORKSPACE, raw)
-      const stat = await vm.fs.stat(path).catch(() => null)
-      if (!stat || !stat.isFile) {
+      const stat = await this.blocks.files.stat(vm, path, { timeoutMs: 10_000 })
+      if (!stat || stat.kind !== "file") {
         texts.push(`[${path}: no such file]`)
         result.isError = paths.length === 1
         continue
@@ -409,7 +376,7 @@ export class Computers {
         texts.push(`[${path} is ${formatBytes(stat.size)}, too large to look at. Make a smaller version with bash first.]`)
         continue
       }
-      const bytes = await vm.fs.readFile(path)
+      const bytes = await this.blocks.files.read(vm, path, { timeoutMs: 30_000 })
       const name = posix.basename(path)
       const reading = await this.readFile({ name, bytes }, counts)
       const unreadable = !reading.image && !reading.document && reading.text.startsWith("[Can't open")
@@ -466,11 +433,11 @@ export const COMPUTER_TOOLS: ToolSpec[] = [
   {
     name: "bash",
     description: [
-      "Run a shell command on your Linux computer for this conversation (Ubuntu, 4 CPUs, 8 GB, internet access, sudo).",
+      "Run a shell command on your Linux computer for this conversation (Ubuntu, internet access, sudo).",
       `The working directory is ${WORKSPACE}; everything there persists between messages.`,
       `Files the person sends are copied to ${FILES_DIR}. Anything you write to ${OUT_DIR} is added to their Files after the command.`,
       "Installed: python3 (pandas, numpy, matplotlib, openpyxl, xlsxwriter, python-docx, python-pptx, pdfplumber, pypdf, pillow, opencv), ffmpeg, imagemagick, poppler-utils, qpdf, tesseract, pandoc, node, jq, ripgrep, sqlite3, git, curl. Install more with sudo apt-get or pip.",
-      `A command stops after timeout_seconds (at most ${MAX_COMMAND_SECONDS}). For longer work run \`background <name> '<command>'\` and check \`tail -n 20 ${WORKSPACE}/.jobs/<name>.log\`.`,
+      `A command times out after timeout_seconds (at most ${MAX_COMMAND_SECONDS}). For longer work run \`background <name> '<command>'\` and check \`tail -n 20 ${WORKSPACE}/.jobs/<name>.log\`.`,
       "Always set description first: it is the progress update the person sees.",
     ].join(" "),
     inputSchema: {
