@@ -83,8 +83,25 @@ jobs:
       head_sha: ${{ github.event.pull_request.head.sha }}
       stage: scan
 
+  # A manual run uses the workflow file of the branch it is started from.
+  # Only run from dev, and load the script from dev regardless, so a branch
+  # with a modified script can't use this job's status token to post
+  # contributor-pr-required.
+  refuse-other-branches:
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Refuse
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Run the Contributor PR gate from dev, not $REF."
+          exit 1
+
   backfill:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -97,6 +114,7 @@ jobs:
       - name: Checkout trusted gate script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: refs/heads/dev
           persist-credentials: false
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
