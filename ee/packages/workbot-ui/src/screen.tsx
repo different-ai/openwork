@@ -132,14 +132,26 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     });
   };
 
+  /**
+   * Why an edit didn't go through, by message. Kept here rather than in the message: the message leaves the page while
+   * its edit is sent and comes back new if the edit fails, so its own state wouldn't survive to say why.
+   */
+  const [editErrors, setEditErrors] = useState<Readonly<Record<string, string>>>({});
+
   /** Sends an edited message in place of the old one: it and everything after it make way for the new answer. */
-  const editTurn = (turn: WorkbotTurn, text: string, onError: (message: string) => void) => {
+  const editTurn = (turn: WorkbotTurn, text: string) => {
     const trimmed = text.trim();
     if (!trimmed && turn.attachments.length === 0) return;
     const turns = data?.turns ?? [];
     const from = turns.findIndex((entry) => entry.id === turn.id);
     const replaced = from === -1 ? [turn.id] : turns.slice(from).map((entry) => entry.id);
     const id = newMessageId();
+    setEditErrors((current) => {
+      if (!(turn.id in current)) return current;
+      const next = { ...current };
+      delete next[turn.id];
+      return next;
+    });
     setHidden((current) => new Set([...current, ...replaced]));
     setPending((current) => [...current, { id, text: trimmed, sentAt: Date.now(), uploads: [], failed: null }]);
     editMessage.mutate(
@@ -148,7 +160,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
         onError: (error) => {
           setHidden((current) => new Set([...current].filter((entry) => !replaced.includes(entry))));
           setPending((current) => current.filter((entry) => entry.id !== id));
-          onError(error.message);
+          setEditErrors((current) => ({ ...current, [turn.id]: error.message }));
         },
       },
     );
@@ -239,6 +251,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
             turns={hidden.size ? data.turns.filter((turn) => !hidden.has(turn.id)) : data.turns}
             canChange={!busy}
             onEdit={editTurn}
+            editErrors={editErrors}
             pending={pending}
             live={stream.live}
             hasEarlier={data.hasEarlier}
@@ -502,7 +515,9 @@ function Conversation(props: {
   starting: boolean;
   /** Whether the person's messages can be edited now (not while Workbot is answering). */
   canChange: boolean;
-  onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
+  onEdit: (turn: WorkbotTurn, text: string) => void;
+  /** Why an edit of a message didn't go through, by message id. */
+  editErrors: Readonly<Record<string, string>>;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -592,6 +607,7 @@ function Conversation(props: {
                     <TurnView
                       canChange={props.canChange}
                       onEdit={props.onEdit}
+                      editError={props.editErrors[row.turn.id] ?? null}
                       turn={row.turn}
                       live={props.live[row.turn.id] ?? null}
                       latest={row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
@@ -681,12 +697,13 @@ function EditButton({ disabled, onClick }: { disabled: boolean; onClick?: () => 
 function OwnMessage(props: {
   turn: WorkbotTurn;
   canChange: boolean;
-  onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
+  onEdit: (turn: WorkbotTurn, text: string) => void;
+  /** Why the last edit of this message didn't go through. */
+  error: string | null;
 }) {
-  const { turn } = props;
+  const { turn, error } = props;
   const [mode, setMode] = useState<"idle" | "editing">("idle");
   const [draft, setDraft] = useState(turn.text);
-  const [error, setError] = useState<string | null>(null);
   const field = useRef<HTMLTextAreaElement>(null);
 
   useLayoutEffect(() => {
@@ -706,9 +723,8 @@ function OwnMessage(props: {
     const text = draft.trim();
     if (!text) return;
     setMode("idle");
-    setError(null);
     if (text === turn.text.trim()) return;
-    props.onEdit(turn, text, setError);
+    props.onEdit(turn, text);
   };
 
   if (mode === "editing") {
@@ -1126,7 +1142,8 @@ function useSettled(flag: boolean, ms: number) {
 
 function TurnView(props: {
   canChange: boolean;
-  onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
+  onEdit: (turn: WorkbotTurn, text: string) => void;
+  editError: string | null;
   turn: WorkbotTurn;
   live: LiveText | null;
   latest: boolean;
@@ -1151,7 +1168,7 @@ function TurnView(props: {
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
       {turn.text && !turn.greeting ? (
-        <OwnMessage turn={turn} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} />
+        <OwnMessage turn={turn} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} error={props.editError} />
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}

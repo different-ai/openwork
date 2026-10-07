@@ -247,6 +247,18 @@ threadUI("a member keeps task cards in their original turn until all work finish
     await user.screenshot();
     evidence.recordAssertionEvidence("Editing is discoverable on hover and deletion is absent", "The edit icon is hidden away from the message, appears on its hover, opens the inline editor, and hides again after Cancel; no Delete message button exists.", true);
   });
+  await step("a failed edit puts the message back and says why", async () => {
+    await user.hover({ text: "What is two plus two?" });
+    await user.click({ role: "button", label: "Edit message", nth: 1 });
+    await user.type({ label: "Edit your message" }, "What is three plus three?", { replace: true });
+    await user.press("Enter");
+    await user.see({ text: "That didn't send." });
+    await user.see({ text: "What is two plus two?" });
+    await user.notSee({ text: "What is three plus three?" });
+    expect(world.editAttempts()).toBe(1);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("A failed edit is explained, not silent", "The edit request failed; the original message returned and its reason shows under it.", true);
+  });
   await step("on a phone, Edit rests under each of the member's messages without hovering", async () => {
     await world.phone();
     await user.see({ role: "button", label: "Edit message" });
