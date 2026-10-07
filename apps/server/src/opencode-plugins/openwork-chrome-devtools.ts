@@ -4,12 +4,16 @@ import { z } from "zod";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 
 const tabId = z.string().min(1).optional().describe("A tab returned by browser_tabs or browser_open in this conversation. Defaults to this conversation's active tab.");
-const action = z.discriminatedUnion("type", [
+// Some models send the nested action as a JSON string; decode it before validating.
+const action = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value); } catch { return value; }
+}, z.discriminatedUnion("type", [
   z.object({ type: z.literal("click"), ref: z.string().optional(), x: z.number().optional(), y: z.number().optional() }),
   z.object({ type: z.literal("fill"), ref: z.string(), text: z.string().max(8000) }),
   z.object({ type: z.literal("key"), key: z.enum(["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Backspace", "Space"]) }),
   z.object({ type: z.literal("scroll"), x: z.number().describe("Horizontal position in viewport CSS pixels."), y: z.number().describe("Vertical position in viewport CSS pixels."), deltaY: z.number().min(-1200).max(1200).describe("Scroll distance in CSS pixels: positive scrolls down, negative up; between -1200 and 1200 per action.") }),
-]);
+]));
 const contextSchema = z.object({ sessionID: z.string().min(1), abort: z.instanceof(AbortSignal).optional() });
 function operationTool<T extends z.ZodRawShape>(operation: string, description: string, shape: T) {
   const schema = z.object(shape);
