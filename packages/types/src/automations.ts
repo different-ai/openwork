@@ -758,6 +758,30 @@ export const automationListSchema = z.object({
 }).meta({ ref: "AutomationList" })
 export type AutomationList = z.infer<typeof automationListSchema>
 
+/** Most days one calendar range read may cover (a month view plus padding). */
+export const AUTOMATION_RUN_RANGE_MAX_DAYS = 45
+
+export const automationRunRangeQuerySchema = z.object({
+  from: z.coerce.number().int().nonnegative().describe("Inclusive lower bound, epoch milliseconds."),
+  to: z.coerce.number().int().positive().describe("Exclusive upper bound, epoch milliseconds."),
+  cursor: z.string().trim().min(1).max(160).optional().describe("nextCursor from the previous page."),
+  limit: z.coerce.number().int().min(1).max(500).optional().describe("Maximum runs to scan for this page (default 200)."),
+}).refine((value) => value.to > value.from, { message: "to must be after from", path: ["to"] })
+  .refine((value) => value.to - value.from <= AUTOMATION_RUN_RANGE_MAX_DAYS * 24 * 60 * 60 * 1_000, {
+    message: `The range may cover at most ${AUTOMATION_RUN_RANGE_MAX_DAYS} days`, path: ["to"],
+  })
+export type AutomationRunRangeQuery = z.infer<typeof automationRunRangeQuerySchema>
+
+/**
+ * Runs of every Automation the caller owns, placed by scheduledFor (else
+ * startedAt, else createdAt). A non-null `nextCursor` means more may exist.
+ */
+export const automationRunRangeSchema = z.object({
+  items: z.array(automationRunSchema),
+  nextCursor: z.string().nullable(),
+}).meta({ ref: "AutomationRunRange" })
+export type AutomationRunRange = z.infer<typeof automationRunRangeSchema>
+
 export const automationDetailSchema = z.object({
   automation: automationSchema,
   revision: automationRevisionSchema,

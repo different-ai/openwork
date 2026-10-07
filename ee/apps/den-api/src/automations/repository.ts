@@ -28,7 +28,7 @@ import type {
   AutomationUsage,
   DesktopRunnerInventory,
 } from "@openwork/types/automations"
-import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
   AutomationRunnerTable,
@@ -48,6 +48,9 @@ type RevisionRow = typeof AutomationRevisionTable.$inferSelect
 type RunRow = typeof AutomationRunTable.$inferSelect
 type EventRow = typeof AutomationRunEventTable.$inferSelect
 type DesktopClaim = { automation: Automation; revision: AutomationRevision; run: AutomationRun }
+
+/** Upper bound for one calendar range read across an owner's Automations. */
+export const AUTOMATION_RUN_RANGE_MAX_ITEMS = 500
 
 const logger = appLogger.child({ component: "automation_repository" })
 const emptyUsage: AutomationUsage = { inputTokens: null, outputTokens: null, costMicros: null }
@@ -1576,6 +1579,42 @@ export class DenAutomationRepository implements AutomationRepository {
       .orderBy(desc(AutomationRunTable.id)).limit(limit + 1)
     const selected = rows.slice(0, limit)
     return { items: selected.map(mapRun), nextCursor: rows.length > limit ? selected.at(-1)?.id ?? null : null }
+  }
+
+  /**
+   * Runs of the owner's Automations whose calendar position (scheduledFor,
+   * else startedAt, else createdAt) falls in [from, to), oldest first, one
+   * page at a time. Scans created_at with a one-day pad on each side so
+   * recovery runs created after their slot are still found; the cursor is the
+   * last scanned run id (run ids sort by creation).
+   */
+  async listRunsInRange(input: { organizationId: string; ownerMemberId: string; from: number; to: number; cursor?: string; limit: number }): Promise<{
+    items: AutomationRun[]
+    nextCursor: string | null
+  }> {
+    const pad = 24 * 60 * 60 * 1_000
+    const limit = Math.max(1, Math.min(input.limit, AUTOMATION_RUN_RANGE_MAX_ITEMS))
+    const conditions = [
+      eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+      gte(AutomationRunTable.created_at, new Date(input.from - pad)),
+      lt(AutomationRunTable.created_at, new Date(input.to + pad)),
+    ]
+    if (input.cursor) conditions.push(gt(AutomationRunTable.id, normalizeRunId(input.cursor)))
+    const rows = await db.select({ run: AutomationRunTable })
+      .from(AutomationRunTable)
+      .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+      .where(and(...conditions))
+      .orderBy(asc(AutomationRunTable.id))
+      .limit(limit + 1)
+    const scanned = rows.slice(0, limit).map((row) => mapRun(row.run))
+    return {
+      items: scanned.filter((run) => {
+        const at = run.scheduledFor ?? run.startedAt ?? run.createdAt
+        return at >= input.from && at < input.to
+      }),
+      nextCursor: rows.length > limit ? scanned.at(-1)?.id ?? null : null,
+    }
   }
 
   async reclaimQueued(input: { runId: string; leaseOwner: string; leaseMs: number; now: number }): Promise<{

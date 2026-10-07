@@ -461,6 +461,10 @@ export class AutomationService {
     return automationRepository.listRuns({ ...scope, automationId, cursor: input.cursor, limit: input.limit ?? 50 })
   }
 
+  listRunsInRange(scope: OwnerScope, input: { from: number; to: number; cursor?: string; limit?: number }) {
+    return automationRepository.listRunsInRange({ ...scope, from: input.from, to: input.to, cursor: input.cursor, limit: input.limit ?? 200 })
+  }
+
   getRun(scope: OwnerScope, runId: string) {
     return automationRepository.getRunReceipt({ ...scope, runId })
   }

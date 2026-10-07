@@ -491,6 +491,8 @@ import type {
   ListAutomationRunnersErrors,
   ListAutomationRunnersResponses,
   ListAutomationRunsErrors,
+  ListAutomationRunsInRangeErrors,
+  ListAutomationRunsInRangeResponses,
   ListAutomationRunsResponses,
   ListAutomationsErrors,
   ListAutomationsResponses,
@@ -2836,6 +2838,44 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).get<ListAutomationRunsResponses, ListAutomationRunsErrors, ThrowOnError>({
       url: "/v1/automations/{id}/runs",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * List the caller's Automation runs in a time range
+   *
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Returns runs of every Automation the caller owns whose scheduled time (else start, else creation) falls in [from, to), for calendar views. At most 45 days per request.
+   */
+  public listAutomationRunsInRange<ThrowOnError extends boolean = false>(
+    parameters: {
+      from: number;
+      to: number;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "from" },
+            { in: "query", key: "to" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      ListAutomationRunsInRangeResponses,
+      ListAutomationRunsInRangeErrors,
+      ThrowOnError
+    >({
+      url: "/v1/automation-runs",
       ...options,
       ...params,
     });

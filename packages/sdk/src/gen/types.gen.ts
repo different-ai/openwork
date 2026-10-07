@@ -928,6 +928,11 @@ export type AutomationRunList = {
   nextCursor: string | null;
 };
 
+export type AutomationRunRange = {
+  items: Array<AutomationRun>;
+  nextCursor: string | null;
+};
+
 export type AutomationRunEventType =
   | "user"
   | "assistant"
@@ -8018,6 +8023,53 @@ export type ListAutomationRunsResponses = {
 };
 
 export type ListAutomationRunsResponse = ListAutomationRunsResponses[keyof ListAutomationRunsResponses];
+
+export type ListAutomationRunsInRangeData = {
+  body?: never;
+  path?: never;
+  query: {
+    /**
+     * Inclusive lower bound, epoch milliseconds.
+     */
+    from: number;
+    /**
+     * Exclusive upper bound, epoch milliseconds.
+     */
+    to: number;
+    /**
+     * nextCursor from the previous page.
+     */
+    cursor?: string;
+    /**
+     * Maximum runs to scan for this page (default 200).
+     */
+    limit?: number;
+  };
+  url: "/v1/automation-runs";
+};
+
+export type ListAutomationRunsInRangeErrors = {
+  /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+};
+
+export type ListAutomationRunsInRangeError = ListAutomationRunsInRangeErrors[keyof ListAutomationRunsInRangeErrors];
+
+export type ListAutomationRunsInRangeResponses = {
+  /**
+   * Runs in the range returned.
+   */
+  200: AutomationRunRange;
+};
+
+export type ListAutomationRunsInRangeResponse =
+  ListAutomationRunsInRangeResponses[keyof ListAutomationRunsInRangeResponses];
 
 export type GetAutomationRunData = {
   body?: never;

@@ -14,6 +14,9 @@ import {
   automationDetailSchema,
   automationExecutionTargetListSchema,
   automationListSchema,
+  AUTOMATION_RUN_RANGE_MAX_DAYS,
+  automationRunRangeQuerySchema,
+  automationRunRangeSchema,
   automationRunReceiptSchema,
   automationRunSchema,
   automationRunnerEventRequestSchema,
@@ -956,6 +959,22 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     }),
     orgMemberRoute(), paramValidator(idParamsSchema), queryValidator(paginationSchema),
     async (c) => c.json(await service.listRuns(scope(c), c.req.valid("param").id, c.req.valid("query"))),
+  )
+
+  app.get(
+    "/v1/automation-runs",
+    describeNonMcpRoute({
+      tags: ["Automations"], operationId: "listAutomationRunsInRange", "x-mcp": false,
+      summary: "List the caller's Automation runs in a time range",
+      description: `${routeDescription} Returns runs of every Automation the caller owns whose scheduled time (else start, else creation) falls in [from, to), for calendar views. At most ${AUTOMATION_RUN_RANGE_MAX_DAYS} days per request.`,
+      responses: {
+        200: jsonResponse("Runs in the range returned.", automationRunRangeSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+      },
+    }),
+    orgMemberRoute(), queryValidator(automationRunRangeQuerySchema),
+    async (c) => c.json(await service.listRunsInRange(scope(c), c.req.valid("query"))),
   )
 
   app.get(
