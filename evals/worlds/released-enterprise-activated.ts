@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { appendFile, copyFile, mkdir, rm } from "node:fs/promises";
+import { appendFile, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { createAndSelectWorkspace, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
@@ -354,7 +354,8 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
     newProfileDir(label: string): string {
       const root = seed.tmpPath(`released-${label}`);
       ownedProfiles.push(root);
-      return join(root, "profile");
+      // Named after the label: the local host keeps each log as <profile dir name>-electron.log.
+      return join(root, label);
     },
     async launch(options: LaunchOptions): Promise<ReleasedLaunch> {
       launchIndex += 1;
@@ -382,20 +383,15 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
         }
       }
       await waitForShipItIdle(60_000);
-      // Profiles live in throwaway temp roots; keep each launch's main-process
-      // log where packaged-smoke uploads evidence, so a CI failure is readable.
-      const keptLogs = process.env.OPENWORK_EVAL_SURFACES_DIR?.trim();
+      // The local host keeps each electron.log in OPENWORK_EVAL_SURFACE_LOGS_DIR;
+      // the renderer side only reaches the console, so keep that beside it. A
+      // swallowed failure (a workspace create that never lands) shows up here.
+      const keptLogs = process.env.OPENWORK_EVAL_SURFACE_LOGS_DIR?.trim();
       if (keptLogs) {
-        // An update scenario boots several executables on one profile, so keep one log per profile.
-        for (const profileDir of new Set(launches.map((launch) => launch.profileDir))) {
-          const target = join(keptLogs, basename(dirname(profileDir)));
-          await mkdir(target, { recursive: true }).catch(() => undefined);
-          await copyFile(join(profileDir, "electron.log"), join(target, "electron.log")).catch(() => undefined);
-        }
+        await mkdir(keptLogs, { recursive: true }).catch(() => undefined);
         for (const launch of launches) {
-          const target = join(keptLogs, basename(dirname(launch.profileDir)));
-          const lines = [`--- ${basename(launch.binary)} launch`, ...launch.consoleLines()].join("\n");
-          await appendFile(join(target, "renderer.log"), `${lines}\n`).catch(() => undefined);
+          const lines = [`--- ${basename(launch.binary)} on ${basename(dirname(launch.profileDir))}`, ...launch.consoleLines()].join("\n");
+          await appendFile(join(keptLogs, "renderer.log"), `${lines}\n`).catch(() => undefined);
         }
       }
       for (const profile of ownedProfiles) await rm(profile, { recursive: true, force: true }).catch(() => undefined);
