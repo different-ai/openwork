@@ -26,7 +26,7 @@ const title = skipReason
   : "MCP tools that mutate without an HTTP route record requested + outcome for the MCP caller, and the transport records nothing";
 
 type Row = Record<string, unknown>;
-type Envelope = { action: string; outcome: string; operationId: string; sequence: number; actor: Row; operation: Row; resources: Row[]; http: unknown; requestId: string | null };
+type Envelope = { action: string; outcome: string; operationId: string; actor: Row; operation: Row; resources: Row[]; http: unknown; requestId: string | null };
 
 function isRecord(value: unknown): value is Row {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -42,7 +42,7 @@ function text(value: unknown, label: string): string {
 function envelopeOf(value: unknown): Envelope {
   const raw = record(typeof value === "string" ? JSON.parse(value) : value, "audit envelope");
   return {
-    action: text(raw.action, "action"), outcome: text(raw.outcome, "outcome"), operationId: text(raw.operationId, "operationId"), sequence: Number(raw.sequence),
+    action: text(raw.action, "action"), outcome: text(raw.outcome, "outcome"), operationId: text(raw.operationId, "operationId"),
     actor: record(raw.actor, "actor"), operation: record(raw.operation, "operation"), resources: Array.isArray(raw.resources) ? raw.resources.filter(isRecord) : [],
     http: raw.http ?? null, requestId: typeof raw.requestId === "string" ? raw.requestId : null,
   };
@@ -64,12 +64,13 @@ function scratchDatabaseUrl(den: Den): string {
 async function sql(dbUrl: string, statement: string, values: (string | number)[] = []): Promise<Row[]> {
   return (await queryDenDatabase(dbUrl, statement, values)).filter(isRecord);
 }
-async function watermark(dbUrl: string, orgId: string): Promise<number> {
-  const rows = await sql(dbUrl, "SELECT COALESCE(MAX(sequence), 0) AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
-  return Number(rows[0]?.n ?? 0);
+async function watermark(dbUrl: string, orgId: string): Promise<string> {
+  // Newest event id: ids are time-ordered, so "after this id" means "recorded later".
+  const rows = await sql(dbUrl, "SELECT COALESCE(MAX(id), '') AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
+  return String(rows[0]?.n ?? "");
 }
-async function eventsAfter(dbUrl: string, orgId: string, after: number): Promise<Envelope[]> {
-  const rows = await sql(dbUrl, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND sequence > ? ORDER BY sequence", [orgId, after]);
+async function eventsAfter(dbUrl: string, orgId: string, after: string): Promise<Envelope[]> {
+  const rows = await sql(dbUrl, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND id > ? ORDER BY id", [orgId, after]);
   return rows.map((row) => envelopeOf(row.envelope));
 }
 
@@ -185,7 +186,7 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
 
   // 3. The MCP transport itself is never recorded, in the tenant log or the platform store.
   const transportRoutes = ["/mcp", "/mcp/agent", "/mcp/agent/connections/:connectionId", "/mcp/admin"];
-  const allEvents = await eventsAfter(dbUrl, orgId, 0);
+  const allEvents = await eventsAfter(dbUrl, orgId, "");
   const transportTenant = allEvents.filter((event) => isRecord(event.http) && transportRoutes.includes(String(event.http.route)));
   const transportPlatform = await sql(dbUrl, "SELECT route, action FROM platform_audit_event WHERE route IN (?, ?, ?, ?)", transportRoutes);
   expect(transportTenant.map((event) => event.action)).toEqual([]);

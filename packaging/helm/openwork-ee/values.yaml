@@ -215,6 +215,7 @@ secret:
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
     connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
+    maintenanceToken: DEN_MAINTENANCE_TOKEN
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     databaseHost: ""
@@ -238,6 +239,8 @@ secret:
     githubConnectorAppWebhookSecret: ""
     connectLinkPrivateKey: ""
     initialAdminBootstrapCode: ""
+    # 24+ characters. Only rendered when set; used by denApi.auditUsage.
+    maintenanceToken: ""
 
 installerArtifacts:
   enabled: false
@@ -257,6 +260,18 @@ denApi:
     loadBalancerClass: ""
     loadBalancerSourceRanges: []
   containerPort: 8788
+  # Daily audit usage refresh. Audit writes never update an organization's usage
+  # totals (retained operations, events, bytes); this CronJob recomputes them by
+  # calling den-api POST /internal/audit/usage/refresh. Same pattern as
+  # inference.retention. Needs a maintenance token: set secret.values.maintenanceToken,
+  # or tokenSecret/tokenKey to read it from your own Secret. The token is also given
+  # to den-api as DEN_MAINTENANCE_TOKEN. Without it, audit usage keeps its last totals.
+  auditUsage:
+    enabled: false
+    schedule: "30 3 * * *"
+    timeZone: "Etc/UTC"
+    tokenSecret: ""
+    tokenKey: DEN_MAINTENANCE_TOKEN
   env: {}
   podAnnotations: {}
   podLabels: {}

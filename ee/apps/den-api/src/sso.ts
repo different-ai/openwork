@@ -5,7 +5,7 @@ import { z } from "zod"
 import { auth } from "./auth.js"
 import { appendDomainChanges } from "./audit/domain/legacy.js"
 import { ssoConnectionDeletedEvent, type SsoConnectionAuditState } from "./audit/domain/sso.js"
-import { fenceAuditChanges, type AuditChangeCapture } from "./audit/request-capture.js"
+import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
 import { env } from "./env.js"
@@ -326,7 +326,6 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
   }
 
   const auditEventIds = await db.transaction(async (tx) => {
-    await fenceAuditChanges(tx, capture)
     const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
     const [provider] = before ? await tx.select({ domainVerified: SsoProviderTable.domainVerified }).from(SsoProviderTable)
       .where(and(eq(SsoProviderTable.providerId, connection.providerId), eq(SsoProviderTable.organizationId, organizationId))).limit(1) : []

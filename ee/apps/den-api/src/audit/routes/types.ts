@@ -4,7 +4,7 @@
 
 export const AUDIT_ROUTE_CLASSES = [
   "tenant_read", "tenant_access", "tenant_change", "tenant_external", "tenant_job", "tenant_signal",
-  "domain_provider", "domain_audit", "platform", "excluded_operational", "proxy", "support", "mcp_consumption",
+  "domain_provider", "domain_audit", "platform", "excluded_operational", "excluded_high_volume", "proxy", "support", "mcp_consumption",
 ] as const
 export type AuditRouteClass = typeof AUDIT_ROUTE_CLASSES[number]
 export type AuditRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "ALL" | "OPTIONS" | "HEAD"
@@ -57,6 +57,7 @@ export const AUDIT_ROUTE_EVENT_SUFFIXES: Readonly<Record<AuditRouteClass, readon
   domain_audit: [],
   platform: ["succeeded", "attempted"],
   excluded_operational: [],
+  excluded_high_volume: [],
   proxy: [],
   support: [],
   mcp_consumption: [],
@@ -69,7 +70,7 @@ export function auditRouteEventTypes(declaration: AuditRouteDeclaration): string
 export type AuditExclusion = Readonly<{ method: AuditRouteMethod; path: string; reason: string }>
 
 /**
- * Permitted exclusion (1 of 2, with OPERATIONAL_EXCLUSIONS): MCP transport endpoints agents use to call or consume
+ * Permitted exclusion (1 of 3, with OPERATIONAL_EXCLUSIONS and HIGH_VOLUME_EXCLUSIONS): MCP transport endpoints agents use to call or consume
  * an MCP. Management APIs for MCP connections, credentials, grants and plugins are
  * declared like any other route. Mutations these transports perform without
  * re-entering an HTTP route are audited at the service layer.
@@ -87,7 +88,7 @@ export const MCP_CONSUMPTION_EXCLUSIONS: readonly AuditExclusion[] = [
 const OPERATIONAL_REASON = "Liveness/readiness probes and service identity; not organization or user activity; must not depend on the database."
 
 /**
- * Permitted exclusion (2 of 2): the operational probes, declared class
+ * Permitted exclusion (2 of 3): the operational probes, declared class
  * excluded_operational and nothing else. Request capture records nothing for them
  * (no tenant or platform audit row, no audit database work).
  */
@@ -95,4 +96,15 @@ export const OPERATIONAL_EXCLUSIONS: readonly AuditExclusion[] = [
   { method: "GET", path: "/", reason: OPERATIONAL_REASON },
   { method: "GET", path: "/health", reason: OPERATIONAL_REASON },
   { method: "GET", path: "/ready", reason: OPERATIONAL_REASON },
+]
+
+/**
+ * Permitted exclusion (3 of 3): organization reads that clients fan out to in
+ * bulk, declared class excluded_high_volume and nothing else. Request capture
+ * records nothing for them: no intent, no outcome, no audit database work, and
+ * audit can never refuse or withhold the response. The content they return is
+ * still reachable through audited routes (plugin list/detail, config objects).
+ */
+export const HIGH_VOLUME_EXCLUSIONS: readonly AuditExclusion[] = [
+  { method: "GET", path: "/v1/plugins/:pluginId/resolved", reason: "Not audited (ENG-683). Den web (usePlugins, dashboard activity) and the desktop Connect inventory request it once per plugin, in parallel, on every load and sync: about 90 calls per load for a 90-plugin organization, 15.4k calls from five users in 3.5 hours. Recording an intent and an outcome for each filled the shared PlanetScale transaction pool. Read-only; returns a plugin's active items with their latest config object versions, the same content GET /v1/plugins/:pluginId/config-objects (audited, tenant_access) returns." },
 ]

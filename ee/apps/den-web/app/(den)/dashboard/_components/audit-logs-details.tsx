@@ -141,7 +141,7 @@ type DetailProps = { scope: AuditScope; onAccessError: (error: AuditReadError) =
 
 export function AuditTimeline({ scope, operationId, members, onAccessError }: DetailProps & { operationId: string; members: readonly DenOrgMember[] }) {
   const query = useAuditEvents(scope, operationId);
-  const events = (query.data?.pages.flatMap((page) => page.events) ?? []).sort((a, b) => a.sequence - b.sequence);
+  const events = (query.data?.pages.flatMap((page) => page.events) ?? []).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const accessError = isAuditAccessError(query.error) ? query.error : null;
   useEffect(() => { if (accessError) onAccessError(accessError); }, [accessError, onAccessError]);
   if (accessError) return <AuditLocked error={accessError} />;
@@ -163,7 +163,6 @@ export function AuditTimeline({ scope, operationId, members, onAccessError }: De
             <div><dt>Request</dt><dd className="font-mono">{event.requestId ?? "Not recorded"}</dd></div>
             {event.http ? <div><dt>HTTP request</dt><dd className="font-mono">{event.http.method} {event.http.route}</dd></div> : null}
             {event.http?.status !== undefined ? <div><dt>HTTP status</dt><dd className="font-mono">{event.http.status}</dd></div> : null}
-            <div><dt>Sequence</dt><dd>{event.sequence}</dd></div>
             <div><dt>Recorded</dt><dd><AuditTime value={event.recordedAt} /></dd></div>
             {event.resources.map((resource) => <div key={`${resource.type}-${resource.id}-${resource.relationship}`}><dt>{auditLabel(resource.relationship)}</dt><dd className="font-mono">{resource.type}: {resource.id}</dd></div>)}
           </dl>

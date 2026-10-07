@@ -511,6 +511,47 @@ secret:
     databaseRedisUrl: "redis://red-...:6379"
 ```
 
+## Audit usage refresh
+
+Audit writes never update an organization's audit usage totals (retained
+operations, events, logical bytes). That keeps each audit write independent, so
+writes never queue behind each other on a shared row. A daily CronJob recomputes
+the totals instead by calling den-api's `POST /internal/audit/usage/refresh`
+with a maintenance token. The audit usage screen shows when the totals were last
+measured. The CronJob is off by default. Turn it on with a token of 24 or more
+characters, either in the chart Secret:
+
+```yaml
+denApi:
+  auditUsage:
+    enabled: true
+secret:
+  values:
+    maintenanceToken: "<random 32+ character string>"
+```
+
+or from your own Secret:
+
+```yaml
+denApi:
+  auditUsage:
+    enabled: true
+    tokenSecret: den-maintenance
+    tokenKey: token
+```
+
+The same token is passed to den-api as `DEN_MAINTENANCE_TOKEN`; den-api answers
+404 on `/internal/*` when it is unset. `schedule` (default `30 3 * * *`) and
+`timeZone` (default `Etc/UTC`) are configurable. Non-Helm deployments need their
+own scheduled caller, for example:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $DEN_MAINTENANCE_TOKEN" \
+  http://<den-api>/internal/audit/usage/refresh
+```
+
+Render-only verification: `bash packaging/helm/openwork-ee/tests/den-audit-usage.sh`.
+
 ## Custom CA certificates
 
 For higher-level planning across desktop, sidecar, Den, and MySQL trust

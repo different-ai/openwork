@@ -30,7 +30,7 @@ export type AuditFilters = Partial<{
   searchId: string;
 }>;
 
-type AuditCursor = { cursor: string | null; snapshot: number | null; cursors: string[]; ids: string[] };
+type AuditCursor = { cursor: string | null; snapshot: string | null; cursors: string[]; ids: string[] };
 const firstPage: AuditCursor = { cursor: null, snapshot: null, cursors: [], ids: [] };
 const defaults = { retry: false, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false };
 export const auditPageSize = 50;
@@ -69,17 +69,17 @@ export function auditFilterParams(filters: AuditFilters) {
   return params;
 }
 
-function verifyPage(page: { nextCursor: string | null; snapshotSequence: number }, param: AuditCursor, ids: string[]) {
-  if ((param.snapshot !== null && page.snapshotSequence !== param.snapshot)
+function verifyPage(page: { nextCursor: string | null; snapshotAt: string }, param: AuditCursor, ids: string[]) {
+  if ((param.snapshot !== null && page.snapshotAt !== param.snapshot)
     || ids.length > auditPageSize || new Set(ids).size !== ids.length || ids.some((id) => param.ids.includes(id))
     || (page.nextCursor !== null && (!page.nextCursor || !ids.length || page.nextCursor === param.cursor || param.cursors.includes(page.nextCursor)))) {
     throw new Error("Audit pagination changed. Refresh from the first page to verify history.");
   }
 }
 
-function nextPage(page: { nextCursor: string | null; snapshotSequence: number }, param: AuditCursor, ids: string[]): AuditCursor | undefined {
+function nextPage(page: { nextCursor: string | null; snapshotAt: string }, param: AuditCursor, ids: string[]): AuditCursor | undefined {
   if (!page.nextCursor) return undefined;
-  return { cursor: page.nextCursor, snapshot: page.snapshotSequence, cursors: [...param.cursors, page.nextCursor], ids: [...param.ids, ...ids] };
+  return { cursor: page.nextCursor, snapshot: page.snapshotAt, cursors: [...param.cursors, page.nextCursor], ids: [...param.ids, ...ids] };
 }
 
 export async function getAuditOperations(scope: AuditScope, filters: AuditFilters, param: AuditCursor = firstPage, signal?: AbortSignal) {

@@ -7,7 +7,7 @@ import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { appendDomainChanges, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { roleCreatedEvent, roleDeletedEvent, roleUpdatedEvent } from "../../audit/domain/roles.js"
-import { auditChangeCapture, fenceAuditChanges } from "../../audit/request-capture.js"
+import { auditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
@@ -86,7 +86,6 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     const roleId = createRoleId()
     const capture = auditChangeCapture(c)
     const auditEventIds = await db.transaction(async (tx) => {
-      await fenceAuditChanges(tx, capture)
       await tx.insert(OrganizationRoleTable).values({
         id: roleId,
         organizationId: payload.organization.id,
@@ -190,7 +189,6 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
     // share fence (when captured) precedes the role/member/invitation row locks.
     const capture = auditChangeCapture(c)
     const update = await db.transaction(async (tx) => {
-      await fenceAuditChanges(tx, capture)
       const [locked] = await tx
         .select()
         .from(OrganizationRoleTable)
@@ -346,7 +344,6 @@ export function registerOrgRoleRoutes<T extends { Variables: OrgRouteVariables }
 
     const capture = auditChangeCapture(c)
     const auditEventIds = await db.transaction(async (tx) => {
-      await fenceAuditChanges(tx, capture)
       const [locked] = capture
         ? await tx.select().from(OrganizationRoleTable).where(eq(OrganizationRoleTable.id, roleRow.id)).limit(1).for("update")
         : []

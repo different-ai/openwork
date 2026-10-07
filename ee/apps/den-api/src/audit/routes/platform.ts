@@ -131,6 +131,9 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("POST", "/v1/org", "organization.create", "platform.user", "organization", null, "Creates a new org; no tenant exists before the handler and the new org has no audit rollout."),
   platform("POST", "/v1/bootstrap/workspace", "workspace.bootstrap.create", "workspace.bootstrap", "workspace_bootstrap", null, "Public, rate limited; creates a provisional org and returns a preclaim assertion."),
 
+  // Scheduled maintenance (bearer DEN_MAINTENANCE_TOKEN; 404 when unset)
+  platform("POST", "/internal/audit/usage/refresh", "audit.usage.refresh", "platform.maintenance", "audit_usage", null, "Called by the den-audit-usage cron (Helm CronJob, Render cron job). Recomputes every organization's audit_state totals from stored rows; no organization activity, so platform evidence only."),
+
   // Global platform admin
   platform("GET", "/v1/admin/overview", "platform.overview.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/metrics", "platform.metrics.read", "platform.admin", "platform_report", null, ADMIN),

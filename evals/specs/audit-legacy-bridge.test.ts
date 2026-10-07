@@ -86,12 +86,13 @@ async function sql(dbUrl: string, statement: string, values: (string | number)[]
 async function legacyRows(dbUrl: string, orgId: string): Promise<Row[]> {
   return sql(dbUrl, "SELECT id, action, payload FROM audit_event WHERE org_id = ? AND operation_id IS NULL ORDER BY created_at, id", [orgId]);
 }
-async function watermark(dbUrl: string, orgId: string): Promise<number> {
-  const rows = await sql(dbUrl, "SELECT COALESCE(MAX(sequence), 0) AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
-  return Number(rows[0]?.n ?? 0);
+async function watermark(dbUrl: string, orgId: string): Promise<string> {
+  // Newest event id: ids are time-ordered, so "after this id" means "recorded later".
+  const rows = await sql(dbUrl, "SELECT COALESCE(MAX(id), '') AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
+  return String(rows[0]?.n ?? "");
 }
-async function eventsAfter(dbUrl: string, orgId: string, after: number): Promise<Envelope[]> {
-  const rows = await sql(dbUrl, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND sequence > ? ORDER BY sequence", [orgId, after]);
+async function eventsAfter(dbUrl: string, orgId: string, after: string): Promise<Envelope[]> {
+  const rows = await sql(dbUrl, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND id > ? ORDER BY id", [orgId, after]);
   return rows.map((row) => envelopeOf(row.envelope));
 }
 async function roleId(dbUrl: string, orgId: string, role: string): Promise<string> {

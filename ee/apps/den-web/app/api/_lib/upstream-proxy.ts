@@ -40,7 +40,7 @@ const INTERNAL_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "x-vercel-id",
 ]);
-const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-audit-next-cursor", "x-audit-snapshot-sequence", "x-audit-resource-scope"]);
+const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-audit-next-cursor", "x-audit-snapshot-at", "x-audit-resource-scope"]);
 const AUTH_COOKIE_PREFIXES = [
   "openwork-den.",
   "__Secure-openwork-den.",

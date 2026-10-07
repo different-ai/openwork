@@ -67,7 +67,7 @@ test("a flagged owner records and filters audit history by default while an unfl
     if (!operation) throw new Error(`No operation recorded ${action}`);
     const eventsResponse = await probe.api(world.den.admin, `/v1/audit/operations/${encodeURIComponent(operation.id)}/events?limit=50`);
     expect(eventsResponse.response.status).toBe(200);
-    const events = auditEventsResponseSchema.parse(eventsResponse.body).events.sort((a, b) => a.sequence - b.sequence);
+    const events = auditEventsResponseSchema.parse(eventsResponse.body).events.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     return { operation, events, text: eventsResponse.text };
   }
 
