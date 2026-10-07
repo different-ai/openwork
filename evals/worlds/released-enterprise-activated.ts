@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { createAndSelectWorkspace, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
@@ -350,6 +350,17 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
         }
       }
       await waitForShipItIdle(60_000);
+      // Profiles live in throwaway temp roots; keep each launch's main-process
+      // log where packaged-smoke uploads evidence, so a CI failure is readable.
+      const keptLogs = process.env.OPENWORK_EVAL_SURFACES_DIR?.trim();
+      if (keptLogs) {
+        // An update scenario boots several executables on one profile, so keep one log per profile.
+        for (const profileDir of new Set(launches.map((launch) => launch.profileDir))) {
+          const target = join(keptLogs, basename(dirname(profileDir)));
+          await mkdir(target, { recursive: true }).catch(() => undefined);
+          await copyFile(join(profileDir, "electron.log"), join(target, "electron.log")).catch(() => undefined);
+        }
+      }
       for (const profile of ownedProfiles) await rm(profile, { recursive: true, force: true }).catch(() => undefined);
     },
   };
