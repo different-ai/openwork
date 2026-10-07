@@ -1,5 +1,6 @@
 import type { DesktopConfig, DesktopExecutionPolicy } from "@openwork/types/den/desktop-policies";
-import type { PolicyRuleAction, SourcedPolicyRule } from "@openwork/types/den/policy-rules";
+import { policyRuleDenial, policyRuleDenialMessage, type PolicyRuleAction, type SourcedPolicyRule } from "@openwork/types/den/policy-rules-runtime";
+import { isOrganizationMcpName } from "./organization-mcp-names.js";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { z } from "zod";
 
@@ -22,10 +23,16 @@ export function executionRules(policy: DesktopExecutionPolicy | undefined): Engi
   return rules;
 }
 /** Team rule actions the v2 engine evaluates natively, as its own permission rules. */
-export const TEAM_ENGINE_ACTIONS: readonly PolicyRuleAction[] = ["shell"];
+export const TEAM_ENGINE_ACTIONS: readonly PolicyRuleAction[] = ["shell", "skill"];
 /** The member's team rules the engine evaluates, in order, without their policy labels. */
 export function teamEngineRules(rules: readonly SourcedPolicyRule[] | undefined): EnginePermissionRule[] {
   return (rules ?? []).flatMap(({ action, resource, effect }) => TEAM_ENGINE_ACTIONS.includes(action) ? [{ action, resource, effect }] : []);
+}
+/** Why the member's team rules block adding this local skill or MCP server, or null. */
+export function teamRuleNameDenial(rules: readonly SourcedPolicyRule[] | undefined, action: "skill" | "mcp", name: string): string | null {
+  if (action === "mcp" && isOrganizationMcpName(name)) return null;
+  const denial = policyRuleDenial(rules, action, [name]);
+  return denial ? policyRuleDenialMessage(denial) : null;
 }
 type LegacyExecutionPermissions = {
   bash?: Record<string, "allow" | "deny">;

@@ -106,7 +106,7 @@ editorTest("an owner writes the Contractors team's command rules in its permissi
   });
 });
 
-chatTest("a contractor's agent cannot run a command the Contractors rules block, while a colleague outside the team can", async ({ world, user, agent, probe, step, evidence }) => {
+chatTest("a contractor's agent works within the Contractors rules for commands, local skills and local MCP servers, while a colleague outside the team does not", async ({ world, user, agent, probe, step, evidence }) => {
   const riley = { user: user.on(world.riley.app), agent: agent.on(world.riley.app) };
   const morgan = { user: user.on(world.morgan.app), agent: agent.on(world.morgan.app) };
   const settledShell = (member: typeof world.riley) => probe.eventually(() => member.shellCall(), {
@@ -149,6 +149,41 @@ chatTest("a contractor's agent cannot run a command the Contractors rules block,
     expect(call?.status).toBe("completed");
     expect(wrote).toBe(true);
     await morgan.user.see({ text: "I tried to save the note." }, { timeoutMs: 60_000 });
+    await morgan.user.screenshot();
+  });
+
+  await step("the contractor's agent cannot load a local skill, and the folder's local MCP server is disabled", async () => {
+    await riley.user.type("composer", world.riley.skillPrompt);
+    await riley.agent.run("composer.send");
+    const call = await probe.eventually(() => world.riley.skillCall(), { within: 120_000, label: "the skill call settled", until: (found) => found !== null });
+    const server = await world.riley.notesServerStatus();
+    const told = call?.error.includes('"Contractors Permissions" (rule: *)') === true;
+    evidence.recordAssertionEvidence("Riley's local skill and MCP server", `skill call: ${call?.status ?? "none"} (${call?.error || "no error"}); notes-server: ${server ?? "absent"}`, call?.status === "error" && told && server === "disabled");
+    expect(call?.status).toBe("error");
+    expect(told).toBe(true);
+    expect(server).toBe("disabled");
+    await riley.user.see({ text: "I tried the team notes skill." }, { timeoutMs: 60_000 });
+    await riley.user.screenshot();
+  });
+
+  await step("adding another local MCP server is refused for the contractor, with the rule that blocks it", async () => {
+    const added = await world.riley.addLocalMcp("meeting-notes");
+    const told = added.message.includes('"Contractors Permissions" (rule: *)');
+    evidence.recordAssertionEvidence("Riley adds a local MCP server", `HTTP ${added.status}: ${added.message}`, added.status === 403 && told);
+    expect(added.status).toBe(403);
+    expect(told).toBe(true);
+  });
+
+  await step("the colleague outside the team loads the same skill and keeps the folder's MCP server", async () => {
+    await morgan.user.type("composer", world.morgan.skillPrompt);
+    await morgan.agent.run("composer.send");
+    const call = await probe.eventually(() => world.morgan.skillCall(), { within: 120_000, label: "the skill call settled", until: (found) => found !== null });
+    const server = await world.morgan.notesServerStatus();
+    evidence.recordAssertionEvidence("Morgan's local skill and MCP server", `skill call: ${call?.status ?? "none"}; notes-server: ${server ?? "absent"}`, call?.status === "completed" && server !== null && server !== "disabled");
+    expect(call?.status).toBe("completed");
+    expect(server).not.toBeNull();
+    expect(server).not.toBe("disabled");
+    await morgan.user.see({ text: "I tried the team notes skill." }, { timeoutMs: 60_000 });
     await morgan.user.screenshot();
   });
 });

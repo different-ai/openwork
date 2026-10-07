@@ -7,7 +7,7 @@ import { isRecord } from "./workspace-kv-store.js";
 import { externalFetch } from "./server-fetch.js";
 import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
-import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
+import { policyDenial, policyRequestActions, teamRuleNameDenial, type ManagedPolicyAction } from "./managed-policy-rules.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
 /** Org-managed providers: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
@@ -268,6 +268,11 @@ class ManagedDesktopPolicy {
     if (!isRecord(body)) return;
     const model = isRecord(body.model) ? body.model : body;
     if (typeof model.providerID === "string") await this.assert("model", { providerID: model.providerID });
+  }
+  /** Refuses a local skill or MCP server the member's team rules block, using the last verified policy. */
+  async assertTeamRule(action: "skill" | "mcp", name: string): Promise<void> {
+    const denial = teamRuleNameDenial((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy?.rules, action, name);
+    if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
   /** The policy to enforce now: verified for this sign-in, else the last one verified for it; never waits on Den. */
   private knownPolicy(): DesktopConfig | null {
