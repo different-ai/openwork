@@ -32,7 +32,9 @@ export type AuditFilters = Partial<{
 
 type AuditCursor = { cursor: string | null; snapshot: number | null; cursors: string[]; ids: string[] };
 const firstPage: AuditCursor = { cursor: null, snapshot: null, cursors: [], ids: [] };
-const defaults = { retry: false, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false };
+// Reads retry once on 503: two first reads at once can collide while the audit policy is set up.
+const retryUnavailableOnce = (failureCount: number, error: Error) => failureCount < 1 && error instanceof AuditReadError && error.status === 503;
+const defaults = { retry: retryUnavailableOnce, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false };
 export const auditPageSize = 50;
 
 export class AuditReadError extends Error {

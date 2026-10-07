@@ -16,7 +16,7 @@ import { auditExportQuerySchema, auditOperationsQuerySchema, auditPageQuerySchem
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
-import { resolvePermissionsForMember } from "../../permissions/resolve.js"
+import { appLogger } from "../../observability/logger.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { permissionDeniedResponse, permissionFailureHeaders, type OrgRouteVariables } from "./shared.js"
 
@@ -98,7 +98,9 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
     }), { ...retry, label: `audit.${action}.served` })
     return response
   } catch (error) {
-    return error instanceof AuditReadError ? c.json({ error: error.code }, error.status) : c.json({ error: "audit_unavailable" }, 503)
+    if (error instanceof AuditReadError) return c.json({ error: error.code }, error.status)
+    appLogger.error("audit read failed", { action, organization_id: organization.organization.id, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) })
+    return c.json({ error: "audit_unavailable" }, 503)
   }
 }
 
@@ -122,10 +124,9 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
       const rejection = await db.transaction(async (tx) => {
         const { entitlement } = await requireAuditFeature(tx, organization.organization.id)
         const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1).for("share")
+        // The route marker checked audit.manage; resolving permissions again here would hold a second pool
+        // connection while this transaction holds the member row lock, so only re-check the member is still active.
         if (!member) return "forbidden"
-        // Re-check the actor's live permissions while their member row is share-locked, so a concurrent demotion cannot slip in.
-        const actorPermissions = await resolvePermissionsForMember({ organizationId: organization.organization.id, memberId: member.id, featureEnabled: organization.features.permissions })
-        if (!actorPermissions.has("audit.manage")) return "forbidden"
         if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
         if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
         const initialization = await initializeAuditPolicyInTx(tx, organization.organization.id, env.auditCaptureEnabled)

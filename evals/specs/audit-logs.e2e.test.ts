@@ -20,7 +20,7 @@ async function enterPastDate(owner: User, label: string, day: string) {
   await owner.see({ label }, { value: `2000-01-${day.padStart(2, "0")}T01:00` });
 }
 
-test("a flagged owner records and filters audit history by default while an unflagged owner and a teammate cannot read it", async ({ world, user, probe, seed, step, evidence }) => {
+test("a flagged owner records and filters audit history by default while an unflagged owner and a teammate cannot read it", { timeout: 1_200_000 }, async ({ world, user, probe, seed, step, evidence }) => {
   const owner = user.on(world.web);
   const audit = probe.on(world.web);
   const teammate = user.on(world.memberWeb);

@@ -1,6 +1,6 @@
 import { denFetch, freshSession, signIn } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import type { Seed } from "@openwork/env";
+import { SkipError, type Place, type Seed } from "@openwork/env";
 import { isRecord } from "./openwork-server-cli.ts";
 
 export const WORKSPACE_ORIGIN = "https://workspace.example.test:8787";
@@ -25,7 +25,8 @@ async function activate(seed: Seed, session: DenSession, organizationId: string)
   if (!result.response.ok) throw new Error(`Selecting the active organization failed: HTTP ${result.response.status}`);
 }
 
-export async function orgWebOrigins(seed: Seed) {
+export async function orgWebOrigins(seed: Seed, { place }: { place: Place }) {
+  if (place.kind !== "local") throw new SkipError("local placement (--local): the Daytona preview proxy answers CORS for den-api itself (DEN_CORS_HANDLED_BY_EDGE), so Den's approved-origin CORS decisions cannot be observed there");
   const runId = Date.now().toString(36);
   const den = await seed.den({
     org: {

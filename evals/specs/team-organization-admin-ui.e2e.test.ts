@@ -12,7 +12,7 @@ import { denyInAdminPermissions } from "../worlds/permissions.ts";
 // checkbox but cannot change it.
 test("owners toggle team Admin in Den Web while inherited admins without Manage Admin teams see a disabled checkbox and provenance", { timeout: 600_000 }, async ({ place, evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
-  await using den = await server({ place, web: true, org: { name: "Team Admin UI", members: { teammate: { name: "Inherited Teammate" } } } });
+  await using den = await server({ place, web: true, org: { name: "Team Admin UI", admin: { name: "Team Admin Owner" }, members: { teammate: { name: "Inherited Teammate" } } } });
   const teammate = den.members.teammate;
   if (!teammate) throw new Error("Missing teammate");
   const org = async (session = den.admin) => {
