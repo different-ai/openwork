@@ -431,7 +431,7 @@ test("archiving exits only the viewed conversation, and working sessions require
     const sideChatBadge = `[data-sidebar-session-workspace-id="${a2.workspaceId}"][data-sidebar-session-id="${a2.sessionId}"] [data-session-side-chat="${b1.sessionId}"]`;
     for (const target of [b1, a2]) {
       await user.press(world.paletteShortcut);
-      await user.type({ placeholder: "Search actions, settings, and sessions\u2026" }, "Open as side chat", { replace: true });
+      await user.type({ placeholder: "Search actions and settings\u2026" }, "Open as side chat", { replace: true });
       await user.click({ role: "option", label: /^Open as side chat/ });
       const splitSearch = { placeholder: "Search sessions and workspaces..." };
       await user.type(splitSearch, b1.title, { replace: true });

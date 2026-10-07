@@ -4,7 +4,7 @@ import { spec } from "@openwork/testkit";
 import { newSplitPrimary } from "../worlds/chat.ts";
 
 const test = spec.world(newSplitPrimary, { timeout: 600_000 });
-const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
+const paletteInput = { placeholder: "Search actions and settings…" };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

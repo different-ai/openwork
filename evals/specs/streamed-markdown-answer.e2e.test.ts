@@ -173,7 +173,7 @@ historyTest("v1 keeps long tool-rich history ordered and its detected links avai
     .flatMap(text => text.match(/Settled history \d{3}\./g) ?? []);
   const expectTargets = async (names: string[], present = true) => {
     await user.press(place.kind === "local" && process.platform === "darwin" ? "Meta+K" : "Control+K");
-    const rootSearch = { placeholder: "Search actions, settings, and sessions…" };
+    const rootSearch = { placeholder: "Search actions and settings…" };
     await user.type(rootSearch, "Accessible items", { replace: true });
     await user.click({ role: "option", label: /^Accessible items/ });
     const search = { placeholder: "Search servers and artifacts..." };

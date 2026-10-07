@@ -2,7 +2,7 @@ import { spec } from "@openwork/testkit";
 import { paletteSessionActions } from "../worlds/chat.ts";
 
 const test = spec.world(paletteSessionActions);
-const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
+const paletteInput = { placeholder: "Search actions and settings…" };
 const paletteFooter = { text: "Arrow keys to navigate" };
 
 test("the command palette pins and renames the open session", async ({ world, user, probe, step, place }) => {

@@ -141,7 +141,7 @@ test(`${live ? "real LLM" : "deterministic"}: completed workspace history surviv
   const createChat = async (workspaceId: string, engine: Engine, entry: "button" | "palette" | "sidebar", marker: string) => {
     const before = await readSessions(workspaceId, engine);
     if (entry === "palette") {
-      const input = { placeholder: "Search actions, settings, and sessions…" };
+      const input = { placeholder: "Search actions and settings…" };
       await user.press(world.paletteShortcut);
       await user.type(input, "New session", { replace: true });
       await user.click({ role: "option", label: /^New session\b/ });
