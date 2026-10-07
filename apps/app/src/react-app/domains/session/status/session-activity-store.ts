@@ -2,7 +2,9 @@
 import { create } from "zustand";
 import { isToolUIPart, type UIMessage } from "ai";
 import { isTaskToolPart, taskChildSessionId } from "../../../../lib/build-in-tools";
+import { isToolPartInFlight } from "../../../../lib/tool-activity";
 import { transcriptProgress } from "./session-progress";
+import { messageActivity, messageNotice, readRunActivities, type RunActivity, type SessionNotice } from "../../../../lib/session-run";
 
 import { t } from "../../../../i18n";
 
@@ -21,6 +23,9 @@ type TranscriptActivity = {
 };
 
 type SessionActivityRecord = {
+  runs: Record<string, RunActivity>;
+  currentRunId: string | null;
+  pendingNotice: SessionNotice | null;
   status: SessionActivityStatus;
   runActive: boolean;
   retrying: boolean;
@@ -42,11 +47,14 @@ type SessionActivityRecord = {
   waitingQuestionIds: string[];
   messageRoles: Record<string, SessionMessageRole>;
   childSessionIds: string[];
+  foregroundChildIds: string[];
+  independentToolActive: boolean;
   updatedAt: number;
 };
 
 type SessionLike = {
   id: string;
+  parentID?: string | null;
   status?: unknown;
   state?: unknown;
   runStatus?: unknown;
@@ -72,6 +80,10 @@ type SessionActivityStore = {
     options?: { snapshotStartedAt?: number },
   ) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
+  bindRunTimingScope: (workspaceId: string, sessionId: string, owner: string | null) => void;
+  beginRun: (workspaceId: string, sessionId: string, promptId: string, startedAt: number) => void;
+  cancelUnadmittedRun: (workspaceId: string, sessionId: string, promptId: string) => void;
+  markRunStopped: (workspaceId: string, sessionId: string) => void;
   observeTranscript: (
     workspaceId: string,
     sessionId: string,
@@ -90,6 +102,9 @@ type SessionActivityStore = {
 };
 
 const createRecord = (): SessionActivityRecord => ({
+  runs: {},
+  currentRunId: null,
+  pendingNotice: null,
   status: "idle",
   runActive: false,
   retrying: false,
@@ -109,6 +124,8 @@ const createRecord = (): SessionActivityRecord => ({
   waitingQuestionIds: [],
   messageRoles: {},
   childSessionIds: [],
+  foregroundChildIds: [],
+  independentToolActive: false,
   updatedAt: 0,
 });
 
@@ -194,6 +211,9 @@ function sameActivityRecord(
   status: SessionActivityStatus,
 ): boolean {
   return current.status === status
+    && current.runs === next.runs
+    && current.currentRunId === next.currentRunId
+    && current.pendingNotice === next.pendingNotice
     && current.runActive === next.runActive
     && current.retrying === next.retrying
     && current.runStatusAt === next.runStatusAt
@@ -213,24 +233,71 @@ function sameActivityRecord(
     && sameStrings(current.waitingPermissionIds, next.waitingPermissionIds)
     && sameStrings(current.waitingQuestionIds, next.waitingQuestionIds)
     && sameMessageRoles(current.messageRoles, next.messageRoles)
-    && sameStrings(current.childSessionIds, next.childSessionIds);
+    && sameStrings(current.childSessionIds, next.childSessionIds)
+    && sameStrings(current.foregroundChildIds, next.foregroundChildIds)
+    && current.independentToolActive === next.independentToolActive;
 }
 
 type SessionActivityDerivedState = Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId" | "waitingByWorkspaceId">;
+
+// The history owner includes the principal, server, workspace and session.
+// Until a surface supplies it, activity is live-only and is never persisted.
+const timingOwners = new Map<string, string | null>();
+const timingIdentity = (workspaceId: string, sessionId: string) => JSON.stringify([workspaceId, sessionId]);
+function readTiming(owner: string | null | undefined) {
+  if (!owner || typeof localStorage === "undefined") return {};
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(`openwork:run-timing:${owner}`) ?? "null");
+    return saved && typeof saved === "object" && "runs" in saved ? readRunActivities(saved.runs) : {};
+  } catch { return {}; }
+}
 
 function updateRecord(
   state: SessionActivityDerivedState,
   workspaceId: string,
   sessionId: string,
   updater: (record: SessionActivityRecord) => SessionActivityRecord,
+  visited = new Set<string>(),
 ): SessionActivityDerivedState {
+  if (visited.has(sessionId)) return state;
+  visited.add(sessionId);
   const workspaceRecords = state.recordsByWorkspaceId[workspaceId] ?? {};
   const currentRecord = workspaceRecords[sessionId];
-  const nextRecord = updater(currentRecord ?? createRecord());
+  let nextRecord = updater(currentRecord ?? createRecord());
+  const now = Date.now();
+  const previous = currentRecord ?? createRecord();
+  const owner = timingOwners.get(timingIdentity(workspaceId, sessionId));
+  if (!currentRecord) nextRecord = { ...nextRecord, runs: { ...readTiming(owner), ...nextRecord.runs } };
+  if (nextRecord.runActive && !previous.runActive) {
+    const id = nextRecord.currentRunId && !nextRecord.runs[nextRecord.currentRunId]?.endedAt ? nextRecord.currentRunId : nextRecord.pendingNotice?.id ?? `run:${nextRecord.runStartedAt || now}`;
+    const saved = nextRecord.runs[id];
+    nextRecord = { ...nextRecord, currentRunId: id, pendingNotice: null, runs: { ...nextRecord.runs,
+      [id]: saved && !saved.endedAt ? saved : { id, initiator: nextRecord.pendingNotice ? "notice" : "restored", startedAt: nextRecord.pendingNotice?.timestamp || nextRecord.runStartedAt || now, waiting: [] } } };
+  }
+  const runId = nextRecord.currentRunId;
+  const run = runId ? nextRecord.runs[runId] : undefined;
+  if (run && !run.endedAt) {
+    const waiting = nextRecord.waitingPermissionIds.length + nextRecord.waitingQuestionIds.length > 0
+      || nextRecord.foregroundChildIds.length > 0 && !nextRecord.independentToolActive && nextRecord.foregroundChildIds.every(id => {
+        const child = workspaceRecords[id];
+        return (child?.waitingPermissionIds.length ?? 0) + (child?.waitingQuestionIds.length ?? 0) > 0;
+      });
+    const last = run.waiting.at(-1);
+    let waits = run.waiting;
+    if (waiting && (!last || last.end !== undefined)) waits = [...waits, { start: now }];
+    if (!waiting && last && last.end === undefined) waits = [...waits.slice(0, -1), { ...last, end: now }];
+    if (waits !== run.waiting || !nextRecord.runActive) {
+      nextRecord = { ...nextRecord, runs: { ...nextRecord.runs, [run.id]: { ...run, waiting: waits,
+        ...(!nextRecord.runActive ? { endedAt: now, outcome: run.outcome ?? (nextRecord.errorActive ? "failed" as const : "completed" as const) } : {}) } } };
+    }
+  }
+  if (owner && nextRecord.runs !== previous.runs && typeof localStorage !== "undefined") {
+    try { localStorage.setItem(`openwork:run-timing:${owner}`, JSON.stringify({ runs: Object.fromEntries(Object.entries(nextRecord.runs).slice(-200)) })); } catch { /* Storage may be disabled. */ }
+  }
   const status = statusForRecord(nextRecord);
   if (currentRecord && sameActivityRecord(currentRecord, nextRecord, status)) return state;
   const recordWithStatus = { ...nextRecord, status, updatedAt: Date.now() };
-  return {
+  let nextState: SessionActivityDerivedState = {
     recordsByWorkspaceId: {
       ...state.recordsByWorkspaceId,
       [workspaceId]: {
@@ -241,6 +308,10 @@ function updateRecord(
     statusesByWorkspaceId: updateWorkspaceStatus(state.statusesByWorkspaceId, workspaceId, sessionId, status),
     waitingByWorkspaceId: updateWorkspaceWaiting(state.waitingByWorkspaceId, workspaceId, sessionId, waitingKindForRecord(nextRecord)),
   };
+  for (const [parentId, parent] of Object.entries(workspaceRecords)) {
+    if (parent.foregroundChildIds.includes(sessionId)) nextState = updateRecord(nextState, workspaceId, parentId, record => record, visited);
+  }
+  return nextState;
 }
 
 // Message roles are only consulted while a run is active to decide whether a
@@ -296,6 +367,27 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
   recordsByWorkspaceId: {},
   statusesByWorkspaceId: {},
   waitingByWorkspaceId: {},
+  bindRunTimingScope: (workspaceId, sessionId, owner) => {
+    const identity = timingIdentity(workspaceId, sessionId);
+    const previousOwner = timingOwners.get(identity);
+    if (timingOwners.has(identity) && previousOwner === owner) return;
+    timingOwners.set(identity, owner);
+    if (timingOwners.size > 500) timingOwners.delete(timingOwners.keys().next().value!);
+    const saved = readTiming(owner);
+    set(state => updateRecord(state, workspaceId, sessionId, record => {
+      const changedOwner = previousOwner !== undefined && previousOwner !== owner;
+      let runs = changedOwner ? saved : { ...record.runs, ...saved };
+      const current = !changedOwner && record.currentRunId ? runs[record.currentRunId] : undefined;
+      let currentRunId = current ? record.currentRunId : null;
+      if (changedOwner && record.runActive) {
+        currentRunId = `run:${Date.now()}`;
+        runs = { ...runs, [currentRunId]: { id: currentRunId, initiator: "restored", startedAt: Date.now(), waiting: [] } };
+      }
+      return { ...record, runs, currentRunId,
+        ...(changedOwner ? { runStartedAt: record.runActive ? Date.now() : 0 } : {}),
+        ...(current && !current.endedAt ? { runStartedAt: current.startedAt } : {}) };
+    }));
+  },
   getStatus: (workspaceId, sessionId) => (
     get().statusesByWorkspaceId[workspaceId]?.[sessionId] ?? "idle"
   ),
@@ -323,6 +415,10 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       for (const session of sessions) {
         const sessionId = session.id.trim();
         if (!sessionId) continue;
+        if (session.parentID && session.parentID !== sessionId) {
+          nextState = updateRecord(nextState, id, session.parentID, record => ({ ...record,
+            childSessionIds: addValue(record.childSessionIds, sessionId) }));
+        }
         const status = sessionRunStatus(session);
         if (status === undefined || status === null) continue;
         nextState = updateRecord(nextState, id, sessionId, (record) => {
@@ -401,29 +497,74 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       };
     }));
   },
+  beginRun: (workspaceId, sessionId, promptId, startedAt) => {
+    set(state => updateRecord(state, workspaceId, sessionId, record => {
+      if (record.runActive && record.currentRunId) {
+        const run = record.runs[record.currentRunId];
+        if (run && !run.promptIds?.includes(promptId)) return { ...record, runs: { ...record.runs,
+          [run.id]: { ...run, promptIds: [...(run.promptIds ?? [run.id]), promptId] } } };
+        return record;
+      } // Steering belongs to the current run.
+      return { ...record, runActive: true, runStartedAt: startedAt, runStatusAt: startedAt,
+        currentRunId: promptId, pendingNotice: null, assistantOutput: false, errorActive: false, errorMessage: null,
+        runs: { ...record.runs, [promptId]: { id: promptId, promptIds: [promptId], initiator: "prompt", startedAt, waiting: [] } } };
+    }));
+  },
+  cancelUnadmittedRun: (workspaceId, sessionId, promptId) => {
+    set(state => updateRecord(state, workspaceId, sessionId, record => {
+      if (record.currentRunId !== promptId) {
+        const run = record.currentRunId ? record.runs[record.currentRunId] : undefined;
+        if (!run?.promptIds?.includes(promptId)) return record;
+        return { ...record, runs: { ...record.runs, [run.id]: { ...run, promptIds: run.promptIds.filter(id => id !== promptId) } } };
+      }
+      if (record.assistantOutput) return record;
+      const runs = { ...record.runs };
+      delete runs[promptId];
+      return { ...record, runs, currentRunId: null, runActive: false, runStartedAt: 0 };
+    }));
+  },
+  markRunStopped: (workspaceId, sessionId) => {
+    set(state => updateRecord(state, workspaceId, sessionId, record => {
+      const id = record.currentRunId;
+      if (!id || !record.runs[id]) return record;
+      return { ...record, runs: { ...record.runs, [id]: { ...record.runs[id], outcome: "stopped" } } };
+    }));
+  },
   observeTranscript: (workspaceId, sessionId, messages, snapshot = false, options = {}) => {
     set((state) => updateRecord(state, workspaceId, sessionId, (record) => {
       const progress = transcriptProgress(messages, record.progressParts);
       const childSessionIds = new Set(record.childSessionIds);
+      const foregroundChildIds: string[] = [];
+      let independentToolActive = false;
       for (const message of messages) {
         if (message.role !== "assistant") continue;
         for (const part of message.parts) {
-          if (!isToolUIPart(part) || !isTaskToolPart(part)) continue;
+          if (!isToolUIPart(part)) continue;
+          if (!isTaskToolPart(part)) { if (isToolPartInFlight(part)) independentToolActive = true; continue; }
           const childId = taskChildSessionId(part);
           if (childId) childSessionIds.add(childId);
+          if (childId && isToolPartInFlight(part) && part.input?.background !== true) foregroundChildIds.push(childId);
         }
       }
       const snapshotStartedAt = options.snapshotStartedAt;
-      const turnChanged = record.transcriptActivity !== null
+      const activeRun = record.currentRunId ? record.runs[record.currentRunId] : undefined;
+      // A live admission or native continuation owns its steering messages.
+      // A coarse restored busy status does not establish that association:
+      // newer transcript prompts must clear the previous turn's activity.
+      const joinsBusyRun = record.runActive && Boolean(record.currentRunId)
+        && (activeRun?.initiator !== "restored" || Boolean(progress.latestUserId && activeRun.promptIds?.includes(progress.latestUserId)));
+      const turnChanged = !joinsBusyRun && record.transcriptActivity !== null
         && record.transcriptActivity.latestUserId !== progress.latestUserId;
       const progressChanged = record.progressRevision !== progress.revision;
       const observedAt = snapshot ? snapshotStartedAt ?? 0 : turnChanged || progressChanged ? Date.now() : 0;
       const next = reconcileTranscriptActivity({
         ...record,
+        foregroundChildIds: sameStrings(record.foregroundChildIds, foregroundChildIds) ? record.foregroundChildIds : foregroundChildIds,
+        independentToolActive,
         childSessionIds: childSessionIds.size === record.childSessionIds.length ? record.childSessionIds : [...childSessionIds],
         ...(turnChanged ? {
           assistantOutput: false,
-          runStartedAt: record.runActive
+          runStartedAt: record.runActive && (!record.currentRunId || record.runs[record.currentRunId]?.initiator === "restored")
             ? Math.max(record.runStartedAt, progress.latestUserCreated ?? (snapshot ? 0 : Date.now()))
             : record.runStartedAt,
           runHydrationAfter: null,
@@ -436,6 +577,28 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           activeStartedAt: progress.activeStartedAt,
         },
       });
+      // Adopt the initiating prompt once, without restarting a busy run for
+      // steering messages. Native notice runs retain their own identity.
+      if (next.runActive && next.currentRunId?.startsWith("run:") && progress.latestUserId) {
+        const run = next.runs[next.currentRunId];
+        if (run) {
+          next.currentRunId = progress.latestUserId;
+          next.runs = { ...next.runs, [progress.latestUserId]: next.runs[progress.latestUserId] && !next.runs[progress.latestUserId].endedAt
+              ? next.runs[progress.latestUserId] : { ...run, id: progress.latestUserId, startedAt: progress.latestUserCreated ?? run.startedAt } };
+        }
+      }
+      const last = messages.at(-1);
+      const notice = last ? messageNotice(last) : null;
+      if (notice && !next.runActive && !next.runs[notice.id] && next.pendingNotice?.id !== notice.id) next.pendingNotice = notice;
+      if (next.runActive && next.currentRunId) {
+        const run = next.runs[next.currentRunId];
+        const joined = messages.map(messageNotice).filter(notice => notice && notice.timestamp >= (run?.startedAt ?? Infinity))
+          .map(notice => notice!.id).filter(id => id !== run?.id && !next.runs[id] && !run?.noticeIds?.includes(id));
+        if (run && joined.length) next.runs = { ...next.runs, [run.id]: { ...run, noticeIds: [...(run.noticeIds ?? []), ...joined] } };
+      }
+      if (last && messageActivity(last).outcome === "stopped" && next.currentRunId && next.runs[next.currentRunId]) {
+        next.runs = { ...next.runs, [next.currentRunId]: { ...next.runs[next.currentRunId], outcome: "stopped" } };
+      }
       // History may have established progress before status arrived. Activity
       // enrichment must still run when its fingerprint is already known.
       if (!progressChanged) return next;

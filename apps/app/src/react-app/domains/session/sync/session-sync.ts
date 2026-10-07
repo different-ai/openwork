@@ -1,3 +1,4 @@
+import { projectedMessageMetadata, reasoningProviderMetadata } from "../../../../lib/session-run";
 import type { UIMessage } from "ai";
 import { create } from "zustand";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
@@ -904,7 +905,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "reasoning",
       text: part.text,
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: reasoningProviderMetadata(part),
     };
   }
   if (part.type === "file") {
@@ -929,7 +930,10 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
 }
 
 function toUIParts(part: Part): UIMessage["parts"] {
-  if (part.type === "text" && part.synthetic) return attachmentNoteToUIParts(part);
+  if (part.type === "text" && part.synthetic) {
+    const notice = textPartToUIPart(part);
+    return notice ? [notice] : attachmentNoteToUIParts(part);
+  }
   if (part.type === "file") return toFileUIParts(part);
   const mapped = toUIPart(part);
   if (!mapped) return [];
@@ -1256,7 +1260,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; parentID?: string; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; parentID?: string; model?: unknown; modelID?: string; providerID?: string; error?: unknown; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
@@ -1282,12 +1286,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const next = {
       id: info.id,
       role: info.role,
-      metadata: { opencode: {
-        ...(typeof created === "number" ? { created } : {}),
-        ...(typeof completed === "number" ? { completed } : {}),
-        ...(typeof info.parentID === "string" ? { parentID: info.parentID } : {}),
-        ...(replyModelFromInfo(info) ? { replyModel: replyModelFromInfo(info) } : {}),
-      } },
+      metadata: projectedMessageMetadata({ ...info, replyModel: replyModelFromInfo(info) }),
       parts: [],
     } satisfies UIMessage;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>

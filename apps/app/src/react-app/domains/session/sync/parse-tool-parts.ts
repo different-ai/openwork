@@ -71,14 +71,17 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const childSessionId = part.tool === "task" && typeof stateMetadata.sessionId === "string" && stateMetadata.sessionId.trim()
     ? stateMetadata.sessionId.trim()
     : null;
-  const appBuilder = /(?:^|_)(?:search_capabilities|prepare_app|create_app|update_app)$/.test(part.tool);
-  const toolStartedAt = (appBuilder || part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
+  // Native timing for every tool survives reload; old history without it
+  // stays explicitly unknown instead of showing a fallback duration.
+  const timingAvailable = stateMetadata.openworkToolTimingUnavailable !== true;
+  const toolStartedAt = timingAvailable && "time" in part.state && typeof part.state.time?.start === "number"
     && Number.isFinite(part.state.time.start)
     ? part.state.time.start
     : null;
-  const toolCompletedAt = appBuilder && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
+  const toolCompletedAt = timingAvailable && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
     && Number.isFinite(part.state.time.end) ? part.state.time.end : null;
   const openwork = {
+    ...(timingAvailable ? {} : { timingUnavailable: true }),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),

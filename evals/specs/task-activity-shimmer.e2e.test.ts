@@ -6,7 +6,7 @@ const test = spec.world(taskActivityWeb, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-test("ACT-01 delegated-task activity stays with its original message after a follow-up", async ({ world, user, probe, evidence, step }) => {
+test("a member keeps the original task and working time when sending a follow-up (ACT-01)", async ({ world, user, probe, step, evidence }) => {
   await user.type("composer", world.prompt);
   await user.click("Run task");
   const native = await probe.eventually(() => world.native(), {
@@ -29,11 +29,18 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   });
   expect(advanced).not.toBe(working);
   evidence.recordJsonArtifact("Parent working footer during delegation", { working, advanced });
+  await step("before: the member sees one task with an advancing working timer", async () => {
+    await user.see({ text: "Build isolated Azure repro" });
+    evidence.recordAssertionEvidence("time advances while the helper is working", `${working} became ${advanced} while native delegation stayed running`, true);
+    await user.screenshot();
+  });
   await step("before: the parent keeps the child chat closed while the delegated task is still running", async () => {
     await user.see({ text: /Build isolated Azure repro/ });
     expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(0);
     await user.screenshot();
   });
+  const seconds = (text: string) => [...text.matchAll(/(\d+)\s*(h|m|s)/g)]
+    .reduce((total, match) => total + Number(match[1]) * (match[2] === "h" ? 3600 : match[2] === "m" ? 60 : 1), 0);
   await user.type("composer", "What is the update?", { verify: true });
 
   // Busy Enter queues; the production Cmd/Ctrl+Enter shortcut sends steering now.
@@ -146,6 +153,13 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
     hovered.hoverCapable
       ? "Hover replaces the title shimmer with solid inherited text; pointer leave restores its running treatment without recoloring the agent label or status."
       : "This browser reports no hover-capable pointer, so the running treatment stays in place under the pointer and the agent label and status keep their colors.", true);
+  await step("after: the follow-up stays after its task and the working timer continues", async () => {
+    await user.see({ text: "What is the update?" });
+    const continued = await readWorkingFooter();
+    expect(seconds(continued)).toBeGreaterThanOrEqual(seconds(advanced));
+    evidence.recordAssertionEvidence("follow-up keeps task order and elapsed work", `Original task precedes its follow-up; ${advanced} continues as ${continued}`, true);
+    await user.screenshot();
+  });
   await user.click({ role: "button", label: /Build isolated Azure repro/ });
   await user.see({ text: /ACTIVITY_CHILD_HOLD/ });
   await user.see({ text: /Working/ });
@@ -155,6 +169,10 @@ test("ACT-01 delegated-task activity stays with its original message after a fol
   expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(1);
   expect((await world.replyState()).deliveredChunks).toBe(2);
   await user.notSee({ text: "Activity child finished." });
+  await step("reloading keeps the same unfinished helper and its visible working state", async () => {
+    await user.see({ text: /Working/ });
+    await user.screenshot();
+  });
   evidence.recordAssertionEvidence("Delegated activity opens the exact live child across reload",
     "Original row shimmers before follow-up; opening it and reloading preserves the child session, prompt and Working state while the provider remains held.", true);
 });
