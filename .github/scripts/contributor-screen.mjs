@@ -2,15 +2,18 @@
 // Contributor screen: the first layer of checks on every push to a fork PR,
 // before any of its code runs anywhere.
 //
-//   scan    deterministic checks over the PR's changes, read from git objects
-//           and a checkout that is never executed: hidden or malformed
-//           characters, dependency and install-script changes, database
-//           changes, binaries, and code that looks encoded or obfuscated.
-//   report  joins the scan with Warden's contributor-screen findings, sets
-//           the `contributor-pr/screen` status and updates one PR comment.
-//   review  reads a standard Warden run (diff-security-review and
-//           confidentiality-review), sets `contributor-pr/warden` and
-//           updates one PR comment.
+//   scan       deterministic checks over the PR's changes, read from git
+//              objects: hidden or malformed characters, dependency and
+//              install-script changes, database changes, binaries, code that
+//              looks encoded, and text aimed at an AI reviewer. Free: no
+//              model, no secrets. Runs on every push.
+//   report     sets `contributor-pr/screen` from the scan and updates one
+//              PR comment.
+//   ai-screen  reads Warden's contributor-screen run (after a maintainer's
+//              /test), sets `contributor-pr/ai-screen`, updates one comment.
+//   review     reads a standard Warden run (diff-security-review and
+//              confidentiality-review), sets `contributor-pr/warden` and
+//              updates one PR comment.
 //
 // Runs only from the default branch. Never install, build, or run PR code.
 import { execFileSync } from "node:child_process";
@@ -18,8 +21,10 @@ import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 export const SCREEN_CONTEXT = "contributor-pr/screen";
+export const AI_SCREEN_CONTEXT = "contributor-pr/ai-screen";
 export const WARDEN_CONTEXT = "contributor-pr/warden";
 const SCREEN_MARKER = "<!-- contributor-pr:screen -->";
+const AI_SCREEN_MARKER = "<!-- contributor-pr:ai-screen -->";
 const WARDEN_MARKER = "<!-- contributor-pr:warden -->";
 
 // --- Hidden and malformed characters ----------------------------------------
@@ -298,7 +303,7 @@ export function parseWardenJsonl(text, expectedSkills) {
 
 // --- Decisions ------------------------------------------------------------------
 
-export function screenDecision(scan, warden) {
+export function screenDecision(scan) {
   const blocked = [];
   const held = [];
   if (scan.hidden.length) blocked.push(`${scan.hidden.length} hidden or look-alike character(s)`);
@@ -308,12 +313,17 @@ export function screenDecision(scan, warden) {
   if (scan.binaries.length) held.push("binary files");
   if (scan.encoded.length) held.push("possibly encoded code");
   if (scan.injection?.length) held.push("text aimed at the AI reviewer");
-  if (!warden.complete) held.push("Warden screen incomplete");
-  const serious = warden.findings.filter((finding) => finding.severity !== "low");
-  if (serious.length) held.push(`${serious.length} Warden finding(s)`);
   if (blocked.length) return { verdict: "blocked", state: "failure", description: `Blocked: ${blocked.join(", ")}`, blocked, held };
-  if (held.length) return { verdict: "held", state: "pending", description: `Held for maintainer review: ${held.join(", ")}`, blocked, held };
+  if (held.length) return { verdict: "held", state: "pending", description: `Needs maintainer review: ${held.join(", ")}`, blocked, held };
   return { verdict: "clean", state: "success", description: "No hidden characters, dependency, database or obfuscation concerns", blocked, held };
+}
+
+// Warden's contributor-screen skill, run only after a maintainer's /test.
+export function aiScreenDecision(warden) {
+  if (!warden.complete) return { verdict: "flagged", state: "failure", description: `AI screen incomplete (${warden.reason})` };
+  const serious = warden.findings.filter((finding) => finding.severity !== "low").length;
+  if (serious) return { verdict: "flagged", state: "failure", description: `${serious} high or medium AI screen finding(s)` };
+  return { verdict: "clean", state: "success", description: "No hidden behavior, obfuscation or supply-chain concerns found" };
 }
 
 export function reviewDecision(warden) {
@@ -344,11 +354,11 @@ const list = (items, render, max = 20) => [
   ...(items.length > max ? [`- …and ${items.length - max} more`] : []),
 ];
 
-export function renderScreenComment({ sha, decision, scan, warden, runUrl }) {
-  const title = { clean: "passed", held: "held for maintainer review", blocked: "blocked" }[decision.verdict];
+export function renderScreenComment({ sha, decision, scan, runUrl }) {
+  const title = { clean: "passed", held: "needs maintainer review", blocked: "blocked" }[decision.verdict];
   const lines = [SCREEN_MARKER, `### Contributor screen: ${title}`, "", `Commit \`${sha.slice(0, 10)}\` · [run](${runUrl})`, ""];
   if (decision.verdict === "clean") {
-    lines.push("No hidden characters, dependency, database or obfuscation concerns. Tests and the Warden security review run next.");
+    lines.push("No hidden characters, dependency, database or obfuscation concerns.");
   }
   if (scan.hidden.length || scan.malformed.length) {
     lines.push("**Hidden or malformed characters.** Remove these and push again; this can't be overridden.", "");
@@ -375,16 +385,23 @@ export function renderScreenComment({ sha, decision, scan, warden, runUrl }) {
     lines.push("**Text that looks like instructions to an AI reviewer.** Warden's results on this commit can't be trusted until a person reads these lines:", "");
     lines.push(...list(scan.injection, (item) => `${where(item)}: ${item.reason}`), "");
   }
-  if (!warden.complete) lines.push(`**Warden screen did not finish** (\`${safe(warden.reason, 80)}\`). A maintainer must review by hand or re-run it.`, "");
+  if (decision.verdict !== "blocked") {
+    lines.push("", "Nothing else runs yet. A maintainer reviews the changes" + (decision.verdict === "held" ? ", including the items above," : "") +
+      " then comments `/test` to start the AI screen, the tests and the Warden security review.");
+  }
+  return lines.join("\n");
+}
+
+export function renderAiScreenComment({ sha, decision, warden, runUrl }) {
+  const lines = [AI_SCREEN_MARKER, `### AI screen: ${decision.verdict === "clean" ? "clear" : "needs review"}`, "", `Commit \`${sha.slice(0, 10)}\` · [run](${runUrl})`, "", decision.description + "."];
+  if (!warden.complete) lines.push("", "The AI screen didn't finish, so it found nothing either way.");
   if (warden.findings.length) {
-    lines.push("**Warden contributor screen:**", "");
-    lines.push(...list(warden.findings, (finding) =>
+    lines.push("", ...list(warden.findings, (finding) =>
       `**${finding.severity}**: ${safe(finding.title, 200)}${finding.location?.path ? ` (${where({ path: finding.location.path, line: finding.location.startLine })})` : ""}<br>${safe(finding.description, 800)}`));
-    lines.push("");
   }
-  if (decision.verdict === "held") {
-    lines.push("A maintainer reviews the items above, then comments `/test` to run the tests and the Warden security review.");
-  }
+  lines.push("", decision.verdict === "clean"
+    ? "The tests and the Warden security review are starting."
+    : "Tests have not started. Review these findings; to run the tests and security review anyway, comment `/test` again.");
   return lines.join("\n");
 }
 
@@ -470,12 +487,27 @@ async function main(mode) {
 
   if (mode === "report") {
     const scan = JSON.parse(await readFile(env("SCAN_PATH"), "utf8"));
-    const warden = parseWardenJsonl(await readOptional(env("WARDEN_JSONL")), ["contributor-screen"]);
-    const decision = screenDecision(scan, warden);
+    const decision = screenDecision(scan);
     await setStatus(repo, sha, SCREEN_CONTEXT, decision, runUrl);
-    await upsertComment(repo, number, SCREEN_MARKER, renderScreenComment({ sha, decision, scan, warden, runUrl }));
+    await upsertComment(repo, number, SCREEN_MARKER, renderScreenComment({ sha, decision, scan, runUrl }));
     await output("verdict", decision.verdict);
     console.log(`${SCREEN_CONTEXT} on ${sha}: ${decision.verdict} (${decision.description})`);
+    return;
+  }
+
+  if (mode === "ai-screen") {
+    const warden = parseWardenJsonl(await readOptional(env("WARDEN_JSONL")), ["contributor-screen"]);
+    const decision = aiScreenDecision(warden);
+    await setStatus(repo, sha, AI_SCREEN_CONTEXT, decision, runUrl);
+    if (decision.verdict !== "clean") {
+      // Tests and the security review wait; say so on the required check.
+      await setStatus(repo, sha, "contributor-pr-required", {
+        state: "pending", description: "AI screen needs review; comment /test again to run tests anyway",
+      }, runUrl);
+    }
+    await upsertComment(repo, number, AI_SCREEN_MARKER, renderAiScreenComment({ sha, decision, warden, runUrl }));
+    await output("verdict", decision.verdict);
+    console.log(`${AI_SCREEN_CONTEXT} on ${sha}: ${decision.verdict} (${decision.description})`);
     return;
   }
 

@@ -70,10 +70,11 @@ from forks.
 Fork PRs are reviewed by `.github/workflows/contributor-warden.yml` instead,
 which runs the pinned Warden CLI from dev against the fork's commits written
 to disk as data (symlinks, LFS and filters off; this repository's `.warden/`
-and `warden.toml` replace the PR's copies). On every push it runs the
+and `warden.toml` replace the PR's copies). It only runs after a maintainer
+comments `/test`, so opening PRs cannot spend model budget. It first runs the
 `contributor-screen` skill (`.warden/contributor.toml`): hidden behavior,
-obfuscation and supply-chain risk. When that screen is clean, or after a
-maintainer's `/test`, it runs the two standard skills. Neither result
+obfuscation and supply-chain risk. When that is clear, or the maintainer
+comments `/test` again, it runs the two standard skills. Neither result
 approves the PR; they feed the `contributor-pr-required` status.
 
 Text in a fork's diff can steer the model, and the agent's `Read` tool

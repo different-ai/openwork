@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  encodedPayload, hiddenCharacters, isDatabasePath, isValidUtf8, nonRegistrySpec, packageJsonChanges,
+  aiScreenDecision, encodedPayload, hiddenCharacters, isDatabasePath, isValidUtf8, nonRegistrySpec, packageJsonChanges,
   parseWardenJsonl, renderScreenComment, reviewDecision, reviewerInstruction, safe, scanRepository, screenDecision,
 } from './contributor-screen.mjs';
 
@@ -118,18 +118,22 @@ test('Warden output is complete only when the summary and findings agree', () =>
 const emptyScan = { files: [], hidden: [], malformed: [], dependencies: [], database: [], binaries: [], images: [], encoded: [], injection: [] };
 const cleanWarden = { complete: true, findings: [] };
 
-test('screen: hidden characters block; dependencies, database, binaries and findings hold', () => {
-  assert.equal(screenDecision(emptyScan, cleanWarden).verdict, 'clean');
-  assert.equal(screenDecision(emptyScan, { complete: true, findings: [finding('low')] }).verdict, 'clean');
-  assert.equal(screenDecision({ ...emptyScan, hidden: [{}] }, cleanWarden).verdict, 'blocked');
-  assert.equal(screenDecision({ ...emptyScan, malformed: [{}] }, cleanWarden).verdict, 'blocked');
-  assert.equal(screenDecision({ ...emptyScan, database: ['x.sql'] }, cleanWarden).verdict, 'held');
-  assert.equal(screenDecision({ ...emptyScan, dependencies: [{}] }, cleanWarden).verdict, 'held');
-  assert.equal(screenDecision({ ...emptyScan, binaries: ['x.bin'] }, cleanWarden).verdict, 'held');
-  assert.equal(screenDecision({ ...emptyScan, encoded: [{}] }, cleanWarden).verdict, 'held');
-  assert.equal(screenDecision({ ...emptyScan, injection: [{}] }, cleanWarden).verdict, 'held');
-  assert.equal(screenDecision(emptyScan, { complete: true, findings: [finding('medium')] }).verdict, 'held');
-  assert.equal(screenDecision(emptyScan, { complete: false, reason: 'x', findings: [] }).verdict, 'held');
+test('free screen: hidden characters block; dependencies, database, binaries, encoded code and reviewer text need review', () => {
+  assert.equal(screenDecision(emptyScan).verdict, 'clean');
+  assert.equal(screenDecision({ ...emptyScan, hidden: [{}] }).verdict, 'blocked');
+  assert.equal(screenDecision({ ...emptyScan, malformed: [{}] }).verdict, 'blocked');
+  assert.equal(screenDecision({ ...emptyScan, database: ['x.sql'] }).verdict, 'held');
+  assert.equal(screenDecision({ ...emptyScan, dependencies: [{}] }).verdict, 'held');
+  assert.equal(screenDecision({ ...emptyScan, binaries: ['x.bin'] }).verdict, 'held');
+  assert.equal(screenDecision({ ...emptyScan, encoded: [{}] }).verdict, 'held');
+  assert.equal(screenDecision({ ...emptyScan, injection: [{}] }).verdict, 'held');
+});
+
+test('AI screen: clear only when complete with no high or medium findings', () => {
+  assert.equal(aiScreenDecision(cleanWarden).verdict, 'clean');
+  assert.equal(aiScreenDecision({ complete: true, findings: [finding('low')] }).verdict, 'clean');
+  assert.equal(aiScreenDecision({ complete: true, findings: [finding('medium')] }).verdict, 'flagged');
+  assert.equal(aiScreenDecision({ complete: false, reason: 'x', findings: [] }).verdict, 'flagged');
 });
 
 test('review: confidentiality or high/medium security findings are not clear', () => {
@@ -149,9 +153,15 @@ test('rendered text never carries secrets, mentions, markup or hidden characters
   assert.doesNotMatch(out, /`/);
 });
 
+test('a clean or held free screen says nothing else runs until /test', () => {
+  const body = renderScreenComment({ sha: 'a'.repeat(40), decision: screenDecision(emptyScan), scan: emptyScan, runUrl: 'https://example.test/run' });
+  assert.match(body, /Nothing else runs yet/);
+  assert.match(body, /\/test/);
+});
+
 test('the screen comment names code points, never the raw characters', () => {
   const scan = { ...emptyScan, hidden: [{ path: 'a.ts', line: 3, column: 9, codePoint: 'U+202E', name: 'BIDIRECTIONAL OVERRIDE' }], database: ['ee/packages/den-db/drizzle/1.sql'] };
-  const body = renderScreenComment({ sha: 'a'.repeat(40), decision: screenDecision(scan, cleanWarden), scan, warden: cleanWarden, runUrl: 'https://example.test/run' });
+  const body = renderScreenComment({ sha: 'a'.repeat(40), decision: screenDecision(scan), scan, runUrl: 'https://example.test/run' });
   assert.match(body, /blocked/);
   assert.match(body, /a\.ts:3.*U\+202E BIDIRECTIONAL OVERRIDE/);
   assert.match(body, /Database changes need a human review/);
@@ -187,5 +197,5 @@ test('scans a real git range: only added lines, from git objects', () => {
   assert.deepEqual(scan.malformed.map((item) => item.path), ['bad.txt']);
   assert.ok(scan.dependencies.some((item) => item.text.includes('left-padd')));
   assert.deepEqual(scan.injection.map((item) => `${item.path}:${item.line}`), ['helper.ts:2', `commit ${head.slice(0, 10)} message:3`]);
-  assert.equal(screenDecision(scan, cleanWarden).verdict, 'blocked');
+  assert.equal(screenDecision(scan).verdict, 'blocked');
 });

@@ -51,24 +51,22 @@ fails and a comment on the pull request explains the fix
 
 ## How CI runs on a pull request from a fork
 
-On every push, in this order:
-
-1. **Contributor screen.** Before any of your code runs, an automated screen
-   reads your changes. It blocks hidden or malformed characters (invisible
-   Unicode, bidirectional overrides, look-alike letters, invalid UTF-8),
-   which you must remove. It holds for a maintainer: dependency or lockfile
-   changes, database schema or migration changes, binary files, code that
-   looks encoded or obfuscated, and text that tries to give instructions to
-   an AI reviewer. A comment on the pull request lists
-   what it found.
-2. **Tests and security review.** If the screen is clean, the tests and the
-   Warden security review start automatically. They run without access to
-   any secrets.
-3. **Maintainer review.** A maintainer reviews your changes and comments
-   `/test`. That marks the commit they reviewed (it also starts the tests if
-   the screen held them). `contributor-pr-required` passes once the tests
-   pass and Warden is clear on that commit. If you push again, the screen
-   runs again and a maintainer reviews the new commits.
+1. **Automatic checks, on every push.** Before any of your code runs, a
+   screen reads your changes. It blocks hidden or malformed characters
+   (invisible Unicode, bidirectional overrides, look-alike letters, invalid
+   UTF-8), which you must remove. It flags for a maintainer: dependency or
+   lockfile changes, database schema or migration changes, binary files,
+   code that looks encoded or obfuscated, and text that tries to give
+   instructions to an AI reviewer. A comment on the pull request lists what
+   it found. Nothing else runs yet.
+2. **Maintainer review and `/test`.** A maintainer reviews your changes and
+   comments `/test`. That marks the commit they reviewed and starts an AI
+   screen for hidden behavior and supply-chain risk.
+3. **Tests and security review.** If the AI screen is clear (or the
+   maintainer decides to proceed), the tests and the Warden security review
+   run, without access to any secrets. `contributor-pr-required` passes once
+   they pass on the reviewed commit. If you push again, the automatic checks
+   run again and a maintainer reviews the new commits before `/test`.
 
 Changes to CI or agent configuration (`.github/`, `.opencode/`,
 `opencode.json`, `warden.toml`, `.warden/`, agent skills) can't be tested

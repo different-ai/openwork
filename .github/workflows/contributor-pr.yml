@@ -3,16 +3,16 @@ name: Contributor PR gate
 # Every PR: every commit must be signed off (DCO); a comment says how to fix
 # it. Sets the `contributor-pr-required` status.
 #
-# Fork PRs, on every push, in this order:
-#   1. Contributor screen (contributor-warden.yml, stage screen): hidden or
-#      malformed characters, dependency changes, database changes, binaries,
-#      obfuscation, plus Warden's contributor-screen skill.
-#   2. If the screen is clean: approve the fork's waiting test runs and run
-#      the standard Warden review. If it is held, nothing runs until a
-#      maintainer reviews and comments `/test` (contributor-pr-test.yml).
+# Fork PRs, on every push: the free screen (contributor-warden.yml, stage
+# scan) checks for hidden or malformed characters, dependency changes,
+# database changes, binaries, encoded code and text aimed at an AI reviewer,
+# and comments what it found. It uses no model and no secrets.
 #
-# The repository requires approval for all external contributors' workflow
-# runs, so a fork's tests never start before step 1.
+# Nothing that costs money runs here. The AI screen, the fork's tests and the
+# Warden security review start only after a maintainer reviews the PR and
+# comments `/test` (contributor-pr-test.yml), so opening PRs can't run up a
+# bill. The repository also requires approval for all external
+# contributors' workflow runs, so a fork's tests never start on their own.
 #
 # pull_request_target runs this file and its scripts from dev, never from the
 # PR, so a fork cannot rewrite the gate. Never check out or run PR code here.
@@ -38,7 +38,6 @@ jobs:
       statuses: write
     outputs:
       fork: ${{ steps.gate.outputs.fork }}
-      ok: ${{ steps.gate.outputs.ok }}
     steps:
       - name: Checkout trusted gate script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -56,6 +55,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node .github/scripts/contributor-pr.mjs gate
 
+  # No secrets are passed: this stage has no model.
   screen:
     needs: gate
     if: needs.gate.outputs.fork == 'true'
@@ -68,49 +68,4 @@ jobs:
     with:
       pr_number: ${{ github.event.pull_request.number }}
       head_sha: ${{ github.event.pull_request.head.sha }}
-      stage: screen
-    secrets:
-      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
-
-  start-tests:
-    needs: [gate, screen]
-    if: needs.gate.outputs.ok == 'true' && needs.screen.outputs.verdict == 'clean'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: write
-      contents: read
-      issues: write
-      pull-requests: write
-    steps:
-      - name: Checkout trusted gate script from dev
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-          sparse-checkout: .github/scripts
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24
-      - name: Approve the fork's waiting test runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node .github/scripts/contributor-pr.mjs approve-runs
-
-  review:
-    needs: [gate, screen]
-    if: needs.screen.outputs.verdict == 'clean'
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-      statuses: write
-    uses: ./.github/workflows/contributor-warden.yml
-    with:
-      pr_number: ${{ github.event.pull_request.number }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      stage: review
-    secrets:
-      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
+      stage: scan

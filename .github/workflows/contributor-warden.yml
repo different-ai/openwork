@@ -1,9 +1,12 @@
 name: Contributor Warden
 
-# Reviews a fork PR's files with Warden without ever running them.
-#   stage: screen  hidden characters, dependencies, database and obfuscation
-#                  checks plus the contributor-screen skill (every push)
+# Reviews a fork PR's changes without ever running them.
+#   stage: scan    free deterministic checks, no model and no secrets: hidden
+#                  characters, dependencies, database changes, binaries,
+#                  encoded code, text aimed at an AI reviewer (every push)
+#   stage: screen  Warden's contributor-screen skill (after /test)
 #   stage: review  the standard diff-security-review and confidentiality-review
+#                  (after /test)
 #
 # Called from contributor-pr.yml (pull_request_target) and
 # contributor-pr-test.yml (issue_comment), so this file, its scripts and the
@@ -49,7 +52,7 @@ jobs:
       pull-requests: write
       statuses: write
     outputs:
-      verdict: ${{ steps.report.outputs.verdict || steps.review.outputs.verdict }}
+      verdict: ${{ steps.report.outputs.verdict || steps.aiscreen.outputs.verdict || steps.review.outputs.verdict }}
     env:
       GIT_LFS_SKIP_SMUDGE: "1"
       PR_NUMBER: ${{ inputs.pr_number }}
@@ -59,7 +62,7 @@ jobs:
         env:
           STAGE: ${{ inputs.stage }}
         run: |
-          case "$STAGE" in screen|review) ;; *) echo "::error::Unknown stage: $STAGE"; exit 1 ;; esac
+          case "$STAGE" in scan|screen|review) ;; *) echo "::error::Unknown stage: $STAGE"; exit 1 ;; esac
           {
             echo "PR_DIR=$RUNNER_TEMP/pr"
             echo "SCAN_PATH=$RUNNER_TEMP/scan.json"
@@ -95,7 +98,7 @@ jobs:
           echo "stale=false" >> "$GITHUB_OUTPUT"
 
       - name: Write the PR's files to disk without running anything
-        if: steps.fetch.outputs.stale == 'false'
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
         working-directory: trusted
         run: |
           git -c core.symlinks=false -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false \
@@ -107,7 +110,7 @@ jobs:
           cp warden.toml "$PR_DIR/warden.toml"
 
       - name: Scan for hidden characters, dependencies, database changes and obfuscation
-        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'screen'
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'scan'
         env:
           PR_GIT_DIR: ${{ github.workspace }}/trusted/.git
           MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
@@ -115,7 +118,7 @@ jobs:
 
       # Same model override as warden.yml, applied to the trusted copies.
       - name: Apply model variable
-        if: steps.fetch.outputs.stale == 'false' && vars.WARDEN_MODEL != ''
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan' && vars.WARDEN_MODEL != ''
         env:
           MODEL: ${{ vars.WARDEN_MODEL }}
         run: |
@@ -129,7 +132,7 @@ jobs:
       # the PR can change where it comes from. Mounted read-only into the
       # sandbox; install scripts are not needed.
       - name: Install the pinned Warden CLI outside the PR
-        if: steps.fetch.outputs.stale == 'false'
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
         working-directory: ${{ runner.temp }}
         run: |
           mkdir warden-cli && cd warden-cli
@@ -138,7 +141,7 @@ jobs:
 
       # The sandbox has no network, so fetch every blob the diff needs now.
       - name: Fetch the objects Warden will read
-        if: steps.fetch.outputs.stale == 'false'
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
         working-directory: trusted
         env:
           MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
@@ -148,7 +151,7 @@ jobs:
       # and no internet; only the proxy container holds the real key. See
       # .github/scripts/contributor-warden-sandbox.sh.
       - name: Run Warden in the sandbox
-        if: steps.fetch.outputs.stale == 'false'
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
         continue-on-error: true
         env:
           STAGE: ${{ inputs.stage }}
@@ -175,12 +178,19 @@ jobs:
           bash trusted/.github/scripts/contributor-warden-sandbox.sh
           cp "$OUT_DIR/warden.jsonl" "$WARDEN_JSONL"
 
-      - name: Report the screen
+      - name: Report the free screen
         id: report
-        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'screen'
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'scan'
         env:
           GH_TOKEN: ${{ github.token }}
         run: node trusted/.github/scripts/contributor-screen.mjs report
+
+      - name: Report the AI screen
+        id: aiscreen
+        if: steps.fetch.outputs.stale == 'false' && inputs.stage == 'screen'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted/.github/scripts/contributor-screen.mjs ai-screen
 
       - name: Report the review
         id: review

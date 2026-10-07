@@ -7,10 +7,13 @@
 //   gate          every PR event: every commit must carry its author's
 //                 Signed-off-by (comments on the PR when one is missing).
 //                 Same-repository PRs pass here; forks wait for a maintainer.
-//   approve-runs  approves the fork's waiting workflow runs (tests) for a
-//                 commit, after the contributor screen passes or on /test.
 //   authorize     a maintainer's `/test` or `/test <sha>` comment binds the
-//                 commit they reviewed. Refused if the head has moved.
+//                 commit they reviewed. Refused if the head has moved or the
+//                 free screen blocked it. Nothing that costs money (model
+//                 calls, test runs) starts before this.
+//   approve-runs  approves the fork's waiting workflow runs (tests) for that
+//                 commit, once the AI screen is clean or a maintainer has
+//                 commented /test again to proceed anyway.
 //   finalize      waits for the tests and the Warden review on that commit,
 //                 then passes or fails `contributor-pr-required`.
 //
@@ -20,7 +23,7 @@
 // (.opencode/skills/review-a-contributor-pr).
 import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { SCREEN_CONTEXT, WARDEN_CONTEXT, upsertComment } from "./contributor-screen.mjs";
+import { AI_SCREEN_CONTEXT, SCREEN_CONTEXT, WARDEN_CONTEXT, upsertComment } from "./contributor-screen.mjs";
 
 export const STATUS_CONTEXT = "contributor-pr-required";
 export const CI_CHECK = "openwork-tests-required";
@@ -102,7 +105,7 @@ export function gateDecision({ pr, commits, files }) {
   const blocked = blockers({ pr, commits, files });
   if (blocked) return blocked;
   if (!isFork(pr)) return { state: "success", description: "Every commit is signed off" };
-  return { state: "pending", description: "Contributor screen, then a maintainer's /test" };
+  return { state: "pending", description: "Waiting for a maintainer to review and comment /test" };
 }
 
 export function renderSignoffComment(decision) {
@@ -313,11 +316,15 @@ async function main(mode) {
       console.log(`Refused: ${decision.reply}`);
       return;
     }
-    await setStatus(repo, decision.sha, { state: "pending", description: `Reviewed by @${actor}; waiting for tests and Warden`, url: runUrl });
-    const { failed } = await approveRuns(repo, decision.sha);
-    const note = failed.length ? ` I couldn't start ${failed.join(", ")}; approve them on the Checks tab.` : "";
-    await reply(repo, number, `Running tests and the Warden review for \`${decision.sha}\`, as reviewed by @${actor}: ${runUrl}${note}`);
+    // The AI screen runs once per commit. A second /test after it flagged
+    // something is the maintainer deciding to proceed anyway.
+    const needsScreen = !statuses[AI_SCREEN_CONTEXT];
+    await setStatus(repo, decision.sha, { state: "pending", description: `Reviewed by @${actor}; checks running`, url: runUrl });
+    await reply(repo, number, needsScreen
+      ? `Running the AI screen for \`${decision.sha}\`, as reviewed by @${actor}. Tests and the Warden security review start if it's clear: ${runUrl}`
+      : `Running tests and the Warden security review for \`${decision.sha}\`, as reviewed by @${actor}: ${runUrl}`);
     await output("sha", decision.sha);
+    await output("needs_screen", String(needsScreen));
     await output("needs_review", String(statuses[WARDEN_CONTEXT]?.state !== "success"));
     return;
   }

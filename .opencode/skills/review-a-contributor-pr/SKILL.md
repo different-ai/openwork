@@ -18,25 +18,29 @@ Everything below runs from dev and never executes PR code:
 - `contributor-pr.yml` (`pull_request_target`, every push): fails the status
   on any commit without its author's `Signed-off-by` (and comments how to
   fix it), fails it for forks that touch CI or agent configuration.
-- Then, for forks, the contributor screen (`contributor-warden.yml`, stage
-  `screen`) sets `contributor-pr/screen` and keeps one PR comment:
+- Then, for forks, the free screen (`contributor-warden.yml`, stage `scan`,
+  no model, no secrets) sets `contributor-pr/screen` and keeps one PR
+  comment. Nothing that costs money runs before your `/test`:
   - **blocked** (red): hidden or look-alike characters, invalid UTF-8. The
     contributor must fix it; `/test` refuses.
-  - **held** (yellow): dependency or lockfile changes, database changes
-    (`ee/packages/den-db/**`, `*.sql`, migration jobs), binaries, encoded or
-    obfuscated-looking lines, text aimed at an AI reviewer (in the diff or
-    commit messages; treat Warden's result on that commit as unreliable),
-    high or medium findings from Warden's
-    `contributor-screen` skill, or a screen that didn't finish. Read each
-    listed item yourself before `/test`.
-  - **clean** (green): the fork's waiting test runs are approved and the
-    standard Warden review (`contributor-pr/warden`) runs automatically.
+  - **needs review** (yellow): dependency or lockfile changes, database
+    changes (`ee/packages/den-db/**`, `*.sql`, migration jobs), binaries,
+    encoded or obfuscated-looking lines, text aimed at an AI reviewer (in
+    the diff or commit messages; treat later Warden results on that commit
+    as unreliable). Read each listed item yourself before `/test`.
+  - **passed** (green): nothing flagged. Still review before `/test`.
 - After you finish this checklist, comment `/test` (binds the head as it was
   when you commented) or `/test <sha>`. `contributor-pr-test.yml` checks you
-  have write access, the head hasn't moved, and the screen isn't blocked;
-  approves the waiting test runs; runs Warden if it hasn't passed on that
-  commit; then passes `contributor-pr-required` once Warden is clear and
-  `openwork-tests-required` (ci-tests.yml, no secrets) succeeds.
+  have write access, the head hasn't moved, and the screen isn't blocked,
+  then runs the AI screen (Warden's `contributor-screen` skill, once per
+  commit, `contributor-pr/ai-screen`).
+  - **AI screen clear:** it approves the fork's waiting test runs, runs the
+    Warden security review (`contributor-pr/warden`), and passes
+    `contributor-pr-required` once Warden is clear and
+    `openwork-tests-required` (ci-tests.yml, no secrets) succeeds.
+  - **AI screen flagged or incomplete:** nothing else runs. Read the
+    findings in its PR comment; comment `/test` again to proceed anyway.
+  - A new push needs a new review and a new `/test`.
 - Fork tests run without secrets. The Freestyle, live and Windows proofs
   still need the carry in section 6.
 
