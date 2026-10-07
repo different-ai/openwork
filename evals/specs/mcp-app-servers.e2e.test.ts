@@ -540,6 +540,7 @@ signInTest("a person who has not signed in to the service an App uses is asked t
     const signedInAt = new Date().toISOString();
     await user.click({ role: "button", label: "Sign in" });
     await probe.eventually(() => world.inventorySignedIn(), { within: 90_000, intervalMs: 1_000, label: "the owner's Inventory sign-in completes", until: signedIn => signedIn });
+    await world.returnToOpenWork();
     await user.notSee(signInRow, { timeoutMs: 60_000 });
     // The reload replaces the App's frame; read the new one, not the closed one the browser may still list.
     await frame?.[Symbol.asyncDispose]();

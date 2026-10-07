@@ -678,6 +678,13 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
       const listed = rows(record((await seed.api(den.admin, "/v1/mcp-connections?scope=usable")).body).connections);
       return listed.find(entry => entry.id === connection.id)?.connectedForMe === true;
     },
+    /**
+     * Back to OpenWork after signing in. The provider's sign-in opens in a new tab in front of
+     * OpenWork, and a background tab does not lay out the App frames it creates.
+     */
+    async returnToOpenWork() {
+      await app.client.send("Page.bringToFront");
+    },
     /** Clicks a button from the App's own script: a click the host does not trust as user input. */
     async scriptedClick(frame: Surface, label: string) {
       const clicked = await evaluate(frame.client, browserScript((text: string) => {
