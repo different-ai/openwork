@@ -1,7 +1,9 @@
 name: Contributor PR gate
 
 # Every PR: sets the `contributor-pr-required` status. Same-repository PRs
-# pass. No sign-off is required: as at GitLab, contributing means accepting
+# pass. The status is posted as the diff-warden App from the warden-clearance
+# environment (dev and v* only); the dev ruleset requires that source, so no
+# workflow on another branch can post it. No sign-off is required: as at GitLab, contributing means accepting
 # the DCO or the ee/ CLA (CONTRIBUTING.md).
 #
 # Fork PRs, on every push: the free screen (contributor-warden.yml, stage
@@ -41,11 +43,11 @@ jobs:
   gate:
     if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
+    environment: warden-clearance
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
-      statuses: write
     outputs:
       fork: ${{ steps.gate.outputs.fork }}
     steps:
@@ -61,10 +63,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+      # contributor-pr-required must come from the diff-warden App: the dev
+      # ruleset requires that source, and its key is only in this environment.
+      - name: Mint the status token
+        id: status-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          permission-statuses: write
       - name: Set contributor-pr-required
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
+          STATUS_TOKEN: ${{ steps.status-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node .github/scripts/contributor-pr.mjs gate
 
@@ -103,11 +115,11 @@ jobs:
   backfill:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    environment: warden-clearance
     timeout-minutes: 120
     permissions:
       contents: read
       pull-requests: read
-      statuses: write
     outputs:
       forks: ${{ steps.backfill.outputs.forks }}
     steps:
@@ -120,10 +132,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+      # contributor-pr-required must come from the diff-warden App: the dev
+      # ruleset requires that source, and its key is only in this environment.
+      - name: Mint the status token
+        id: status-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          permission-statuses: write
       - name: Set contributor-pr-required on open PRs
         id: backfill
         env:
           GH_TOKEN: ${{ github.token }}
+          STATUS_TOKEN: ${{ steps.status-token.outputs.token }}
           PR_NUMBER: ${{ inputs.pr }}
         run: node .github/scripts/contributor-pr.mjs backfill
 

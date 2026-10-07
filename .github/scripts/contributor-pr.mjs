@@ -22,6 +22,11 @@
 //                 that still need the free screen. For PRs opened before
 //                 this gate existed.
 //
+// `contributor-pr-required` is posted with STATUS_TOKEN, a diff-warden App
+// token minted only in the `warden-clearance` environment (dev and v* tags).
+// The dev ruleset requires the status from that App, so no workflow on another
+// branch can post it, whatever token it asks for.
+//
 // A fork's own `pull_request` workflows come from the PR's merge commit, so a
 // fork could rewrite them. Changes to CI or agent configuration are therefore
 // refused here; a maintainer carries them to a same-repository branch instead
@@ -142,11 +147,12 @@ function env(name) {
 }
 
 async function github(path, init = {}, attempt = 0) {
+  const { token, ...request } = init;
   const response = await fetch(`${process.env.GITHUB_API_URL ?? "https://api.github.com"}${path}`, {
-    ...init,
+    ...request,
     headers: {
       accept: "application/vnd.github+json",
-      authorization: `Bearer ${env("GH_TOKEN")}`,
+      authorization: `Bearer ${token ?? env("GH_TOKEN")}`,
       "x-github-api-version": "2022-11-28",
       ...(init.body ? { "content-type": "application/json" } : {}),
     },
@@ -188,8 +194,10 @@ async function statusesFor(repo, sha) {
   return latestStatuses(await github(`/repos/${repo}/commits/${sha}/status?per_page=100`));
 }
 
+// Fails closed: without the App token there is no status, and the PR waits.
 async function setStatus(repo, sha, { state, description, url }) {
   await github(`/repos/${repo}/statuses/${sha}`, {
+    token: env("STATUS_TOKEN"),
     method: "POST",
     body: JSON.stringify({ state, context: STATUS_CONTEXT, description: description.slice(0, 140), target_url: url }),
   });
@@ -296,7 +304,13 @@ async function main(mode) {
     // The AI screen runs once per commit. A second /test after it flagged
     // something is the maintainer deciding to proceed anyway.
     const needsScreen = !statuses[AI_SCREEN_CONTEXT];
-    await setStatus(repo, decision.sha, { state: "pending", description: `Reviewed by @${actor}; checks running`, url: runUrl });
+    await setStatus(repo, decision.sha, {
+      state: "pending",
+      description: needsScreen
+        ? `Reviewed by @${actor}; AI screen first. If it flags something, /test again to run tests`
+        : `Reviewed by @${actor}; tests and Warden running`,
+      url: runUrl,
+    });
     await reply(repo, number, needsScreen
       ? `Running the AI screen for \`${decision.sha}\`, as reviewed by @${actor}. Tests and the Warden security review start if it's clear: ${runUrl}`
       : `Running tests and the Warden security review for \`${decision.sha}\`, as reviewed by @${actor}: ${runUrl}`);

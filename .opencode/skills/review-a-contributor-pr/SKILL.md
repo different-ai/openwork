@@ -14,7 +14,9 @@ means accepting the DCO, or the Individual or Corporate CLA for `ee/`
 and no label to enforce.
 
 `contributor-pr-required` (commit status) is the CI gate for contributor PRs.
-Everything below runs from dev and never executes PR code:
+It is posted as the diff-warden App from the `warden-clearance` environment,
+and the dev ruleset only accepts it from that App, so a workflow on a branch
+cannot fake it. Everything below runs from dev and never executes PR code:
 
 - `contributor-pr.yml` (`pull_request_target`, every push): passes the
   status for same-repository and bot PRs, fails it for forks that touch CI or

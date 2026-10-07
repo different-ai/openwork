@@ -555,12 +555,6 @@ async function main(mode) {
     const warden = parseWardenJsonl(await readOptional(env("WARDEN_JSONL")), ["contributor-screen"]);
     const decision = aiScreenDecision(warden);
     await setStatus(repo, sha, AI_SCREEN_CONTEXT, decision, runUrl);
-    if (decision.verdict !== "clean") {
-      // Tests and the security review wait; say so on the required check.
-      await setStatus(repo, sha, "contributor-pr-required", {
-        state: "pending", description: "AI screen needs review; comment /test again to run tests anyway",
-      }, runUrl);
-    }
     await upsertComment(repo, number, AI_SCREEN_MARKER, renderAiScreenComment({ sha, decision, warden, runUrl }));
     await output("verdict", decision.verdict);
     console.log(`${AI_SCREEN_CONTEXT} on ${sha}: ${decision.verdict} (${decision.description})`);

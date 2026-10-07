@@ -26,13 +26,13 @@ jobs:
   authorize:
     if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/test')
     runs-on: ubuntu-latest
+    environment: warden-clearance
     timeout-minutes: 5
     permissions:
       actions: read
       contents: read
       issues: write
       pull-requests: write
-      statuses: write
     outputs:
       sha: ${{ steps.authorize.outputs.sha }}
       needs_screen: ${{ steps.authorize.outputs.needs_screen }}
@@ -47,10 +47,20 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+      # contributor-pr-required must come from the diff-warden App: the dev
+      # ruleset requires that source, and its key is only in this environment.
+      - name: Mint the status token
+        id: status-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          permission-statuses: write
       - name: Check the commenter and bind the reviewed commit
         id: authorize
         env:
           GH_TOKEN: ${{ github.token }}
+          STATUS_TOKEN: ${{ steps.status-token.outputs.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
@@ -128,6 +138,7 @@ jobs:
       always() && needs.authorize.outputs.sha != '' &&
       (needs.authorize.outputs.needs_screen == 'false' || needs.ai-screen.outputs.verdict == 'clean')
     runs-on: ubuntu-latest
+    environment: warden-clearance
     timeout-minutes: 130
     # A newer /test on the same PR supersedes this one.
     concurrency:
@@ -136,7 +147,6 @@ jobs:
     permissions:
       contents: read
       checks: read
-      statuses: write
     steps:
       - name: Checkout trusted gate script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -147,9 +157,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
+      # contributor-pr-required must come from the diff-warden App: the dev
+      # ruleset requires that source, and its key is only in this environment.
+      - name: Mint the status token
+        id: status-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          permission-statuses: write
       - name: Wait for tests and Warden on the reviewed commit
         env:
           GH_TOKEN: ${{ github.token }}
+          STATUS_TOKEN: ${{ steps.status-token.outputs.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ needs.authorize.outputs.sha }}
           REVIEW_JOB_RESULT: ${{ needs.review.result }}
