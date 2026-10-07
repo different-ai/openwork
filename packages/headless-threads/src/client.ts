@@ -504,6 +504,26 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     };
   }
 
+  /**
+   * The model for a turn sent without one. Null keeps the model the thread
+   * already runs on (v1 reuses its last turn's, v2 its bound one); only a
+   * thread without one starts on the workspace default.
+   */
+  async function unspecifiedTurnModel(
+    engine: Transport,
+    threadId: string,
+    messages: MessageWire[],
+    signal?: AbortSignal,
+  ): Promise<HeadlessThreadModel | null> {
+    const hasModel = engine.engine === "v2"
+      ? await engine.sessionModel(threadId, signal) !== null
+      : messages.some((message) => message.info.role === "user");
+    if (hasModel) return null;
+    const model = await workspaceDefaultModel(signal);
+    if (model === null && engine.engine === "v2") modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
+    return model;
+  }
+
   async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
     const engine = await transport(input.signal);
     const messages = await engine.messages(threadId, input.signal);
@@ -511,11 +531,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
       return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
     }
-    const model = input.model ?? options.defaultModel ?? await workspaceDefaultModel(input.signal);
-    // A v2 session keeps the model it was given; reuse it rather than refuse.
-    if (model === null && engine.engine === "v2" && await engine.sessionModel(threadId, input.signal) === null) {
-      modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
-    }
+    const model = input.model ?? options.defaultModel ?? await unspecifiedTurnModel(engine, threadId, messages, input.signal);
     await engine.submit(threadId, input.prompt, model, input.messageId, input.signal);
     return {
       threadId,
