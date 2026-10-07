@@ -1,6 +1,6 @@
 ---
 name: review-a-contributor-pr
-description: Review a fork PR, review an external contributor PR, check DCO sign-off, check ee/ CLA, carry a fork commit into a same-repo branch, is this PR safe to merge. Checklist for pull requests from forks before a human approves or merges them.
+description: Review a fork PR, review an external contributor PR, check provenance (DCO) and ee/ CLA, run /test, carry a fork commit into a same-repo branch, is this PR safe to merge. Checklist for pull requests from forks before a human approves or merges them.
 ---
 
 # Skill: review-a-contributor-pr
@@ -8,16 +8,17 @@ description: Review a fork PR, review an external contributor PR, check DCO sign
 Use for every PR whose head is not in `different-ai/openwork`
 (`isCrossRepository: true`). Fork PRs get no automatic clearance: `warden.yml`
 skips them (`head.repo.full_name == github.repository`, no secrets on fork
-heads) and `warden-clearance.yml` refuses them. The `ee/` CLA is accepted by
-contributing (CONTRIBUTING.md), so there is no CLA signature or label to
-enforce.
+heads) and `warden-clearance.yml` refuses them. As at GitLab, contributing
+means accepting the DCO, or the Individual or Corporate CLA for `ee/`
+(CONTRIBUTING.md). There is no `Signed-off-by` requirement, no CLA signature
+and no label to enforce.
 
 `contributor-pr-required` (commit status) is the CI gate for contributor PRs.
 Everything below runs from dev and never executes PR code:
 
-- `contributor-pr.yml` (`pull_request_target`, every push): fails the status
-  on any commit without its author's `Signed-off-by` (and comments how to
-  fix it), fails it for forks that touch CI or agent configuration.
+- `contributor-pr.yml` (`pull_request_target`, every push): passes the
+  status for same-repository and bot PRs, fails it for forks that touch CI or
+  agent configuration, and leaves other forks pending until `/test`.
 - Then, for forks, the free screen (`contributor-warden.yml`, stage `scan`,
   no model, no secrets) sets `contributor-pr/screen` and keeps one PR
   comment. Nothing that costs money runs before your `/test`:
@@ -56,27 +57,21 @@ gh pr view $N -R $R --json isCrossRepository,headRepositoryOwner,headRepository,
   --jq '{fork: .isCrossRepository, head: "\(.headRepositoryOwner.login)/\(.headRepository.name)@\(.headRefOid[:10])", author: .author.login, labels: [.labels[].name], ee: [.files[].path | select(startswith("ee/"))]}'
 ```
 
-## 1. DCO: every commit carries Signed-off-by
+## 1. Provenance: the code is the contributor's to give
 
-CONTRIBUTING.md "Signing off commits": every commit must certify the DCO with a
-`Signed-off-by: Name <email>` trailer. Check every non-merge commit on the PR
-head, not just the last one:
+The DCO (outside `ee/`) or the CLA (`ee/`) applies by contributing; nothing
+needs a signature or a `Signed-off-by` line. What a reviewer checks is that
+the contribution is plausibly the contributor's to license:
 
-```bash
-gh api "repos/$R/pulls/$N/commits" --paginate \
-  --jq '.[] | select(.parents | length == 1)
-    | "\(.sha[:10]) author=\(.commit.author.email) signed_off=\(.commit.message | test("(?m)^Signed-off-by: .+ <.+>$")) \(.commit.message | split("\n")[0])"'
-```
+- No code copied from another project without its license allowing it:
+  look for foreign license headers, copyright lines, or large blocks that
+  read like vendored or generated code.
+- If the author says the work was done for an employer or client, the
+  Corporate CLA covers `ee/`; outside `ee/`, ask them to confirm they may
+  contribute it.
+- AI-generated content is fine; ask for it to be disclosed if it is large.
 
-- Any `signed_off=false` -> Blocked. Ask the contributor to
-  `git rebase --signoff origin/dev && git push --force-with-lease`. Do not
-  add the trailer yourself; only the author can certify.
-- The sign-off email should match the commit author email (or the author's
-  GitHub noreply address). A trailer naming someone else is not that author's
-  certification.
-- Squash-merging does not repair this: the squash commit inherits the PR
-  body, and the trailers of the original commits are lost. Fix the commits
-  first.
+Anything doubtful -> Blocked until the source and license are clear.
 
 ## 2. ee/ paths are covered by the CLA notice
 
@@ -113,14 +108,16 @@ gh api "repos/$R/commits/$HEAD/check-runs" --paginate \
 gh pr view $N -R $R --json reviews --jq '.reviews[] | select(.author.login == "diff-warden") | .state'
 ```
 
-- Fork head: these are absent by design, and approving the workflow run in
-  the Actions UI does not help (the job's `if:` skips fork heads regardless).
-  The only ways to get Warden coverage are (a) carry the commit into a
-  same-repo branch (section 6) and let `Warden` run there, or (b) run the
-  local preflight on that branch: `pnpm warden:check` (bare mode, clean tree,
-  per `.warden/README.md`) and record the run reference, both refs, and the
-  skills that actually ran. Local clearance never substitutes for the GitHub
-  approval; it only tells you whether to proceed.
+- Fork head: `warden.yml` skips forks by design. Warden runs for forks
+  after your `/test` (section 7), in the sandboxed `contributor-warden.yml`,
+  and reports the `contributor-pr/ai-screen` and `contributor-pr/warden`
+  statuses plus one PR comment each. Check them on the head being merged:
+
+  ```bash
+  gh api "repos/$R/commits/$HEAD/status" --jq '.statuses[] | select(.context | startswith("contributor-pr")) | "\(.context) \(.state) \(.description)"'
+  ```
+
+  `contributor-pr/warden` not `success` on that head -> Blocked.
 - Same-repo head with `warden: diff-security-review` or
   `warden: confidentiality-review` missing, skipped, or failed -> Blocked.
 - Any PR that touches `.github/`, `warden.toml`, `.warden/`,
@@ -165,9 +162,9 @@ gh pr diff $N -R $R --name-only | grep -E 'pnpm-lock\.yaml|^\.github/|opencode\.
 
 ## 6. Carry a fork commit into a same-repo branch
 
-Do this when Warden coverage is required (section 3), when the fork branch is
-stale and the contributor is unresponsive, or when the change must be split.
-Preserve authorship; do not manufacture certification.
+Do this when a fork changes CI or agent configuration (the gate refuses
+those), when the fork branch is stale and the contributor is unresponsive, or
+when the change must be split. Preserve authorship.
 
 ```bash
 git fetch origin dev "pull/$N/head:contributor/pr-$N"   # GitHub exposes the fork head as refs/pull/N/head
@@ -175,7 +172,7 @@ git worktree add /tmp/ow-carry-$N -b carry/pr-$N origin/dev
 cd /tmp/ow-carry-$N
 git log --oneline origin/dev..contributor/pr-$N          # the commits to carry, oldest last
 git cherry-pick -x origin/dev..contributor/pr-$N         # keeps Author: as the contributor, adds "(cherry picked from commit ...)"
-git log origin/dev.. --format='%h %an <%ae>%n%(trailers:key=Signed-off-by)'   # author and original Signed-off-by must survive
+git log origin/dev.. --format='%h %an <%ae> %s'                    # the contributor must still be the author
 git push -u origin carry/pr-$N
 gh pr create -R $R --base dev --head carry/pr-$N --title "<original title>" \
   --body "Carries #$N by @<contributor> onto a same-repo branch so Warden can run. Original commits: <shas>."
@@ -186,16 +183,8 @@ Rules:
 - `git cherry-pick` preserves `Author:`; the committer becomes you. That is
   correct and expected. Do not rewrite the author to yourself.
 - If you squash or amend the contributor's commit and it must be attributed
-  to you as committer, add `Co-authored-by: Name <email>` for the contributor.
-  `Co-authored-by` is attribution only. It is not a DCO certification, and
-  your own `Signed-off-by` only certifies your right to submit under DCO
-  clause (c): you received it from someone who certified (a), (b), or (c).
-  That still requires the contributor's own `Signed-off-by` on the original
-  commit (section 1). If the original was unsigned, the carry is Blocked
-  until the contributor signs it; do not sign on their behalf.
-- Keep the contributor's `Signed-off-by` trailer intact through the
-  cherry-pick, then add your own with `git commit --amend -s` only if you
-  changed the content.
+  to you as committer, add `Co-authored-by: Name <email>` for the contributor
+  so the credit trail survives.
 - Close the fork PR with a comment linking the carry PR so the contributor
   keeps the credit trail and knows where review continues.
 - The carry PR is a normal same-repo PR: Warden runs, clearance applies, and
@@ -217,5 +206,5 @@ gh pr comment $N -R $R --body "/test $(gh pr view $N -R $R --json headRefOid --j
 
 Naming the SHA you read is the strict form; a plain `/test` comment binds the
 head as it was when you commented. The workflow replies on the PR if it
-refuses (no write access, head moved, missing sign-off, CI or agent
-configuration changed, screen blocked or not finished).
+refuses (no write access, head moved, CI or agent configuration changed,
+screen blocked or not finished).
