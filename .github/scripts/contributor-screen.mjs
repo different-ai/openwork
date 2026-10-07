@@ -78,10 +78,14 @@ export function hiddenCharacters(line, { firstLine = false } = {}) {
     const name = invisibleName(cp);
     if (name) found.push({ column: index + 1, codePoint: hex(cp), name });
   });
-  for (const match of line.matchAll(/[\p{L}\p{M}\p{N}_$]+/gu)) {
+  // Escape sequences in strings (\n, \t, \u0041...) would glue a Latin
+  // letter onto the next word, so "\nЛюди" looked like a mixed identifier.
+  // Blank them out first, keeping columns where they were.
+  const words = line.replace(/\\(u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[nrtbfv0'"`\\])/g, (escape) => " ".repeat(escape.length));
+  for (const match of words.matchAll(/[\p{L}\p{M}\p{N}_$]+/gu)) {
     const token = match[0];
     if (/[A-Za-z]/.test(token) && CONFUSABLE_SCRIPTS.test(token)) {
-      found.push({ column: [...line.slice(0, match.index)].length + 1, codePoint: "mixed", name: "MIXED-SCRIPT IDENTIFIER (look-alike letters)" });
+      found.push({ column: [...words.slice(0, match.index)].length + 1, codePoint: "mixed", name: "MIXED-SCRIPT IDENTIFIER (look-alike letters)" });
     }
   }
   return found;
