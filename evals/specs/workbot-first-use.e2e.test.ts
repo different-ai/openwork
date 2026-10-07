@@ -1,5 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
+import { workbotThreadWorld } from "../worlds/workbot-thread.ts";
 import { workbotFirstUse, workbotGreetingRecovery, workbotModelGreetingRecovery } from "../worlds/workbot-first-use.ts";
 
 const test = spec.world(workbotFirstUse, { resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, needs: { placement: "local" }, timeout: 900_000 });
@@ -39,7 +40,7 @@ test("a member understands Workbot and keeps chatting while a real background jo
       const pane = (await probe.dom(".workbot-scroll")).elements[0];
       const reply = (await probe.dom('ol[aria-label="Conversation"] > li:last-child')).elements[0];
       return !!pane && !!reply && reply.text.includes("Four.") && reply.rect.bottom <= pane.rect.bottom + 1;
-    }, { label: "The latest reply stays above the pinned job", within: 30_000 });
+    }, { label: "The latest reply stays in the thread", within: 30_000 });
     await user.see({ text: "Four." });
     expect(await probe.text()).toContain(world.hello);
     await user.see({ text: world.title });
@@ -163,5 +164,84 @@ recovery("a member retries a failed greeting without losing the conversation", a
     expect(JSON.stringify(await world.thread()).split(world.hello)).toHaveLength(2);
     await user.screenshot();
     evidence.recordAssertionEvidence("Recovery does not duplicate the greeting", "There is one stored greeting after retry and reload, and the welcome does not return.", true);
+  });
+});
+
+
+const threadUI = spec.world(workbotThreadWorld, { resources: { surfaces: ["appWeb"], services: [] }, needs: { placement: "local" }, timeout: 120_000 });
+threadUI("a member keeps task cards in their original turn until all work finishes", async ({ world, user, probe, step, evidence }) => {
+  let briefNode = 0;
+  const dots = '[aria-label="Workbot is processing"] .workbot-typing-dot';
+  await step("before: two jobs are still processing after Workbot has replied", async () => {
+    await user.navigate(world.url);
+    await user.see({ text: "Launch brief" });
+    await user.see({ text: "Meeting notes" });
+    expect((await probe.dom('ol > li:first-child [data-workbot-task]')).elements).toHaveLength(2);
+    expect((await probe.dom(dots)).elements).toHaveLength(3);
+    briefNode = await world.cardNode("brief");
+    expect(briefNode).toBeGreaterThan(0);
+    await user.notSee({ text: "Working on it in the background" });
+    await user.notSee({ text: "Working on 2 things in the background" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Running and queued cards stay with their request", "Both cards are in the first conversation turn, with one three-dot indicator and no duplicate background message. API responses are synthetic; this proves the real UI, not runner execution.", true);
+  });
+  await step("the member keeps chatting while the first task remains in place", async () => {
+    await user.type(composer, "What is two plus two?");
+    await user.click({ role: "button", label: "Send" });
+    await user.see({ text: "Four." });
+    expect((await probe.dom('ol > li:first-child [data-workbot-task]')).elements).toHaveLength(2);
+    expect((await probe.dom(dots)).elements).toHaveLength(3);
+    expect(await world.cardNode("brief")).toBe(briefNode);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("A later reply does not move running cards", "The newer reply is below the original turn, both task cards remain there, the first DOM node is unchanged, and three dots remain after the foreground answer.", true);
+  });
+  await step("after: finishing one task keeps its card and the remaining work indicator", async () => {
+    world.respond("brief", "done");
+    world.respond("notes", "paused");
+    await user.see({ text: "Picking it back up" });
+    await user.see({ text: "Done" });
+    expect(await world.cardNode("brief")).toBe(briefNode);
+    expect((await probe.dom('ol > li:first-child [data-workbot-task]')).elements).toHaveLength(2);
+    expect((await probe.dom(dots)).elements).toHaveLength(3);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Completed cards remain anchored while another task resumes", "The completed brief uses the same DOM node in the first turn; the paused task and all three dots remain visible.", true);
+  });
+  await step("after: failed or stopped work clears the dots without removing its card", async () => {
+    world.respond("notes", "failed");
+    await user.see({ text: "Couldn't finish" });
+    expect((await probe.dom(dots)).elements).toHaveLength(0);
+    world.respond("notes", "stopped");
+    await user.see({ text: "Stopped" });
+    expect((await probe.dom('[data-workbot-task]')).elements).toHaveLength(2);
+    expect((await probe.dom(dots)).elements).toHaveLength(0);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Terminal outcomes stop processing without moving the history", "Failure and Stop both leave two cards in the conversation and no processing dots.", true);
+  });
+  await step("after: a foreground reply keeps the dots while its text streams", async () => {
+    world.streamReply();
+    await user.see({ text: "I'm still checking." });
+    expect((await probe.dom(dots)).elements).toHaveLength(3);
+    await user.screenshot();
+    world.finishReply();
+    await user.see({ text: "Four. Checked." });
+    expect((await probe.dom(dots)).elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("Streaming text does not hide processing", "With both tasks terminal, a working foreground turn shows three dots alongside streamed text, and completion removes them.", true);
+  });
+  await step("the member sees Edit only when hovering their message and no Delete action", async () => {
+    await user.hover(composer);
+    await probe.eventually(() => world.editHidden(), { within: 2_000, label: "The edit icon fades out away from its message" });
+    await user.notSee({ role: "button", label: "Edit message" });
+    await user.notSee({ role: "button", label: "Delete message" });
+    await user.hover({ text: "Draft the brief and meeting notes." });
+    await user.see({ role: "button", label: "Edit message" });
+    await user.screenshot();
+    await user.click({ role: "button", label: "Edit message", nth: 0 });
+    await user.see({ label: "Edit your message" }, { editable: true });
+    await user.click({ role: "button", text: "Cancel" });
+    await user.hover(composer);
+    await probe.eventually(() => world.editHidden(), { within: 2_000, label: "The edit icon fades out away from its message" });
+    await user.notSee({ role: "button", label: "Edit message" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Editing is discoverable on hover and deletion is absent", "The edit icon is hidden away from the message, appears on its hover, opens the inline editor, and hides again after Cancel; no Delete message button exists.", true);
   });
 });

@@ -1,11 +1,10 @@
 "use client";
 
-import { ArrowUp, Check, Copy, FileText, Lock, Pencil, Trash2 } from "lucide-react";
+import { ArrowUp, Check, Copy, FileText, Lock, Pencil } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import {
-  useDeleteWorkbotMessage,
   useEditWorkbotMessage,
   useSendWorkbotMessage,
   useStartWorkbot,
@@ -67,9 +66,8 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   const thread = useWorkbotThread({ turns: turnWindow, awaiting: greetingAwaited || pending.some((entry) => !entry.failed), live: stream.connected });
   const send = useSendWorkbotMessage();
   const stop = useStopWorkbot();
-  const removeMessage = useDeleteWorkbotMessage();
   const editMessage = useEditWorkbotMessage();
-  // Messages deleted or replaced by an edit leave the page at once; the conversation catches up on its next read.
+  // Messages replaced by an edit leave the page at once; the conversation catches up on its next read.
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const uploads = useUploads();
   const data = thread.data?.available ? thread.data : null;
@@ -131,17 +129,6 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
         onError: (error) => fail(error.message),
         onSuccess: () => void queryClient.invalidateQueries({ queryKey: workbotFilesKey }),
       });
-    });
-  };
-
-  /** Deletes one of the person's messages and the answer to it; it reappears if that fails. */
-  const deleteTurn = (turn: WorkbotTurn, onError: (message: string) => void) => {
-    setHidden((current) => new Set([...current, turn.id]));
-    removeMessage.mutate(turn.id, {
-      onError: (error) => {
-        setHidden((current) => new Set([...current].filter((id) => id !== turn.id)));
-        onError(error.message);
-      },
     });
   };
 
@@ -251,7 +238,6 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
           <Conversation
             turns={hidden.size ? data.turns.filter((turn) => !hidden.has(turn.id)) : data.turns}
             canChange={!busy}
-            onDelete={deleteTurn}
             onEdit={editTurn}
             pending={pending}
             live={stream.live}
@@ -278,7 +264,6 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
           />
           <div className="flex shrink-0 justify-center px-3 pb-3 pt-3 sm:px-10 sm:pb-7">
             <div className={COLUMN}>
-              <RunningTasks turns={data.turns} />
               {composer}
             </div>
           </div>
@@ -515,9 +500,8 @@ function Conversation(props: {
   onSuggestion: (text: string) => void;
   /** Workbot is about to say hello (right after the welcome). */
   starting: boolean;
-  /** Whether the person's messages can be edited or deleted now (not while Workbot is answering). */
+  /** Whether the person's messages can be edited now (not while Workbot is answering). */
   canChange: boolean;
-  onDelete: (turn: WorkbotTurn, onError: (message: string) => void) => void;
   onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -530,6 +514,9 @@ function Conversation(props: {
     ...props.pending.filter((entry) => !known.has(entry.id)).map((entry) => ({ key: entry.id, at: entry.sentAt, turn: null, pending: entry })),
   ];
   const lastTurnId = props.turns.at(-1)?.id;
+  // One indicator survives text, tool and background-task updates, including work in an older turn.
+  const processing = props.starting || props.pending.some((entry) => !entry.failed) || props.turns.some((turn) =>
+    turn.status === "working" || turn.status === "queued" || turn.tasks.some(isOpen));
   // Local previews keep a just-sent image on screen while its kept copy loads.
   const localUrls = useMemo(() => {
     const urls: Record<string, string | null> = {};
@@ -598,7 +585,6 @@ function Conversation(props: {
                   {row.turn ? (
                     <TurnView
                       canChange={props.canChange}
-                      onDelete={props.onDelete}
                       onEdit={props.onEdit}
                       turn={row.turn}
                       live={props.live[row.turn.id] ?? null}
@@ -614,8 +600,7 @@ function Conversation(props: {
               );
             })}
           </ol>
-          {/* Workbot is starting the conversation: it is "typing" before its hello exists. */}
-          {props.starting && rows.length === 0 ? <TypingBubble /> : null}
+          {processing ? <div className="pt-3"><TypingBubble /></div> : null}
         </div>
       </div>
     </div>
@@ -638,7 +623,7 @@ function Reaction({ emoji }: { emoji: string }) {
   );
 }
 
-function UserBubble({ text, muted = false, reaction = null }: { text: string; muted?: boolean; reaction?: string | null }) {
+function UserBubble({ text, muted = false, reaction = null, action }: { text: string; muted?: boolean; reaction?: string | null; action?: ReactNode }) {
   if (!text) {
     return reaction ? (
       <div className="flex justify-end">
@@ -648,10 +633,11 @@ function UserBubble({ text, muted = false, reaction = null }: { text: string; mu
   }
   return (
     <div className="flex justify-end">
-      <div className="relative max-w-[85%] sm:max-w-[480px]">
+      <div className="group/own relative max-w-[85%] sm:max-w-[480px]">
         <p className={`whitespace-pre-wrap break-words rounded-[20px] bg-[var(--wb-user-bubble)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
           {text}
         </p>
+        {action ? <span className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/own:opacity-100 has-[:focus-visible]:opacity-100">{action}</span> : null}
         {reaction ? (
           <span className="absolute -left-3 -top-3.5">
             <Reaction emoji={reaction} />
@@ -665,19 +651,14 @@ function UserBubble({ text, muted = false, reaction = null }: { text: string; mu
 const iconButton =
   "grid size-7 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:opacity-40";
 
-/**
- * One of the person's own messages, which they can change: Edit and Delete appear beside it on hover or focus
- * (always on touch). Editing happens in the bubble itself and sends the edit in place of the original; deleting
- * asks once, right there. Neither while Workbot is answering.
- */
+/** Edit appears beside its own message on hover or keyboard focus, without a delete action. */
 function OwnMessage(props: {
   turn: WorkbotTurn;
   canChange: boolean;
-  onDelete: (turn: WorkbotTurn, onError: (message: string) => void) => void;
   onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
 }) {
   const { turn } = props;
-  const [mode, setMode] = useState<"idle" | "editing" | "confirming">("idle");
+  const [mode, setMode] = useState<"idle" | "editing">("idle");
   const [draft, setDraft] = useState(turn.text);
   const [error, setError] = useState<string | null>(null);
   const field = useRef<HTMLTextAreaElement>(null);
@@ -752,43 +733,12 @@ function OwnMessage(props: {
   }
 
   return (
-    <div className="group/own flex flex-col items-end gap-1">
-      <div className="flex w-full items-center justify-end gap-1">
-        {props.canChange && mode === "idle" ? (
-          <div className="flex shrink-0 items-center opacity-0 transition-opacity duration-150 group-hover/own:opacity-100 group-focus-within/own:opacity-100 [@media(hover:none)]:opacity-100">
-            <button type="button" aria-label="Edit message" title="Edit" onClick={() => setMode("editing")} className={iconButton}>
-              <Pencil size={14} strokeWidth={1.75} aria-hidden />
-            </button>
-            <button type="button" aria-label="Delete message" title="Delete" onClick={() => setMode("confirming")} className={iconButton}>
-              <Trash2 size={14} strokeWidth={1.75} aria-hidden />
-            </button>
-          </div>
-        ) : null}
-        <UserBubble text={turn.text} reaction={turn.reaction} />
-      </div>
-      {mode === "confirming" ? (
-        <div className="workbot-row-enter flex items-center gap-1.5 pr-1 text-[13px] leading-4 text-[var(--wb-muted)]" role="group" aria-label="Delete this message">
-          <span className="pr-1">Delete this message and its answer?</span>
-          <button
-            type="button"
-            onClick={() => setMode("idle")}
-            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode("idle");
-              setError(null);
-              props.onDelete(turn, setError);
-            }}
-            className="h-7 rounded-full px-2.5 font-medium text-[var(--wb-danger)] transition-colors duration-150 hover:bg-[#c4302b14] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-          >
-            Delete
-          </button>
-        </div>
-      ) : null}
+    <div className="flex flex-col items-end gap-1">
+      <UserBubble text={turn.text} reaction={turn.reaction} action={props.canChange ? (
+        <button type="button" aria-label="Edit message" title="Edit" onClick={() => setMode("editing")} className={iconButton}>
+          <Pencil size={14} strokeWidth={1.75} aria-hidden />
+        </button>
+      ) : null} />
       {error ? <p className="pr-1 text-[13px] leading-4 text-[var(--wb-danger)]">{error}</p> : null}
     </div>
   );
@@ -835,12 +785,12 @@ function AssistantBubble({ children }: { children: ReactNode }) {
 }
 
 /**
- * Workbot thinking: a small reply bubble with three dots that darken in turn, where its answer will appear,
+ * Workbot processing: one small reply bubble with three dots that darken in turn at the end of the thread,
  * like a messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
  */
 function TypingBubble() {
   return (
-    <div className="workbot-row-enter flex pt-1.5 pl-1" role="status" aria-label="Thinking">
+    <div className="workbot-row-enter flex pt-1.5 pl-1" role="status" aria-label="Workbot is processing">
       <div className="flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-card-shadow)]">
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
@@ -877,7 +827,7 @@ function PendingView({ entry, onRetry }: { entry: Pending; onRetry: () => void }
       ) : (
         <>
           <Gap />
-          {uploading ? <QuietLine label="Uploading your files" /> : <TypingBubble />}
+          {uploading ? <QuietLine label="Uploading your files" /> : null}
         </>
       )}
     </>
@@ -1081,20 +1031,6 @@ function StepsSegment({ steps, live }: { steps: WorkbotStep[]; live: boolean }) 
   );
 }
 
-/** True only once `flag` has held for `ms`: the typing bubble doesn't flash for a beat between two steps. */
-function useSettled(flag: boolean, ms: number) {
-  const [settled, setSettled] = useState(false);
-  useEffect(() => {
-    if (!flag) {
-      setSettled(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setSettled(true), ms);
-    return () => window.clearTimeout(timer);
-  }, [flag, ms]);
-  return flag && settled;
-}
-
 /** The other apps a computer card's work used, as logos in its trailing slot. */
 function AppLogos({ apps }: { apps: UsedApp[] }) {
   if (apps.length === 0) return null;
@@ -1132,7 +1068,6 @@ function withoutNextLine(text: string) {
 
 function TurnView(props: {
   canChange: boolean;
-  onDelete: (turn: WorkbotTurn, onError: (message: string) => void) => void;
   onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
   turn: WorkbotTurn;
   live: LiveText | null;
@@ -1162,16 +1097,15 @@ function TurnView(props: {
   // Its computer starting before the step is stored: the card shows right away, after what it just said.
   const startingCard = working && !turn.greeting && starting?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
   const lastIsLive = working && last?.kind === "steps" && !liveText && !startingCard;
-  const typing = useSettled(working && turn.status !== "queued" && !liveText && !startingCard && (turn.greeting || !lastIsLive), 350);
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
       {turn.text && !turn.greeting && turn.status !== "queued" ? (
-        <OwnMessage turn={turn} canChange={props.canChange} onDelete={props.onDelete} onEdit={props.onEdit} />
+        <OwnMessage turn={turn} canChange={props.canChange} onEdit={props.onEdit} />
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
-      {parts.length > 0 || liveText || typing || startingCard || turn.status === "queued" ? <Gap /> : null}
+      {parts.length > 0 || liveText || startingCard || turn.status === "queued" ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
         {parts.map((part, index) => {
@@ -1194,7 +1128,7 @@ function TurnView(props: {
           </AssistantBubble>
         ) : null}
         {startingCard ? <StepsSegment steps={[{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [] }]} live /> : null}
-        {turn.status === "queued" ? <QuietLine label="Up next" /> : typing ? <TypingBubble /> : null}
+        {turn.status === "queued" ? <QuietLine label="Up next" /> : null}
         {turn.status === "done" && lastText !== -1 ? (
           <CopyAnswer text={parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n")} />
         ) : null}
@@ -1346,35 +1280,11 @@ function TaskCard({ task, onRetry, canRetry = true }: { task: WorkbotTask; onRet
   );
 }
 
-/**
- * Background tasks where they started. While one runs, its card is pinned above the composer (RunningTasks), so
- * here one quiet line says where it went; once it's over, its card stays here, quiet (DESIGN P11, T1).
- */
+/** A task keeps the same keyed card in the turn that started it, through every status. */
 function TaskCards({ tasks, onRetry, canRetry }: { tasks: WorkbotTask[]; onRetry: (task: WorkbotTask) => void; canRetry: boolean }) {
-  const running = tasks.filter(isOpen).length;
   return (
     <div className="flex flex-col gap-2 pl-1 pt-3">
-      {tasks.filter((task) => !isOpen(task)).map((task) => <TaskCard key={task.id} task={task} canRetry={canRetry} onRetry={() => onRetry(task)} />)}
-      {running ? (
-        <p className="pl-0.5 text-[12px] leading-4 text-[var(--wb-faint)]">
-          {running === 1 ? "Working on it in the background" : `Working on ${running} things in the background`}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Work Workbot is doing in the background stays in view, whatever happens in the chat: each running task's card,
- * pinned above the composer until it reports back.
- */
-function RunningTasks({ turns }: { turns: WorkbotTurn[] }) {
-  const open = turns.flatMap((turn) => turn.tasks.filter(isOpen));
-  if (open.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-2 pb-2.5" role="status" aria-live="polite">
-      {open.map((task) => <TaskCard key={task.id} task={task} />)}
-      <p className="pl-1 text-[12px] leading-4 text-[var(--wb-faint)]">Keep chatting. I&apos;ll post the result here when it&apos;s done.</p>
+      {tasks.map((task) => <div key={task.id} data-workbot-task={task.id}><TaskCard task={task} canRetry={canRetry} onRetry={() => onRetry(task)} /></div>)}
     </div>
   );
 }
