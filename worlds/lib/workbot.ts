@@ -404,23 +404,25 @@ child.on("exit", (code) => process.exit(code ?? 1));
  * one private sandbox at the same commit. Workbot's signed URL exists before Den starts, so Den is configured with it.
  */
 export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: Place): Promise<Record<string, WorldOutput>> {
+  const { createWorldDaytonaExec } = await import("../../evals/packages/hosts/src/sandbox-daytona.ts");
+  const exec = await createWorldDaytonaExec();
   const base = place.denBase();
   if (base.kind !== "daytona") throw new Error("preview-workbot on Daytona needs a pinned Daytona ref.");
   const name = `${receiptName(WORKBOT_WORLD, resolveStage(process.env))}-${randomUUID().slice(0, 8)}`;
   let sandboxId: string | undefined;
   const room = await provisionWebSandbox({
-    ref: base.ref, name, private: true, autoStopMinutes: 0,
+    exec, ref: base.ref, name, private: true, autoStopMinutes: 0,
     onCreated: async (created) => {
-      sandboxId = await privateSandboxId(created);
+      sandboxId = await privateSandboxId(created, exec);
       await trackResource({ kind: "app-web-daytona", id: sandboxId, match: sandboxId, label: name });
     },
   });
-  stack.defer(() => deleteSandboxes([sandboxId ?? room.sandbox]));
+  stack.defer(() => deleteSandboxes([sandboxId ?? room.sandbox], { exec }));
   if (!sandboxId || !room.created) throw new Error("preview-workbot did not receive an owned private sandbox.");
   const lifetime = (DAYTONA_LIFETIME_MINUTES + 10) * 60;
   const issuedAt = Date.now();
-  const workbotPreview = await privateWebPreview(sandboxId, DAYTONA_WORKBOT_PORT, undefined, lifetime);
-  const runnerPreview = await privateWebPreview(sandboxId, DAYTONA_RUNNER_PORT, undefined, lifetime);
+  const workbotPreview = await privateWebPreview(sandboxId, DAYTONA_WORKBOT_PORT, exec, lifetime);
+  const runnerPreview = await privateWebPreview(sandboxId, DAYTONA_RUNNER_PORT, exec, lifetime);
   const secrets = { runnerToken: token(), sessionSecret: token(), upstreamKey: randomUUID() };
   const den = stack.use(await server({
     place, web: true, seedProfile: "demo-org", daytonaAutoStopMinutes: 0,
@@ -430,18 +432,18 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
     },
   }));
   const upstream = await startScriptOnSandbox({
-    sandbox: sandboxId, label: "acme-upstream", port: DAYTONA_UPSTREAM_PORT,
+    exec, sandbox: sandboxId, label: "acme-upstream", port: DAYTONA_UPSTREAM_PORT,
     scriptSource: await readFile(fileURLToPath(new URL("../../evals/packages/labs/src/acme-upstream.mjs", import.meta.url)), "utf8"),
     env: { ACME_UPSTREAM_KEY: secrets.upstreamKey, ACME_MODEL, ACME_REPLY },
     log: (line) => console.error(`[preview-workbot] ${line}`),
   });
   stack.defer(() => upstream.stop().catch(() => undefined));
-  const built = await execInSandbox(defaultDaytonaExec, sandboxId, "cd /workspace && pnpm --filter @openwork-ee/workbot build > /tmp/workbot-build.log 2>&1; status=$?; tail -20 /tmp/workbot-build.log; exit $status", {
+  const built = await execInSandbox(exec, sandboxId, "cd /workspace && pnpm --filter @openwork-ee/workbot build > /tmp/workbot-build.log 2>&1; status=$?; tail -20 /tmp/workbot-build.log; exit $status", {
     timeoutMs: 900_000, context: "Workbot build",
   });
   if (built.code !== 0) throw new Error(`Workbot build failed in the sandbox: ${built.stdout.slice(-800)}`);
   const runner = await startScriptOnSandbox({
-    sandbox: sandboxId, label: "workbot-runner", port: DAYTONA_RUNNER_PORT, healthPath: "/health", scriptSource: LAUNCHER,
+    exec, sandbox: sandboxId, label: "workbot-runner", port: DAYTONA_RUNNER_PORT, healthPath: "/health", scriptSource: LAUNCHER,
     env: {
       OPENWORK_LAUNCH_CWD: "/workspace/ee/apps/headless-runner",
       OPENWORK_LAUNCH_ARGS: JSON.stringify(["--conditions=development", "--import", "tsx", "src/server.ts"]),
@@ -454,7 +456,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
   });
   stack.defer(() => runner.stop().catch(() => undefined));
   const workbot = await startScriptOnSandbox({
-    sandbox: sandboxId, label: "workbot-app", port: DAYTONA_WORKBOT_PORT, healthPath: "/healthz", scriptSource: LAUNCHER,
+    exec, sandbox: sandboxId, label: "workbot-app", port: DAYTONA_WORKBOT_PORT, healthPath: "/healthz", scriptSource: LAUNCHER,
     env: {
       OPENWORK_LAUNCH_CWD: "/workspace/ee/apps/workbot", OPENWORK_LAUNCH_ARGS: JSON.stringify(["dist/server.js"]),
       WORKBOT_PUBLIC_URL: workbotPreview.browserOrigin, WORKBOT_DEN_API_URL: den.ref.apiUrl, WORKBOT_DEN_WEB_URL: den.ref.webUrl,

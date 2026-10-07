@@ -170,6 +170,12 @@ importers:
       '@openwork/paths':
         specifier: link:../../../packages/paths
         version: link:../../../packages/paths
+      '@openwork/sandbox':
+        specifier: link:../../../packages/sandbox
+        version: link:../../../packages/sandbox
+      '@openwork/sandbox-daytona':
+        specifier: link:../../../packages/sandbox-daytona
+        version: link:../../../packages/sandbox-daytona
       '@openwork/timeline':
         specifier: workspace:*
         version: link:../timeline

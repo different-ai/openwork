@@ -13,6 +13,8 @@
     "./evidence-builder": "./src/evidence-builder.ts"
   },
   "dependencies": {
-    "freestyle": "0.2.13"
+    "freestyle": "0.2.13",
+    "@openwork/sandbox": "workspace:*",
+    "@openwork/sandbox-freestyle": "workspace:*"
   }
 }

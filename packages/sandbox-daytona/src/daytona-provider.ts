@@ -46,6 +46,8 @@ export type DaytonaSandboxClient = {
   readonly state: string | null
   readonly target: string | null
   readonly labels?: Readonly<Record<string, string>>
+  readonly public?: boolean
+  readonly toolboxProxyUrl?: string
   refreshData(): Promise<unknown>
   start(timeoutSeconds?: number): Promise<unknown>
   stop(timeoutSeconds?: number): Promise<unknown>
@@ -150,6 +152,8 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
     get labels() {
       return sandbox.labels
     },
+    get public() { return sandbox.public },
+    get toolboxProxyUrl() { return sandbox.toolboxProxyUrl },
     refreshData: () => sandbox.refreshData(),
     start: (timeout) => sandbox.start(timeout),
     stop: (timeout) => sandbox.stop(timeout),

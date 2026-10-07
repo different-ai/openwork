@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { Freestyle, FreestyleApiError } from "freestyle";
 import type { Vm } from "freestyle";
+import { withBlocks } from "@openwork/sandbox";
+import { createFreestyleProvider } from "@openwork/sandbox-freestyle";
 
 export const PREVIEW_KIND = "openwork-review-v1";
 export const ACCESS_FILE = "/opt/openwork-preview/access.json";
@@ -42,7 +44,7 @@ export function guestCommandOutcome(statusCode: number | null | undefined, timeo
   return typeof statusCode === "number" ? `exit ${statusCode}` : `killed at ${Math.round(timeoutMs / 1000)}s timeout`;
 }
 
-export async function execChecked(vm: Vm, command: string, timeoutMs = 120_000): Promise<string> {
+export async function execChecked(vm: Pick<Vm, "exec">, command: string, timeoutMs = 120_000): Promise<string> {
   const result = await vm.exec({ command, timeoutMs, linuxUser: "root" });
   // Keep this prefix: the review app logs only messages that start with it.
   if (result.statusCode !== 0) throw new Error(`Freestyle guest command failed (${guestCommandOutcome(result.statusCode, timeoutMs)}).`);
@@ -128,6 +130,46 @@ export async function waitForServiceRoutes(
   }));
 }
 
+/** Transitional job facade: existing preview bootstrap stays intact while Workbot's host uses shared blocks. */
+type PreviewGuest = Pick<Vm, "exec" | "delete"> & { fs: Pick<Vm["fs"], "readTextFile" | "writeTextFile"> };
+
+async function createWorkbotPreviewGuest(input: {
+  api: Freestyle; snapshotId: string; slug: string; minutes: number; gitSha: string; reportId?: string; domains: string[];
+}): Promise<{ vm: PreviewGuest; vmId: string; data: { createdAt: string } }> {
+  const provider = createFreestyleProvider({
+    snapshot: input.snapshotId, linuxUser: "root",
+    firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
+    createOptions: {
+      displayName: `OpenWork preview ${input.gitSha.slice(0, 7)}`, ttlSeconds: input.minutes * 60,
+      tls: { rules: input.domains.map(domain => ({ action: "allow", domain, source: { public: true }, destination: { port: 8080 } })) },
+    },
+  }, { client: input.api });
+  const createdAt = new Date().toISOString(); // conservative: access expires no later than the host TTL
+  const box = await provider.create({
+    idempotencyKey: input.slug, image: provider.currentImage(),
+    labels: { kind: PREVIEW_KIND, world: "workbot", gitSha: input.gitSha, ...(input.reportId ? { reportId: input.reportId } : {}) },
+    env: {}, storage: [], exposePorts: [], lifecycle: { autoStopMinutes: 10 },
+  }, { timeoutMs: 120_000 });
+  const { run, files } = withBlocks(provider, ["run", "files"], "Workbot preview");
+  const vm: PreviewGuest = {
+    exec: async request => {
+      const spec = typeof request === "string" ? { command: request } : request;
+      if (spec.stdin) throw new Error("Preview bootstrap does not support stdin");
+      const result = await run(box, { command: spec.command, env: spec.env, timeoutMs: spec.timeoutMs ?? 120_000 });
+      return { statusCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+    },
+    delete: () => provider.destroy(box, { timeoutMs: 30_000 }),
+    fs: {
+      writeTextFile: async (path, text, opts = {}) => {
+        if (opts.mode !== undefined && opts.mode !== 0o600) throw new Error("Preview secrets must use mode 0600");
+        await files.write(box, path, new TextEncoder().encode(text), { timeoutMs: 30_000 });
+      },
+      readTextFile: async path => new TextDecoder().decode(await files.read(box, path, { timeoutMs: 30_000 })),
+    },
+  };
+  return { vm, vmId: box.ref.ref.vmId, data: { createdAt } };
+}
+
 /** Every call creates a VM. Neither reports nor visitors ever key a reusable VM. */
 export async function launchPreview(
   input: { gitSha: string; reportId?: string; lifetimeMinutes?: number; world?: PreviewWorld },
@@ -150,7 +192,9 @@ export async function launchPreview(
   } : world === "desktop" ? { desktop: `https://${domain}` } : undefined;
   const domains = origins ? Object.values(origins).map((value) => new URL(value).hostname) : [domain];
   const token = randomBytes(32).toString("base64url");
-  const { vm, vmId, data } = await api.vms.create({
+  const { vm, vmId, data } = world === "workbot"
+    ? await createWorkbotPreviewGuest({ api, snapshotId: snapshot.id, slug: `ow-preview-${launchId}`, minutes, gitSha: input.gitSha, reportId: input.reportId, domains })
+    : await api.vms.create({
     snapshotId: snapshot.id, slug: `ow-preview-${launchId}`,
     displayName: `OpenWork preview ${input.gitSha.slice(0, 7)}`,
     ttlSeconds: minutes * 60, idleTimeoutSeconds: 600,
@@ -238,5 +282,9 @@ export async function deletePreview(id: string, api = client()): Promise<void> {
   try { vm = await api.vms.get(id); }
   catch (error) { if (isMissing(error)) return; throw error; }
   if (vm.metadata.kind !== PREVIEW_KIND) throw new Error("Refusing to delete a VM not owned by OpenWork previews.");
-  await api.vms.delete(vm.id);
+  if (vm.metadata.world === "workbot") {
+    const provider = createFreestyleProvider({ snapshot: vm.snapshotId ?? "freestyle/ubuntu" , firewall: { rules: [] } }, { client: api });
+    const box = await provider.get({ providerId: "freestyle", ref: { vmId: vm.id } });
+    if (box) await provider.destroy(box, { timeoutMs: 30_000 });
+  } else await api.vms.delete(vm.id);
 }

@@ -103,6 +103,11 @@ jobs:
           pnpm --filter @openwork/sandbox-daytona test
           pnpm --filter @openwork/sandbox-freestyle typecheck
           pnpm --filter @openwork/sandbox-freestyle test
+      - name: Test shared Workbot world transports (no cloud resources)
+        run: |
+          pnpm --filter @openwork/sandbox-freestyle build
+          pnpm --filter @openwork/sandbox-daytona build
+          pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/sandbox-daytona.test.ts packages/env/src/freestyle-sandbox-preview.test.ts
       - name: Check contract generation and commit-hook safety
         run: pnpm test:contracts
       # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;

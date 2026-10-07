@@ -1,9 +1,12 @@
-import { Freestyle, FreestyleApiError, type VmData } from "freestyle"
+import { Freestyle, FreestyleApiError, type VmData, type CreateVmOptions } from "freestyle"
 import { SandboxError, shellQuote, type SandboxProvider, type SandboxHandle, type SandboxRef, type SandboxQuery, type SandboxState, type RunSpec, type RunResult } from "@openwork/sandbox"
 
 export type FreestyleProviderOptions = {
-  apiKey: string
+  apiKey?: string
   snapshot: string
+  /** Provider-native creation settings for preview jobs; identity and ownership stay in SandboxSpec. */
+  createOptions?: Pick<CreateVmOptions, "displayName" | "ttlSeconds" | "tls" | "placement">
+  linuxUser?: string
   /** Required: Freestyle never grants network access implicitly. */
   firewall: NonNullable<Parameters<Freestyle["vms"]["create"]>[0]["firewall"]>
   /** Provider-specific endpoint composition (TLS/domains), not assumed by compute. */
@@ -20,7 +23,7 @@ export function freestyleError(error: unknown): SandboxError {
 
 /** Freestyle Linux VM compute with optional process/files/pause/snapshot blocks. */
 export function createFreestyleProvider(options: FreestyleProviderOptions, deps: FreestyleProviderDeps = {}): SandboxProvider {
-  const api = deps.client ?? new Freestyle({ apiKey: options.apiKey })
+  const api = deps.client ?? (options.apiKey ? new Freestyle({ apiKey: options.apiKey }) : (() => { throw new Error("Freestyle requires apiKey or an injected client") })())
   const now = deps.now ?? Date.now
   const id = "freestyle"
   const unsupported = (feature: string): never => { throw new SandboxError({ providerId: id, code: "invalid_state", retryable: false, message: `Freestyle adapter does not provide ${feature}` }) }
@@ -51,7 +54,7 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
   async function run(h: SandboxHandle, spec: RunSpec): Promise<RunResult> {
     if (spec.shell && spec.shell !== "sh") unsupported("PowerShell")
     const command = `${spec.cwd ? `cd ${shellQuote(spec.cwd)} && ` : ""}exec sh -c ${shellQuote(spec.command)}`
-    const result = await bounded(() => api.vms.ref(identity(h.ref)).exec({ command, env: { ...spec.env }, timeoutMs: spec.timeoutMs }), spec.timeoutMs)
+    const result = await bounded(() => api.vms.ref(identity(h.ref)).exec({ command, env: { ...spec.env }, ...(options.linuxUser ? { linuxUser: options.linuxUser } : {}), timeoutMs: spec.timeoutMs }), spec.timeoutMs)
     if (typeof result.statusCode !== "number") throw new SandboxError({ providerId: id, code: "timeout", retryable: false, message: "Command did not return an exit code; do not retry automatically" })
     return { exitCode: result.statusCode, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
   }
@@ -66,6 +69,7 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
       if (spec.storage.length || spec.resources || spec.lifecycle?.autoArchiveMinutes !== undefined) unsupported("storage attachments, resource overrides or auto-archive")
       if (Object.keys(spec.env).length) unsupported("create-time env; use run.env")
       const response = await bounded(() => api.vms.create({
+        ...options.createOptions,
         snapshotId: spec.image?.id ?? options.snapshot,
         slug: spec.idempotencyKey,
         metadata: { ...spec.labels },

@@ -1534,6 +1534,12 @@ importers:
 
   packages/freestyle:
     dependencies:
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+      '@openwork/sandbox-freestyle':
+        specifier: workspace:*
+        version: link:../sandbox-freestyle
       freestyle:
         specifier: 0.2.13
         version: 0.2.13
