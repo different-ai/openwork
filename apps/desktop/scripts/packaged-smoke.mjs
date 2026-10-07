@@ -119,7 +119,7 @@ try {
   // instances. Running the quit contract beside the long egress observation can
   // make an unrelated attached surface disappear before its quiet window ends.
   // Linux has no crash reports to read, so the journey names that half skipped
-  // and the exit signal is the witness.
+  // and the exit signal is the witness; packaged-smoke-macos.mjs asserts it.
   if (selected("desktop-quit-path")) await bootPackagedDesktop(
     "desktop-quit-enterprise",
     "desktop-quit-path",

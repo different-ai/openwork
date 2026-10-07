@@ -56,7 +56,13 @@ const definitions = {
   'packaged-preactivation-egress.e2e.test.ts': { name: 'Keep an unactivated enterprise install off the network', placement: 'local', needs: PACKAGED_BINARY },
   'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local', needs: PACKAGED_BINARY },
   // Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
+  // Its crash-report half is asserted on macOS, where packaged-smoke-macos runs it; Linux records that half as skipped.
   'desktop-quit-path.e2e.test.ts': { name: 'Quit an enterprise install cleanly', placement: 'local', needs: PACKAGED_BINARY },
+  // Installs a newer signed build from a loopback feed through Squirrel.Mac; only packaged-smoke-macos provides both builds.
+  'packaged-update-install.e2e.test.ts': {
+    name: 'Update an activated enterprise install in place', placement: 'local',
+    needs: { platform: 'darwin', env: ['OPENWORK_EVAL_ELECTRON_BINARY', 'OPENWORK_EVAL_UPDATE_FEED_DIR'] },
+  },
   // Boots a RELEASED enterprise binary already activated against a real Den. Only its update case also needs
   // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own and the lane that runs
   // this journey must provide both binaries for it to pass (#4848).

@@ -317,6 +317,51 @@ jobs:
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm --filter @openwork/desktop typecheck:electron
 
+  # The Linux packaged smoke boots an unpacked directory, which writes no crash
+  # reports and cannot install an update. This lane builds real enterprise .app
+  # bundles so desktop-quit-path asserts DiagnosticReports stays empty and
+  # packaged-update-install proves download -> install on quit -> relaunch.
+  packaged-desktop-macos:
+    name: Packaged desktop on macOS
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-12vcpu-macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - name: Setup tests
+        uses: ./.github/actions/setup-tests
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Package, sign, and run the macOS packaged journeys
+        timeout-minutes: 30
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke-macos
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node apps/desktop/scripts/packaged-smoke-macos.mjs --server-built
+      - name: Upload macOS packaged evidence and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-desktop-macos-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/profiles/**/electron.log
+            evals/results/test-runs/**
+          include-hidden-files: true
+          retention-days: 7
+
   validate-models-snapshot:
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'snapshot'
