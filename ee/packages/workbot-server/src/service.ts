@@ -181,13 +181,15 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   })
   if (!savedMain.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   if (!chat) return savedMain.value.id
-  // Named by the runner after its first answer; never sent a title, so that name stays.
+  // Named by the runner after its first answer; never sent a title, so that name stays. Strict: a side chat is only
+  // found again through its owner and ref, so it is never kept without them (the main chat's id is derived).
   const saved = await client.putSession(sessionOf(actor, chat), {
     instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, side: true }),
     ...common,
     ref: chat,
     autoTitle: true,
     memoryOf: main,
+    strict: true,
   })
   if (!saved.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return saved.value.id

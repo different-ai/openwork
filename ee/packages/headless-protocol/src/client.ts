@@ -235,7 +235,13 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      */
     async putSession(
       id: string,
-      input: { title?: string; instructions?: string } & RunnerCapabilities & RunnerSessionSettings = {},
+      input: { title?: string; instructions?: string } & RunnerCapabilities & RunnerSessionSettings & {
+        /**
+         * Fail rather than keep the conversation without settings an older runner doesn't know. For a conversation
+         * that can only be found again through them (a side chat is listed by `owner` and `ref`).
+         */
+        strict?: boolean
+      } = {},
     ): Promise<RunnerResult<{ id: string; created: boolean }>> {
       const base = {
         ...(input.title ? { title: input.title.slice(0, 200) } : {}),
@@ -243,9 +249,8 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
       const extras = capabilityFields(input)
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
-      // A runner older than per-session capabilities rejects them: keep the conversation, without them. A conversation
-      // that belongs to someone (owner) is never created without that: it could not be found again.
-      if (unknownSetting(status, payload) && Object.keys(extras).length && !input.owner) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
+      // A runner older than per-session capabilities or settings rejects them: keep the conversation, without them.
+      if (unknownSetting(status, payload) && Object.keys(extras).length && !input.strict) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
       const saved = z.object({ id: z.string() }).safeParse(payload)
       if ((status !== 200 && status !== 201) || !saved.success) return { ok: false, status, error: errorCode(payload, `headless_put_${status}`) }
       return { ok: true, value: { id: saved.data.id, created: status === 201 } }
