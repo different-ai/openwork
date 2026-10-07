@@ -10,12 +10,10 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await user.click("Run task");
 
   await step("a running connected action shows its own advancing elapsed time", async () => {
-    // TODO(primitive): observe the elapsed label on this individual connected action.
-    const readRunning = () => probe.eval(() => {
-      const row = [...document.querySelectorAll<HTMLElement>('[data-capability-call]')]
-        .find(node => node.getAttribute('data-capability-call')?.endsWith('execute_capability'));
-      return { duration: row?.querySelector('.tabular-nums')?.textContent ?? null,
-        rawVisible: Boolean(row?.querySelector('pre')), text: row?.innerText ?? "" };
+    const row = '[data-capability-call$="execute_capability"]';
+    const readRunning = async () => ({
+      duration: (await probe.dom(`${row} .tabular-nums`)).elements[0]?.text ?? null,
+      rawVisible: (await probe.dom(`${row} pre`)).elements.length > 0,
     });
     const first = await probe.eventually(readRunning, { within: 90_000, intervalMs: 100,
       label: "individual lookup has its own running duration", until: value => value.duration !== null }).catch(async error => {
@@ -47,7 +45,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     }
     evidence.recordJsonArtifact("Connected action live elapsed time", { first, advanced });
     evidence.recordAssertionEvidence("Each running connected action shows advancing elapsed time",
-      `${first.duration} advanced to ${advanced.duration} on Listing channels, with raw output still disclosed`, true);
+      `${first.duration} advanced to ${advanced.duration} on Listing channels, with raw output still hidden`, true);
     await user.screenshot();
   });
 
