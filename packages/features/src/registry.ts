@@ -137,6 +137,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  permissionRules: {
+    label: "Permission rules",
+    description: "Organization admins add OpenCode permission rules to Member, Admin and team permissions for the commands, websites, local skills and local MCP servers members' apps may use. Needs Permissions.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   platformAuditReads: {
     label: "Platform audit: read-only requests",
     description: "Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.",

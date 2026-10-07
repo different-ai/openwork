@@ -18,7 +18,8 @@ import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSum
 import type { AuthContextVariables } from "../../session.js"
 import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { getOrganizationFeatures } from "../../features.js"
+import { permissionRulesForMember } from "../../permissions/rules.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -379,12 +380,18 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         organizationId: organization.id,
         orgMemberId: currentMember.id,
       })
+      const features = await getOrganizationFeatures(organization.id)
+      // Turning either feature off stops members' apps from applying permission rules.
+      const rules = features.permissions && features.permissionRules
+        ? await permissionRulesForMember({ organizationId: organization.id, memberId: currentMember.id })
+        : []
 
       return c.json({
         ...desktopPolicy,
+        ...(rules.length > 0 ? { rules } : {}),
         automationsEnabled: env.automations.enabled,
         dashboardEnabled: env.dashboardsEnabled,
-        connectEnabled: await organizationFeatureEnabled(organization.id, "mcpConnections"),
+        connectEnabled: features.mcpConnections,
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),

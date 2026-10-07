@@ -32,6 +32,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   permissionSetCreated: "organization.permission_set.created",
   permissionSetPermissionsChanged: "organization.permission_set.permissions_changed",
   permissionSetArchived: "organization.permission_set.archived",
+  permissionSetRulesChanged: "organization.permission_set.rules_changed",
 }
 
 export type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -83,6 +84,7 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated:
     case ORGANIZATION_AUDIT_ACTIONS.permissionSetPermissionsChanged:
     case ORGANIZATION_AUDIT_ACTIONS.permissionSetArchived:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetRulesChanged:
       return true
     // Intentionally unchanged by the operation audit work: ownership transfer
     // has never raised an operator [audit-alert]; widening that contract is out of scope.

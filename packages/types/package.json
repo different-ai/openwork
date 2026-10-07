@@ -166,6 +166,17 @@
       "development": "./src/url.ts",
       "default": "./src/url.ts"
     },
+    "./den/policy-rules": {
+      "types": "./src/den/policy-rules.ts",
+      "development": "./src/den/policy-rules.ts",
+      "default": "./src/den/policy-rules.ts"
+    },
+    "./den/policy-rules-runtime": {
+      "types": "./src/den/policy-rules.ts",
+      "development": "./src/den/policy-rules.ts",
+      "bun": "./src/den/policy-rules.ts",
+      "default": "./dist/den/policy-rules.js"
+    },
     "./den/desktop-policies-runtime": {
       "types": "./src/den/desktop-policies.ts",
       "development": "./src/den/desktop-policies.ts",

@@ -91,6 +91,11 @@
       "development": "./src/permissions.ts",
       "default": "./dist/permissions.js"
     },
+    "./permission-rules": {
+      "types": "./src/permission-rules.ts",
+      "development": "./src/permission-rules.ts",
+      "default": "./dist/permission-rules.js"
+    },
     "./drizzle": {
       "types": "./src/drizzle.ts",
       "development": "./src/drizzle.ts",

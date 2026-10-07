@@ -20,7 +20,7 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "organization.complimentary_access.granted": "audit/domain/organization-settings.ts", "organization.complimentary_access.revoked": "audit/domain/organization-settings.ts",
   "organization.dpa_signed.updated": "audit/domain/organization-settings.ts",
   "web_origin.approved": "audit/domain/web-origins.ts", "web_origin.removed": "audit/domain/web-origins.ts",
-  "permission_set.created": "audit/domain/permissions.ts", "permission_set.permissions_changed": "audit/domain/permissions.ts", "permission_set.archived": "audit/domain/permissions.ts",
+  "permission_set.created": "audit/domain/permissions.ts", "permission_set.permissions_changed": "audit/domain/permissions.ts", "permission_set.archived": "audit/domain/permissions.ts", "permission_set.rules_changed": "audit/domain/permissions.ts",
   // Organization-bound MCP OAuth tokens (consent referenceId; src/audit/better-auth.ts).
   "oauth_token.issued": "audit/domain/oauth-tokens.ts", "oauth_token.revoked": "audit/domain/oauth-tokens.ts",
   // User-scoped events (attribution user_memberships, src/audit/fanout.ts).

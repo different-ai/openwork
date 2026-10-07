@@ -341,6 +341,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
 | `litellm` | `DEN_FEATURE_LITELLM` | default off | Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person. |
 | `permissions` | `DEN_FEATURE_PERMISSIONS` | default off | Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults. |
+| `permissionRules` | `DEN_FEATURE_PERMISSION_RULES` | default off | Organization admins add OpenCode permission rules to Member, Admin and team permissions for the commands, websites, local skills and local MCP servers members' apps may use. Needs Permissions. |
 | `platformAuditReads` | `DEN_FEATURE_PLATFORM_AUDIT_READS` | default off | Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect. |
 <!-- END GENERATED features -->
 
