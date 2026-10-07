@@ -31,6 +31,8 @@ import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES, type 
  * tasks), and the "Order calculator" MCP App seeded into the org (worlds/mcp-apps-demo.ts).
  */
 
+import { workbotProbeAuthorizeUrl } from "./workbot-auth.ts";
+
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const WORKBOT_WORLD = "preview-workbot";
 // A preview VM's services keep template origins; these preloads translate them (see each file).
@@ -328,7 +330,7 @@ export async function signInWorkbot(world: WorkbotWorld, options: { denInternal?
   withCookies(denJar, active);
   if (!active.ok) throw new Error(`Could not choose the Acme workspace: HTTP ${active.status}`);
 
-  const granted = await fetch(toInternal(authorize), {
+  const granted = await fetch(workbotProbeAuthorizeUrl(authorize, world.denWebPublic, world.den.ref.apiUrl), {
     redirect: "manual", signal: AbortSignal.timeout(30_000),
     headers: { ...DAYTONA_SKIP_WARNING, cookie: cookieHeader(denJar), origin: world.denWebPublic },
   });
