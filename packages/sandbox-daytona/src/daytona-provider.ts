@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { Daytona, type CreateSandboxFromImageParams, type CreateSandboxFromSnapshotParams, type Sandbox } from "@daytonaio/sdk"
-import { shellQuote } from "@openwork-ee/cloud-runtime/bootstrap"
 import {
   RuntimeProviderError,
+  shellQuote,
   type Endpoint,
   type ExecHandle,
   type ExecSpec,
@@ -17,7 +17,7 @@ import {
   type SandboxSpec,
   type SandboxState,
   type SandboxStorage,
-} from "@openwork-ee/cloud-runtime/contract"
+} from "@openwork/sandbox"
 import { toRuntimeProviderError } from "./errors"
 
 export const DAYTONA_PROVIDER_ID = "daytona"

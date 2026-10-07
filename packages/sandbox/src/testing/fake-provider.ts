@@ -1,4 +1,4 @@
-import { RuntimeProviderError } from "../contract/errors"
+import { RuntimeProviderError } from "../errors"
 import type {
   Endpoint,
   ExecHandle,
@@ -14,7 +14,7 @@ import type {
   SandboxState,
   SandboxStorage,
   VolumeRef,
-} from "../contract/provider"
+} from "../provider"
 
 export type FakeExecResult = {
   exitCode: number | null

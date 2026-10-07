@@ -3,8 +3,6 @@ import { defineConfig } from "tsup"
 export default defineConfig({
   entry: {
     index: "src/index.ts",
-    "bootstrap/index": "src/bootstrap/index.ts",
-    "orchestrator/index": "src/orchestrator/index.ts",
     "testing/index": "src/testing/index.ts",
   },
   format: ["esm"],

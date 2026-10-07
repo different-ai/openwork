@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
-import { isRuntimeProviderError } from "../contract/errors"
-import type { SandboxProvider, SandboxSpec } from "../contract/provider"
+import { isRuntimeProviderError } from "../errors"
+import type { SandboxProvider, SandboxSpec } from "../provider"
 
 export type ConformanceCase = {
   name: string

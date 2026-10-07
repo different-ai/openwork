@@ -4,8 +4,8 @@ import {
   type CloudRuntimeOrchestratorConfig,
   type RuntimeInstanceStore,
 } from "@openwork-ee/cloud-runtime/orchestrator"
-import type { ProviderEndpointKind, SandboxProvider } from "@openwork-ee/cloud-runtime/contract"
-import { createDaytonaProvider, DAYTONA_PROVIDER_ID } from "@openwork-ee/cloud-runtime-daytona"
+import type { ProviderEndpointKind, SandboxProvider } from "@openwork/sandbox"
+import { createDaytonaProvider, DAYTONA_PROVIDER_ID } from "@openwork/sandbox-daytona"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { createDatabaseRuntimeInstanceStore } from "./cloud-runtime-store.js"

@@ -581,9 +581,6 @@ importers:
       '@openwork-ee/cloud-runtime':
         specifier: workspace:*
         version: link:../../packages/cloud-runtime
-      '@openwork-ee/cloud-runtime-daytona':
-        specifier: workspace:*
-        version: link:../../packages/cloud-runtime-daytona
       '@openwork-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
@@ -626,6 +623,12 @@ importers:
       '@openwork/mcp-apps':
         specifier: workspace:*
         version: link:../../../packages/mcp-apps
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../../../packages/sandbox
+      '@openwork/sandbox-daytona':
+        specifier: workspace:*
+        version: link:../../../packages/sandbox-daytona
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types
@@ -1141,25 +1144,10 @@ importers:
         version: 6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.1)(yaml@2.9.0)
 
   ee/packages/cloud-runtime:
-    devDependencies:
-      '@types/node':
-        specifier: ^20.11.30
-        version: 20.12.12
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^5.5.4
-        version: 5.9.3
-
-  ee/packages/cloud-runtime-daytona:
     dependencies:
-      '@daytonaio/sdk':
-        specifier: ^0.201.0
-        version: 0.201.0
-      '@openwork-ee/cloud-runtime':
+      '@openwork/sandbox':
         specifier: workspace:*
-        version: link:../cloud-runtime
+        version: link:../../../packages/sandbox
     devDependencies:
       '@types/node':
         specifier: ^20.11.30
@@ -1663,6 +1651,40 @@ importers:
       zod:
         specifier: 4.3.6
         version: 4.3.6
+
+  packages/sandbox:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  packages/sandbox-daytona:
+    dependencies:
+      '@daytonaio/sdk':
+        specifier: ^0.201.0
+        version: 0.201.0
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
 
   packages/sdk:
     devDependencies:
@@ -16330,7 +16352,7 @@ snapshots:
       es-errors: 1.3.0
       get-intrinsic: 1.3.0
       has-tostringtag: 1.0.2
-      hasown: 2.0.2
+      hasown: 2.0.4
 
   es-to-primitive@1.3.4:
     dependencies:
@@ -16842,12 +16864,12 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       es-define-property: 1.0.1
       es-errors: 1.3.0
-      es-object-atoms: 1.1.1
+      es-object-atoms: 1.1.2
       function-bind: 1.1.2
       get-proto: 1.0.1
       gopd: 1.2.0
       has-symbols: 1.1.0
-      hasown: 2.0.2
+      hasown: 2.0.4
       math-intrinsics: 1.1.0
 
   get-nonce@1.0.1: {}
@@ -18609,7 +18631,7 @@ snapshots:
       define-properties: 1.2.1
       es-abstract: 1.24.2
       es-errors: 1.3.0
-      es-object-atoms: 1.1.1
+      es-object-atoms: 1.1.2
       get-intrinsic: 1.3.0
       get-proto: 1.0.1
       which-builtin-type: 1.2.1

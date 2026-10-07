@@ -1,0 +1,30 @@
+{
+  "name": "@openwork/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One sandbox contract for OpenWork: create, run commands in, move files to and from, pause and delete a Linux sandbox on any provider.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "development": "./src/testing/index.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4"
+  }
+}
