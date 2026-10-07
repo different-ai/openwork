@@ -1,6 +1,10 @@
 export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model, the computer and an MCP App.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+
 import { hold } from "../packages/world/src/hold.ts";
 import { output, secret } from "../packages/world/src/outputs.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";
@@ -15,6 +19,10 @@ const NAME = "preview-workbot";
  * the whole path before it reports ready: sign in through Den, send a message, get the runner's answer.
  */
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  // Production adapters expose compiled exports. Prepare them once on the
+  // controller before selecting a remote transport; no cloud work happens here.
+  await promisify(execFile)("pnpm", ["--filter", "@openwork/freestyle", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
+  await promisify(execFile)("pnpm", ["--filter", "@openwork/sandbox-daytona", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
   await using stack = new AsyncDisposableStack();
   if (process.env.OPENWORK_WORLD_PLACE === "freestyle") {
     const { parseAppWebOptions } = await import("./lib/app-web-options.ts");

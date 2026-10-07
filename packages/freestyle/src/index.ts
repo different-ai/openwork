@@ -5,8 +5,6 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { Freestyle, FreestyleApiError } from "freestyle";
 import type { Vm } from "freestyle";
-import { withBlocks } from "@openwork/sandbox";
-import { createFreestyleProvider } from "@openwork/sandbox-freestyle";
 
 export const PREVIEW_KIND = "openwork-review-v1";
 export const ACCESS_FILE = "/opt/openwork-preview/access.json";
@@ -136,6 +134,8 @@ type PreviewGuest = Pick<Vm, "exec" | "delete"> & { fs: Pick<Vm["fs"], "readText
 async function createWorkbotPreviewGuest(input: {
   api: Freestyle; snapshotId: string; slug: string; minutes: number; gitSha: string; reportId?: string; domains: string[];
 }): Promise<{ vm: PreviewGuest; vmId: string; data: { createdAt: string } }> {
+  const { withBlocks } = await import("@openwork/sandbox");
+  const { createFreestyleProvider } = await import("@openwork/sandbox-freestyle");
   const provider = createFreestyleProvider({
     snapshot: input.snapshotId, linuxUser: "root",
     firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
@@ -283,6 +283,7 @@ export async function deletePreview(id: string, api = client()): Promise<void> {
   catch (error) { if (isMissing(error)) return; throw error; }
   if (vm.metadata.kind !== PREVIEW_KIND) throw new Error("Refusing to delete a VM not owned by OpenWork previews.");
   if (vm.metadata.world === "workbot") {
+    const { createFreestyleProvider } = await import("@openwork/sandbox-freestyle");
     const provider = createFreestyleProvider({ snapshot: vm.snapshotId ?? "freestyle/ubuntu" , firewall: { rules: [] } }, { client: api });
     const box = await provider.get({ providerId: "freestyle", ref: { vmId: vm.id } });
     if (box) await provider.destroy(box, { timeoutMs: 30_000 });

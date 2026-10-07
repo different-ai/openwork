@@ -16,5 +16,8 @@
     "freestyle": "0.2.13",
     "@openwork/sandbox": "workspace:*",
     "@openwork/sandbox-freestyle": "workspace:*"
+  },
+  "scripts": {
+    "build": "pnpm --filter \"@openwork/freestyle^...\" --if-present run build"
   }
 }
