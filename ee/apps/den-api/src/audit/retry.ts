@@ -20,17 +20,19 @@ const BACKOFF_MS: readonly number[] = [50, 150]
 const BACKOFF_JITTER_MS = 25
 
 /**
- * lock_conflict: InnoDB deadlock victim (1213) or lock wait timeout (1205); the
+ * lock_conflict: InnoDB deadlock victim (1213), lock wait timeout (1205), or a
+ * MariaDB snapshot-isolation write conflict (1020, ER_CHECKREAD, on by default
+ * since MariaDB 11.6.2, which says to retry it like a deadlock); the
  * transaction was rolled back, so a re-run can never duplicate anything.
  * connection: the connection failed mid-transaction; the COMMIT may or may not
  * have landed, so only appends that are idempotent on replay are re-run.
  */
 export type AuditTransientFailure = "lock_conflict" | "connection"
 
-const LOCK_CONFLICT_CODES = new Set(["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT"])
-const LOCK_CONFLICT_ERRNOS = new Set([1213, 1205])
+const LOCK_CONFLICT_CODES = new Set(["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT", "ER_CHECKREAD"])
+const LOCK_CONFLICT_ERRNOS = new Set([1213, 1205, 1020])
 // PlanetScale/Vitess surface MySQL errors as message text: "... Deadlock found when trying to get lock; try restarting transaction (errno 1213) (sqlstate 40001)".
-const LOCK_CONFLICT_MESSAGE = /Deadlock found when trying to get lock|Lock wait timeout exceeded|\(errno 12(?:13|05)\)/
+const LOCK_CONFLICT_MESSAGE = /Deadlock found when trying to get lock|Lock wait timeout exceeded|Record has changed since last read|\(errno (?:12(?:13|05)|1020)\)/
 const CONNECTION_MESSAGE = /Connection lost|PROTOCOL_CONNECTION_LOST/
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{1,63}$/
 

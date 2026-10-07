@@ -99,7 +99,14 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
     return response
   } catch (error) {
     if (error instanceof AuditReadError) return c.json({ error: error.code }, error.status)
-    appLogger.error("audit read failed", { action, organization_id: organization.organization.id, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) })
+    const cause = error instanceof Error && typeof error.cause === "object" && error.cause !== null ? error.cause : null
+    appLogger.error("audit read failed", {
+      action,
+      organization_id: organization.organization.id,
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      cause_code: cause && "code" in cause && typeof cause.code === "string" ? cause.code : null,
+      cause_errno: cause && "errno" in cause && typeof cause.errno === "number" ? cause.errno : null,
+    })
     return c.json({ error: "audit_unavailable" }, 503)
   }
 }
