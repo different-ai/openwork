@@ -19,7 +19,7 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
   const task = (id: string, title: string): { id: string; title: string; status: TaskStatus; startedAt: number; finishedAt: number | null; update: string; updates: string[] } => ({ id, title, status: "working", startedAt: now, finishedAt: null, update: "Drafting", updates: ["Drafting"] });
   const tasks = [task("brief", "Launch brief"), task("notes", "Meeting notes")];
   tasks[1].status = "queued";
-  const turns = [{ id: "request", text: "Draft the brief and meeting notes.", sentAt: now, finishedAt: now, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "I'll draft those while we keep chatting." }], modelSteps: 1, error: null, tasks }];
+  const turns = [{ id: "request", text: "Draft the brief and meeting notes.", sentAt: now, finishedAt: now, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "On it, drafting both now." }], modelSteps: 1, error: null, tasks }];
   const change = () => {
     for (const stream of streams) stream.write(`data: ${JSON.stringify({ type: "changed", messageId: "request" })}\n\n`);
   };

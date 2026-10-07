@@ -109,7 +109,7 @@ export async function workbotFirstUse(_seed: Seed, context: { place: Place }, fa
             blocks = [text(prompt.includes("stopped before finishing") ? "I couldn't finish the brief. The model was unavailable." : "Your launch brief is ready. Open launch-brief.md in Files.")];
           }
         }
-        else if (prompt === JOB) blocks = called("start_task") ? [text("I'm drafting the launch brief. You can keep chatting.")] : [tool("start_task", { title: TITLE, brief: `${CHILD}: draft and save launch-brief.md.` })];
+        else if (prompt === JOB) blocks = called("start_task") ? [text("I'm drafting the launch brief.")] : [tool("start_task", { title: TITLE, brief: `${CHILD}: draft and save launch-brief.md.` })];
         else if (prompt === "Draft another brief with the unavailable provider.") blocks = called("start_task") ? [text("I'm drafting another brief.")] : [tool("start_task", { title: "Another brief", brief: `${CHILD} PROVIDER_FAIL: draft another brief.` })];
         else if (prompt === 'Try the "Another brief" background task again.') blocks = called("start_task") ? [text("I'm trying the brief again.")] : [tool("start_task", { title: "Retry the brief", brief: `${CHILD}: draft and save launch-brief.md.` })];
         else if (prompt === "What is two plus two?") blocks = [text("Four.")];
