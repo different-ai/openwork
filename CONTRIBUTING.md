@@ -1,46 +1,53 @@
 # Contributing to OpenWork
 
-Thanks for contributing. Two things keep this project's licensing clean —
-please read them before opening a pull request.
+## Contributor License Agreement and Developer Certificate of Origin
 
-## 1. Developer Certificate of Origin (DCO)
+Contributions to this repository are subject to the
+[Developer Certificate of Origin](https://developercertificate.org/), or the
+[Individual](./legal/individual-contributor-license-agreement.md) or
+[Corporate](./legal/corporate-contributor-license-agreement.md) Contributor
+License Agreement, depending on where the contribution is made and on whose
+behalf, unless otherwise agreed with Different AI, Inc. in writing:
 
-Every commit must be signed off, certifying the
-[Developer Certificate of Origin v1.1](https://developercertificate.org/):
+- By submitting code contributions as an individual to the
+  [`ee/` directory](./ee) of this repository, you agree to the
+  [Individual Contributor License Agreement](./legal/individual-contributor-license-agreement.md).
+- By submitting code contributions on behalf of a corporation to the
+  [`ee/` directory](./ee) of this repository, you agree to the
+  [Corporate Contributor License Agreement](./legal/corporate-contributor-license-agreement.md).
+- By submitting code contributions as an individual or on behalf of a
+  corporation to any directory in this repository outside of the
+  [`ee/` directory](./ee), you agree to the
+  [Developer Certificate of Origin](https://developercertificate.org/), and
+  your contribution is licensed under the [MIT license](./LICENSE).
+
+By contributing, you are deemed to have accepted the agreement that applies
+to your contribution. There is nothing separate to sign. You keep ownership
+of your contribution; you grant Different AI, Inc. the permissions in the
+applicable agreement, and those permissions cannot be withdrawn.
+
+`ee/` needs a CLA rather than the DCO because the code there is distributed
+under the [OpenWork EE License](./ee/LICENSE), not an open source license,
+and each released version later converts to MIT. The CLA grants a license
+broad enough to do both.
+
+To put an overarching Corporate CLA in place for everyone contributing on
+behalf of your organization, email team@openworklabs.com.
+
+_This notice should stay as the first item in this file._
+
+## Signing off commits
+
+Sign off every commit to record your DCO certification in the history:
 
 ```
 git commit -s -m "your message"
 ```
 
-This adds a `Signed-off-by: Your Name <your@email>` trailer asserting that
-you wrote the change (or otherwise have the right to submit it) and that you
-may submit it under this repository's licenses. Pull requests with unsigned
-commits cannot be merged.
+This adds a `Signed-off-by: Your Name <your@email>` trailer. Pull requests
+with unsigned commits cannot be merged.
 
-## 2. How your contribution is licensed
-
-This repository is open core, and the paperwork depends on where you
-contribute (the same structure GitLab uses for its `ee/` directory):
-
-- Contributions to code **outside `ee/`** are accepted under the
-  [MIT license](./LICENSE) (inbound = outbound), certified by your DCO
-  sign-off.
-- Contributions to code **under `ee/`** additionally require a Contributor
-  License Agreement, because the EE-licensed software is sold under
-  subscriptions and each release later converts to MIT — we need a license
-  from you broad enough to do both:
-  - as an individual, the
-    [Individual Contributor License Agreement](./legal/individual-contributor-license-agreement.md);
-  - on behalf of a company, the
-    [Corporate Contributor License Agreement](./legal/corporate-contributor-license-agreement.md).
-
-  You keep ownership of your contribution; the CLA grants Different AI, Inc.
-  a perpetual, irrevocable license (including sublicensing) that covers
-  subscription distribution and the EE License's scheduled MIT conversion.
-
-By submitting a pull request you agree your contribution is provided under
-the terms above for the directories it modifies. Maintainers will not merge
-`ee/` contributions until the applicable CLA is in place.
+## Paid work
 
 If you are contributing as part of paid work, a work trial, or on behalf of
 an employer, make sure a signed agreement covering intellectual property

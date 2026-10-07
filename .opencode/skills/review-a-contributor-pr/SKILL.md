@@ -8,12 +8,12 @@ description: Review a fork PR, review an external contributor PR, check DCO sign
 Use for every PR whose head is not in `different-ai/openwork`
 (`isCrossRepository: true`). Fork PRs get no automatic clearance: `warden.yml`
 skips them (`head.repo.full_name == github.repository`, no secrets on fork
-heads) and `warden-clearance.yml` refuses them. Nothing enforces DCO or the
-`ee/` CLA today either; two external commits were merged on 2026-09-09 without
-`Signed-off-by`. Open PRs #4733 (fork guard: DCO + `ee/` label status) and
-#4709 (DCO + EE CLA policy and status gate) will automate parts of this; this
-checklist does not depend on them and stays required after they land, because
-they gate the contributor, not the reviewer.
+heads) and `warden-clearance.yml` refuses them. Nothing enforces DCO sign-off
+today either; two external commits were merged on 2026-09-09 without
+`Signed-off-by`. The `ee/` CLA is accepted by contributing (CONTRIBUTING.md),
+so there is no CLA signature or label to enforce. This checklist stays
+required even if CI automates the DCO check, because CI gates the
+contributor, not the reviewer.
 
 Every item must be answered explicitly in the review comment. `Blocked` on any
 item means no approval and no merge.
@@ -26,7 +26,7 @@ gh pr view $N -R $R --json isCrossRepository,headRepositoryOwner,headRepository,
 
 ## 1. DCO: every commit carries Signed-off-by
 
-CONTRIBUTING.md section 1: every commit must certify the DCO with a
+CONTRIBUTING.md "Signing off commits": every commit must certify the DCO with a
 `Signed-off-by: Name <email>` trailer. Check every non-merge commit on the PR
 head, not just the last one:
 
@@ -46,24 +46,26 @@ gh api "repos/$R/pulls/$N/commits" --paginate \
   body, and the trailers of the original commits are lost. Fix the commits
   first.
 
-## 2. ee/ paths need a CLA on file
+## 2. ee/ paths are covered by the CLA notice
 
-CONTRIBUTING.md section 2: anything under `ee/` additionally needs an
-Individual or Corporate CLA. Renames out of `ee/` count.
+CONTRIBUTING.md (first section, same model as GitLab): contributing to `ee/`
+means the contributor is deemed to accept the Individual or Corporate CLA in
+`legal/`. There is no signature to collect and no label to apply. Renames out
+of `ee/` count as `ee/` changes.
 
 ```bash
-gh pr view $N -R $R --json files --jq '[.files[].path | select(startswith("ee/"))] | length'
-gh pr view $N -R $R --json labels --jq '[.labels[].name] | index("cla-signed") != null'
+gh pr view $N -R $R --json files --jq '[.files[].path | select(startswith("ee/"))]'
 ```
 
-- `ee/` files changed and no `cla-signed` label -> Blocked. Point to
-  `legal/individual-contributor-license-agreement.md` or
-  `legal/corporate-contributor-license-agreement.md`.
-- Only a maintainer applies `cla-signed`, and only after confirming the
-  signed agreement is on file privately. The label records that check; it is
-  not the check. Never apply it to unblock a PR.
-- Check the previous `ee/` commit inventory against the same contributor's
-  earlier PRs: the CLA covers the person or company, not the PR.
+- `ee/` files changed -> note it in the review comment so the record shows
+  the CLA applied. Not a blocker on its own.
+- Blocked if the PR body or commits say the contribution is "Not a
+  Contribution", is submitted on behalf of a third party, or otherwise
+  rejects the CLA terms. Ask the contributor to resolve it with
+  team@openworklabs.com first.
+- If the author is clearly contributing for an employer, mention the
+  Corporate CLA (`legal/corporate-contributor-license-agreement.md`) in the
+  review so they can confirm they are authorized.
 
 ## 3. Warden ran on the exact head being merged
 

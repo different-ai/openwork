@@ -151,7 +151,7 @@ Runtime-observable changes need test evidence on the PR. `AGENTS.md` and [`evals
 1. Branch from `dev` (the default branch) and open your PR against `dev`.
 2. Sign off every commit: `git commit -s`.
 3. Keep the diff as small as possible, and include or update test evidence for runtime-observable changes.
-4. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the DCO and licensing rules — contributions under `ee/` additionally require a CLA.
+4. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the DCO and licensing rules. Contributing under `ee/` means you agree to the [CLA](./legal/individual-contributor-license-agreement.md); there is nothing separate to sign.
 
 ## Local development
 
