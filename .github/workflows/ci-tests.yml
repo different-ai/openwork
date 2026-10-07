@@ -86,6 +86,11 @@ jobs:
         run: pnpm --filter @openwork-ee/den-web lint
       - name: Typecheck the headless runner
         run: pnpm --filter @openwork-ee/headless-runner typecheck
+      - name: Test shared headless computer and configuration
+        run: |
+          pnpm --filter @openwork-ee/headless-computer build
+          pnpm --filter @openwork-ee/headless-computer test
+          pnpm --filter @openwork-ee/headless-runner test:computer-config
       - name: Boot the app provider tree
         run: pnpm test:boot
       - name: Run core unit tests

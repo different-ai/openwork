@@ -179,6 +179,26 @@ keep `service_subnet_ids` in different availability zones).
 - **Headless Automations**: with `automations_enabled` and the runner,
   scheduled cloud Automations run on the runner.
 
+### Optional Workbot computer (Daytona or Freestyle)
+
+The runner's `bash` and `look` tools can use either provider, off by default.
+Daytona shares this deployment's Daytona connection, but **not the Web snapshot**:
+
+```hcl
+  headless_computer = {
+    provider = "daytona"
+    snapshot = "<snapshot from snapshot:build:daytona>"
+  }
+  daytona_api_key = var.daytona_api_key
+```
+
+Build it with `DAYTONA_API_KEY=… pnpm --filter @openwork-ee/headless-computer snapshot:build:daytona`.
+For Freestyle, set `provider = "freestyle"` and `headless_computer_api_key`;
+its snapshot defaults to the existing prepared computer image. The backend
+setting changes where tools run, not organization feature access. Turning it
+off stops new computer use; existing computers retain their provider's idle
+and retention policies and can be explicitly cleaned up by their owner.
+
 ## OpenWork Web
 
 OpenWork Web lets members chat with OpenWork in the browser. Each member gets

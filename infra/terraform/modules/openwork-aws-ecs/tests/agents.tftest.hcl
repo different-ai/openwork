@@ -168,3 +168,32 @@ run "runner_requires_model" {
 
   expect_failures = [aws_ecs_task_definition.runner]
 }
+
+run "daytona_computer_uses_separate_image_and_runner_only_key" {
+  command = apply
+
+  variables {
+    headless_runner   = { enabled = true, model = "test-model" }
+    headless_computer = { provider = "daytona", snapshot = "computer-image" }
+    daytona_api_key   = "test-daytona-key"
+  }
+
+  assert {
+    condition     = contains([for e in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_COMPUTER=daytona") && contains([for e in jsondecode(aws_ecs_task_definition.runner[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "HEADLESS_COMPUTER_SNAPSHOT=computer-image")
+    error_message = "The runner should use Daytona and the computer snapshot, not the Web snapshot."
+  }
+  assert {
+    condition     = contains(keys(local.runner_secret_values), "DAYTONA_API_KEY") && !contains([for s in jsondecode(aws_ecs_task_definition.web.container_definitions)[0].secrets : s.name], "DAYTONA_API_KEY")
+    error_message = "The computer key belongs to the runner secret."
+  }
+}
+
+run "daytona_computer_requires_snapshot" {
+  command = plan
+  variables {
+    headless_runner   = { enabled = true, model = "test-model" }
+    headless_computer = { provider = "daytona" }
+    daytona_api_key   = "test-daytona-key"
+  }
+  expect_failures = [aws_ecs_task_definition.runner]
+}

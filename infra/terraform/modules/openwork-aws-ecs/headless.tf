@@ -17,6 +17,8 @@ locals {
   runner_secret_values = local.runner_enabled ? { for k, v in {
     HEADLESS_API_TOKEN     = random_password.runner_token[0].result
     HEADLESS_MODEL_API_KEY = var.headless_model_api_key
+    DAYTONA_API_KEY        = var.headless_computer.provider == "daytona" ? var.daytona_api_key : ""
+    FREESTYLE_API_KEY      = var.headless_computer.provider == "freestyle" ? var.headless_computer_api_key : ""
     WORKBOT_SESSION_SECRET = try(random_password.workbot_session[0].result, "")
   } : k => v if v != "" } : {}
 
@@ -198,7 +200,14 @@ resource "aws_ecs_task_definition" "runner" {
       essential    = true
       portMappings = [{ name = "runner", containerPort = 8795, protocol = "tcp", appProtocol = "http" }]
       mountPoints  = [{ sourceVolume = "data", containerPath = "/var/data" }]
-      environment = [
+      environment = [for e in [
+        { name = "HEADLESS_COMPUTER", value = var.headless_computer.provider },
+        { name = "HEADLESS_COMPUTER_SNAPSHOT", value = var.headless_computer.snapshot },
+        { name = "HEADLESS_COMPUTER_PAUSE_SECONDS", value = tostring(var.headless_computer.pause_seconds) },
+        { name = "HEADLESS_COMPUTER_KEEP_DAYS", value = tostring(var.headless_computer.keep_days) },
+        { name = "HEADLESS_COMPUTER_SCOPE", value = var.headless_computer.provider == "daytona" ? var.name : "" },
+        { name = "DAYTONA_API_URL", value = var.headless_computer.provider == "daytona" ? var.daytona.api_url : "" },
+        { name = "DAYTONA_TARGET", value = var.headless_computer.provider == "daytona" ? var.daytona.target : "" },
         { name = "HEADLESS_PORT", value = "8795" },
         { name = "HEADLESS_DB_PATH", value = "/var/data/headless.sqlite" },
         { name = "HEADLESS_MODEL_PROTOCOL", value = var.headless_runner.model_protocol },
@@ -208,7 +217,7 @@ resource "aws_ecs_task_definition" "runner" {
         { name = "HEADLESS_MCP_URL", value = "${local.api_url}/mcp/agent" },
         # Uploads and files the agent hands back live next to the database.
         { name = "HEADLESS_FILES", value = "disk" },
-      ]
+      ] : e if e.value != ""]
       secrets = [for k in keys(local.runner_secret_values) : { name = k, valueFrom = "${aws_secretsmanager_secret.runner[0].arn}:${k}::" } if k != "WORKBOT_SESSION_SECRET"]
       logConfiguration = {
         logDriver = "awslogs"
@@ -225,6 +234,14 @@ resource "aws_ecs_task_definition" "runner" {
     precondition {
       condition     = var.headless_runner.model != ""
       error_message = "headless_runner.enabled needs headless_runner.model (a model id at headless_runner.model_base_url)."
+    }
+    precondition {
+      condition     = var.headless_computer.provider != "daytona" || (var.daytona_api_key != "" && var.headless_computer.snapshot != "")
+      error_message = "Daytona computers need daytona_api_key and headless_computer.snapshot (a computer image, not the Web image)."
+    }
+    precondition {
+      condition     = var.headless_computer.provider != "freestyle" || var.headless_computer_api_key != ""
+      error_message = "Freestyle computers need headless_computer_api_key."
     }
   }
 }

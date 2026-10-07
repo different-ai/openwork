@@ -325,6 +325,29 @@ variable "headless_runner" {
   }
 }
 
+variable "headless_computer" {
+  description = "Optional computer tools for Workbot/headless turns. Off by default. Daytona reuses daytona_api_key/api_url/target but needs its own computer snapshot; Freestyle uses headless_computer_api_key."
+  type = object({
+    provider      = optional(string, "off")
+    snapshot      = optional(string, "")
+    pause_seconds = optional(number, 300)
+    keep_days     = optional(number, 14)
+  })
+  default = {}
+
+  validation {
+    condition     = contains(["off", "freestyle", "daytona"], var.headless_computer.provider)
+    error_message = "headless_computer.provider must be off, freestyle or daytona."
+  }
+}
+
+variable "headless_computer_api_key" {
+  description = "Freestyle key for headless_computer.provider = freestyle; stored in the runner secret. Daytona uses daytona_api_key instead."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "headless_model_api_key" {
   description = "API key for headless_runner's model endpoint. Stored in Secrets Manager; only the runner receives it."
   type        = string
