@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { appTitle, mcpAppServersChat } from "../worlds/mcp-app-servers.ts";
+import { appTitle, mcpAppServersChat, record, rows } from "../worlds/mcp-app-servers.ts";
 
 // The personal dashboard matches Library: Add lives in the titlebar, the page
 // has no heading of its own, an artifact tile has no header bar, and Refresh,
@@ -14,11 +14,22 @@ const test = spec.world(mcpAppServersChat, {
 const emptyHeading = "Pin the artifacts you check every day";
 const emptyDescription = "Add artifacts your team shared with you, or ones you made. They stay live, so you never open a chat to see the numbers.";
 const tiles = '[data-dashboard-tile^="personal:"]';
+const sharePage = '[data-testid="library-share-page"]';
+const phoneHeight = 812;
+// The evals launch Chrome at 1280 × 900.
+const desktop = { width: 1280, height: 900, deviceScaleFactor: 1 };
 
 test("the personal dashboard keeps Add in the titlebar and each artifact's actions in its tile menu", async ({ world, user, probe, step, evidence }) => {
   let frame: Awaited<ReturnType<typeof world.appFrame>> | undefined;
   await using _openFrame = { [Symbol.asyncDispose]: async () => { await frame?.[Symbol.asyncDispose](); } };
   const pageControls = async () => (await probe.dom("[data-dashboard-page] button")).elements.map(element => element.text.trim());
+  // The tile menu shows only while its tile is hovered, so point at the App inside the tile first.
+  const openTileMenu = async () => {
+    const apps = rows(record((await probe.api(world.den.admin, "/v1/mcp-apps")).body).apps);
+    const resourceUri = String(apps.find(app => app.title === appTitle)?.resourceUri ?? "");
+    await user.hover({ mcpApp: { resourceUri }, role: "heading", label: appTitle });
+    await user.click({ role: "button", label: `Artifact options for ${appTitle}` });
+  };
 
   await step("an empty dashboard invites the first artifact, with Add in the titlebar", async () => {
     await user.click({ role: "button", label: "Dashboard" });
@@ -85,10 +96,44 @@ test("the personal dashboard keeps Add in the titlebar and each artifact's actio
     true,
   );
 
+  // 375 px is a common phone width; 320 px is the narrowest common one.
+  for (const width of [375, 320]) {
+    await step(`after: on a ${width} px phone the share sheet keeps every button on screen, even Share with everyone`, async () => {
+      await user.resizeViewport({ width, height: phoneHeight, deviceScaleFactor: 1 });
+      await openTileMenu();
+      await user.click({ role: "menuitem", label: `Share ${appTitle}` });
+      await user.see({ text: "Who can use it" }, { timeoutMs: 15_000 });
+      // Everyone gives the main button its longest label in this organization.
+      await user.click({ role: "switch", label: "Everyone in the organization" });
+      await user.see({ role: "button", label: "Share with everyone" });
+      // Below 1024 px the dialog is a sheet that slides up; measure and capture it at rest.
+      await probe.eventually(async () => (await probe.dom(`[role="dialog"]:has(${sharePage})`)).elements[0]?.rect.bottom ?? 0, {
+        within: 5_000, label: "share sheet resting on the bottom edge", until: bottom => Math.abs(bottom - phoneHeight) < 1,
+      });
+      const { viewportWidth, elements: buttons } = await probe.dom(`${sharePage} button`);
+      const contentRight = (await probe.dom(sharePage)).elements[0]?.rect.right ?? 0;
+      const edge = Math.min(viewportWidth, contentRight);
+      const labels = buttons.map(button => button.text);
+      const pastEdge = buttons.filter(button => button.rect.left < 0 || button.rect.right > edge + 0.5).map(button => button.text);
+      await user.screenshot();
+      evidence.recordAssertionEvidence(
+        `On a ${width} px phone every button in the share sheet fits, including Share with everyone`,
+        `The sheet's content ends at ${Math.round(contentRight)} px on a ${viewportWidth} px screen. Its ${buttons.length} buttons span ${buttons.map(button => `${button.text} ${Math.round(button.rect.left)}–${Math.round(button.rect.right)}`).join(", ")} px; ${pastEdge.length > 0 ? `${pastEdge.join(", ")} run past the edge` : "none runs past the edge"}.`,
+        labels.includes("Share with everyone") && pastEdge.length === 0,
+      );
+      expect(labels).toContain("Share with everyone");
+      expect(pastEdge).toEqual([]);
+      // Cancel closes the sheet without sharing; the next steps run at desktop width again.
+      await user.click({ role: "button", label: "Cancel" });
+      await user.notSee({ role: "heading", label: `Share ${appTitle}` });
+      await user.resizeViewport(desktop);
+    });
+  }
+
   await step("removing the only artifact brings back the empty state, and Undo restores it", async () => {
     await frame?.[Symbol.asyncDispose]();
     frame = undefined;
-    await user.click({ role: "button", label: `Artifact options for ${appTitle}` });
+    await openTileMenu();
     await user.click({ role: "menuitem", label: `Remove ${appTitle} from dashboard` });
     await user.see({ role: "heading", label: emptyHeading }, { timeoutMs: 15_000 });
     expect((await probe.dom(tiles)).elements).toHaveLength(0);
