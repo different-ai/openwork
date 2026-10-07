@@ -475,6 +475,11 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     await user.screenshot();
     await user.click({ role: "option", label: `Add ${pricerTitle}` });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
+    // A re-added tile shows its saved copy at once, then replaces that frame with the live App.
+    // Read the order line from the frame that stays, once the tile has finished loading.
+    expect(await probe.eventually(async () => (await probe.dom('[data-dashboard-tile^="personal:"][aria-busy="false"]')).elements, {
+      within: 90_000, intervalMs: 200, label: "the re-added tile has replaced its saved copy with the live App", until: elements => elements.length === 1,
+    })).toHaveLength(1);
     pricer = await focus(pricerTitle);
     await pricer.see({ testId: "order-line" }, { text: pricedLine, timeoutMs: 90_000 });
     evidence.recordAssertionEvidence("Removing a tile changes only personal placement", "After removing Quick order pricer, its tile is gone but the App remains in the Add picker, and adding it again restores a working tile; neither the App nor its sharing grants were deleted.", true);
