@@ -109,7 +109,7 @@ const refreshGoogle: RefreshProtocol = async ({ secret, client, fetchToken }) =>
   if (!isTokenMaterial(record.access_token) || !/^[A-Za-z0-9._~+\/-]+=*$/.test(record.access_token)
     || typeof record.token_type !== "string" || record.token_type.toLowerCase() !== "bearer"
     || typeof record.expires_in !== "number" || !Number.isInteger(record.expires_in) || record.expires_in <= 0 || record.expires_in > GOOGLE_OAUTH_MAX_EXPIRES_IN_SECONDS
-    || (record.scope !== undefined && (typeof record.scope !== "string" || !record.scope.split(/\s+/).includes(GOOGLE_CLOUD_PLATFORM_SCOPE)))
+    || (record.scope !== undefined && (typeof record.scope !== "string" || !new Set(record.scope.split(/\s+/)).has(GOOGLE_CLOUD_PLATFORM_SCOPE)))
     || (record.refresh_token !== undefined && !isTokenMaterial(record.refresh_token))) {
     return { kind: "failed", error: "invalid_token_response", permanent: false }
   }
