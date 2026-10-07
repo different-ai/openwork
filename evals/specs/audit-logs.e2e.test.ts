@@ -163,9 +163,12 @@ test("a flagged owner records and filters audit history by default while an unfl
     await owner.see({ role: "link", label: "Audit logs" });
     await owner.click({ text: "Capture and storage" });
     await owner.see({ text: "Recording" });
+    // Usage totals come from the scheduled refresh, not from each write.
+    await world.refreshAuditUsage();
     const usageResponse = await probe.api(world.den.admin, "/v1/audit/usage");
     expect(usageResponse.response.status).toBe(200);
     const usage = auditUsageResponseSchema.parse(usageResponse.body);
+    expect(usage.measuredAt).toEqual(expect.any(String));
     expect(usage.entitlement).toEqual({ enabled: true, source: "self_hosted" });
     expect(usage.captureAvailable).toBe(true);
     expect(usage.captureOn).toBe(true);
