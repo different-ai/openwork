@@ -36,19 +36,6 @@ behalf of your organization, email team@openworklabs.com.
 
 _This notice should stay as the first item in this file._
 
-## Signing off commits
-
-Sign off every commit to record your DCO certification in the history:
-
-```
-git commit -s -m "your message"
-```
-
-This adds a `Signed-off-by: Your Name <your@email>` trailer. Pull requests
-with unsigned commits cannot be merged: the `contributor-pr-required` check
-fails and a comment on the pull request explains the fix
-(`git rebase --signoff origin/dev`, then force-push).
-
 ## How CI runs on a pull request from a fork
 
 1. **Automatic checks, on every push.** Before any of your code runs, a

@@ -1,4 +1,5 @@
 import type {
+  GatewayAwsSsoSettings,
   InferenceProviderCredentialKind,
   InferenceProviderCredentialMode,
   InferenceProviderCredentialStatus,
@@ -19,6 +20,8 @@ export {
   INFERENCE_USAGE_SOURCES as GATEWAY_USAGE_SOURCES,
   inferenceApiKeyMapSecretSchema as gatewayApiKeyMapSecretSchema,
   inferenceAwsKeysSecretSchema as gatewayAwsKeysSecretSchema,
+  inferenceAwsSsoSecretSchema as gatewayAwsSsoSecretSchema,
+  gatewayAwsSsoSettingsSchema,
   inferenceGcpServiceAccountSecretSchema as gatewayGcpServiceAccountSecretSchema,
   inferenceOauthTokenSecretSchema as gatewayOauthTokenSecretSchema,
   parseInferenceProviderSecret as parseGatewayProviderSecret,
@@ -31,6 +34,7 @@ export type {
   InferenceProviderSecret as GatewayProviderSecret,
   InferenceApiKeyMapSecret as GatewayApiKeyMapSecret,
   InferenceAwsKeysSecret as GatewayAwsKeysSecret,
+  InferenceAwsSsoSecret as GatewayAwsSsoSecret,
   InferenceGcpServiceAccountSecret as GatewayGcpServiceAccountSecret,
   InferenceOauthTokenSecret as GatewayOauthTokenSecret,
   InferenceRequestOutcome as GatewayRequestOutcome,
@@ -78,6 +82,10 @@ export interface GatewayCredentialSetWrite {
   /** Omit to retain; empty string explicitly clears OAuth client configuration. */
   oauthClientId?: string;
   oauthClientSecret?: string;
+  /** Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Omit to retain; empty string clears. */
+  oauthTenantId?: string;
+  /** Amazon Bedrock member sets: the IAM Identity Center instance, account and permission set. Omit to retain; null clears. */
+  awsSso?: GatewayAwsSsoSettings | null;
   status?: GatewayResourceStatus;
 }
 
@@ -94,6 +102,8 @@ export interface GatewayCredentialSet {
   credentialStatus: GatewayCredentialStatus;
   oauthClientId?: string | null;
   hasOauthClientSecret?: boolean;
+  oauthTenantId?: string | null;
+  awsSso?: GatewayAwsSsoSettings | null;
 }
 
 export interface GatewayAccessGrantWrite {

@@ -137,6 +137,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  gatewayCloudSignIn: {
+    label: "AI Gateway: AWS and Microsoft sign-in",
+    description: "Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   platformAuditReads: {
     label: "Platform audit: read-only requests",
     description: "Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.",

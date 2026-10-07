@@ -155,6 +155,7 @@ export type AdminFeature = {
     | "workbot"
     | "workbotSideChats"
     | "litellm"
+    | "gatewayCloudSignIn"
     | "platformAuditReads";
   label: string;
   description: string;
@@ -206,6 +207,7 @@ export type AdminOrganizationsPageResponse = {
       workbot: boolean;
       workbotSideChats: boolean;
       litellm: boolean;
+      gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -318,6 +320,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      gatewayCloudSignIn: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -410,6 +421,7 @@ export type AdminOverviewResponse = {
       workbot: boolean;
       workbotSideChats: boolean;
       litellm: boolean;
+      gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -522,6 +534,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      gatewayCloudSignIn: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1659,6 +1680,7 @@ export type CapabilityDisabledError = {
     | "workbot"
     | "workbotSideChats"
     | "litellm"
+    | "gatewayCloudSignIn"
     | "platformAuditReads";
 };
 
@@ -1967,6 +1989,13 @@ export type GatewayProviderDetails = {
     credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
     oauthClientId?: string | null;
     hasOauthClientSecret?: boolean;
+    oauthTenantId?: string | null;
+    awsSso?: {
+      startUrl: string;
+      region: string;
+      accountId: string;
+      roleName: string;
+    } | null;
   }>;
   accessGrants: Array<{
     /**
@@ -2014,7 +2043,7 @@ export type GatewayProviderDetails = {
     orgMembershipId: string | null;
     memberName: string | null;
     memberEmail: string | null;
-    kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+    kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure" | "aws_sso";
     status: "active" | "revoked" | "refresh_failed";
     expiresAt: string | null;
   }>;
@@ -5540,6 +5569,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       workbot: boolean;
       workbotSideChats: boolean;
       litellm: boolean;
+      gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -5652,6 +5682,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      gatewayCloudSignIn: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5732,6 +5771,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       workbot: boolean;
       workbotSideChats: boolean;
       litellm: boolean;
+      gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -5844,6 +5884,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       litellm: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      gatewayCloudSignIn: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -15811,11 +15860,12 @@ export type GetV1InferenceProvidersMemberConnectionsError =
 
 export type GetV1InferenceProvidersMemberConnectionsResponses = {
   /**
-   * List the caller's member Google connections
+   * List the caller's member sign-in connections
    */
   200: {
     connections: Array<{
       providerId: string;
+      signInMethod?: "google" | "aws_sso" | "microsoft";
       credentialSetId: string;
       providerName: string;
       name: string;
@@ -15909,7 +15959,7 @@ export type PostV1InferenceProvidersData = {
     status?: "active" | "disabled";
     credentialMode?: "org" | "member";
     credential?: {
-      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure" | "aws_sso";
       secret: string;
     };
     apiKeys?: {
@@ -15917,6 +15967,19 @@ export type PostV1InferenceProvidersData = {
     };
     oauthClientId?: string;
     oauthClientSecret?: string;
+    /**
+     * Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Empty string clears.
+     */
+    oauthTenantId?: string;
+    /**
+     * Amazon Bedrock member sets: IAM Identity Center access portal URL, its region, the AWS account ID and the permission set name members get. null clears.
+     */
+    awsSso?: {
+      startUrl: string;
+      region: string;
+      accountId: string;
+      roleName: string;
+    } | null;
     allMembers?: boolean;
     memberIds?: Array<string>;
     teamIds?: Array<string>;
@@ -16124,7 +16187,7 @@ export type PatchV1InferenceProvidersByInferenceProviderIdData = {
     status?: "active" | "disabled";
     credentialMode?: "org" | "member";
     credential?: {
-      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure" | "aws_sso";
       secret: string;
     };
     apiKeys?: {
@@ -16132,6 +16195,19 @@ export type PatchV1InferenceProvidersByInferenceProviderIdData = {
     };
     oauthClientId?: string;
     oauthClientSecret?: string;
+    /**
+     * Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Empty string clears.
+     */
+    oauthTenantId?: string;
+    /**
+     * Amazon Bedrock member sets: IAM Identity Center access portal URL, its region, the AWS account ID and the permission set name members get. null clears.
+     */
+    awsSso?: {
+      startUrl: string;
+      region: string;
+      accountId: string;
+      roleName: string;
+    } | null;
     allMembers?: boolean;
     memberIds?: Array<string>;
     teamIds?: Array<string>;
@@ -16789,6 +16865,13 @@ export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses 
       credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
       oauthClientId?: string | null;
       hasOauthClientSecret?: boolean;
+      oauthTenantId?: string | null;
+      awsSso?: {
+        startUrl: string;
+        region: string;
+        accountId: string;
+        roleName: string;
+      } | null;
     }>;
   };
 };
@@ -16801,7 +16884,7 @@ export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsData = {
     name: string;
     credentialMode: "org" | "member";
     credential?: {
-      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure" | "aws_sso";
       secret: string;
     };
     apiKeys?: {
@@ -16809,6 +16892,19 @@ export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsData = {
     };
     oauthClientId?: string;
     oauthClientSecret?: string;
+    /**
+     * Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Empty string clears.
+     */
+    oauthTenantId?: string;
+    /**
+     * Amazon Bedrock member sets: IAM Identity Center access portal URL, its region, the AWS account ID and the permission set name members get. null clears.
+     */
+    awsSso?: {
+      startUrl: string;
+      region: string;
+      accountId: string;
+      roleName: string;
+    } | null;
     status?: "active" | "disabled";
   };
   path: {
@@ -16886,6 +16982,13 @@ export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses
       credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
       oauthClientId?: string | null;
       hasOauthClientSecret?: boolean;
+      oauthTenantId?: string | null;
+      awsSso?: {
+        startUrl: string;
+        region: string;
+        accountId: string;
+        roleName: string;
+      } | null;
     };
   };
 };
@@ -16963,7 +17066,7 @@ export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCreden
     name?: string;
     credentialMode?: "org" | "member";
     credential?: {
-      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+      kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure" | "aws_sso";
       secret: string;
     };
     apiKeys?: {
@@ -16971,6 +17074,19 @@ export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCreden
     };
     oauthClientId?: string;
     oauthClientSecret?: string;
+    /**
+     * Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Empty string clears.
+     */
+    oauthTenantId?: string;
+    /**
+     * Amazon Bedrock member sets: IAM Identity Center access portal URL, its region, the AWS account ID and the permission set name members get. null clears.
+     */
+    awsSso?: {
+      startUrl: string;
+      region: string;
+      accountId: string;
+      roleName: string;
+    } | null;
     status?: "active" | "disabled";
   };
   path: {
@@ -17052,6 +17168,13 @@ export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCreden
       credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
       oauthClientId?: string | null;
       hasOauthClientSecret?: boolean;
+      oauthTenantId?: string | null;
+      awsSso?: {
+        startUrl: string;
+        region: string;
+        accountId: string;
+        roleName: string;
+      } | null;
     };
   };
 };
@@ -17588,7 +17711,7 @@ export type GetV1InferenceProvidersByInferenceProviderIdOauthStartError =
 
 export type GetV1InferenceProvidersByInferenceProviderIdOauthStartResponses = {
   /**
-   * Begin Google sign-in for a member inference credential
+   * Begin sign-in for a member inference credential
    */
   200: {
     authUrl: string;
@@ -17646,14 +17769,14 @@ export type GetV1InferenceProvidersOauthBrowserStatusError =
 
 export type GetV1InferenceProvidersOauthBrowserStatusResponses = {
   /**
-   * Check browser readiness for member Google sign-in
+   * Check browser readiness for member sign-in
    */
   200: {
     status: "sign_in_required" | "account_mismatch" | "ready";
     /**
-     * Present when ready. google: continue with browser-start. litellm_key: submit the member's LiteLLM key to browser-litellm-key. litellm_issued: OpenWork creates the key; issue reports why it has not yet, and browser-litellm-check retries.
+     * Present when ready. google and microsoft: continue with browser-start. aws_sso: start AWS device sign-in with browser-aws-start, then poll browser-aws-poll. litellm_key: submit the member's LiteLLM key to browser-litellm-key. litellm_issued: OpenWork creates the key; issue reports why it has not yet, and browser-litellm-check retries.
      */
-    method?: "google" | "litellm_key" | "litellm_issued";
+    method?: "google" | "aws_sso" | "microsoft" | "litellm_key" | "litellm_issued";
     providerName?: string;
     issue?: {
       status: string;
@@ -17716,7 +17839,7 @@ export type GetV1InferenceProvidersOauthBrowserStartError =
 
 export type GetV1InferenceProvidersOauthBrowserStartResponses = {
   /**
-   * Continue member Google sign-in in a signed-in browser
+   * Continue member Google or Microsoft sign-in in a signed-in browser
    */
   200: {
     authUrl: string;
@@ -17756,6 +17879,133 @@ export type GetV1InferenceProvidersOauthCallbackResponses = {
 
 export type GetV1InferenceProvidersOauthCallbackResponse =
   GetV1InferenceProvidersOauthCallbackResponses[keyof GetV1InferenceProvidersOauthCallbackResponses];
+
+export type PostV1InferenceProvidersOauthBrowserAwsStartData = {
+  body: {
+    attempt: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/oauth/browser-aws-start";
+};
+
+export type PostV1InferenceProvidersOauthBrowserAwsStartErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserAwsStartError =
+  PostV1InferenceProvidersOauthBrowserAwsStartErrors[keyof PostV1InferenceProvidersOauthBrowserAwsStartErrors];
+
+export type PostV1InferenceProvidersOauthBrowserAwsStartResponses = {
+  /**
+   * Start member AWS sign-in from a signed-in browser
+   */
+  200: {
+    attempt: string;
+    verificationUri: string;
+    verificationUriComplete: string;
+    userCode: string;
+    interval: number;
+    expiresIn: number;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserAwsStartResponse =
+  PostV1InferenceProvidersOauthBrowserAwsStartResponses[keyof PostV1InferenceProvidersOauthBrowserAwsStartResponses];
+
+export type PostV1InferenceProvidersOauthBrowserAwsPollData = {
+  body: {
+    attempt: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/oauth/browser-aws-poll";
+};
+
+export type PostV1InferenceProvidersOauthBrowserAwsPollErrors = {
+  /**
+   * Invalid request or provider configuration.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error: string;
+        message?: string;
+      };
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Access denied or Gateway management disabled.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "gateway_not_enabled";
+        message: string;
+      };
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+  /**
+   * Selection or resource conflict.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserAwsPollError =
+  PostV1InferenceProvidersOauthBrowserAwsPollErrors[keyof PostV1InferenceProvidersOauthBrowserAwsPollErrors];
+
+export type PostV1InferenceProvidersOauthBrowserAwsPollResponses = {
+  /**
+   * Check a member AWS sign-in from a signed-in browser
+   */
+  200: {
+    status: "pending" | "connected";
+    retryAfter?: number;
+    accountName?: string | null;
+  };
+};
+
+export type PostV1InferenceProvidersOauthBrowserAwsPollResponse =
+  PostV1InferenceProvidersOauthBrowserAwsPollResponses[keyof PostV1InferenceProvidersOauthBrowserAwsPollResponses];
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdOauthData = {
   body?: never;
@@ -17815,7 +18065,7 @@ export type DeleteV1InferenceProvidersByInferenceProviderIdOauthError =
 
 export type DeleteV1InferenceProvidersByInferenceProviderIdOauthResponses = {
   /**
-   * Disconnect the caller's Google credential for an inference provider
+   * Disconnect the caller's member sign-in for an inference provider
    */
   204: void;
 };

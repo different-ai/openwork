@@ -43,6 +43,9 @@ export const providerUncoveredRoutes = [
   "PUT /v1/inference-providers/:inferenceProviderId/litellm/member-key",
   "POST /v1/inference-providers/oauth/browser-litellm-key",
   "POST /v1/inference-providers/oauth/browser-litellm-check",
+  // AWS IAM Identity Center member sign-in (gatewayCloudSignIn): request evidence only.
+  "POST /v1/inference-providers/oauth/browser-aws-start",
+  "POST /v1/inference-providers/oauth/browser-aws-poll",
 ]
 export const providerCoverage: AuditCoverageDeclaration = {
   status: "implemented_scoped", operationKinds: ["provider.configuration"],

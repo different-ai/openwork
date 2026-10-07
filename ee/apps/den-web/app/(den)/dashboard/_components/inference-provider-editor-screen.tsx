@@ -16,12 +16,13 @@ import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, useInferenceProvider, useOrgInferenceProviders } from "./inference-provider-data";
 import {
-  accessFromGrants, buildInferenceProviderRequestBody, getAwsKeysError, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
-  isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isSupportedGatewayNpm, supportsMemberCredentialMode, type AwsKeysInput,
+  accessFromGrants, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
+  isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isMicrosoftTenantId, isSupportedGatewayNpm, MEMBER_SIGN_IN_DOC_URLS, trimAwsSso, type AwsKeysInput, type AwsSsoInput,
 } from "./inference-provider-request";
 import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 import { LiteLlmProviderScreen } from "./litellm-provider-screen";
@@ -35,6 +36,12 @@ const LABEL = "mt-3 block text-[12px] font-medium text-gray-700";
 const MONO_INPUT = "font-mono text-[12px]";
 const EMPTY_AWS_KEYS: AwsKeysInput = { accessKeyId: "", secretAccessKey: "", sessionToken: "" };
 const SETTING_PLACEHOLDERS: Record<string, string> = { region: "us-east-1" };
+const AWS_SSO_FIELDS: Array<{ key: keyof AwsSsoInput; label: string; placeholder: string }> = [
+  { key: "startUrl", label: "AWS access portal URL", placeholder: "https://d-xxxxxxxxxx.awsapps.com/start" },
+  { key: "region", label: "IAM Identity Center region", placeholder: "us-east-1" },
+  { key: "accountId", label: "AWS account ID", placeholder: "123456789012" },
+  { key: "roleName", label: "Permission set name", placeholder: "BedrockInference" },
+];
 
 function Radio({ testId, checked, label, onSelect }: { testId: string; checked: boolean; label: string; onSelect: () => void }) {
   return (
@@ -67,6 +74,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const { inferenceProviders } = useOrgInferenceProviders(orgId);
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
+  const [oauthTenantId, setOauthTenantId] = useState("");
+  const [awsSso, setAwsSso] = useState<AwsSsoInput>(EMPTY_AWS_SSO);
   const [rotationAcknowledged, setRotationAcknowledged] = useState(false);
   const [callbackCopied, setCallbackCopied] = useState(false);
   const [replacingKey, setReplacingKey] = useState(false);
@@ -92,6 +101,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     setCredentialMode(provider.credentialSets[0]?.credentialMode ?? provider.credentialMode);
     setOauthClientId(provider.credentialSets[0]?.oauthClientId ?? provider.oauthClientId ?? "");
     setOauthClientSecret("");
+    setOauthTenantId(provider.credentialSets[0]?.oauthTenantId ?? "");
+    setAwsSso(provider.credentialSets[0]?.awsSso ?? EMPTY_AWS_SSO);
     setApiKey("");
     setApiKeyValues({});
     setServiceAccountJson("");
@@ -130,17 +141,24 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const reusableKeyProviders = !inferenceProviderId && bedrock ? getReusableAwsKeyProviders(inferenceProviders) : [];
   const reuseSource = reusableKeyProviders.find((entry) => entry.id === reuseKeysFrom) ?? null;
   const envNames = detail ? getProviderEnvNames(detail.config) : [];
-  const memberSignInSupported = supportsMemberCredentialMode(providerId);
+  // AWS and Microsoft sign-in roll out behind gatewayCloudSignIn; Google sign-in is always offered.
+  const cloudSignIn = orgFeatureEnabled(orgContext, "gatewayCloudSignIn");
+  const signInMethod = getMemberSignInMethod(providerId, cloudSignIn);
+  const offeredSignInMethod = gatewayMemberSignInMethod(providerId);
+  const memberSignInSupported = signInMethod !== null;
   const configuredSet = provider?.credentialSets[0] ?? null;
   const invalidatesCredentials = Boolean(configuredSet && (
     configuredSet.credentialMode !== credentialMode ||
-    (credentialMode === "member" && (oauthClientId.trim() !== (configuredSet.oauthClientId ?? "") || oauthClientSecret.trim()))
+    (credentialMode === "member" && (oauthClientId.trim() !== (configuredSet.oauthClientId ?? "") || oauthClientSecret.trim()
+      || (signInMethod === "microsoft" && oauthTenantId.trim().toLowerCase() !== (configuredSet.oauthTenantId ?? ""))
+      || (signInMethod === "aws_sso" && JSON.stringify(trimAwsSso(awsSso)) !== JSON.stringify(configuredSet.awsSso ?? EMPTY_AWS_SSO))))
   ));
   const keySaved = Boolean(configuredSet?.configured && configuredSet.credentialMode === credentialMode) && !replacingKey;
   const displayName = detail?.name ?? provider?.name ?? "provider";
   const formInput = {
     name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active" as const,
     settings, envNames, apiKey, apiKeyValues, serviceAccountJson, oauthClientId, oauthClientSecret, access,
+    ...(signInMethod === "microsoft" ? { oauthTenantId } : {}), ...(signInMethod === "aws_sso" ? { awsSso } : {}),
     ...(bedrock ? { awsKeys, reuseCredentialFrom: reuseSource?.id ?? null } : {}),
   };
   const models = detail?.models ?? [];
@@ -174,11 +192,13 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     if (groupModels.length) {
       await saveGatewayResource(provider.id, group.id, { resource: "model-groups", body: { name: group.name, description: group.description, modelIds: groupModels, status: "active" } }, auditContext);
     }
-    const { credential, apiKeys, oauthClientId: clientId, oauthClientSecret: clientSecret } = buildInferenceProviderRequestBody(formInput);
+    const { credential, apiKeys, oauthClientId: clientId, oauthClientSecret: clientSecret, oauthTenantId: tenantId, awsSso: ssoSettings } = buildInferenceProviderRequestBody(formInput);
     if (credential || apiKeys || credentialMode === "member" || set.credentialMode !== credentialMode) {
       const body: GatewayCredentialSetWrite = { name: set.name, credentialMode, status: "active", credential, apiKeys };
       if (clientId !== undefined) body.oauthClientId = clientId;
       if (clientSecret !== undefined) body.oauthClientSecret = clientSecret;
+      if (tenantId !== undefined) body.oauthTenantId = tenantId;
+      if (ssoSettings !== undefined) body.awsSso = ssoSettings;
       await saveGatewayResource(provider.id, set.id, { resource: "credential-sets", body }, auditContext);
     }
     const desired: GatewayAccessGrantWrite["audience"][] = [
@@ -202,7 +222,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     if (!detail || detail.id !== providerId) return setSaveError("Wait for the provider catalog to load.");
     if (!isSupportedGatewayNpm(npm)) return setSaveError("This provider is not supported by AI Gateway.");
     if (!allowAllModels && !modelIds.length) return setSaveError("Pick at least one model, or choose all models.");
-    for (const key of getRequiredSettingKeys(npm)) if (!settings[key]?.trim()) return setSaveError(`${getSettingLabel(key)} is required.`);
+    for (const key of getRequiredSettingKeys(npm, providerId)) if (!settings[key]?.trim()) return setSaveError(`${getSettingLabel(key, providerId)} is required.`);
     if (bedrock && !isAwsRegion(settings.region?.trim() ?? "")) return setSaveError("Enter an AWS region code such as us-east-1.");
     const awsKeysError = bedrock && !reuseSource ? getAwsKeysError(awsKeys) : null;
     if (awsKeysError) return setSaveError(awsKeysError);
@@ -211,8 +231,17 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
       const hasKey = vertex ? Boolean(serviceAccountJson.trim()) : bedrock ? Boolean(reuseSource || (awsKeys.accessKeyId.trim() && awsKeys.secretAccessKey.trim())) : envNames.length > 1 ? Object.values(apiKeyValues).some((value) => value.trim()) : Boolean(apiKey.trim());
       if (!hasKey) return setSaveError("Paste a key before sharing these models.");
     }
-    if (credentialMode === "member" && (!memberSignInSupported || !oauthClientId.trim() || (!oauthClientSecret.trim() && !configuredSet?.hasOauthClientSecret))) {
-      return setSaveError("People sign in needs a Google OAuth client ID and secret.");
+    if (credentialMode === "member") {
+      if (!signInMethod) return setSaveError("People can't sign in to this provider with their own account.");
+      if (signInMethod === "aws_sso") {
+        const ssoError = getAwsSsoError(awsSso);
+        if (ssoError) return setSaveError(ssoError);
+      } else {
+        if (signInMethod === "microsoft" && !isMicrosoftTenantId(oauthTenantId)) return setSaveError("Enter the Microsoft Entra directory (tenant) ID.");
+        if (!oauthClientId.trim() || (!oauthClientSecret.trim() && !configuredSet?.hasOauthClientSecret)) {
+          return setSaveError(signInMethod === "microsoft" ? "People sign in needs the Entra application (client) ID and a client secret." : "People sign in needs a Google OAuth client ID and secret.");
+        }
+      }
     }
     setSaving(true);
     const auditContext = createAuditOperationContext();
@@ -281,29 +310,42 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
           { value: "org", label: "Shared API key" },
           { value: "member", label: "Each member signs in", disabled: !memberSignInSupported },
         ]} onChange={changeCredentialMode} />
-        {!memberSignInSupported ? <p className="mt-3 flex items-center gap-2 text-sm text-[var(--dls-text-secondary)]"><LockKeyhole aria-hidden="true" className="size-4" strokeWidth={1.5} />Google sign-in is unavailable for this provider.</p> : null}
-        {getRequiredSettingKeys(npm).map((key) => (
+        {!memberSignInSupported ? <p className="mt-3 flex items-center gap-2 text-sm text-[var(--dls-text-secondary)]" data-testid="gateway-member-sign-in-locked"><LockKeyhole aria-hidden="true" className="size-4" strokeWidth={1.5} />{offeredSignInMethod ? `${getMemberSignInBrand(offeredSignInMethod)} sign-in isn't turned on for your organization yet.` : "People can't sign in to this provider with their own account."}</p> : null}
+        {getRequiredSettingKeys(npm, providerId).map((key) => (
           <label key={key} className={LABEL}>
-            {getSettingLabel(key)}
+            {getSettingLabel(key, providerId)}
             <DenInput className={`mt-1.5 ${MONO_INPUT}`} readOnly={Boolean(provider)} value={settings[key] ?? ""} placeholder={SETTING_PLACEHOLDERS[key]} data-testid={`gateway-setting-${key}`}
               onChange={(event) => setSettings((current) => ({ ...current, [key]: key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value }))} />
           </label>
         ))}
         {invalidatesCredentials ? <label className="mt-3 flex items-center gap-3"><DenSwitch checked={rotationAcknowledged} onChange={setRotationAcknowledged} aria-label="Confirm credential invalidation" /><span>Revoke this set’s credentials and pending sign-ins on save; members must reconnect.</span></label> : null}
-        {credentialMode === "member" ? (
+        {credentialMode === "member" && signInMethod === "aws_sso" ? (
+          <>
+            {AWS_SSO_FIELDS.map((field) => (
+              <label key={field.key} className={LABEL}>{field.label}
+                <DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid={`gateway-aws-sso-${field.key}`} value={awsSso[field.key]} autoComplete="off" placeholder={field.placeholder}
+                  onChange={(event) => { const value = event.target.value; setAwsSso((current) => ({ ...current, [field.key]: value })); setRotationAcknowledged(false); }} />
+              </label>
+            ))}
+            <Link href={MEMBER_SIGN_IN_DOC_URLS.aws_sso} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-3 w-fit" })}>Read setup instructions</Link>
+          </>
+        ) : credentialMode === "member" ? (
           <>
             {provider?.oauthCallbackUrl ? <div className="flex flex-wrap items-center gap-3 border-b border-[var(--dls-border)] py-3">
-              <div className="flex min-w-0 flex-1 flex-col gap-1"><p className="text-sm font-medium">OAuth callback URL</p><code className="break-all text-xs text-[var(--dls-text-secondary)]">{provider.oauthCallbackUrl}</code></div>
+              <div className="flex min-w-0 flex-1 flex-col gap-1"><p className="text-sm font-medium">{signInMethod === "microsoft" ? "Redirect URI" : "OAuth callback URL"}</p><code className="break-all text-xs text-[var(--dls-text-secondary)]">{provider.oauthCallbackUrl}</code></div>
               <DenButton size="sm" variant="secondary" onClick={() => {
                 const callback = provider.oauthCallbackUrl;
                 if (!callback) return;
                 if (!navigator.clipboard) { setSaveError("Clipboard access is unavailable. Select and copy the displayed URL manually."); return; }
                 void navigator.clipboard.writeText(callback).then(() => setCallbackCopied(true)).catch(() => setSaveError("Could not copy the callback. Select and copy the displayed URL manually."));
               }}>{callbackCopied ? "Callback copied" : "Copy callback URL"}</DenButton>
-            </div> : <DenNotice className="mt-3" tone="neutral" message={provider ? "Callback unavailable. Ask your deployment administrator to configure the public Den API origin." : "Save this provider to obtain its exact OAuth callback URL, then register it in your Google Web OAuth client before members connect."} />}
-            <label className={LABEL}>OAuth client ID<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-id" value={oauthClientId} autoComplete="off" onChange={(event) => { setOauthClientId(event.target.value); setRotationAcknowledged(false); }} /></label>
-            <label className={LABEL}>OAuth client secret {configuredSet?.hasOauthClientSecret ? "(configured)" : ""}<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" data-testid="gateway-oauth-client-secret" value={oauthClientSecret} autoComplete="new-password" onChange={(event) => { setOauthClientSecret(event.target.value); setRotationAcknowledged(false); }} placeholder={configuredSet?.hasOauthClientSecret ? "Saved — enter a replacement to change it" : undefined} /></label>
-            <Link href="https://openworklabs.com/docs/ai-gateway/google-agent-platform" target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-3 w-fit" })}>Read setup instructions</Link>
+            </div> : <DenNotice className="mt-3" tone="neutral" message={provider ? "Callback unavailable. Ask your deployment administrator to configure the public Den API origin." : signInMethod === "microsoft"
+              ? "Save this provider to get its exact redirect URI, then add it to your Entra app registration as a Web redirect URI before members connect."
+              : "Save this provider to obtain its exact OAuth callback URL, then register it in your Google Web OAuth client before members connect."} />}
+            {signInMethod === "microsoft" ? <label className={LABEL}>Directory (tenant) ID<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-tenant-id" value={oauthTenantId} autoComplete="off" placeholder="00000000-0000-0000-0000-000000000000" onChange={(event) => { setOauthTenantId(event.target.value); setRotationAcknowledged(false); }} /></label> : null}
+            <label className={LABEL}>{signInMethod === "microsoft" ? "Application (client) ID" : "OAuth client ID"}<DenInput className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-oauth-client-id" value={oauthClientId} autoComplete="off" onChange={(event) => { setOauthClientId(event.target.value); setRotationAcknowledged(false); }} /></label>
+            <label className={LABEL}>{signInMethod === "microsoft" ? "Client secret" : "OAuth client secret"} {configuredSet?.hasOauthClientSecret ? "(configured)" : ""}<DenInput className={`mt-1.5 ${MONO_INPUT}`} type="password" data-testid="gateway-oauth-client-secret" value={oauthClientSecret} autoComplete="new-password" onChange={(event) => { setOauthClientSecret(event.target.value); setRotationAcknowledged(false); }} placeholder={configuredSet?.hasOauthClientSecret ? "Saved — enter a replacement to change it" : undefined} /></label>
+            <Link href={MEMBER_SIGN_IN_DOC_URLS[signInMethod ?? "google"]} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-3 w-fit" })}>Read setup instructions</Link>
           </>
         ) : vertex ? (
           <label className={LABEL}>Service account JSON<DenTextarea className={`mt-1.5 ${MONO_INPUT}`} data-testid="gateway-service-account" value={serviceAccountJson} onChange={(event) => setServiceAccountJson(event.target.value)} placeholder={configuredSet?.configured ? "Saved — paste a replacement to change it" : "Paste the key file"} /></label>

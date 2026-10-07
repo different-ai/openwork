@@ -6,13 +6,14 @@ import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { MICROSOFT_FOUNDRY_PROVIDER_ID, isMicrosoftFoundryResourceName } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, recordProviderAttempt, type ProviderAuditCapture } from "../audit/provider.js"
 import { recheckAuditEntitlement } from "../audit/capture.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { bedrockSettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
-import { isGoogleOAuthInferenceProviderId } from "./inference-provider-google-oauth.js"
+import { gatewayMemberSignInMethod, memberSignInConfigurationError, memberSignInCredentialKind, memberSignInCredentialUsable, memberSignInExtraneousFields, readAwsSsoSettings, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { liteLlmCatalogProvider, liteLlmStatus, readLiteLlmSettings } from "./litellm-settings.js"
 import { getModelsDevProvider, type ModelsDevProvider } from "./models-dev.js"
@@ -42,6 +43,9 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
   }
   const bedrockError = isAwsGatewayNpm(npm) ? bedrockSettingsError(settings) : null
   if (bedrockError) throw new GatewayWriteError(400, "invalid_settings", bedrockError)
+  if (config.id === MICROSOFT_FOUNDRY_PROVIDER_ID && !isMicrosoftFoundryResourceName(settings.resourceName)) {
+    throw new GatewayWriteError(400, "invalid_settings", "Microsoft Foundry requires the Foundry resource name, the first part of https://<resource>.services.ai.azure.com.")
+  }
   if (npm === "@ai-sdk/azure" && (typeof settings.resourceName !== "string" || !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(settings.resourceName))) {
     throw new GatewayWriteError(400, "invalid_settings", "Azure requires a resourceName DNS label.")
   }
@@ -266,6 +270,7 @@ function normalizeCredential(input: GatewayCredentialSetPatch, provider: Gateway
   try {
     const parsed = parseGatewayProviderSecret(credential.kind, credential.secret)
     if (!isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
+      || parsed.kind === "aws_sso" || parsed.kind === "oauth_azure"
       || parsed.kind === "api_key_map" && !pickInferenceApiKeyFromMap(parsed.apiKeys, envNames)
       || parsed.kind === "aws_keys" && parsed.awsKeys.region !== undefined && !isAwsRegion(parsed.awsKeys.region)) throw new Error("invalid")
   } catch { throw new GatewayWriteError(400, "invalid_credential", "Credential kind and key fields must match the trusted provider catalog.") }
@@ -330,19 +335,28 @@ export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, 
   if (!name || !mode) throw new GatewayWriteError(400, "invalid_request")
   const clientId = input.oauthClientId === undefined ? existing?.oauth_client_id ?? null : input.oauthClientId || null
   const clientSecret = input.oauthClientSecret === undefined ? existing?.oauth_client_secret ?? null : input.oauthClientSecret || null
+  // Organization sets keep no member sign-in settings; switching to org mode drops them.
+  const tenantId = input.oauthTenantId === undefined ? mode === "org" ? null : existing?.oauth_tenant_id ?? null : input.oauthTenantId.trim().toLowerCase() || null
+  const awsSso = input.awsSso === undefined ? mode === "org" ? null : existing?.aws_sso ?? null : input.awsSso === null ? null : readAwsSsoSettings(input.awsSso)
+  if (input.awsSso && !awsSso) throw new GatewayWriteError(400, "invalid_aws_sso", "Enter the AWS access portal URL, IAM Identity Center region, 12-digit AWS account ID and permission set name.")
+  const signIn = { oauth_client_id: clientId, oauth_client_secret: clientSecret, oauth_tenant_id: tenantId, aws_sso: awsSso }
   // LiteLLM member sets hold each member's own LiteLLM key, connected by that member.
   const litellm = isLiteLlmProviderId(provider.provider_id)
-  if (mode === "member" && ((!isGoogleOAuthInferenceProviderId(provider.provider_id) && !litellm) || input.credential !== undefined || input.apiKeys !== undefined)) {
+  const method = gatewayMemberSignInMethod(provider.provider_id)
+  if (mode === "member" && ((!method && !litellm) || input.credential !== undefined || input.apiKeys !== undefined)) {
     throw new GatewayWriteError(400, "unsupported_credential_mode", "Member sets use each member's own sign-in or key, never an uploaded shared credential.")
   }
   if (litellm && (clientId || clientSecret)) throw new GatewayWriteError(400, "unsupported_oauth_client", "LiteLLM sets do not use an OAuth client.")
+  const extraneous = memberSignInExtraneousFields(mode === "member" ? method : null, mode === "member" ? signIn : { ...signIn, oauth_client_id: null, oauth_client_secret: null })
+  if (extraneous) throw new GatewayWriteError(400, "unsupported_sign_in_settings", extraneous)
   const id = existing?.id ?? createDenTypeId("gatewayCredentialSet")
   const modeChanged = existing && mode !== existing.credential_mode
-  const clientChanged = existing && (clientId !== existing.oauth_client_id || clientSecret !== existing.oauth_client_secret)
+  const clientChanged = existing && !sameMemberSignInConfiguration(signIn, existing)
   const disabled = existing?.status === "active" && input.status === "disabled"
   const enabled = existing && existing.status !== "active" && input.status === "active"
-  if (mode === "member" && !litellm && (!existing || modeChanged || clientChanged || enabled) && (!clientId?.trim() || !clientSecret?.trim())) {
-    throw new GatewayWriteError(400, "oauth_client_required", "Member credential sets require a non-empty Google OAuth client ID and secret.")
+  if (mode === "member" && method && (!existing || modeChanged || clientChanged || enabled)) {
+    const error = memberSignInConfigurationError(method, signIn)
+    if (error) throw new GatewayWriteError(400, "oauth_client_required", error)
   }
   // Lock exchanges before tokens, but defer cancellation until validation succeeds. Renames do neither.
   if (modeChanged || clientChanged || disabled) await tx.select({ id: GatewayProviderOauthStateTable.id }).from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id)).for("update")
@@ -356,9 +370,10 @@ export async function writeGatewaySet(tx: GatewayTx, provider: GatewayProvider, 
     throw new GatewayWriteError(400, "credential_required", "Provide a non-empty organization credential to create this set, switch to organization mode, or re-enable it without an active credential.")
   }
   if (modeChanged || clientChanged || disabled) await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id))
-  const revoked = credentials.filter((row) => row.status !== "revoked" && (modeChanged || input.status === "disabled" || clientChanged && row.kind === "oauth_google"))
+  const memberKind = method ? memberSignInCredentialKind(method) : null
+  const revoked = credentials.filter((row) => row.status !== "revoked" && (modeChanged || input.status === "disabled" || clientChanged && row.kind === memberKind))
   if (revoked.length) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", expires_at: null, scopes: null, refreshing_until: null, last_error: null, updated_at: new Date() }).where(inArray(GatewayProviderCredentialTable.id, revoked.map((row) => row.id)))
-  const values = { name, credential_mode: mode, oauth_client_id: clientId, oauth_client_secret: clientSecret, status: input.status ?? existing?.status ?? "active", updated_at: new Date() }
+  const values = { name, credential_mode: mode, ...signIn, status: input.status ?? existing?.status ?? "active", updated_at: new Date() }
   if (existing) await tx.update(GatewayCredentialSetTable).set(values).where(eq(GatewayCredentialSetTable.id, id))
   else await tx.insert(GatewayCredentialSetTable).values({ id, gateway_provider_id: provider.id, created_by_org_membership_id: creatorId, ...values })
   if (credential) {
@@ -440,23 +455,29 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
     const token = credentials.find(({ credential: row }) => row.credential_set_id === set.id && row.subject === subject
       && row.org_membership_id === (set.credential_mode === "org" ? null : memberId) && row.status === "active")?.credential
     const litellm = isLiteLlmProviderId(provider.provider_id)
-    const configured = set.credential_mode === "member" ? litellm || Boolean(set.oauth_client_id && set.oauth_client_secret) : Boolean(token)
+    const method = gatewayMemberSignInMethod(provider.provider_id)
+    const configured = set.credential_mode === "member" ? litellm || Boolean(method && !memberSignInConfigurationError(method, set)) : Boolean(token)
     let usable = false
     if (token) {
       try {
         const parsed = parseGatewayProviderSecret(token.kind, token.secret)
         usable = isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
-          && (parsed.kind !== "oauth_google" || token.last_error !== "invalid_client")
-          && (set.credential_mode !== "member" || (litellm ? parsed.kind === "api_key" : parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken)))
-          && (parsed.kind !== "oauth_google" || Boolean(token.expires_at && Number.isFinite(token.expires_at.getTime())))
-          && (parsed.kind !== "api_key_map" || Boolean(pickInferenceApiKeyFromMap(parsed.apiKeys, readProviderEnvNames(provider.provider_config))))
-          && (!token.expires_at || token.expires_at.getTime() > Date.now() || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken && set.oauth_client_id && set.oauth_client_secret))
+          && (set.credential_mode === "member"
+            ? litellm ? parsed.kind === "api_key" && (!token.expires_at || token.expires_at.getTime() > Date.now())
+              : Boolean(method && memberSignInCredentialUsable(method, set, token, parsed))
+            : parsed.kind !== "oauth_azure" && parsed.kind !== "aws_sso"
+              && (parsed.kind !== "oauth_google" || token.last_error !== "invalid_client")
+              && (parsed.kind !== "oauth_google" || Boolean(token.expires_at && Number.isFinite(token.expires_at.getTime())))
+              && (parsed.kind !== "api_key_map" || Boolean(pickInferenceApiKeyFromMap(parsed.apiKeys, readProviderEnvNames(provider.provider_config))))
+              && (!token.expires_at || token.expires_at.getTime() > Date.now() || parsed.kind === "oauth_google" && Boolean(parsed.token.refreshToken && set.oauth_client_id && set.oauth_client_secret)))
       } catch { usable = false }
     }
+    const awsSso = readAwsSsoSettings(set.aws_sso)
     return { id: set.id, name: set.name, credentialMode: set.credential_mode, status: set.status, configured,
       ...(manage ? { createdAt: set.created_at.toISOString(), createdBy: set.created_by_org_membership_id ? { id: set.created_by_org_membership_id, name: creator?.name ?? null, email: creator?.email ?? null } : null } : {}),
       credentialStatus: provider.status === "active" && set.status === "active" && configured && usable ? "ready" : set.credential_mode === "member" ? "member_auth_required" : "org_credential_missing",
-      oauthClientId: set.oauth_client_id, hasOauthClientSecret: Boolean(set.oauth_client_secret) }
+      oauthClientId: set.oauth_client_id, hasOauthClientSecret: Boolean(set.oauth_client_secret),
+      ...(set.oauth_tenant_id ? { oauthTenantId: set.oauth_tenant_id } : {}), ...(awsSso ? { awsSso } : {}) }
   })
   // LiteLLM keys created by OpenWork need nothing from the person once any key exists.
   const liteLlmSettings = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings) : null

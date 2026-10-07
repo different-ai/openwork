@@ -4,9 +4,10 @@
 // issue_comment) and only reads PR metadata through the API: it never checks
 // out, installs, or executes PR code.
 //
-//   gate          every PR event: every commit must carry its author's
-//                 Signed-off-by (comments on the PR when one is missing).
-//                 Same-repository PRs pass here; forks wait for a maintainer.
+//   gate          every PR event. Same-repository PRs pass here; forks wait
+//                 for a maintainer. No sign-off is required: as at GitLab,
+//                 contributing means accepting the DCO or the ee/ CLA
+//                 (CONTRIBUTING.md).
 //   authorize     a maintainer's `/test` or `/test <sha>` comment binds the
 //                 commit they reviewed. Refused if the head has moved or the
 //                 free screen blocked it. Nothing that costs money (model
@@ -16,6 +17,10 @@
 //                 commented /test again to proceed anyway.
 //   finalize      waits for the tests and the Warden review on that commit,
 //                 then passes or fails `contributor-pr-required`.
+//   backfill      manual run: sets `contributor-pr-required` on every open PR
+//                 to dev (or one, with PR_NUMBER), and lists the fork PRs
+//                 that still need the free screen. For PRs opened before
+//                 this gate existed.
 //
 // A fork's own `pull_request` workflows come from the PR's merge commit, so a
 // fork could rewrite them. Changes to CI or agent configuration are therefore
@@ -23,14 +28,12 @@
 // (.opencode/skills/review-a-contributor-pr).
 import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { AI_SCREEN_CONTEXT, SCREEN_CONTEXT, WARDEN_CONTEXT, upsertComment } from "./contributor-screen.mjs";
+import { AI_SCREEN_CONTEXT, SCREEN_CONTEXT, WARDEN_CONTEXT } from "./contributor-screen.mjs";
 
 export const STATUS_CONTEXT = "contributor-pr-required";
 export const CI_CHECK = "openwork-tests-required";
-const SIGNOFF_MARKER = "<!-- contributor-pr:signoff -->";
 const MAINTAINER_PERMISSIONS = ["admin", "maintain", "write"];
 const REVIEW_MACHINERY = /^(\.github\/|\.opencode\/|opencode\.jsonc?$|warden\.toml$|\.warden\/|\.agents\/skills\/|\.claude\/skills\/)/;
-const SIGN_OFF = /^Signed-off-by: .+ <([^<>\s]+)>\s*$/gm;
 
 const lower = (value) => (typeof value === "string" ? value.toLowerCase() : "");
 const short = (sha) => (typeof sha === "string" ? sha.slice(0, 10) : "");
@@ -41,27 +44,6 @@ export function isFork(pr) {
 
 export function isBot(pr) {
   return pr?.user?.type === "Bot";
-}
-
-// The author's own GitHub noreply address also counts as their sign-off.
-function noreplyLogin(email) {
-  const match = /^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/.exec(email);
-  return match ? match[1] : null;
-}
-
-// A commit is signed off when a Signed-off-by trailer carries its author's
-// email. A trailer naming someone else is not the author's certification.
-export function unsignedCommits(commits) {
-  return commits
-    .filter((commit) => (commit.parents?.length ?? 1) <= 1)
-    .filter((commit) => {
-      const author = lower(commit.commit?.author?.email);
-      const login = lower(commit.author?.login);
-      const emails = [...(commit.commit?.message ?? "").matchAll(SIGN_OFF)].map((match) => lower(match[1]));
-      const own = (email) => email === author || (login && noreplyLogin(email) === login);
-      return !author || !emails.some(own);
-    })
-    .map((commit) => commit.sha);
 }
 
 export function machineryFiles(files) {
@@ -79,16 +61,7 @@ export function parseTestCommand(body) {
   return { sha: match[1] ? match[1].toLowerCase() : null };
 }
 
-function blockers({ pr, commits, files }) {
-  const unsigned = unsignedCommits(commits);
-  if (unsigned.length) {
-    return {
-      state: "failure",
-      description: `${unsigned.length} commit(s) missing Signed-off-by. Run: git rebase --signoff origin/dev`,
-      detail: `${unsigned.length === 1 ? "This commit has" : "These commits have"} no \`Signed-off-by\` line with the author's email: ${unsigned.map((sha) => `\`${short(sha)}\``).join(", ")}. Sign off with \`git rebase --signoff origin/dev\` and force-push. See CONTRIBUTING.md.`,
-      unsigned,
-    };
-  }
+function blockers({ pr, files }) {
   const machinery = isFork(pr) ? machineryFiles(files) : [];
   if (machinery.length) {
     return {
@@ -100,35 +73,16 @@ function blockers({ pr, commits, files }) {
   return null;
 }
 
-export function gateDecision({ pr, commits, files }) {
+export function gateDecision({ pr, files }) {
   if (isBot(pr)) return { state: "success", description: "Bot pull request" };
-  const blocked = blockers({ pr, commits, files });
+  const blocked = blockers({ pr, files });
   if (blocked) return blocked;
-  if (!isFork(pr)) return { state: "success", description: "Every commit is signed off" };
+  if (!isFork(pr)) return { state: "success", description: "Pull request from this repository" };
   return { state: "pending", description: "Waiting for a maintainer to review and comment /test" };
 }
 
-export function renderSignoffComment(decision) {
-  if (decision.unsigned?.length) {
-    return [
-      SIGNOFF_MARKER,
-      "### Sign-off missing",
-      "",
-      decision.detail,
-      "",
-      "```sh",
-      "git rebase --signoff origin/dev",
-      "git push --force-with-lease",
-      "```",
-      "",
-      "To sign off future commits, use `git commit -s`.",
-    ].join("\n");
-  }
-  return [SIGNOFF_MARKER, "### Sign-off: fixed", "", "Every commit is now signed off."].join("\n");
-}
-
 // `pushedAt` is when GitHub first saw the head (its earliest workflow run).
-export function authorizeDecision({ permission, pr, command, commits, files, pushedAt, commentedAt, screen }) {
+export function authorizeDecision({ permission, pr, command, files, pushedAt, commentedAt, screen }) {
   if (!MAINTAINER_PERMISSIONS.includes(permission)) {
     return { ok: false, reply: "Only maintainers with write access can run `/test`." };
   }
@@ -144,7 +98,7 @@ export function authorizeDecision({ permission, pr, command, commits, files, pus
   } else if (!pushedAt || !commentedAt || Date.parse(pushedAt) > Date.parse(commentedAt)) {
     return { ok: false, reply: `New commits arrived after your comment, or I can't tell when \`${short(head)}\` was pushed. Review the head, then comment \`/test\` again, or \`/test ${short(head)}\` to name it.` };
   }
-  const blocked = blockers({ pr, commits, files });
+  const blocked = blockers({ pr, files });
   if (blocked) return { ok: false, reply: blocked.detail };
   if (!screen) return { ok: false, reply: `The contributor screen hasn't finished for \`${short(head)}\` yet. Comment \`/test\` again when it has.` };
   if (screen.state === "failure") return { ok: false, reply: `The contributor screen blocked \`${short(head)}\`: ${screen.description}. The contributor must fix this first.` };
@@ -187,7 +141,7 @@ function env(name) {
   return value;
 }
 
-async function github(path, init = {}) {
+async function github(path, init = {}, attempt = 0) {
   const response = await fetch(`${process.env.GITHUB_API_URL ?? "https://api.github.com"}${path}`, {
     ...init,
     headers: {
@@ -197,6 +151,15 @@ async function github(path, init = {}) {
       ...(init.body ? { "content-type": "application/json" } : {}),
     },
   });
+  // Out of API quota: wait for the reset (at most an hour) and try again.
+  if ((response.status === 403 || response.status === 429) && attempt < 3 &&
+      (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.get("retry-after"))) {
+    const reset = Number(response.headers.get("x-ratelimit-reset") ?? 0) * 1000;
+    const wait = Math.min(Math.max(reset - Date.now(), Number(response.headers.get("retry-after") ?? 0) * 1000, 30_000), 3_600_000);
+    console.log(`Rate limited on ${path}; waiting ${Math.round(wait / 1000)}s.`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    return github(path, init, attempt + 1);
+  }
   if (!response.ok) throw new Error(`${init.method ?? "GET"} ${path}: ${response.status} ${await response.text()}`);
   const text = await response.text();
   return text ? JSON.parse(text) : null;
@@ -214,12 +177,11 @@ async function paginate(path, key) {
 }
 
 async function loadPr(repo, number) {
-  const [pr, commits, files] = await Promise.all([
+  const [pr, files] = await Promise.all([
     github(`/repos/${repo}/pulls/${number}`),
-    paginate(`/repos/${repo}/pulls/${number}/commits`),
     paginate(`/repos/${repo}/pulls/${number}/files`),
   ]);
-  return { pr, commits, files };
+  return { pr, files };
 }
 
 async function statusesFor(repo, sha) {
@@ -231,11 +193,6 @@ async function setStatus(repo, sha, { state, description, url }) {
     method: "POST",
     body: JSON.stringify({ state, context: STATUS_CONTEXT, description: description.slice(0, 140), target_url: url }),
   });
-}
-
-async function hasComment(repo, number, marker) {
-  const comments = await paginate(`/repos/${repo}/issues/${number}/comments`);
-  return comments.some((comment) => comment.user?.login === "github-actions[bot]" && comment.body?.startsWith(marker));
 }
 
 async function reply(repo, number, body) {
@@ -268,8 +225,33 @@ async function approveRuns(repo, sha) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function backfill(repo, runUrl) {
+  const only = (process.env.PR_NUMBER ?? "").trim();
+  if (only && !/^\d+$/.test(only)) throw new Error(`PR_NUMBER must be a number, got: ${only}`);
+  const prs = only
+    ? [await github(`/repos/${repo}/pulls/${only}`)]
+    : await paginate(`/repos/${repo}/pulls?state=open&base=dev`);
+  const forks = [];
+  for (const pr of prs.filter((item) => item.state === "open")) {
+    // Files only matter for forks (CI and agent configuration check).
+    const files = isFork(pr) ? await paginate(`/repos/${repo}/pulls/${pr.number}/files`) : [];
+    const decision = gateDecision({ pr, files });
+    await setStatus(repo, pr.head.sha, { ...decision, url: runUrl });
+    console.log(`#${pr.number} ${pr.head.sha.slice(0, 10)}: ${decision.state} (${decision.description})`);
+    // Forks that change CI or agent configuration are carried by a maintainer.
+    if (isFork(pr) && !isBot(pr) && decision.state !== "failure") forks.push({ number: pr.number, sha: pr.head.sha });
+  }
+  // A job matrix holds at most 256 entries.
+  await output("forks", JSON.stringify(forks.slice(0, 256)));
+  console.log(`Checked ${prs.length} PR(s); ${forks.length} fork PR(s) queued for the free screen.`);
+}
+
 async function main(mode) {
   const repo = env("GITHUB_REPOSITORY");
+  if (mode === "backfill") {
+    const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`;
+    return backfill(repo, runUrl);
+  }
   const number = Number(env("PR_NUMBER"));
   const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`;
 
@@ -277,12 +259,7 @@ async function main(mode) {
     const data = await loadPr(repo, number);
     const decision = gateDecision(data);
     await setStatus(repo, data.pr.head.sha, { ...decision, url: runUrl });
-    // Comment when sign-off is missing; mark it fixed once it is.
-    if (decision.unsigned?.length || await hasComment(repo, number, SIGNOFF_MARKER)) {
-      await upsertComment(repo, number, SIGNOFF_MARKER, renderSignoffComment(decision));
-    }
     await output("fork", String(isFork(data.pr) && !isBot(data.pr)));
-    await output("ok", String(decision.state !== "failure"));
     console.log(`${STATUS_CONTEXT} on ${data.pr.head.sha}: ${decision.state} (${decision.description})`);
     return;
   }

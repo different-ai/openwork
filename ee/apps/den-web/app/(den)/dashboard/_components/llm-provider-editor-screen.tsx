@@ -155,7 +155,7 @@ export function LlmProviderEditorScreen({
         void requestLlmProviderCatalog(orgId)
             .then((providers) => {
                 if (!canceled) {
-                    setCatalogProviders(providers.filter((provider) => !isGatewayOnlyNpm(provider.npm)));
+                    setCatalogProviders(providers.filter((provider) => !isGatewayOnlyNpm(provider.npm, provider.id)));
                 }
             })
             .catch((loadError) => {

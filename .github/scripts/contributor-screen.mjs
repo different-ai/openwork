@@ -189,7 +189,7 @@ export function reviewerInstruction(line) {
 export function normalizeForInstructions(line) {
   return line
     .replace(/["'`]\s*\+\s*["'`]/g, "")
-    .replace(/^\s*(\/\/+|\/\*+|\*+\/?|#+|<!--|-->|--|;+|"{3}|'{3}|>)\s?/, "")
+    .replace(/^\s*(\/\/+|\/\*+|\*+\/?|#+|<!--|--!?>|--|;+|"{3}|'{3}|>)\s?/, "")
     .replace(/\s*(\*\/|--!?>)\s*$/, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -473,7 +473,7 @@ function env(name) {
   return value;
 }
 
-async function github(path, init = {}) {
+async function github(path, init = {}, attempt = 0) {
   const response = await fetch(`${process.env.GITHUB_API_URL ?? "https://api.github.com"}${path}`, {
     ...init,
     headers: {
@@ -483,6 +483,15 @@ async function github(path, init = {}) {
       ...(init.body ? { "content-type": "application/json" } : {}),
     },
   });
+  // Out of API quota: wait for the reset (at most an hour) and try again.
+  if ((response.status === 403 || response.status === 429) && attempt < 3 &&
+      (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.get("retry-after"))) {
+    const reset = Number(response.headers.get("x-ratelimit-reset") ?? 0) * 1000;
+    const wait = Math.min(Math.max(reset - Date.now(), Number(response.headers.get("retry-after") ?? 0) * 1000, 30_000), 3_600_000);
+    console.log(`Rate limited on ${path}; waiting ${Math.round(wait / 1000)}s.`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    return github(path, init, attempt + 1);
+  }
   if (!response.ok) throw new Error(`${init.method ?? "GET"} ${path}: ${response.status} ${await response.text()}`);
   const text = await response.text();
   return text ? JSON.parse(text) : null;
