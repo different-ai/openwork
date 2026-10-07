@@ -47,13 +47,15 @@ const execFileAsync = promisify(execFile);
 /** `--live`: a real model, the computer on, and an MCP App seeded. Local placement only. */
 export type WorkbotWorldOptions = {
   live: boolean;
+  /** `--calendar`: seed the owner's Automations and runs for the desktop Calendar (worlds/lib/calendar.ts). */
+  calendar?: boolean;
   upstream?: { baseUrl: string; key: string; model: string };
   runnerProxy?: (runnerUrl: string) => Promise<string>;
 };
 
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
-  for (const arg of argv) if (arg !== "--live") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live)`);
-  return { live: argv.includes("--live") };
+  for (const arg of argv) if (arg !== "--live" && arg !== "--calendar") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar)`);
+  return { live: argv.includes("--live"), calendar: argv.includes("--calendar") };
 }
 
 /** A secret from the caller's environment, else the team's dev Infisical; never printed. */
@@ -209,7 +211,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   const workbotUrl = preview?.workbot ?? workbotInternal;
   const secrets = { runnerToken: token(), sessionSecret: token(), upstreamKey: runner.upstreamKey };
   const den = stack.use(await server({
-    place, web: true, seedProfile: "demo-org",
+    place, web: true, seedProfile: "demo-org", seedAutomations: options.calendar === true,
     env: {
       DEN_WORKBOT_URL: workbotUrl, DEN_HEADLESS_RUNNER_URL: runnerUrl, DEN_HEADLESS_RUNNER_TOKEN: secrets.runnerToken,
       RESEND_API_KEY: "", SMTP_HOST: "",

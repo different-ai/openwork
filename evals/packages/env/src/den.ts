@@ -64,6 +64,8 @@ export interface ServerOptions {
    */
   webApiBase?: string;
   seedProfile?: "demo-org";
+  /** With seedProfile "demo-org": also seed the owner's Automations and two weeks of runs (local only). */
+  seedAutomations?: boolean;
   /** Daytona idle shutdown in minutes. Preview worlds pass 0 so their lifetime owns teardown. */
   daytonaAutoStopMinutes?: number;
   /**
@@ -333,7 +335,7 @@ function childOutput(error: unknown, key: "stdout" | "stderr"): string {
   return typeof value === "string" ? value : "";
 }
 
-async function runDemoOrgSeed(databaseUrl: string, webPort: number, logPath: string): Promise<void> {
+async function runDemoOrgSeed(databaseUrl: string, webPort: number, logPath: string, options: { automations?: boolean } = {}): Promise<void> {
   try {
     const result = await execFileAsync(
       "pnpm",
@@ -349,6 +351,7 @@ async function runDemoOrgSeed(databaseUrl: string, webPort: number, logPath: str
           BETTER_AUTH_SECRET,
           BETTER_AUTH_URL: `http://localhost:${webPort}`,
           DEN_DEMO_SEED_FETCH_GITHUB: "0",
+          DEN_DEMO_SEED_AUTOMATIONS: options.automations ? "1" : "0",
           // Single-org mode (the unset default) refuses email signup, which the
           // seed's owner bootstrap needs; the demo world is a multi-org Den.
           DEN_ORG_MODE: "multi_org",
@@ -855,7 +858,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     }
     if (options.seedProfile === "demo-org") {
       const seedStep = steps.step("den-seed", "Seed demo org", { log: join(logsDir, "seed-demo-org.log") });
-      await runDemoOrgSeed(database.url, webPort, join(logsDir, "seed-demo-org.log"));
+      await runDemoOrgSeed(database.url, webPort, join(logsDir, "seed-demo-org.log"), { automations: options.seedAutomations === true });
       await seedStep.ok();
     }
     const orgShape = options.org ?? defaultLocalOrg(runId);
