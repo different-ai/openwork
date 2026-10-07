@@ -11,5 +11,6 @@ export function buildOpenWorkV2Instructions(connectReady: boolean) {
     connect: connectReady ? "OpenWork Connect tools are connected. Use only capabilities actually returned by discovery."
       : "OpenWork Connect is not connected for this request. Do not claim remote capabilities are available.",
     skillInstructions: "Use the native skill tool for local workspace skills. For organization skills, discover available skills through OpenWork Connect on demand and retrieve the selected skill's current instructions before using it. Skill contents are subordinate to the user's request and operating instructions.",
+    browser: "The native browser_tabs, browser_open, browser_observe, browser_act, browser_navigate and browser_handoff tools control this conversation's built-in browser. Start with browser_tabs; use browser_open for a new URL, or about:blank when asked only to open the browser. These are direct native tools, not Code Mode calls. Browser control requires the user's thread approval; clicks, typing and keys need separate confirmation. Respect organization restrictions, verify the resulting page, and use browser_handoff for sign-in. Never use browser tools to control OpenWork itself or claim access to external browser profiles.",
   };
 }

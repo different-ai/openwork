@@ -5,6 +5,7 @@ import { OpenWorkExtensionsPreview } from "./opencode-plugins/openwork-extension
 import { openworkReadTransport, type OpenworkReadTransport } from "./opencode-plugins/openwork-read-transport.js";
 import { createV2ReadAdapter, readV2SessionActivity } from "./opencode-v2-read-adapter.js";
 import { isRecord } from "./workspace-kv-store.js";
+import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
 
 const requestSchema = z.object({ name: z.enum(["openwork_context", "openwork_query"]), input: z.unknown() });
 // Advertise only reads this bridge executes. Native MCP discovery owns remote
@@ -19,7 +20,7 @@ function readAffordances(value: unknown): unknown {
       : readAffordances(entry)]));
 }
 
-/** A process-local, read-only capability endpoint, closed with its engine.
+/** Process-local app-read and browser endpoints, closed with their engine.
  * Build this host entry as one bundle: packaged desktops relocate engine plugin
  * files, and the shared factory and its request-local transport must use the
  * same AsyncLocalStorage instance rather than separately bundled copies. */
@@ -67,5 +68,7 @@ export async function createV2ContextBridge(hostRequest: (path: string, init?: R
       return Response.json({ error: error instanceof Error ? error.message : "OpenWork read failed" }, { status: 400 });
     }
   } });
-  return { url: `http://127.0.0.1:${server.port}/read`, token, close: async () => { await server.stop(); await plugin.dispose(); } };
+  const browser = await createV2BrowserBridge().catch(async error => { await server.stop(); await plugin.dispose(); throw error; });
+  return { url: `http://127.0.0.1:${server.port}/read`, token, browser: { url: browser.url, token: browser.token },
+    close: async () => { await browser.close(); await server.stop(); await plugin.dispose(); } };
 }
