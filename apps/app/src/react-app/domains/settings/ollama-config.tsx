@@ -45,7 +45,7 @@ import {
 import { formatFileSize } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { fetchOllamaModelSupportsVision, OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "./openai-image-extension";
+import { fetchOllamaModelCapabilities, OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "./openai-image-extension";
 import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
 
 const ollamaConfigFactory = (ctx: ExtensionConfigContext) => (
@@ -260,7 +260,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
     void (async () => {
       setCheckingCapabilities(true);
       try {
-        const supportsVision = await fetchOllamaModelSupportsVision(activeModelId, OLLAMA_PROVIDER_CONFIG.baseURL);
+        const { supportsVision, thinkingLevels } = await fetchOllamaModelCapabilities(activeModelId, OLLAMA_PROVIDER_CONFIG.baseURL);
         await props.onInstall({
           providerId: OLLAMA_PROVIDER_CONFIG.providerId,
           name: OLLAMA_PROVIDER_CONFIG.name,
@@ -269,6 +269,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
           modelName: activeModelId,
           setDefault,
           supportsVision,
+          thinkingLevels,
         });
       } finally {
         setCheckingCapabilities(false);

@@ -8,6 +8,8 @@ export type LocalProviderInstallInput = {
   modelName: string;
   setDefault: boolean;
   supportsVision: boolean;
+  /** Thinking levels the model server reports, in its own order. Empty when it reports none. */
+  thinkingLevels?: string[];
 };
 
 type ProviderModelConfig = NonNullable<ProviderConfig["models"]>[string];
@@ -18,6 +20,17 @@ export const OLLAMA_PROVIDER_CONFIG = {
   baseURL: "http://localhost:11434/v1",
   defaultModelId: "qwen2.5-coder:7b",
 };
+
+export type OllamaModelCapabilities = {
+  supportsVision: boolean;
+  thinkingLevels: string[];
+};
+
+const NO_OLLAMA_CAPABILITIES: OllamaModelCapabilities = { supportsVision: false, thinkingLevels: [] };
+
+// Level names become variant keys and are sent back verbatim as
+// `reasoning_effort`, so accept only short plain identifiers.
+const THINKING_LEVEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 function readProperty(value: unknown, key: string) {
   if (typeof value !== "object" || value === null) return undefined;
@@ -30,7 +43,31 @@ export function parseOllamaVisionCapability(payload: unknown) {
   return capabilities.some((capability) => typeof capability === "string" && capability.toLowerCase() === "vision");
 }
 
-export async function fetchOllamaModelSupportsVision(modelId: string, baseURL: string) {
+/**
+ * Reads `thinking.values` from Ollama's `/api/show`. Named levels are kept
+ * exactly; boolean on/off controls map to the efforts Ollama accepts for them
+ * on its OpenAI-compatible API (`false` -> "none", `true` -> "high").
+ * A model that can only turn thinking off has nothing to choose, so it gets no levels.
+ */
+export function parseOllamaThinkingLevels(payload: unknown): string[] {
+  const values = readProperty(readProperty(payload, "thinking"), "values");
+  if (!Array.isArray(values)) return [];
+  const levels: string[] = [];
+  for (const value of values) {
+    const level = value === true ? "high" : value === false ? "none" : typeof value === "string" ? value.trim() : "";
+    if (THINKING_LEVEL_PATTERN.test(level) && !levels.includes(level)) levels.push(level);
+  }
+  return levels.some((level) => level !== "none") ? levels : [];
+}
+
+export function parseOllamaModelCapabilities(payload: unknown): OllamaModelCapabilities {
+  return {
+    supportsVision: parseOllamaVisionCapability(payload),
+    thinkingLevels: parseOllamaThinkingLevels(payload),
+  };
+}
+
+export async function fetchOllamaModelCapabilities(modelId: string, baseURL: string): Promise<OllamaModelCapabilities> {
   try {
     const response = await fetch(`${baseURL.replace(/\/v1\/?$/, "")}/api/show`, {
       method: "POST",
@@ -38,15 +75,18 @@ export async function fetchOllamaModelSupportsVision(modelId: string, baseURL: s
       body: JSON.stringify({ model: modelId }),
       signal: AbortSignal.timeout(3000),
     });
-    if (!response.ok) return false;
+    if (!response.ok) return NO_OLLAMA_CAPABILITIES;
     const payload: unknown = await response.json();
-    return parseOllamaVisionCapability(payload);
+    return parseOllamaModelCapabilities(payload);
   } catch {
-    return false;
+    return NO_OLLAMA_CAPABILITIES;
   }
 }
 
-export function buildLocalProviderModelConfig(input: Pick<LocalProviderInstallInput, "modelId" | "modelName" | "supportsVision">): ProviderModelConfig {
+export function buildLocalProviderModelConfig(
+  input: Pick<LocalProviderInstallInput, "modelId" | "modelName" | "supportsVision" | "thinkingLevels">,
+): ProviderModelConfig {
+  const thinkingLevels = input.thinkingLevels ?? [];
   return {
     name: input.modelName.trim() || input.modelId,
     attachment: input.supportsVision,
@@ -54,6 +94,10 @@ export function buildLocalProviderModelConfig(input: Pick<LocalProviderInstallIn
       input: input.supportsVision ? ["text", "image"] : ["text"],
       output: ["text"],
     },
+    // Each level is a Thinking choice in the model picker; the engine sends it as `reasoning_effort`.
+    ...(thinkingLevels.length > 0
+      ? { variants: Object.fromEntries(thinkingLevels.map((level) => [level, { reasoningEffort: level }])) }
+      : {}),
   };
 }
 
