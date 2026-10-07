@@ -1,12 +1,15 @@
+import { automationOccurrenceIdentity, automationRevisionDigest } from "@openwork/automations"
+// Schedule expansion comes straight from @openwork/types: prepared Dens run this seed against
+// @openwork/automations' built dist, which can predate the range API.
+import { automationOccurrencesInRange, nextAutomationOccurrence } from "@openwork/types/automation-schedule"
 import {
   AUTOMATION_CLOUD_DEFAULT_MODEL,
   AUTOMATION_DEFAULT_MAXIMUM_RUNTIME_MS,
-  automationOccurrenceIdentity,
-  automationOccurrencesInRange,
-  automationRevisionDigest,
-  nextAutomationOccurrence,
-} from "@openwork/automations"
-import type { AutomationAction, AutomationError, AutomationNeedsAttentionReason, AutomationSchedule } from "@openwork/types/automations"
+  type AutomationAction,
+  type AutomationError,
+  type AutomationNeedsAttentionReason,
+  type AutomationSchedule,
+} from "@openwork/types/automations"
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
