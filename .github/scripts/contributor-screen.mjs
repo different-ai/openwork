@@ -182,6 +182,48 @@ export function reviewerInstruction(line) {
   return null;
 }
 
+// Splitting a phrase across lines, comments or string pieces is the obvious
+// way around a per-line check, so lines are also joined after removing
+// comment markers and string concatenation. This raises the bar; it cannot
+// catch every rewording, which is why held PRs still need a person.
+export function normalizeForInstructions(line) {
+  return line
+    .replace(/["'`]\s*\+\s*["'`]/g, "")
+    .replace(/^\s*(\/\/+|\/\*+|\*+\/?|#+|<!--|-->|--|;+|"{3}|'{3}|>)\s?/, "")
+    .replace(/\s*(\*\/|-->)\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const INSTRUCTION_WINDOW = 4;
+
+// `lines` is a list of { number, text } in order. Consecutive numbers form a
+// run; every window of up to INSTRUCTION_WINDOW lines in a run is checked.
+export function instructionHits(lines) {
+  const hits = [];
+  const reported = new Set();
+  const matchOf = (from, to) => {
+    if (from === to) return reviewerInstruction(lines[from].text) ?? reviewerInstruction(normalizeForInstructions(lines[from].text));
+    return reviewerInstruction(lines.slice(from, to + 1).map((line) => normalizeForInstructions(line.text)).join(" ").trim());
+  };
+  lines.forEach((_, index) => {
+    if (reported.has(lines[index].number)) return;
+    for (let end = index; end < index + INSTRUCTION_WINDOW && end < lines.length; end += 1) {
+      if (end > index && lines[end].number !== lines[end - 1].number + 1) break;
+      if (!matchOf(index, end)) continue;
+      // Narrow to the smallest run of lines that still matches.
+      let start = index;
+      while (start < end && matchOf(start + 1, end)) start += 1;
+      if (reported.has(lines[start].number)) return;
+      const reason = matchOf(start, end);
+      hits.push({ line: lines[start].number, ...(end !== start ? { endLine: lines[end].number } : {}), reason });
+      for (let covered = start; covered <= end; covered += 1) reported.add(lines[covered].number);
+      return;
+    }
+  });
+  return hits;
+}
+
 // --- Scan -----------------------------------------------------------------------
 
 function parseNameStatus(text) {
@@ -249,26 +291,31 @@ export function scanRepository({ gitDir, base, head }) {
     const added = addedLineNumbers(patch);
     const lines = content.toString().split(/\r?\n/);
     const checkEncoded = CODE.test(file.path) && !GENERATED.test(file.path);
-    for (const number of added) {
+    const addedLines = [];
+    for (const number of [...added].sort((a, b) => a - b)) {
       const line = lines[number - 1];
       if (line === undefined) continue;
+      addedLines.push({ number, text: line });
       for (const hit of hiddenCharacters(line, { firstLine: number === 1 })) result.hidden.push({ path: file.path, line: number, ...hit });
       const encoded = checkEncoded ? encodedPayload(line) : null;
       if (encoded) result.encoded.push({ path: file.path, line: number, reason: encoded });
-      const instruction = reviewerInstruction(line);
-      if (instruction) result.injection.push({ path: file.path, line: number, reason: instruction });
     }
+    for (const hit of instructionHits(addedLines)) result.injection.push({ path: file.path, ...hit });
   }
-  // Commit messages reach the model too.
-  const log = git("log", "--format=%H%x00%B%x1e", `${base}..${head}`).toString();
-  for (const entry of log.split("\x1e")) {
-    const [sha, message] = entry.trim().split("\0");
-    if (!sha || message === undefined) continue;
-    message.split("\n").forEach((line, index) => {
-      for (const hit of hiddenCharacters(line)) result.hidden.push({ path: `commit ${sha.slice(0, 10)} message`, line: index + 1, ...hit });
-      const instruction = reviewerInstruction(line);
-      if (instruction) result.injection.push({ path: `commit ${sha.slice(0, 10)} message`, line: index + 1, reason: instruction });
-    });
+  // Commit messages reach the model too. Each raw commit object is read on
+  // its own, so no byte in a message can act as a delimiter and hide the
+  // rest. The message starts after the first blank line of the headers.
+  const commits = git("rev-list", "--max-count=500", `${base}..${head}`).toString().split("\n").filter(Boolean);
+  for (const sha of commits) {
+    const raw = git("cat-file", "commit", sha).toString("utf8");
+    const split = raw.indexOf("\n\n");
+    const message = split === -1 ? "" : raw.slice(split + 2);
+    const where = `commit ${sha.slice(0, 10)} message`;
+    const messageLines = message.split("\n").map((text, index) => ({ number: index + 1, text }));
+    for (const { number, text } of messageLines) {
+      for (const hit of hiddenCharacters(text)) result.hidden.push({ path: where, line: number, ...hit });
+    }
+    for (const hit of instructionHits(messageLines)) result.injection.push({ path: where, ...hit });
   }
   return result;
 }
@@ -342,13 +389,13 @@ export function reviewDecision(warden) {
 export function safe(value, limit = 500) {
   return String(value ?? "")
     .replace(/\b(sk|rk|pk)-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bAKIA[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[redacted]")
-    .replace(/[&<>"`|]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "`": "'", "|": "\\|" })[char])
+    .replace(/[\\&<>"`|]/g, (char) => ({ "\\": "\\\\", "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "`": "'", "|": "\\|" })[char])
     .replace(/@(?=[A-Za-z0-9])/g, "@\u200b")
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, (char) => (char === "\u200b" ? char : ""))
     .slice(0, limit);
 }
 
-const where = (item) => `\`${safe(item.path, 200)}${item.line ? `:${item.line}` : ""}\``;
+const where = (item) => `\`${safe(item.path, 200)}${item.line ? `:${item.line}${item.endLine ? `-${item.endLine}` : ""}` : ""}\``;
 const list = (items, render, max = 20) => [
   ...items.slice(0, max).map((item) => `- ${render(item)}`),
   ...(items.length > max ? [`- …and ${items.length - max} more`] : []),

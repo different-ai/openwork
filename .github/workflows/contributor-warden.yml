@@ -97,10 +97,17 @@ jobs:
           echo "merge_base=$(git merge-base refs/contributor/dev "$HEAD_SHA")" >> "$GITHUB_OUTPUT"
           echo "stale=false" >> "$GITHUB_OUTPUT"
 
+      # CodeQL flags this as untrusted checkout in a privileged workflow
+      # (alert 375). It is deliberate and the files are data only: every later
+      # step runs scripts from trusted/, installs Warden in a sibling
+      # directory (no .npmrc from the PR applies), runs git in trusted/, and
+      # only the sandbox container reads these files, with no key and no
+      # network. Never add a step that runs anything from $PR_DIR on the host.
       - name: Write the PR's files to disk without running anything
         if: steps.fetch.outputs.stale == 'false' && inputs.stage != 'scan'
         working-directory: trusted
         run: |
+          case "$PR_DIR" in "$GITHUB_WORKSPACE"*|"$RUNNER_TEMP/warden-cli"*) echo "::error::PR_DIR must stay outside the workspace and the Warden install"; exit 1 ;; esac
           git -c core.symlinks=false -c filter.lfs.smudge= -c filter.lfs.process= -c filter.lfs.required=false \
             worktree add --detach "$PR_DIR" "$HEAD_SHA"
           # Warden reads policy and skills from the repository it reviews.
