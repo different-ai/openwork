@@ -110,3 +110,15 @@ export function buildLocalProviderConfig(input: LocalProviderInstallInput): Prov
     models: { [modelId]: buildLocalProviderModelConfig({ ...input, modelId }) },
   };
 }
+
+/**
+ * Workspace config patch that adds one local model. Models added earlier stay:
+ * the server merges this provider's models instead of replacing the provider.
+ * Adding the same model again refreshes its capabilities.
+ */
+export function buildLocalProviderInstallPatch(input: LocalProviderInstallInput) {
+  return {
+    opencode: { provider: { [input.providerId]: buildLocalProviderConfig(input) } },
+    mergeProviderModels: [input.providerId],
+  };
+}

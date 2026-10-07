@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import {
   buildLocalProviderConfig,
+  buildLocalProviderInstallPatch,
   fetchOllamaModelCapabilities,
   parseOllamaThinkingLevels,
 } from "../src/react-app/domains/settings/openai-image-extension.ts";
@@ -65,6 +66,21 @@ test("models without thinking levels keep the previous config", () => {
     attachment: false,
     modalities: { input: ["text"], output: ["text"] },
   });
+});
+
+test("asks the server to keep the Ollama models added earlier", () => {
+  const patch = buildLocalProviderInstallPatch({
+    providerId: "ollama",
+    name: "Ollama (local)",
+    baseURL: "http://localhost:11434/v1",
+    modelId: "gpt-oss:120b",
+    modelName: "gpt-oss:120b",
+    setDefault: false,
+    supportsVision: false,
+    thinkingLevels: ["low", "medium", "high"],
+  });
+  expect(patch.mergeProviderModels).toEqual(["ollama"]);
+  expect(Object.keys(patch.opencode.provider.ollama.models ?? {})).toEqual(["gpt-oss:120b"]);
 });
 
 test("reads vision and thinking from one /api/show call", async () => {

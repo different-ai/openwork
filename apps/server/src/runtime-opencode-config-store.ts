@@ -128,17 +128,26 @@ export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<
  * provider, explicit `null` deletes it (so clients can remove runtime-managed
  * providers, e.g. cloud imports, without racing a read-modify-write of the
  * whole map). Returns undefined when the resulting map is empty.
+ *
+ * Providers named in `mergeModelsFor` keep the models they already have: the
+ * update's models are added or replace same-ID entries, and the rest of the
+ * provider is replaced as usual. Adding one more local model (e.g. Ollama)
+ * must not drop the ones added before it.
  */
 export function mergeRuntimeProviderUpdate(
   current: unknown,
   update: Record<string, unknown>,
+  mergeModelsFor: ReadonlySet<string> = new Set(),
 ): Record<string, unknown> | undefined {
   const next: Record<string, unknown> = { ...(isRecord(current) ? current : {}) };
   for (const [providerId, value] of Object.entries(update)) {
     if (value === null) {
       delete next[providerId];
     } else if (isRecord(value)) {
-      next[providerId] = value;
+      const existing = next[providerId];
+      next[providerId] = mergeModelsFor.has(providerId) && isRecord(existing) && isRecord(existing.models)
+        ? { ...value, models: { ...existing.models, ...(isRecord(value.models) ? value.models : {}) } }
+        : value;
     }
   }
   return Object.keys(next).length ? next : undefined;

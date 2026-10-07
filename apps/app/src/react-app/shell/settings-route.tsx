@@ -202,7 +202,7 @@ import {
 } from "@/react-app/infra/workspace-server-client";
 import { resolveEngineRootEndpoint } from "@/app/lib/workspace-endpoint";
 import {
-  buildLocalProviderConfig,
+  buildLocalProviderInstallPatch,
   type LocalProviderInstallInput,
 } from "@/react-app/domains/settings/openai-image-extension";
 import {
@@ -1247,13 +1247,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setLocalProviderStatus(null);
     setLocalProviderError(null);
     try {
-      await client.patchConfig(workspaceId, {
-        opencode: {
-          provider: {
-            [input.providerId]: buildLocalProviderConfig({ ...input, modelId }),
-          },
-        },
-      });
+      await client.patchConfig(workspaceId, buildLocalProviderInstallPatch({ ...input, modelId }));
       if (input.setDefault) {
         local.setPrefs((previous) => ({
           ...previous,
