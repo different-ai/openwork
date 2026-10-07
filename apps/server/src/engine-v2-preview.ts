@@ -1,7 +1,7 @@
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import { ApiError } from "./errors.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
-import { executionRules } from "./managed-policy-rules.js";
+import { executionRules, teamEngineRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -686,8 +686,9 @@ export function createEngineV2Preview(options: {
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
-        return executionRules(runtime.managedPolicy?.execution);
+        return [...executionRules(runtime.managedPolicy?.execution), ...teamEngineRules(runtime.managedPolicy?.rules)];
       },
+      teamRules: async () => (await readGlobalRuntimeOpencodeConfig(config)).managedPolicy?.rules ?? [],
     });
     sidecar = managed;
     if (!enabled || !allowRunning) {

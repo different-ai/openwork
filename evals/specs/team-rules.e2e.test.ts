@@ -1,9 +1,10 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { teamRules, teamRulesEditor, type TeamRule } from "../worlds/team-rules.ts";
+import { teamRules, teamRulesChat, teamRulesEditor, type TeamRule } from "../worlds/team-rules.ts";
 
 const test = spec.world(teamRules, { timeout: 600_000, resources: { surfaces: [], services: ["den"] } });
 const editorTest = spec.world(teamRulesEditor, { timeout: 900_000, resources: { surfaces: ["web"], services: ["den"] } });
+const chatTest = spec.world(teamRulesChat, { timeout: 900_000, resources: { surfaces: ["appWeb"], services: ["den", "mock"] } });
 
 const contractorRules: TeamRule[] = [
   { action: "shell", resource: "*", effect: "deny" },
@@ -102,5 +103,52 @@ editorTest("an owner writes the Contractors team's command rules in its permissi
     evidence.recordAssertionEvidence("boundaries", `Morgan: ${outside.length} rules; Riley saving the Contractors rules → HTTP ${status}`, outside.length === 0 && status === 403);
     expect(outside).toEqual([]);
     expect(status).toBe(403);
+  });
+});
+
+chatTest("a contractor's agent cannot run a command the Contractors rules block, while a colleague outside the team can", async ({ world, user, agent, probe, step, evidence }) => {
+  const riley = { user: user.on(world.riley.app), agent: agent.on(world.riley.app) };
+  const morgan = { user: user.on(world.morgan.app), agent: agent.on(world.morgan.app) };
+  const settledShell = (member: typeof world.riley) => probe.eventually(() => member.shellCall(), {
+    within: 120_000, label: "the shell call settled in the engine", until: (call) => call !== null,
+  });
+
+  await step("given the contractor's engine has the Contractors rules and the colleague's has none", async () => {
+    const rileyPlugin = await world.riley.teamRulesPlugin({ until: (plugin) => plugin?.state === "active" });
+    const morganPlugin = await world.morgan.teamRulesPlugin({ until: (plugin) => plugin === null });
+    await riley.user.see("composer");
+    evidence.recordAssertionEvidence("team rules in each engine", `Riley: ${JSON.stringify(rileyPlugin)}; Morgan: ${JSON.stringify(morganPlugin)}`, rileyPlugin?.state === "active" && morganPlugin === null);
+    expect(rileyPlugin?.state).toBe("active");
+    expect(morganPlugin).toBeNull();
+  });
+
+  await step("when the contractor asks the agent to save a note with printf", async () => {
+    await riley.user.type("composer", world.riley.prompt);
+    await riley.agent.run("composer.send");
+    const call = await settledShell(world.riley);
+    evidence.recordAssertionEvidence("the agent's shell call", `${call?.status ?? "none"}: ${world.riley.command}`, call?.status === "error");
+    await riley.user.see({ text: "I tried to save the note." }, { timeoutMs: 60_000 });
+    await riley.user.screenshot();
+  });
+
+  await step("then: the command never ran, and the agent was told which rule blocked it", async () => {
+    const call = await world.riley.shellCall();
+    const wrote = await world.riley.wroteNote();
+    const told = call?.error.includes('"Contractors Permissions" (rule: *)') === true;
+    evidence.recordAssertionEvidence("blocked before it ran", `note written: ${wrote}; tool error: ${call?.error ?? "(none)"}`, !wrote && told);
+    expect(wrote).toBe(false);
+    expect(told).toBe(true);
+  });
+
+  await step("a colleague outside the team gets the same command run", async () => {
+    await morgan.user.type("composer", world.morgan.prompt);
+    await morgan.agent.run("composer.send");
+    const call = await settledShell(world.morgan);
+    const wrote = await world.morgan.wroteNote();
+    evidence.recordAssertionEvidence("Morgan's shell call", `${call?.status ?? "none"}; note written: ${wrote}`, call?.status === "completed" && wrote);
+    expect(call?.status).toBe("completed");
+    expect(wrote).toBe(true);
+    await morgan.user.see({ text: "I tried to save the note." }, { timeoutMs: 60_000 });
+    await morgan.user.screenshot();
   });
 });
