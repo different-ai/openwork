@@ -56,6 +56,7 @@
     "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/free-auto": "workspace:*",
     "@openwork/types": "workspace:*",
+    "acorn": "8.16.0",
     "better-sqlite3": "^13.0.2",
     "drizzle-orm": "^0.45.2",
     "htmlparser2": "8.0.2",

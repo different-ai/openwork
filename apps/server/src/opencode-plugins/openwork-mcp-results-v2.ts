@@ -1,3 +1,5 @@
+import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
+
 type Registration = { dispose(): Promise<void> };
 type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
@@ -6,7 +8,8 @@ type ExecuteAfter = CallEvent & { readonly input: unknown } & (
 );
 type Context = {
   tool: {
-    hook(name: "execute.before", callback: (event: CallEvent) => void): Promise<Registration>;
+    transform(callback: (editor: { get(id: string): unknown }) => void): Promise<Registration>;
+    hook(name: "execute.before", callback: (event: CallEvent & { input: unknown }) => void): Promise<Registration>;
     hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration>;
   };
 };
@@ -117,11 +120,19 @@ export default {
   id: "openwork.mcp-results",
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
-    const before = await context.tool.hook("execute.before", event => collector.before(event));
+    let rootSearch = false;
+    const catalog = await context.tool.transform(editor => { rootSearch = editor.get("search") !== undefined; });
+    const before = await context.tool.hook("execute.before", event => {
+      if (!rootSearch && event.tool === "execute" && isRecord(event.input) && typeof event.input.code === "string") {
+        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code) };
+      }
+      collector.before(event);
+    });
     const after = await context.tool.hook("execute.after", event => collector.after(event));
     return async () => {
       await before.dispose();
       await after.dispose();
+      await catalog.dispose();
     };
   },
 };
