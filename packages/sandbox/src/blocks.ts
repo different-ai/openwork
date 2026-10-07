@@ -14,7 +14,7 @@ export interface SandboxRun {
 export type FileStat = { size: number; kind: "file" | "directory" }
 export interface SandboxFiles {
   read(handle: SandboxHandle, path: string, opts: ProviderTimeout): Promise<Uint8Array>
-  write(handle: SandboxHandle, path: string, bytes: Uint8Array, opts: ProviderTimeout): Promise<void>
+  write(handle: SandboxHandle, path: string, bytes: Uint8Array, opts: ProviderTimeout & { mode?: number }): Promise<void>
   /** null means absent, not inaccessible. */
   stat(handle: SandboxHandle, path: string, opts: ProviderTimeout): Promise<FileStat | null>
 }

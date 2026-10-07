@@ -120,7 +120,7 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
       run,
       files: {
         async read(h, path, opts) { return bounded(() => api.vms.ref(identity(h.ref)).fs.readFile(path, { signal: AbortSignal.timeout(opts.timeoutMs) }), opts.timeoutMs) },
-        async write(h, path, bytes, opts) { await bounded(() => api.vms.ref(identity(h.ref)).fs.writeFile(path, bytes, { signal: AbortSignal.timeout(opts.timeoutMs) }), opts.timeoutMs) },
+        async write(h, path, bytes, opts) { await bounded(() => api.vms.ref(identity(h.ref)).fs.writeFile(path, bytes, { signal: AbortSignal.timeout(opts.timeoutMs), ...(opts.mode === undefined ? {} : { mode: opts.mode }) }), opts.timeoutMs) },
         async stat(h, path, opts) {
           const vm = api.vms.ref(identity(h.ref))
           try {

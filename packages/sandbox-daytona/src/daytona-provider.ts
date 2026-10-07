@@ -707,7 +707,11 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
           return wrap(() => download(path, seconds(opts.timeoutMs)))
         },
         async write(handle, path, bytes, opts) {
-          await wrap(async () => { await (await resolve(handle)).fs.uploadFile(Buffer.from(bytes), path, seconds(opts.timeoutMs)) })
+          if (opts.mode !== undefined && (!Number.isInteger(opts.mode) || opts.mode < 0 || opts.mode > 0o777)) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "File mode must be 000-777" })
+          const sandbox = await resolve(handle)
+          await wrap(() => sandbox.fs.uploadFile(Buffer.from(bytes), path, seconds(opts.timeoutMs)))
+          const mode = opts.mode
+          if (mode !== undefined) await wrap(() => sandbox.fs.setFilePermissions(path, { mode: mode.toString(8).padStart(3, "0") }))
         },
         async stat(handle, path, opts) {
           const sandbox = await resolve(handle)

@@ -15,7 +15,7 @@ test("Workbot preview keeps TTL/TLS/access guards while shared compute owns crea
       return Response.json({ id: "vm-test", slug: created.slug, state: "running", metadata: created.metadata, createdAt: new Date().toISOString() });
     }
     if (init?.method === "DELETE") { deletes++; return new Response(null, { status: 204 }); }
-    if (url.pathname.endsWith("/fs/write")) return new Response(null, { status: 204 });
+    if (url.pathname.endsWith("/fs/write")) { expect(url.searchParams.get("mode")).toBe("384"); return new Response(null, { status: 204 }); }
     if (url.pathname.endsWith("/fs/read")) return new Response("{}");
     return Response.json({ id: "vm-test", slug: created.slug, state: "running", metadata: created.metadata, createdAt: new Date().toISOString() });
   };

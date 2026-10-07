@@ -162,7 +162,7 @@ async function createWorkbotPreviewGuest(input: {
     fs: {
       writeTextFile: async (path, text, opts = {}) => {
         if (opts.mode !== undefined && opts.mode !== 0o600) throw new Error("Preview secrets must use mode 0600");
-        await files.write(box, path, new TextEncoder().encode(text), { timeoutMs: 30_000 });
+        await files.write(box, path, new TextEncoder().encode(text), { timeoutMs: 30_000, mode: opts.mode ?? 0o600 });
       },
       readTextFile: async path => new TextDecoder().decode(await files.read(box, path, { timeoutMs: 30_000 })),
     },
