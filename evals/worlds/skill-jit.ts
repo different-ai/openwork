@@ -82,9 +82,11 @@ function isInside(path: string, root: string): boolean {
 /**
  * Headless app-web fixture for just-in-time skills on the native v2 engine.
  *
- * The world owns: a deterministic model witness (seed.mock) whose only tool
- * step is the native `skill` tool, an identity-scoped mock of the OpenWork
- * Cloud `/mcp/agent` endpoint serving `skill://` resources, and typed seed-side
+ * The world owns: a deterministic model witness (seed.mock) whose tool steps
+ * are the native `skill` tool for workspace skills and Connect's `get_skill`
+ * (through Code Mode) for organization skills listed in openwork.skills, an
+ * identity-scoped mock of the OpenWork Cloud `/mcp/agent` endpoint serving
+ * `skill://` resources and the Connect tools, and typed seed-side
  * steps that persist that endpoint as the account-global Cloud MCP config for
  * one account at a time. Nothing here injects renderer prompts or evaluates
  * browser code on behalf of a spec body.
@@ -234,6 +236,21 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
     async cloudHealth(): Promise<CloudReconcileReceipt> {
       const result = await request(`${cloudMcpPath}/health`);
       return cloudReceipt(result.status, result.json);
+    },
+    /** Skill names in the account's Connect catalog as the server reads it; the read also fills the server's 30-second catalog cache. */
+    async connectSkillNames(): Promise<string[]> {
+      const result = await request("/experimental/connect/skills");
+      if (result.status !== 200) throw new Error(`Connect skill catalog unavailable: HTTP ${result.status}`);
+      const skills = isRecord(result.json) && Array.isArray(result.json.skills) ? result.json.skills : [];
+      return skills.flatMap((skill) => isRecord(skill) && typeof skill.name === "string" ? [skill.name] : []);
+    },
+    /** The organization skill list OpenWork attached to this conversation (its openwork.skills instruction entry), or null when none is attached. */
+    async organizationSkillList(): Promise<string | null> {
+      const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/instructions/entries`);
+      if (result.status !== 200) throw new Error(`Conversation instruction entries unavailable: HTTP ${result.status}`);
+      const entries = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+      const value = entries.find((entry) => entry.key === "openwork.skills")?.value;
+      return typeof value === "string" ? value : null;
     },
     /** The engine's live native skill registry, as the proxied v2 route exposes it. */
     async nativeSkills(): Promise<NativeSkillEntry[]> {

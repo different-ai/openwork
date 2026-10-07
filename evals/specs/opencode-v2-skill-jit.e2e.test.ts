@@ -6,6 +6,7 @@ import { skillLifecycle } from "../worlds/chat.ts";
 import { selectedSkillsWeb } from "../worlds/selected-skills.ts";
 import {
   cloudNativeSkillIdPrefix,
+  skillJitAccounts,
   skillJitWeb,
   type SkillJitTurnTarget,
 } from "../worlds/skill-jit.ts";
@@ -219,8 +220,9 @@ selectedTest("SKILL-MISSING a selected skill removed from the native registry fa
 });
 
 // ---------------------------------------------------------------------------
-// Local native workspace skill compatibility. Remote organization skill
-// parity is covered by LIVE-CLOUD on both engines using real Den and inference.
+// Local native workspace skills, and organization skills that OpenWork lists in
+// the conversation's openwork.skills entry. Live remote parity is covered by
+// LIVE-CLOUD on both engines using real Den and inference.
 
 const jitTest = spec.world(skillJitWeb, {
   timeout: 900_000,
@@ -359,4 +361,70 @@ jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admissi
   });
   evidence.recordAssertionEvidence("Workspace skills never block a turn",
     "A malformed skill and one skill installed in both .agents and .claude were answered normally; installing, editing and removing the workspace skill through OpenWork still changed the next answer.", true);
+});
+
+jitTest("SKILL-CLOUD-01 an organization skill answers a request that never names it, and stops once OpenWork Cloud is removed", async ({ world, user, probe, step, evidence }) => {
+  const talk = jitConversation({ world, user, probe });
+  const account = skillJitAccounts.a;
+  const catalogTurn: SkillJitTurnTarget = { kind: "catalog", skill: world.cloudSkillName };
+  const code = talk.mintCode();
+  let answered: Awaited<ReturnType<typeof talk.ask>> | null = null;
+
+  await step("given OpenWork Cloud is connected and its catalog offers the amber release report skill", async () => {
+    world.cloud.publishSkill(account, { name: world.cloudSkillName, description: cloudSkillDescription, body: cloudSkillBody(code) });
+    const receipt = await world.authorizeCloud(account);
+    expect(receipt.status).toBe(200);
+    const health = await probe.eventually(() => world.cloudHealth(), {
+      within: 60_000, label: "the engine reports OpenWork Cloud connected", until: (value) => value.engineStatus === "connected",
+    });
+    // Prompt admission waits at most 300 ms for a cold catalog read and lists
+    // the skill from the next turn otherwise. Reading the catalog first keeps
+    // this proof independent of runner speed.
+    const names = await world.connectSkillNames();
+    expect(names).toEqual([world.cloudSkillName]);
+    evidence.recordAssertionEvidence("OpenWork Cloud is connected and offers the skill",
+      `reconcile HTTP ${receipt.status}; engine ${health.engineStatus}; Connect catalog ${JSON.stringify(names)}`, true);
+  });
+
+  await step("after: a request that never names the skill is answered from its current instructions", async () => {
+    // ask() also proves the prompt carries no skill name, connector id or code.
+    const turn = await talk.ask(catalogTurn, code);
+    expect(turn.text).toContain(code);
+    answered = turn;
+    evidence.recordAssertionEvidence("An unnamed organization skill answers the request",
+      `The prompt names no skill; the answer shows the skill's current code ${code}.`, true);
+  });
+
+  await step("then the agent found the skill in its organization skill list and read it with get_skill, without searching", async () => {
+    if (!answered) throw new Error("The organization skill turn did not run");
+    const list = await world.organizationSkillList();
+    expect(list).toContain(`- ${world.cloudSkillName}`);
+    expect(list).toContain(cloudSkillDescription);
+    // Metadata only: the instructions arrive through get_skill, never in the list.
+    expect(list).not.toContain(code);
+    const calls = (await world.modelRequests(answered.prompt, { atLeast: 2, timeoutMs: 30_000 }))
+      .filter((request) => request.kind === "tool");
+    expect(calls.map((request) => request.toolName)).toEqual(["execute"]);
+    expect(String(calls[0]?.arguments.code)).toContain(".get_skill(");
+    const cloudCalls = world.cloud.log({ sinceIso: answered.startedAt, rpcMethod: "tools/call" });
+    expect(cloudCalls.map((call) => [call.toolName, call.identity, call.status])).toEqual([["get_skill", account, 200]]);
+    evidence.recordAssertionEvidence("The listed skill was read with get_skill, without a search",
+      `organization skill list ${JSON.stringify(list)}; model tool call: execute → get_skill; OpenWork Cloud tool calls: get_skill as ${account}, no list_skills or search_capabilities`, true);
+  });
+
+  await step("removing OpenWork Cloud takes the skill out of the list, and the same request no longer reads it", async () => {
+    const removal = await world.removeCloud();
+    expect(removal.status).toBe(200);
+    expect(removal.remaining).not.toContain("openwork-cloud");
+    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
+    talk.expectNoCodes(turn.fresh);
+    expect(await world.organizationSkillList()).toBeNull();
+    const requests = await world.modelRequests(turn.prompt, { atLeast: 1, timeoutMs: 30_000 });
+    expect(requests.filter((request) => request.kind === "tool" || request.kind === "error")).toEqual([]);
+    const contact = world.cloud.log({ sinceIso: turn.startedAt })
+      .filter((entry) => entry.rpcMethod === "resources/read" || entry.rpcMethod === "tools/call");
+    expect(contact).toEqual([]);
+    evidence.recordAssertionEvidence("Without OpenWork Cloud the skill is neither listed nor read",
+      `DELETE HTTP ${removal.status}; organization skill list: none; answer ${JSON.stringify(turn.fresh.slice(0, 80))}; model tool calls: 0; OpenWork Cloud catalog reads or tool calls during the turn: 0`, true);
+  });
 });

@@ -20,13 +20,17 @@ function systemUpdate(message: Record<string, unknown>): string | null {
   return update ? update[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") : null;
 }
 
-function catalog(messages: Record<string, unknown>[]) {
+function systemText(messages: Record<string, unknown>[]): string {
   const system = messages.flatMap((message) => {
     if (message.role === "system" || message.role === "developer") return [text(message.content)];
     const update = systemUpdate(message);
     return update === null ? [] : [update];
   }).join("\n");
   if (!system.includes("You are OpenWork.")) throw new Error("The model did not receive OpenWork operating instructions");
+  return system;
+}
+
+function catalog(system: string) {
   const skills = new Map<string, { id: string; name: string; description: string }>();
   for (const update of system.split(/(?=<available_skills>|The available skills have changed|New skills are available|The following skill IDs|Skill guidance is no longer available|No skills are currently available)/)) {
     if (update.startsWith("<available_skills>") || update.startsWith("The available skills have changed")
@@ -41,6 +45,21 @@ function catalog(messages: Record<string, unknown>[]) {
     for (const id of removed?.split(", ") ?? []) skills.delete(id);
   }
   return [...skills.values()];
+}
+
+/**
+ * Organization skills from the latest `<context key="openwork.skills">` entry
+ * (`- name (capability): description` lines), or none once it no longer applies.
+ */
+function organizationSkills(system: string) {
+  let latest = "";
+  for (const [, value] of system.matchAll(/<context key="openwork\.skills">\n([\s\S]*?)\n<\/context>|The context under "openwork\.skills" no longer applies\./g)) {
+    latest = value ?? "";
+  }
+  return latest.split("\n").flatMap((line) => {
+    const entry = line.match(/^- ([a-z0-9]+(?:-[a-z0-9]+)*)(?: \(([^)]+)\))?(?:: (.*))?$/);
+    return entry ? [{ name: entry[1], capability: entry[2] ?? entry[1], description: entry[3] ?? "" }] : [];
+  });
 }
 
 function matchesPrompt(description: string, prompt: string): boolean {
@@ -72,7 +91,8 @@ function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSki
     if (!reply) throw new Error("The model received no tool result text");
     return { request, reply };
   }
-  const skills = catalog(messages);
+  const system = systemText(messages);
+  const skills = catalog(system);
   const tools = Array.isArray(body.tools) ? body.tools.filter(record) : [];
   const tool = tools.find((item) => item.type === "function" && record(item.function) && item.function.name === "skill");
   const parameters = tool && record(tool.function) && record(tool.function.parameters) ? tool.function.parameters : null;
@@ -87,6 +107,15 @@ function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSki
       request.toolName = "skill";
       request.arguments = { id };
     }
+  }
+  // Organization skills are only listed in openwork.skills; the model reads the
+  // matching one with Connect's get_skill inside the native Code Mode tool.
+  const listed = organizationSkills(system).filter((skill) => matchesPrompt(skill.description, prompt));
+  const codeMode = tools.some((item) => item.type === "function" && record(item.function) && item.function.name === "execute");
+  if (request.toolName === null && turn.forcedSkillId === undefined && codeMode && listed.length === 1) {
+    request.kind = "tool";
+    request.toolName = "execute";
+    request.arguments = { code: `return await tools["openwork-cloud"].get_skill(${JSON.stringify({ name: listed[0].capability })});` };
   }
   return { request, reply: "OpenWork: UNAVAILABLE" };
 }
