@@ -40,7 +40,13 @@ import { warmEngineFolder, type EngineFolderWarmupResult } from "./engine-folder
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
-import { buildOpenWorkV2Instructions, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
+import { readOpenWorkConnectSkillCatalogOrNull } from "./connect-skill-catalog.js";
+import {
+  buildOpenWorkV2Instructions,
+  buildOpenWorkV2SkillList,
+  OPENWORK_V2_INSTRUCTION_KEY,
+  OPENWORK_V2_SKILLS_INSTRUCTION_KEY,
+} from "./opencode-v2-instructions.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -254,6 +260,28 @@ function reserveAgentDiagnosticsRun(
     released = true;
     inFlight.delete(key);
   };
+}
+
+// Admission never waits on Cloud for long: a cold or failed catalog read keeps
+// the previous list, and the cached read is ready for the next turn.
+const SKILL_LIST_ADMISSION_WAIT_MS = 300;
+
+/** Best effort: the organization skill list never blocks or fails prompt admission. */
+async function syncOpenWorkV2SkillList(
+  config: ServerConfig,
+  connectReady: boolean,
+  send: (init: { method: "PUT" | "DELETE"; body?: string }) => Promise<Response>,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const skills = connectReady
+    ? await Promise.race([
+      readOpenWorkConnectSkillCatalogOrNull(config),
+      new Promise<null>((resolve) => { timer = setTimeout(resolve, SKILL_LIST_ADMISSION_WAIT_MS, null); }),
+    ]).finally(() => clearTimeout(timer))
+    : [];
+  if (skills === null) return;
+  const list = buildOpenWorkV2SkillList(skills);
+  await send(list ? { method: "PUT", body: JSON.stringify({ value: list }) } : { method: "DELETE" }).catch(() => undefined);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1409,7 +1437,8 @@ export async function proxyOpencodeV2Request(input: {
   }
 
   if (method !== "GET" && method !== "HEAD"
-    && decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`)) {
+    && [OPENWORK_V2_INSTRUCTION_KEY, OPENWORK_V2_SKILLS_INSTRUCTION_KEY]
+      .some((key) => decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${key}`))) {
     throw new ApiError(403, "engine_instructions_managed", "OpenWork instructions are managed by the server");
   }
 
@@ -1424,14 +1453,19 @@ export async function proxyOpencodeV2Request(input: {
     const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
     const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
-    // Keep organization skill discovery on demand through Connect. The full
-    // catalog can exceed the engine's instruction-entry request limit.
     const value = buildOpenWorkV2Instructions(connectReady);
-    const instructionUrl = new URL(target);
-    instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
-    const synced = await engineFetch(instructionUrl.toString(), {
-      method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
-    });
+    const entryUrl = (key: string) => {
+      const url = new URL(target);
+      url.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${key}`;
+      return url.toString();
+    };
+    const [synced] = await Promise.all([
+      engineFetch(entryUrl(OPENWORK_V2_INSTRUCTION_KEY), {
+        method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
+      }),
+      syncOpenWorkV2SkillList(input.config, connectReady, (init) =>
+        engineFetch(entryUrl(OPENWORK_V2_SKILLS_INSTRUCTION_KEY), { ...init, headers: internalHeaders, signal: AbortSignal.timeout(15_000) })),
+    ]);
     if (!synced.ok) throw new ApiError(502, "engine_instruction_sync_failed", "OpenWork instructions could not be updated");
   }
 

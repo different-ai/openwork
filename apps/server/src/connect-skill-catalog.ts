@@ -71,6 +71,14 @@ export async function readOpenWorkConnectSkillCatalog(
   config: ServerConfig,
   fetcher: McpFetch = externalFetch,
 ): Promise<OpenWorkConnectSkill[]> {
+  return await readOpenWorkConnectSkillCatalogOrNull(config, fetcher) ?? [];
+}
+
+/** Like readOpenWorkConnectSkillCatalog, but null when every configured candidate failed. */
+export async function readOpenWorkConnectSkillCatalogOrNull(
+  config: ServerConfig,
+  fetcher: McpFetch = externalFetch,
+): Promise<OpenWorkConnectSkill[] | null> {
   try {
     const serverCloud = await readConnectCloudMcp(config);
     const candidates: Array<{ cloud: Record<string, unknown>; source: "server" | "workspace" }> = [];
@@ -96,9 +104,9 @@ export async function readOpenWorkConnectSkillCatalog(
       }
       return skills;
     }
-    return [];
+    return seen.size === 0 ? [] : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
