@@ -95,7 +95,6 @@ config:
     appMcpServersEnabled: "true"
     connectLinkMode: exchange
     connectLinkKeyId: ""
-    openworkAppConnectUrl: ""
     openworkWebUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""

@@ -1282,108 +1282,6 @@ body {
     gap: 0.58rem;
 }
 
-.ow-worker-section-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.6rem;
-}
-
-.ow-worker-layout {
-    display: grid;
-    gap: 0.6rem;
-}
-
-@media (min-width: 860px) {
-    .ow-worker-layout {
-        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-    }
-}
-
-.ow-worker-list-panel {
-    max-height: 58vh;
-    overflow-y: auto;
-    padding-right: 0.2rem;
-}
-
-.ow-worker-select {
-    width: 100%;
-    text-align: left;
-    font: inherit;
-    color: inherit;
-    cursor: pointer;
-    border: 1px solid #e2e8f0;
-    border-radius: 1.2rem;
-    background: #fff;
-    padding: 0.82rem;
-    display: grid;
-    gap: 0.45rem;
-    transition:
-        border-color 140ms ease,
-        box-shadow 140ms ease,
-        background-color 140ms ease;
-}
-
-.ow-worker-select:hover {
-    border-color: #cbd5e1;
-    background: #f8fafc;
-}
-
-.ow-worker-select.is-active {
-    border-color: #1b29ff;
-    background: rgba(27, 41, 255, 0.04);
-    box-shadow:
-        inset 3px 0 0 #1b29ff,
-        0 8px 22px rgba(27, 41, 255, 0.12);
-}
-
-.ow-worker-detail {
-    border: 1px solid #dbe3f4;
-    border-radius: 0.82rem;
-    background: #fff;
-    padding: 0.66rem;
-    display: grid;
-    gap: 0.52rem;
-}
-
-.ow-worker-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 0.46rem;
-}
-
-.ow-worker-item {
-    border: 1px solid #dbe3f4;
-    border-radius: 0.76rem;
-    background: #fff;
-    padding: 0.56rem;
-    display: grid;
-    gap: 0.4rem;
-}
-
-.ow-worker-item.is-active {
-    border-color: #9fb2eb;
-    background: #f8fbff;
-}
-
-.ow-worker-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-}
-
-.ow-worker-meta {
-    margin: 0;
-    font-size: 0.72rem;
-    color: #64748b;
-    word-break: break-all;
-    font-family:
-        var(--font-ibm-plex-mono), "JetBrains Mono", "SF Mono", monospace;
-}
-
 .ow-badge {
     display: inline-flex;
     align-items: center;
@@ -1397,12 +1295,6 @@ body {
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 0.2rem 0.45rem;
-}
-
-.ow-worker-badges {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
 }
 
 .ow-status-pill {

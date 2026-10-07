@@ -60,8 +60,6 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   support("ALL", "/api/auth/sso/saml2/callback/*", "sso.saml_callback.policy", "samlResponsePolicyMiddleware before better-auth; the endpoint itself is declared with the better-auth endpoints."),
   support("ALL", "/api/auth/sso/saml2/sp/acs/*", "sso.saml_acs.policy", "samlResponsePolicyMiddleware before better-auth ACS; the endpoint itself is declared with the better-auth endpoints."),
   support("ALL", "/v1/auth/desktop-handoff/exchange", "desktop_handoff.cors", "Reflecting CORS middleware for the grant exchange (only when !env.corsHandledByEdge)."),
-  support("ALL", "/v1/cloud/workers/*", "cloud_worker.cors", "Worker compatibility CORS middleware; the proxy endpoint is declared in ./org.ts."),
-  support("OPTIONS", "/v1/cloud/workers/*", "cloud_worker.cors_preflight", "CORS preflight answered by the cors() handler; no state, no tenant."),
 
   // app.fetch re-dispatch
   route("ALL", "/v1/orgs/:orgId/*", "proxy", "legacy_org.proxy", "request.proxy", "organization", "orgId", "delegatedRoute legacy org proxy re-dispatches through app.fetch; the destination route records."),

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterAll, expect } from "vitest";
 import { denFetch, signIn } from "@openwork/behaviors";
@@ -934,34 +935,28 @@ test.skipIf(skip)(name("12. the event-type catalog lists the generic route actio
 
 // Routes behind orgMemberRoute({ useUserOrganizations: true }) attribute to the caller's verified
 // active membership (resolveUserOrganizationsMiddleware → beginUserOrganizationsAuditRequest).
-test.skipIf(skip)(name("13. worker routes resolved from the caller's memberships record tenant evidence, including the worker token reveal"), STEP, async ({ evidence, place }) => {
+test.skipIf(skip)(name("13. worker routes resolved from the caller's memberships record tenant evidence for the worker delete"), STEP, async ({ evidence, place }) => {
   const w = await world(place);
   const headers = orgHeaders(w.admin, w.orgId);
+  const { workerId } = await seedLocalWorker(w, `Audit worker ${w.stamp}`);
   const mark = await watermark(w, w.orgId);
-  const knownPlatform = new Set([...await platformRows(w, "/v1/workers"), ...await platformRows(w, "/v1/workers/:id/tokens")].map((row) => String(row.id)));
-  const created = await call(w.den, "/v1/workers", { method: "POST", headers, body: { name: `Audit worker ${w.stamp}`, destination: "local", workspacePath: "/tmp/audit-eval-workspace" } });
-  expect(created.response.status, created.text).toBe(201);
-  const workerId = text(record(record(created.body, "worker response").worker, "worker").id, "worker id");
-  const tokens = await call(w.den, `/v1/workers/${workerId}/tokens`, { method: "POST", headers, body: {} });
-  expect(tokens.response.status, tokens.text).toBe(200);
+  const knownPlatform = new Set((await platformRows(w, "/v1/workers/:id")).map((row) => String(row.id)));
+  const deleted = await call(w.den, `/v1/workers/${workerId}`, { method: "DELETE", headers });
+  expect(deleted.response.status, deleted.text).toBe(204);
   await sleep(500);
   const events = (await tenantEvents(w, w.orgId, mark)).filter((event) => event.action.startsWith("worker."));
-  const platform = [...await platformRows(w, "/v1/workers"), ...await platformRows(w, "/v1/workers/:id/tokens")].filter((row) => !knownPlatform.has(String(row.id)));
-  const tokenValues = Object.values(record(tokens.body, "tokens")).filter((value): value is string => typeof value === "string" && value.length > 16);
-  expect(tokenValues.some((value) => JSON.stringify(platform).includes(value))).toBe(false);
+  const platform = (await platformRows(w, "/v1/workers/:id")).filter((row) => !knownPlatform.has(String(row.id)));
+  const remaining = await sql(w, "SELECT id FROM worker WHERE id = ?", [workerId]);
   evidence.recordAssertionEvidence(
-    "POST /v1/workers (tenant_job) and POST /v1/workers/:id/tokens (tenant_access) record tenant operations in the caller's organization",
-    `tenant events ${summary(events)}; new platform rows for /v1/workers and /v1/workers/:id/tokens: ${JSON.stringify(platform)}`,
+    "DELETE /v1/workers/:id (tenant_external) records tenant operations in the caller's organization",
+    `tenant events ${summary(events)}; new platform rows for /v1/workers/:id: ${JSON.stringify(platform)}; worker rows left: ${remaining.length}`,
     events.length > 0,
   );
-  expect(events.map((event) => event.action), summary(events)).toEqual([
-    "worker.create.requested", "worker.create.accepted", "worker.token.reveal.requested", "worker.token.reveal.served",
-  ]);
+  expect(events.map((event) => event.action), summary(events)).toEqual(["worker.delete.requested", "worker.delete.confirmed"]);
   for (const event of events) expect(event.actor).toEqual({ type: "user", id: w.adminUserId, memberId: w.adminMemberId });
-  expect(events[1]?.resources).toEqual(expect.arrayContaining([expect.objectContaining({ type: "worker", id: workerId, relationship: "related" })]));
-  expect(events[3]?.resources).toEqual(expect.arrayContaining([expect.objectContaining({ type: "worker", id: workerId, relationship: "target" })]));
+  expect(events[1]?.resources).toEqual(expect.arrayContaining([expect.objectContaining({ type: "worker", id: workerId, relationship: "target" })]));
   expect(platform).toEqual([]);
-  expect(tokenValues.some((value) => JSON.stringify(events).includes(value))).toBe(false);
+  expect(remaining).toEqual([]);
 });
 
 // Handler-attributed routes call attributeAuditRequest once their credential is verified: the
@@ -1008,6 +1003,15 @@ function syntheticTypeId(prefix: string): string {
   let suffix = String(Math.floor(Math.random() * 8));
   for (let index = 1; index < 26; index++) suffix += TYPEID_ALPHABET[Math.floor(Math.random() * TYPEID_ALPHABET.length)];
   return `${prefix}_${suffix}`;
+}
+
+/** A local worker and its activity token, seeded at the database seam (Den no longer creates workers over HTTP). */
+async function seedLocalWorker(w: { dbUrl: string; orgId: string; adminUserId: string }, workerName: string): Promise<{ workerId: string; activityToken: string }> {
+  const workerId = syntheticTypeId("wrk");
+  const activityToken = randomBytes(32).toString("hex");
+  await sql(w, "INSERT INTO worker (id, org_id, created_by_user_id, name, destination, status, workspace_path) VALUES (?, ?, ?, ?, 'local', 'healthy', ?)", [workerId, w.orgId, w.adminUserId, workerName, "/tmp/audit-eval-workspace"]);
+  await sql(w, "INSERT INTO worker_token (id, worker_id, scope, token) VALUES (?, ?, 'activity', ?)", [syntheticTypeId("wkt"), workerId, activityToken]);
+  return { workerId, activityToken };
 }
 
 async function sessionCookie(den: Den, email: string, password: string): Promise<string> {
@@ -1072,10 +1076,7 @@ test.skipIf(skip)(name("16. runner and worker signals (inventory, work poll, act
   const minted = await call(w.den, "/v1/automation-runners/token", { method: "POST", headers, body: { runnerId, protocolVersion: 1, supportedExecutionTargets: ["desktop"], capabilities: [], appVersion: "0.0.0-audit", platform: "linux", concurrency: 1 } });
   expect(minted.response.status, minted.text).toBe(200);
   const runnerToken = text(record(minted.body, "runner token").token, "runner token");
-  const worker = await call(w.den, "/v1/workers", { method: "POST", headers, body: { name: `Audit signal worker ${w.stamp}`, destination: "local", workspacePath: "/tmp/audit-eval-signal" } });
-  expect(worker.response.status, worker.text).toBe(201);
-  const workerId = text(record(record(worker.body, "worker response").worker, "worker").id, "worker id");
-  const activityToken = text((await sql(w, "SELECT token FROM worker_token WHERE worker_id = ? AND scope = 'activity' AND revoked_at IS NULL LIMIT 1", [workerId]))[0]?.token, "activity token");
+  const { workerId, activityToken } = await seedLocalWorker(w, `Audit signal worker ${w.stamp}`);
   const signals = async () => {
     const inventory = await call(w.den, "/v1/automation-runner/inventory", { method: "PUT", headers: { authorization: `Bearer ${runnerToken}` }, body: { computer: { label: "Audit eval runner", platform: "linux", appVersion: "0.0.0-audit" }, workspaces: [] } });
     expect(inventory.response.status, inventory.text).toBe(200);

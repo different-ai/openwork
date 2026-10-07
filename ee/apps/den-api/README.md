@@ -50,7 +50,7 @@ Organization owners and super-admins approve self-hosted OpenWork Web instances 
 - organization routes under `/v1/orgs*`
 - active-organization SCIM management routes under `/v1/scim*`
 - admin routes under `/v1/admin*`
-- worker lifecycle and billing routes under `/v1/workers*`
+- worker list, delete, and activity heartbeat routes under `/v1/workers*` (OpenWork Web instances are worker rows; their lifecycle lives under `/v1/cloud/*`)
 
 ## Folder map
 
@@ -58,7 +58,7 @@ Organization owners and super-admins approve self-hosted OpenWork Web instances 
 - `src/routes/me/`: current user and current user's org resolution routes
 - `src/routes/org/`: organization CRUD-ish surfaces, split by area
 - `src/routes/admin/`: admin-only reporting endpoints
-- `src/routes/workers/`: worker lifecycle, billing, runtime, and heartbeat endpoints
+- `src/routes/workers/`: worker list, delete, and activity heartbeat endpoints
 - `src/middleware/`: reusable Hono middleware for auth context, org context, teams, and validation
 - `src/cache.ts`: shared Redis-backed read-through cache. Add expensive read helpers here, keyed as `cache:${cacheParent}:${cacheChild}:${id}`; for example `cache.auth.session(token)` and `cache.org.members(orgId)`. Redis is optional, so every helper must fall back to the DB loader.
 
