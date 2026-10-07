@@ -1,7 +1,7 @@
 import { automationOccurrencesInRange } from "@openwork/types/automation-schedule"
 import type { AutomationList, AutomationRun } from "@openwork/types/automations"
 
-import { MINUTE_MS } from "./calendar-time"
+import { MINUTE_MS } from "./time"
 
 type AutomationListItem = AutomationList["items"][number]
 

@@ -1,6 +1,6 @@
 import type { AutomationSchedule } from "@openwork/types/automations"
 
-import { compareDates, type CalendarRange, type LocalDate } from "./calendar-time"
+import { compareDates, type CalendarRange, type LocalDate } from "./time"
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]

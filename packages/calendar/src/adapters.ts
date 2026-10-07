@@ -3,7 +3,7 @@ import {
   type DenCalendarRangeQuery,
   type DenGoogleCalendarEvent,
   type DenMicrosoftCalendarEvent,
-} from "@/app/lib/den-calendar-contract"
+} from "./den-contract"
 import {
   CALENDAR_PROVIDER_LABEL,
   CalendarConnectionError,
@@ -12,8 +12,8 @@ import {
   type CalendarProviderId,
   type CalendarRangeRead,
   type CalendarRangeRequest,
-} from "./calendar-event"
-import { addDays, HOUR_MS, MINUTE_MS, parseDateKey, parseGraphDateTime, resolveGraphTimeZone, toUtcIso } from "./calendar-time"
+} from "./event"
+import { addDays, HOUR_MS, MINUTE_MS, parseDateKey, parseGraphDateTime, resolveGraphTimeZone, toUtcIso } from "./time"
 
 /**
  * Where calendar range reads go. `den` is the member's real connections

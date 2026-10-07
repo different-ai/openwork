@@ -1,13 +1,13 @@
 import { DenApiError, type DenClient } from "@/app/lib/den"
 import {
   calendarRangeSearch,
-  denGoogleCalendarEventsResponseSchema,
-  denMicrosoftCalendarEventsResponseSchema,
+  type CalendarTransport,
   DEN_GOOGLE_CALENDAR_EVENTS_PATH,
   DEN_MICROSOFT_CALENDAR_EVENTS_PATH,
   type DenCalendarRangeQuery,
-} from "@/app/lib/den-calendar-contract"
-import type { CalendarTransport } from "./calendar-adapters"
+  denGoogleCalendarEventsResponseSchema,
+  denMicrosoftCalendarEventsResponseSchema,
+} from "@openwork/calendar"
 
 /**
  * Meetings come from the member's real connections through Den unless a

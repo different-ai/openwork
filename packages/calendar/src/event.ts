@@ -1,4 +1,4 @@
-import type { LocalDate } from "./calendar-time"
+import type { LocalDate } from "./time"
 
 /** Calendar providers a member can overlay. Each has its own adapter. */
 export type CalendarProviderId = "google" | "microsoft"

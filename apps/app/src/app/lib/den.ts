@@ -63,7 +63,7 @@ import {
   type DenCalendarRangeQuery,
   type DenGoogleCalendarEvent,
   type DenMicrosoftCalendarEvent,
-} from "./den-calendar-contract";
+} from "@openwork/calendar";
 import type { ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,

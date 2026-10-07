@@ -6,14 +6,14 @@ import {
   normalizeGoogleEvent,
   normalizeMicrosoftEvent,
   type CalendarTransport,
-} from "../../../../apps/app/src/react-app/domains/calendar/calendar-adapters";
+} from "../../../../packages/calendar/src/adapters";
 import {
   denGoogleCalendarEventsResponseSchema,
   denMicrosoftCalendarEventsResponseSchema,
-} from "../../../../apps/app/src/app/lib/den-calendar-contract";
-import { CalendarConnectionError } from "../../../../apps/app/src/react-app/domains/calendar/calendar-event";
+} from "../../../../packages/calendar/src/den-contract";
+import { CalendarConnectionError } from "../../../../packages/calendar/src/event";
 import { createMockCalendarTransport } from "../../../../apps/app/src/react-app/domains/calendar/calendar-source";
-import { calendarRange } from "../../../../apps/app/src/react-app/domains/calendar/calendar-time";
+import { calendarRange } from "../../../../packages/calendar/src/time";
 import {
   createCalendarMockState,
   denCalendarEvents,

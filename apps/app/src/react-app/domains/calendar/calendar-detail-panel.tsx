@@ -8,11 +8,20 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AutomationScheduleFields, AutomationTimezoneField } from "@/react-app/domains/automations/automation-schedule-fields"
-import { describeRunOutcome, runPlacement, type AutomationCalendarItem } from "./automation-calendar"
-import { CALENDAR_PROVIDER_LABEL, type CalendarEvent } from "./calendar-event"
-import { describeSchedule, formatDate, formatInstant, formatTime } from "./calendar-format"
+import {
+  addDays,
+  type AutomationCalendarItem,
+  CALENDAR_PROVIDER_LABEL,
+  type CalendarEvent,
+  compareDates,
+  describeRunOutcome,
+  describeSchedule,
+  formatDate,
+  formatInstant,
+  formatTime,
+  runPlacement,
+} from "@openwork/calendar"
 import { AutomationStatusIcon } from "./calendar-grid"
-import { addDays, compareDates } from "./calendar-time"
 
 type AutomationListItem = AutomationList["items"][number]
 

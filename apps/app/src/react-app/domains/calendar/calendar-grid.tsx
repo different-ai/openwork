@@ -3,19 +3,23 @@ import { useEffect, useMemo, useRef } from "react"
 import { CheckCircle2, Cloud, Loader2, Lock, MinusCircle, Monitor, XCircle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import type { AutomationCalendarItem } from "./automation-calendar"
-import { CALENDAR_PROVIDER_LABEL, type CalendarEvent } from "./calendar-event"
-import { formatDayHeader, formatHourLabel, formatTime, isSameDate } from "./calendar-format"
-import { layoutOverlappingBlocks } from "./calendar-layout"
 import {
   addDays,
+  type AutomationCalendarItem,
+  CALENDAR_PROVIDER_LABEL,
+  type CalendarEvent,
+  type CalendarRange,
   compareDates,
+  formatDayHeader,
+  formatHourLabel,
+  formatTime,
+  isSameDate,
+  layoutOverlappingBlocks,
+  type LocalDate,
   localDateOf,
   minutesIntoDay,
   startOfDay,
-  type CalendarRange,
-  type LocalDate,
-} from "./calendar-time"
+} from "@openwork/calendar"
 
 export const HOUR_HEIGHT_PX = 48
 const DAY_MINUTES = 24 * 60

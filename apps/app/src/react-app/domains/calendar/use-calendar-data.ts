@@ -1,67 +1,19 @@
 import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import type { AutomationList, AutomationRun } from "@openwork/types/automations"
+import { useMeetingsQuery, useRunsInRangeQuery } from "@openwork/calendar/react"
+import type { AutomationList } from "@openwork/types/automations"
 
-import { DenApiError, type DenClient } from "@/app/lib/den"
-import type { DenExternalMcpConnection } from "@/app/lib/den"
-import { ACTIVE_RUN_STATUSES, AUTOMATIONS_FAST_POLL_MS, AUTOMATIONS_SLOW_POLL_MS, type AutomationsDenContext } from "@/react-app/domains/automations/use-automations"
-import { createCalendarAdapter, type CalendarTransport } from "./calendar-adapters"
-import { CalendarConnectionError, type CalendarProviderId, type CalendarRangeRead } from "./calendar-event"
-import { runPlacement } from "./automation-calendar"
+import type { AutomationRunsSource, CalendarProviderId, CalendarTransport } from "@openwork/calendar"
+import type { DenClient, DenExternalMcpConnection } from "@/app/lib/den"
+import type { AutomationsDenContext } from "@/react-app/domains/automations/use-automations"
 import { createDenCalendarTransport, createMockCalendarTransport, readCalendarMockUrl } from "./calendar-source"
 
-const RANGE_PAGE_LIMIT = 200
-const RANGE_MAX_PAGES = 10
-/** Older Dens without the range route: per-Automation history, bounded. */
-const FALLBACK_MAX_AUTOMATIONS = 30
-const FALLBACK_CONCURRENCY = 4
-
-export type RunsInRange = {
-  runs: AutomationRun[]
-  /** False when the range had more runs than one read returns. */
-  complete: boolean
-  /** `range` is the owner-scoped route; `per_automation` is the bounded fallback for older Dens. */
-  source: "range" | "per_automation"
-}
-
-async function readRunsInRange(
-  client: DenClient,
-  organizationId: string,
-  range: { start: number; end: number },
-  automations: readonly AutomationList["items"][number][],
-): Promise<RunsInRange> {
-  try {
-    const runs: AutomationRun[] = []
-    let cursor: string | undefined
-    for (let page = 0; page < RANGE_MAX_PAGES; page += 1) {
-      const result = await client.listAutomationRunsInRange(organizationId, { from: range.start, to: range.end, cursor, limit: RANGE_PAGE_LIMIT })
-      runs.push(...result.items)
-      if (!result.nextCursor) return { runs, complete: true, source: "range" }
-      cursor = result.nextCursor
-    }
-    return { runs, complete: false, source: "range" }
-  } catch (error) {
-    if (!(error instanceof DenApiError) || error.status !== 404) throw error
+/** Den's run routes as the shared Calendar's runs source. */
+export function denRunsSource(client: DenClient, organizationId: string): AutomationRunsSource {
+  return {
+    listRunsInRange: (input) => client.listAutomationRunsInRange(organizationId, input),
+    listRuns: (automationId, input) => client.listAutomationRuns(organizationId, automationId, input),
   }
-  // N+1 fallback: newest 100 runs per Automation, filtered to the range.
-  const selected = automations.filter((item) => item.automation.state !== "archived").slice(0, FALLBACK_MAX_AUTOMATIONS)
-  const runs: AutomationRun[] = []
-  let complete = selected.length === automations.filter((item) => item.automation.state !== "archived").length
-  for (let index = 0; index < selected.length; index += FALLBACK_CONCURRENCY) {
-    const batch = await Promise.all(selected.slice(index, index + FALLBACK_CONCURRENCY).map((item) =>
-      client.listAutomationRuns(organizationId, item.automation.id, { limit: 100 })))
-    for (const page of batch) {
-      const inRange = page.items.filter((run) => {
-        const at = runPlacement(run)
-        return at >= range.start && at < range.end
-      })
-      runs.push(...inRange)
-      // The oldest run on a full page is still inside the range: older ones may be missing.
-      const oldest = page.items.at(-1)
-      if (page.nextCursor && oldest && runPlacement(oldest) >= range.start) complete = false
-    }
-  }
-  return { runs, complete, source: "per_automation" }
 }
 
 export function useAutomationRunsInRange(
@@ -70,15 +22,11 @@ export function useAutomationRunsInRange(
   automations: readonly AutomationList["items"][number][] | undefined,
   enabled: boolean,
 ) {
-  return useQuery({
-    queryKey: [...context.queryRoot, "runs-range", range.start, range.end],
-    queryFn: () => readRunsInRange(context.client!, context.organizationId!, range, automations ?? []),
-    enabled: enabled && context.ready && automations !== undefined,
-    staleTime: 15_000,
-    refetchInterval: (query) => query.state.data?.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))
-      ? AUTOMATIONS_FAST_POLL_MS
-      : AUTOMATIONS_SLOW_POLL_MS,
-  })
+  const source = useMemo(
+    () => context.client && context.organizationId ? denRunsSource(context.client, context.organizationId) : null,
+    [context.client, context.organizationId],
+  )
+  return useRunsInRangeQuery({ keyPrefix: context.queryRoot, source, range, automations, enabled: enabled && context.ready })
 }
 
 /** Whether the organization turned the Calendar on (`automationCalendar` in `/v1/org` features). */
@@ -132,14 +80,5 @@ export function useCalendarMeetings(input: {
   range: { start: number; end: number }
   enabled: boolean
 }) {
-  return useQuery<CalendarRangeRead, CalendarConnectionError>({
-    queryKey: ["calendar", "meetings", input.transport?.kind ?? "none", input.organizationId, input.provider, input.range.start, input.range.end],
-    queryFn: ({ signal }) => createCalendarAdapter(input.provider, input.transport!).readRange({ ...input.range, signal }),
-    enabled: input.enabled && input.transport !== null,
-    staleTime: 2 * 60_000,
-    refetchInterval: 5 * 60_000,
-    refetchOnWindowFocus: true,
-    retry: (failureCount, error) => error.retryable && failureCount < 2,
-    retryDelay: (attempt) => Math.min(30_000, 2_000 * 2 ** attempt),
-  })
+  return useMeetingsQuery({ keyPrefix: ["calendar", input.organizationId], provider: input.provider, transport: input.transport, range: input.range, enabled: input.enabled })
 }

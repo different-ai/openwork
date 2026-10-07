@@ -25,12 +25,24 @@ import {
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src"
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections"
 import { usePlatform } from "@/react-app/kernel/platform"
-import { buildAutomationCalendarItems } from "./automation-calendar"
-import { CALENDAR_PROVIDER_LABEL, type CalendarConnectionError, type CalendarEvent, type CalendarProviderId } from "./calendar-event"
+import {
+  buildAutomationCalendarItems,
+  CALENDAR_PROVIDER_LABEL,
+  type CalendarConnectionError,
+  type CalendarEvent,
+  type CalendarProviderId,
+  calendarRange,
+  type CalendarView,
+  dateKey,
+  formatRangeLabel,
+  formatTime,
+  type LocalDate,
+  localDateOf,
+  parseDateKey,
+  shiftAnchor,
+} from "@openwork/calendar"
 import { AutomationDetailPanel, MeetingDetailPanel } from "./calendar-detail-panel"
-import { formatRangeLabel, formatTime } from "./calendar-format"
 import { CalendarMonthGrid, CalendarTimeGrid, type CalendarSelection } from "./calendar-grid"
-import { calendarRange, dateKey, localDateOf, parseDateKey, shiftAnchor, type CalendarView, type LocalDate } from "./calendar-time"
 import {
   calendarProviderPresence,
   useAutomationRunsInRange,
