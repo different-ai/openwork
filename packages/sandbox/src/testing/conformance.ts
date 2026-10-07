@@ -24,7 +24,7 @@ function specFor(provider: SandboxProvider, key: string, extra: Partial<SandboxS
     idempotencyKey: `conformance-${key}`,
     image: provider.currentImage(),
     labels: { "openwork.den.conformance": key },
-    env: { DEN_CONFORMANCE: "1" },
+    env: provider.describe().createEnvironment === false ? {} : { DEN_CONFORMANCE: "1" },
     storage: [],
     exposePorts: [8787],
     ...extra,
@@ -182,6 +182,7 @@ export function sandboxProviderConformanceCases(
       name: "endpoint kind and expiry match the declared capability",
       async run() {
         const provider = await factory()
+        if (provider.describe().endpoints === false) return
         const created = await provider.create(specFor(provider, `endpoint-${Date.now()}`), timeout)
         try {
           const endpoint = await provider.endpoint(created, 8787, { ttlSeconds: 600 })

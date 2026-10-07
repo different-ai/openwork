@@ -10,5 +10,5 @@ export default defineConfig({
   sourcemap: false,
   splitting: false,
   treeshake: true,
-  external: ["@openwork/sandbox", "@daytonaio/sdk"],
+  external: ["@openwork/sandbox", "freestyle"],
 })

@@ -1,8 +1,8 @@
 {
-  "name": "@openwork/sandbox-daytona",
+  "name": "@openwork/sandbox-freestyle",
   "private": true,
   "type": "module",
-  "description": "Daytona sandbox adapter: compute, process execution, files and optional memory-preserving pause.",
+  "description": "Freestyle compute, processes, files, pause and snapshots for OpenWork sandboxes.",
   "main": "./dist/index.js",
   "types": "./src/index.ts",
   "source": "./src/index.ts",
@@ -16,12 +16,12 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
-    "test:live": "tsx --test --test-concurrency=1 src/live.test.ts",
-    "test": "tsx --test src/unit.test.ts"
+    "test": "tsx --test src/unit.test.ts",
+    "test:live": "tsx --test --test-concurrency=1 src/live.test.ts"
   },
   "dependencies": {
-    "@daytonaio/sdk": "^0.201.0",
-    "@openwork/sandbox": "workspace:*"
+    "@openwork/sandbox": "workspace:*",
+    "freestyle": "0.2.13"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

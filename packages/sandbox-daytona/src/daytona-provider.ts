@@ -17,6 +17,7 @@ import {
   type SandboxSpec,
   type SandboxState,
   type SandboxStorage,
+  type SandboxPlatform,
 } from "@openwork/sandbox"
 import { toRuntimeProviderError } from "./errors"
 
@@ -32,6 +33,10 @@ export type DaytonaProviderConfig = {
   resources: SandboxResources
   pollIntervalMs: number
   helperCreateTimeoutMs: number
+  /** Explicit platform for the configured snapshot; never inferred from its name. */
+  platform?: SandboxPlatform
+  /** Operator verified this Daytona class supports memory-preserving pause. */
+  supportsPause?: boolean
 }
 
 /** The slice of the SDK the provider drives; production wraps `Daytona`, tests substitute. */
@@ -45,12 +50,15 @@ export type DaytonaSandboxClient = {
   start(timeoutSeconds?: number): Promise<unknown>
   stop(timeoutSeconds?: number): Promise<unknown>
   delete(timeoutSeconds?: number): Promise<unknown>
+  pause?(timeoutSeconds?: number): Promise<unknown>
   getSignedPreviewUrl(port: number, expiresInSeconds?: number): Promise<{ url: string }>
   fs: {
     createFolder(path: string, mode: string): Promise<unknown>
     uploadFile(source: Buffer, path: string, timeoutSeconds?: number): Promise<unknown>
     setFilePermissions(path: string, permissions: { mode?: string; owner?: string; group?: string }): Promise<unknown>
     deleteFile(path: string, recursive?: boolean): Promise<unknown>
+    downloadFile?(path: string, timeoutSeconds?: number): Promise<Uint8Array>
+    getFileDetails?(path: string): Promise<{ size: number; isDir: boolean }>
   }
   process: {
     createSession(sessionId: string): Promise<unknown>
@@ -146,12 +154,15 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
     start: (timeout) => sandbox.start(timeout),
     stop: (timeout) => sandbox.stop(timeout),
     delete: (timeout) => sandbox.delete(timeout),
+    pause: (timeout) => sandbox.pause(timeout),
     getSignedPreviewUrl: (port, expiresInSeconds) => sandbox.getSignedPreviewUrl(port, expiresInSeconds),
     fs: {
       createFolder: (path, mode) => sandbox.fs.createFolder(path, mode),
       uploadFile: (source, path, timeout) => sandbox.fs.uploadFile(source, path, timeout),
       setFilePermissions: (path, permissions) => sandbox.fs.setFilePermissions(path, permissions),
       deleteFile: (path, recursive) => sandbox.fs.deleteFile(path, recursive),
+      downloadFile: async (path, timeout) => new Uint8Array(await sandbox.fs.downloadFile(path, timeout)),
+      getFileDetails: (path) => sandbox.fs.getFileDetails(path),
     },
     process: {
       createSession: (sessionId) => sandbox.process.createSession(sessionId),
@@ -468,6 +479,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     endpointKind: "signed-expiring",
     exec: true,
     regions: config.target ? [config.target] : [],
+    ...(config.platform ? { platform: config.platform } : {}),
   }
 
   const storage: SandboxStorage = {
@@ -645,6 +657,77 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       return endpoint
     },
     storage,
+    // Existing Web instances leave platform unset. Opting in to a verified
+    // Linux flavor enables the POSIX process block; no Windows shell guessing.
+    blocks: {
+      ...(config.platform?.os === "linux" ? {
+        run: async (handle, spec) => {
+          if (!Number.isFinite(spec.timeoutMs) || spec.timeoutMs <= 0) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "timeoutMs must be positive" })
+          return boundedScriptOperation((async () => {
+            if (spec.shell && spec.shell !== "sh") throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "This Daytona flavor supports sh only" })
+            const env = Object.entries(spec.env ?? {}).map(([key, value]) => {
+              if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Invalid environment variable name" })
+              return `${key}=${shellQuote(value)}`
+            })
+            const command = `${spec.cwd ? `cd ${shellQuote(spec.cwd)} && ` : ""}exec env ${env.join(" ")} sh -c ${shellQuote(spec.command)}`
+            const sandbox = await resolve(handle)
+            const download = sandbox.fs.downloadFile
+            if (!download) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Exact run output requires file downloads" })
+            const directory = `/tmp/openwork-run-${randomUUID()}`
+            await wrap(() => sandbox.fs.createFolder(directory, "700"))
+            let completed = false
+            try {
+              // Session logs normalize line endings. Capture process streams as
+              // bytes so run preserves trailing whitespace and separates stderr.
+              const script = `(${command}) >${shellQuote(`${directory}/stdout`)} 2>${shellQuote(`${directory}/stderr`)}`
+              const exec = await execOn(sandbox, { script, detach: false, timeoutMs: spec.timeoutMs })
+              const exitCode = await exec.exitCode()
+              if (exitCode === null) throw new RuntimeProviderError({ providerId, code: "timeout", retryable: false, message: "Command has not exited; execution outcome is unknown, do not retry" })
+              completed = true
+              const stdout = await wrap(() => download(`${directory}/stdout`, seconds(spec.timeoutMs)))
+              const stderr = await wrap(() => download(`${directory}/stderr`, seconds(spec.timeoutMs)))
+              return { exitCode, stdout: Buffer.from(stdout).toString("utf8"), stderr: Buffer.from(stderr).toString("utf8") }
+            } finally {
+              // An unacknowledged launch might still write these files. Do not
+              // delete them or repeat the command while its outcome is unknown.
+              if (completed) await wrap(() => sandbox.fs.deleteFile(directory, true)).catch(() => undefined)
+            }
+          })(), spec.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", retryable: false, message: "Run exceeded its deadline; execution outcome may be unknown, do not retry" }))
+        },
+      } : {}),
+      files: {
+        async read(handle, path, opts) {
+          const sandbox = await resolve(handle)
+          const download = sandbox.fs.downloadFile
+          if (!download) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Client does not implement file downloads" })
+          return wrap(() => download(path, seconds(opts.timeoutMs)))
+        },
+        async write(handle, path, bytes, opts) {
+          await wrap(async () => { await (await resolve(handle)).fs.uploadFile(Buffer.from(bytes), path, seconds(opts.timeoutMs)) })
+        },
+        async stat(handle, path, opts) {
+          const sandbox = await resolve(handle)
+          const details = sandbox.fs.getFileDetails
+          if (!details) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Client does not implement file metadata" })
+          try {
+            const info = await boundedScriptOperation(wrap(() => details(path)), opts.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", message: "File metadata timed out", retryable: false }))
+            return { size: info.size, kind: info.isDir ? "directory" : "file" }
+          } catch (error) {
+            // A missing sandbox is NOT a missing file.
+            if (toRuntimeProviderError(error, providerId).code === "not_found" && await provider.get(handle.ref)) return null
+            throw error
+          }
+        },
+      },
+      ...(config.supportsPause ? {
+        pause: async (handle, opts) => {
+          const sandbox = await resolve(handle)
+          const pause = sandbox.pause
+          if (!pause) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Client does not implement pause" })
+          await wrap(() => pause(seconds(opts.timeoutMs)))
+        },
+      } : {}),
+    },
   }
 
   return provider

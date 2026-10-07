@@ -1,3 +1,4 @@
+import type { RunSpec, RunResult } from "../blocks"
 import { RuntimeProviderError } from "../errors"
 import type {
   Endpoint,
@@ -32,6 +33,13 @@ export type FakeOperationName =
   | "stop"
   | "destroy"
   | "exec"
+  | "run"
+  | "files.read"
+  | "files.write"
+  | "files.stat"
+  | "pause"
+  | "snapshots.create"
+  | "snapshots.destroy"
   | "endpoint"
   | "storage.ensureVolume"
   | "storage.eraseSubpaths"
@@ -53,6 +61,7 @@ export type FakeProviderOptions = {
   endpointTtlSeconds?: number
   now?: () => number
   /** Decide what a command does; defaults to exit 0 with no output. */
+  onRun?: (spec: RunSpec) => Promise<RunResult> | RunResult
   onExec?: (input: { sandboxId: string; spec: ExecSpec }) => FakeExecResult | Promise<FakeExecResult>
   /**
    * Consulted before every operation. Throw to fail the operation (typically a
@@ -108,6 +117,7 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
   const image = options.image === undefined ? { id: "fake-image", version: "fake-image" } : options.image
   const sandboxes = new Map<string, FakeSandboxRecord>()
   const volumes = new Map<string, { ref: VolumeRef; files: Set<string> }>()
+  const fileData = new Map<string, Map<string, Uint8Array>>()
   const calls: string[] = []
   const attempts = new Map<FakeOperationName, number>()
   const hidden = new Set<string>()
@@ -196,6 +206,46 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
 
   const provider: FakeProvider = {
     id: providerId,
+    blocks: {
+      run: async (handle, spec) => {
+        const record = requireRecord(handle)
+        await before("run", { sandboxId: record.id })
+        if (record.state !== "running") fail("invalid_state", "sandbox is not running")
+        return options.onRun?.(spec) ?? { exitCode: 0, stdout: "", stderr: "" }
+      },
+      files: {
+        async read(handle, path) {
+          const record = requireRecord(handle)
+          await before("files.read", { sandboxId: record.id })
+          const data = fileData.get(record.id)?.get(path)
+          if (!data) fail("not_found", "file not found", false)
+          return data.slice()
+        },
+        async write(handle, path, bytes) {
+          const record = requireRecord(handle)
+          await before("files.write", { sandboxId: record.id })
+          const files = fileData.get(record.id) ?? new Map<string, Uint8Array>()
+          files.set(path, bytes.slice())
+          fileData.set(record.id, files)
+        },
+        async stat(handle, path) {
+          const record = requireRecord(handle)
+          await before("files.stat", { sandboxId: record.id })
+          const data = fileData.get(record.id)?.get(path)
+          return data ? { size: data.byteLength, kind: "file" } : null
+        },
+      },
+      pause: async (handle) => {
+        const record = requireRecord(handle)
+        await before("pause", { sandboxId: record.id })
+        record.state = "stopped"
+      },
+      snapshots: { async create(handle, name) {
+        const record = requireRecord(handle)
+        await before("snapshots.create", { sandboxId: record.id })
+        return { id: name, version: name }
+      }, async destroy() { await before("snapshots.destroy") } },
+    },
     describe: () => capabilities,
     currentImage: () => image,
     async create(spec, _opts) {

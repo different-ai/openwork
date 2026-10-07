@@ -22,6 +22,8 @@
  *    either return the existing instance or throw `conflict`, never make two.
  */
 
+import type { SandboxBlocks, SandboxPlatform } from "./blocks"
+
 export type ProviderEndpointKind = "signed-expiring" | "stable" | "den-tunnel"
 
 export type ProviderCapabilities = {
@@ -37,6 +39,11 @@ export type ProviderCapabilities = {
   /** `exec` is implemented; every current provider needs it for the bootstrap. */
   exec: boolean
   regions: readonly string[]
+  /** Verified platform for this configured flavor; omitted means unknown. */
+  platform?: SandboxPlatform
+  /** Legacy defaults are true; new adapters explicitly report unsupported operations. */
+  createEnvironment?: boolean
+  endpoints?: boolean
 }
 
 export type SandboxState =
@@ -86,7 +93,8 @@ export type SandboxLifecyclePolicy = {
 }
 
 export type SandboxSpec = {
-  workerId: string
+  /** Compatibility metadata for Web; generic sandbox jobs need no worker identity. */
+  workerId?: string
   /**
    * Stable per worker and image version. Providers map it to whatever makes a
    * create idempotent on their side (a name, a label, a request token).
@@ -177,4 +185,6 @@ export interface SandboxProvider {
   exec(handle: SandboxHandle, spec: ExecSpec): Promise<ExecHandle>
   endpoint(handle: SandboxHandle, port: number, opts?: { ttlSeconds?: number }): Promise<Endpoint>
   readonly storage: SandboxStorage
+  /** Independent, optional building blocks. Clients must ask for the ones their job needs. */
+  readonly blocks?: SandboxBlocks
 }
