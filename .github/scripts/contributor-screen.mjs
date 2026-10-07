@@ -156,6 +156,27 @@ export function encodedPayload(line) {
   return null;
 }
 
+// --- Text aimed at the AI reviewer -------------------------------------------------
+
+// Warden's model reads the diff and the head commit message. No prompt makes
+// a model immune to instructions hidden there, so this check does not use
+// one: text that tries to talk to an AI reviewer holds the PR for a person.
+// On the codebase as of this change, these match nothing outside CI and
+// Warden configuration, which forks cannot change through this path.
+const INJECTION = [
+  [/\b(ignore|disregard|forget|override)\b[^.\n]{0,30}\b(all|any|the|your|previous|prior|above|earlier|preceding|system)\b[^.\n]{0,20}\b(instructions?|prompts?|rules|guidelines|directives|context)\b/i, "tells the reader to ignore its instructions"],
+  [/<\/?\s*(skill_instructions|scope_reminder|evidence|role|task|system|assistant|developer|instructions)\s*>/i, "imitates a prompt section tag"],
+  [/["']?findings["']?\s*:\s*\[\s*\]/i, "contains an empty findings result"],
+  [/\b(warden|security[\s-]review(er)?|code[\s-]review(er)?|ai[\s-]review(er)?|llm|language model|the reviewer|reviewing (ai|agent|model))\b[^\n]{0,80}\b(ignore|skip|don'?t (report|flag)|do not (report|flag)|no need to|report nothing|return no|mark (this|it) (as )?(safe|clean)|is safe|approve)\b/i, "addresses the AI reviewer"],
+  [/\b(report|return|output)\s+(no|zero|an empty (list of )?)\s*findings\b/i, "asks for no findings"],
+  [/\b(new|updated|real|actual)\s+(system\s+)?instructions\s*:/i, "announces new instructions"],
+];
+
+export function reviewerInstruction(line) {
+  for (const [pattern, reason] of INJECTION) if (pattern.test(line)) return reason;
+  return null;
+}
+
 // --- Scan -----------------------------------------------------------------------
 
 function parseNameStatus(text) {
@@ -193,7 +214,7 @@ export function scanRepository({ gitDir, base, head }) {
     git("diff", "--numstat", "-z", "-M", base, head).toString().split("\0")
       .filter((entry) => entry.startsWith("-\t-\t")).map((entry) => entry.slice(4)).filter(Boolean),
   );
-  const result = { files: files.map((file) => file.path), hidden: [], malformed: [], dependencies: [], database: [], binaries: [], images: [], encoded: [] };
+  const result = { files: files.map((file) => file.path), hidden: [], malformed: [], dependencies: [], database: [], binaries: [], images: [], encoded: [], injection: [] };
 
   for (const file of files) {
     const paths = [file.path, file.previous].filter(Boolean);
@@ -229,7 +250,20 @@ export function scanRepository({ gitDir, base, head }) {
       for (const hit of hiddenCharacters(line, { firstLine: number === 1 })) result.hidden.push({ path: file.path, line: number, ...hit });
       const encoded = checkEncoded ? encodedPayload(line) : null;
       if (encoded) result.encoded.push({ path: file.path, line: number, reason: encoded });
+      const instruction = reviewerInstruction(line);
+      if (instruction) result.injection.push({ path: file.path, line: number, reason: instruction });
     }
+  }
+  // Commit messages reach the model too.
+  const log = git("log", "--format=%H%x00%B%x1e", `${base}..${head}`).toString();
+  for (const entry of log.split("\x1e")) {
+    const [sha, message] = entry.trim().split("\0");
+    if (!sha || message === undefined) continue;
+    message.split("\n").forEach((line, index) => {
+      for (const hit of hiddenCharacters(line)) result.hidden.push({ path: `commit ${sha.slice(0, 10)} message`, line: index + 1, ...hit });
+      const instruction = reviewerInstruction(line);
+      if (instruction) result.injection.push({ path: `commit ${sha.slice(0, 10)} message`, line: index + 1, reason: instruction });
+    });
   }
   return result;
 }
@@ -273,6 +307,7 @@ export function screenDecision(scan, warden) {
   if (scan.dependencies.length) held.push("dependency changes");
   if (scan.binaries.length) held.push("binary files");
   if (scan.encoded.length) held.push("possibly encoded code");
+  if (scan.injection?.length) held.push("text aimed at the AI reviewer");
   if (!warden.complete) held.push("Warden screen incomplete");
   const serious = warden.findings.filter((finding) => finding.severity !== "low");
   if (serious.length) held.push(`${serious.length} Warden finding(s)`);
@@ -335,6 +370,10 @@ export function renderScreenComment({ sha, decision, scan, warden, runUrl }) {
   if (scan.encoded.length) {
     lines.push("**Lines that may hide encoded or obfuscated code:**", "");
     lines.push(...list(scan.encoded, (item) => `${where(item)}: ${item.reason}`), "");
+  }
+  if (scan.injection?.length) {
+    lines.push("**Text that looks like instructions to an AI reviewer.** Warden's results on this commit can't be trusted until a person reads these lines:", "");
+    lines.push(...list(scan.injection, (item) => `${where(item)}: ${item.reason}`), "");
   }
   if (!warden.complete) lines.push(`**Warden screen did not finish** (\`${safe(warden.reason, 80)}\`). A maintainer must review by hand or re-run it.`, "");
   if (warden.findings.length) {

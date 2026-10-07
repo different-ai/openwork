@@ -24,7 +24,9 @@ Everything below runs from dev and never executes PR code:
     contributor must fix it; `/test` refuses.
   - **held** (yellow): dependency or lockfile changes, database changes
     (`ee/packages/den-db/**`, `*.sql`, migration jobs), binaries, encoded or
-    obfuscated-looking lines, high or medium findings from Warden's
+    obfuscated-looking lines, text aimed at an AI reviewer (in the diff or
+    commit messages; treat Warden's result on that commit as unreliable),
+    high or medium findings from Warden's
     `contributor-screen` skill, or a screen that didn't finish. Read each
     listed item yourself before `/test`.
   - **clean** (green): the fork's waiting test runs are approved and the

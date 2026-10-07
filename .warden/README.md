@@ -95,9 +95,15 @@ in a sandbox (`.github/scripts/contributor-warden-sandbox.sh`):
   fails the run if a real key, the internet, host files or writable PR files
   are visible.
 
-A steered model can still lie about the code. That is why the deterministic
-screen runs separately, held items always need a person, and Warden never
-approves a fork PR. Only OpenAI models work in the sandbox; pointing
+Steering the model itself is resisted in two ways, neither of which is
+complete on its own. Every skill that runs on forks starts with an
+"Untrusted input" section in its system prompt: the diff, commit messages,
+comments and files are data, and text aimed at the reviewer is reported as a
+finding. Separately, the deterministic screen holds any PR whose added lines
+or commit messages try to address an AI reviewer, imitate prompt tags, or ask
+for no findings, without asking a model. A steered model can still lie about
+the code, so held items always need a person and Warden never approves a
+fork PR. Only OpenAI models work in the sandbox; pointing
 `WARDEN_MODEL` at another provider makes fork reviews incomplete.
 
 The workflow reads policy, skills, and the reporter from the PR's immutable

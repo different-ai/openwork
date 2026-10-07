@@ -57,8 +57,9 @@ On every push, in this order:
    reads your changes. It blocks hidden or malformed characters (invisible
    Unicode, bidirectional overrides, look-alike letters, invalid UTF-8),
    which you must remove. It holds for a maintainer: dependency or lockfile
-   changes, database schema or migration changes, binary files, and code
-   that looks encoded or obfuscated. A comment on the pull request lists
+   changes, database schema or migration changes, binary files, code that
+   looks encoded or obfuscated, and text that tries to give instructions to
+   an AI reviewer. A comment on the pull request lists
    what it found.
 2. **Tests and security review.** If the screen is clean, the tests and the
    Warden security review start automatically. They run without access to
