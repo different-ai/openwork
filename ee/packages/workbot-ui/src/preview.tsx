@@ -3,7 +3,7 @@
 import { extractOfficeText, openXlsxWorkbook, sheetGridRows, type XlsxWorkbook } from "@openwork/workbook";
 import { Download, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { downloadWorkbotFile, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
+import { downloadWorkbotFile, useWorkbotChat, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
 import { FileBadge, formatSize, isImage, kindLabel } from "./files";
 import { WorkbotMarkdown } from "./markdown";
 
@@ -49,6 +49,7 @@ function useJustUpdated(version: number | undefined) {
 
 export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClose: () => void }) {
   const justUpdated = useJustUpdated(file.updatedAt);
+  const chat = useWorkbotChat();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -71,7 +72,7 @@ export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClo
         </span>
         <button
           type="button"
-          onClick={() => void downloadWorkbotFile(file)}
+          onClick={() => void downloadWorkbotFile(file, chat)}
           className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           <Download size={14} strokeWidth={1.75} aria-hidden />
@@ -113,13 +114,14 @@ function Loading() {
 }
 
 function NoPreview({ file, reason }: { file: WorkbotAttachment; reason?: string }) {
+  const chat = useWorkbotChat();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
       <FileBadge name={file.name} mediaType={file.mediaType} />
       <p className="text-[13px] leading-5 text-[var(--wb-muted)]">{reason ?? "This kind of file can't be shown here."}</p>
       <button
         type="button"
-        onClick={() => void downloadWorkbotFile(file)}
+        onClick={() => void downloadWorkbotFile(file, chat)}
         className="rounded-full bg-[var(--wb-ink)] px-4 py-2 text-[13px] font-medium text-[var(--wb-on-ink)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
       >
         Download

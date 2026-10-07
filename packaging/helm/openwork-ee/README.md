@@ -339,6 +339,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `slackAssistantHeadless` | `DEN_FEATURE_SLACK_ASSISTANT_HEADLESS` | default off | Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. |
 | `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
 | `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
+| `workbotSideChats` | `DEN_FEATURE_WORKBOT_SIDE_CHATS` | default off | Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. |
 | `litellm` | `DEN_FEATURE_LITELLM` | default off | Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person. |
 | `platformAuditReads` | `DEN_FEATURE_PLATFORM_AUDIT_READS` | default off | Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect. |
 <!-- END GENERATED features -->

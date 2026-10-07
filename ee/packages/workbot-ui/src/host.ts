@@ -19,6 +19,8 @@ export type WorkbotHost = {
   appIcons: (name: string) => string[]
   /** Where the avatar in the header leads. */
   homeHref: string
+  /** The person can start side chats next to their main chat (the workbotSideChats feature). Off when unset. */
+  sideChats?: boolean
 }
 
 let current: WorkbotHost | null = null

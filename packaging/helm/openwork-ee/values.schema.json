@@ -118,6 +118,16 @@
               ],
               "description": "Workbot: Members can use Workbot. Needs the deployment's Workbot app. Renders DEN_FEATURE_WORKBOT."
             },
+            "workbotSideChats": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: side chats: Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. Renders DEN_FEATURE_WORKBOT_SIDE_CHATS."
+            },
             "litellm": {
               "enum": [
                 "",
