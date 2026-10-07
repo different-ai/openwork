@@ -1,7 +1,13 @@
 import type { Client } from "../types";
 import type { Message, Part } from "@opencode-ai/sdk/v2/client";
-import { createPromptMessageID, isPromptAdmissionUnknown, PromptAdmissionUnknownError, unwrap } from "./opencode";
+import { createClient, createPromptMessageID, isPromptAdmissionUnknown, PromptAdmissionUnknownError, unwrap } from "./opencode";
+import { isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
 import { engineDirectory } from "./session-ownership";
+
+export function createSessionInterruptionClient(baseUrl: string, client: Client, directory?: string, token?: string): Client {
+  return isOpencodeV2BaseUrl(baseUrl) ? client
+    : createClient(baseUrl, directory?.trim() || undefined, { token, mode: "openwork" }, { desktopTransport: "main" });
+}
 
 type Submission = {
   messageID?: string;
