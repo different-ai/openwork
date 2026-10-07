@@ -1,0 +1,79 @@
+name: Contributor PR checks
+
+# A maintainer reviews a fork PR, then comments `/test <sha>` with the commit
+# they reviewed. This binds that exact commit: if the contributor pushes
+# again, the head no longer matches and the maintainer must review again.
+# Once bound, `contributor-pr-required` passes when `openwork-tests-required`
+# (ci-tests.yml, no secrets) succeeds on that commit.
+#
+# issue_comment always runs this file from dev. Nothing here checks out or
+# runs PR code. Secret-backed checks (Warden, Freestyle and live proofs) for
+# forks are not wired yet; carry the commits to a same-repository branch for
+# those (.opencode/skills/review-a-contributor-pr).
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  authorize:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/test')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    outputs:
+      sha: ${{ steps.authorize.outputs.sha }}
+    steps:
+      - name: Checkout trusted gate script from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Check the commenter and bind the reviewed commit
+        id: authorize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+        run: node .github/scripts/contributor-pr.mjs authorize
+
+  finalize:
+    needs: authorize
+    if: needs.authorize.outputs.sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    # A newer /test on the same PR supersedes this one.
+    concurrency:
+      group: contributor-pr-test-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      checks: read
+      statuses: write
+    steps:
+      - name: Checkout trusted gate script from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Wait for openwork-tests-required on the reviewed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ needs.authorize.outputs.sha }}
+          WAIT_MINUTES: "120"
+        run: node .github/scripts/contributor-pr.mjs finalize

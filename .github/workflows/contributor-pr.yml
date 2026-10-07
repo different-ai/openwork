@@ -1,0 +1,42 @@
+name: Contributor PR gate
+
+# Sets the `contributor-pr-required` commit status on every PR head: every
+# commit must be signed off (DCO), and fork PRs wait for a maintainer to
+# review and comment `/test <sha>` (contributor-pr-test.yml).
+#
+# pull_request_target runs this file and its script from dev, never from the
+# PR, so a fork cannot rewrite the gate. It only reads PR metadata through the
+# API. Never check out or run PR code here: this job can write statuses.
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: contributor-pr-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted gate script from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Check sign-off and set contributor-pr-required
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/contributor-pr.mjs gate

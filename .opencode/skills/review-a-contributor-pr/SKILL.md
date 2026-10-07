@@ -8,12 +8,26 @@ description: Review a fork PR, review an external contributor PR, check DCO sign
 Use for every PR whose head is not in `different-ai/openwork`
 (`isCrossRepository: true`). Fork PRs get no automatic clearance: `warden.yml`
 skips them (`head.repo.full_name == github.repository`, no secrets on fork
-heads) and `warden-clearance.yml` refuses them. Nothing enforces DCO sign-off
-today either; two external commits were merged on 2026-09-09 without
-`Signed-off-by`. The `ee/` CLA is accepted by contributing (CONTRIBUTING.md),
-so there is no CLA signature or label to enforce. This checklist stays
-required even if CI automates the DCO check, because CI gates the
-contributor, not the reviewer.
+heads) and `warden-clearance.yml` refuses them. The `ee/` CLA is accepted by
+contributing (CONTRIBUTING.md), so there is no CLA signature or label to
+enforce.
+
+`contributor-pr-required` (commit status) is the CI gate for contributor PRs:
+
+- `contributor-pr.yml` (`pull_request_target`, runs from dev, metadata only)
+  fails it on any commit without the author's `Signed-off-by`, fails it for
+  forks that touch CI or agent configuration, and otherwise leaves forks
+  pending.
+- After you finish this checklist, comment `/test <head-sha>` on the PR.
+  `contributor-pr-test.yml` checks you have write access and that the head
+  is still that commit, then passes the status once `openwork-tests-required`
+  (ci-tests.yml, no secrets) succeeds on it. A new push needs a new review
+  and a new `/test`.
+- Fork CI runs without secrets. Warden and the Freestyle, live and Windows
+  proofs still need the carry in section 6.
+
+The status gates the contributor, not the reviewer: this checklist is still
+required.
 
 Every item must be answered explicitly in the review comment. `Blocked` on any
 item means no approval and no merge.
@@ -175,3 +189,13 @@ Post one comment on the PR with the seven items above, each marked `OK`,
 `Blocked (why)`, or `N/A (why)`, plus the head SHA the review binds to. If
 the head changes after the comment, the review is stale; rerun sections 1,
 3, 4, and 5 before approving.
+
+If nothing is Blocked, bind the commit you read so `contributor-pr-required`
+can pass:
+
+```bash
+gh pr comment $N -R $R --body "/test $(gh pr view $N -R $R --json headRefOid --jq .headRefOid)"
+```
+
+The workflow replies on the PR if it refuses (no write access, head moved,
+missing sign-off, CI or agent configuration changed).

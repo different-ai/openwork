@@ -45,7 +45,23 @@ git commit -s -m "your message"
 ```
 
 This adds a `Signed-off-by: Your Name <your@email>` trailer. Pull requests
-with unsigned commits cannot be merged.
+with unsigned commits cannot be merged. The `contributor-pr-required` check
+fails until every commit is signed off; fix older commits with
+`git rebase --signoff origin/dev` and force-push.
+
+## How CI runs on a pull request from a fork
+
+- The first time you contribute, a maintainer approves your workflow runs.
+  After that, builds and tests run automatically on every push. They run
+  without access to any secrets.
+- A maintainer reviews your changes and comments `/test <commit>`. That marks
+  the exact commit they reviewed, and `contributor-pr-required` passes once
+  the tests pass on it. If you push again, a maintainer reviews the new
+  commits and comments `/test` again.
+- Changes to CI or agent configuration (`.github/`, `.opencode/`,
+  `opencode.json`, `warden.toml`, `.warden/`, agent skills) can't be tested
+  from a fork. A maintainer moves those commits to a branch in this
+  repository, keeping you as the author.
 
 ## Paid work
 
