@@ -1444,7 +1444,12 @@ export class DenAutomationRepository implements AutomationRepository {
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
   }
 
-  /** One runner's capabilities and last contact, scoped to its owner. */
+  /**
+   * One runner's capabilities and last contact, scoped to its owner.
+   * `runnerId` is the install id a command was claimed with; the row is keyed
+   * by its scoped id, or by the install id until a pre-scoping desktop
+   * registers again.
+   */
   async desktopRunnerById(input: {
     organizationId: string
     ownerMemberId: string
@@ -1454,10 +1459,10 @@ export class DenAutomationRepository implements AutomationRepository {
       capabilities: AutomationRunnerTable.capabilities,
       lastSeenAt: AutomationRunnerTable.last_seen_at,
     }).from(AutomationRunnerTable).where(and(
-      eq(AutomationRunnerTable.id, input.runnerId),
+      inArray(AutomationRunnerTable.id, automationRunnerComputerIds(input)),
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
-    )).limit(1)
+    )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(1)
     const row = rows[0]
     return row ? { capabilities: row.capabilities ?? [], lastSeenAt: row.lastSeenAt.getTime() } : null
   }
