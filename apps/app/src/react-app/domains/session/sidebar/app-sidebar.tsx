@@ -13,6 +13,7 @@ import {
   Archive,
   ArchiveRestore,
   Blocks,
+  CalendarDays,
   Clock3,
   ChevronRight,
   Columns2,
@@ -620,6 +621,8 @@ export type AppSidebarProps = {
   automationsActive?: boolean;
   automationsNeedAttention?: boolean;
   onOpenAutomations?: () => void;
+  calendarActive?: boolean;
+  onOpenCalendar?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -818,6 +821,14 @@ export function AppSidebar(props: AppSidebarProps) {
                   </span>
                 )}
                 onSelect={props.onOpenAutomations}
+              />
+            ) : null}
+            {props.onOpenCalendar ? (
+              <SidebarDestination
+                active={props.calendarActive === true}
+                icon={CalendarDays}
+                label="Calendar"
+                onSelect={props.onOpenCalendar}
               />
             ) : null}
             <SidebarDestination
