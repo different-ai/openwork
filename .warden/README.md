@@ -63,8 +63,21 @@ credentials, partial analysis, and model errors are incomplete reviews.
 
 ## Rollout
 
-Warden runs on every same-repository PR, including drafts. Forks cannot use
-the model secret and are skipped.
+Warden runs on every same-repository PR, including drafts. `warden.yml` skips
+forks: the action only analyzes `pull_request` events, which get no secrets
+from forks.
+
+Fork PRs are reviewed by `.github/workflows/contributor-warden.yml` instead,
+which runs the pinned Warden CLI from dev against the fork's commits written
+to disk as data (symlinks, LFS and filters off; this repository's `.warden/`
+and `warden.toml` replace the PR's copies). On every push it runs the
+`contributor-screen` skill (`.warden/contributor.toml`): hidden behavior,
+obfuscation and supply-chain risk. When that screen is clean, or after a
+maintainer's `/test`, it runs the two standard skills. Neither result
+approves the PR; they feed the `contributor-pr-required` status. It uses a
+separate, spend-limited key, `WARDEN_CONTRIBUTOR_OPENAI_API_KEY`, because
+text in a fork's diff can steer the model and the agent's `Read` tool is not
+confined to the repository.
 
 The workflow reads policy, skills, and the reporter from the PR's immutable
 base; proposed policy changes take effect after merging. PR code is inspected,

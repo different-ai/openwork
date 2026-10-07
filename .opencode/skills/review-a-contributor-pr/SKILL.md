@@ -12,19 +12,31 @@ heads) and `warden-clearance.yml` refuses them. The `ee/` CLA is accepted by
 contributing (CONTRIBUTING.md), so there is no CLA signature or label to
 enforce.
 
-`contributor-pr-required` (commit status) is the CI gate for contributor PRs:
+`contributor-pr-required` (commit status) is the CI gate for contributor PRs.
+Everything below runs from dev and never executes PR code:
 
-- `contributor-pr.yml` (`pull_request_target`, runs from dev, metadata only)
-  fails it on any commit without the author's `Signed-off-by`, fails it for
-  forks that touch CI or agent configuration, and otherwise leaves forks
-  pending.
-- After you finish this checklist, comment `/test <head-sha>` on the PR.
-  `contributor-pr-test.yml` checks you have write access and that the head
-  is still that commit, then passes the status once `openwork-tests-required`
-  (ci-tests.yml, no secrets) succeeds on it. A new push needs a new review
-  and a new `/test`.
-- Fork CI runs without secrets. Warden and the Freestyle, live and Windows
-  proofs still need the carry in section 6.
+- `contributor-pr.yml` (`pull_request_target`, every push): fails the status
+  on any commit without its author's `Signed-off-by` (and comments how to
+  fix it), fails it for forks that touch CI or agent configuration.
+- Then, for forks, the contributor screen (`contributor-warden.yml`, stage
+  `screen`) sets `contributor-pr/screen` and keeps one PR comment:
+  - **blocked** (red): hidden or look-alike characters, invalid UTF-8. The
+    contributor must fix it; `/test` refuses.
+  - **held** (yellow): dependency or lockfile changes, database changes
+    (`ee/packages/den-db/**`, `*.sql`, migration jobs), binaries, encoded or
+    obfuscated-looking lines, high or medium findings from Warden's
+    `contributor-screen` skill, or a screen that didn't finish. Read each
+    listed item yourself before `/test`.
+  - **clean** (green): the fork's waiting test runs are approved and the
+    standard Warden review (`contributor-pr/warden`) runs automatically.
+- After you finish this checklist, comment `/test` (binds the head as it was
+  when you commented) or `/test <sha>`. `contributor-pr-test.yml` checks you
+  have write access, the head hasn't moved, and the screen isn't blocked;
+  approves the waiting test runs; runs Warden if it hasn't passed on that
+  commit; then passes `contributor-pr-required` once Warden is clear and
+  `openwork-tests-required` (ci-tests.yml, no secrets) succeeds.
+- Fork tests run without secrets. The Freestyle, live and Windows proofs
+  still need the carry in section 6.
 
 The status gates the contributor, not the reviewer: this checklist is still
 required.
@@ -197,5 +209,7 @@ can pass:
 gh pr comment $N -R $R --body "/test $(gh pr view $N -R $R --json headRefOid --jq .headRefOid)"
 ```
 
-The workflow replies on the PR if it refuses (no write access, head moved,
-missing sign-off, CI or agent configuration changed).
+Naming the SHA you read is the strict form; a plain `/test` comment binds the
+head as it was when you commented. The workflow replies on the PR if it
+refuses (no write access, head moved, missing sign-off, CI or agent
+configuration changed, screen blocked or not finished).

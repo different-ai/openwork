@@ -4,12 +4,15 @@
 // issue_comment) and only reads PR metadata through the API: it never checks
 // out, installs, or executes PR code.
 //
-//   gate       every PR event: DCO sign-off on every commit. Same-repository
-//              PRs pass here. Fork PRs wait for a maintainer's `/test <sha>`.
-//   authorize  a `/test <sha>` comment: a maintainer with write access binds
-//              the commit they reviewed. Refused if the head has moved.
-//   finalize   after authorize: wait for `openwork-tests-required` on that
-//              exact commit, then pass or fail the status.
+//   gate          every PR event: every commit must carry its author's
+//                 Signed-off-by (comments on the PR when one is missing).
+//                 Same-repository PRs pass here; forks wait for a maintainer.
+//   approve-runs  approves the fork's waiting workflow runs (tests) for a
+//                 commit, after the contributor screen passes or on /test.
+//   authorize     a maintainer's `/test` or `/test <sha>` comment binds the
+//                 commit they reviewed. Refused if the head has moved.
+//   finalize      waits for the tests and the Warden review on that commit,
+//                 then passes or fails `contributor-pr-required`.
 //
 // A fork's own `pull_request` workflows come from the PR's merge commit, so a
 // fork could rewrite them. Changes to CI or agent configuration are therefore
@@ -17,9 +20,11 @@
 // (.opencode/skills/review-a-contributor-pr).
 import { appendFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { SCREEN_CONTEXT, WARDEN_CONTEXT, upsertComment } from "./contributor-screen.mjs";
 
 export const STATUS_CONTEXT = "contributor-pr-required";
 export const CI_CHECK = "openwork-tests-required";
+const SIGNOFF_MARKER = "<!-- contributor-pr:signoff -->";
 const MAINTAINER_PERMISSIONS = ["admin", "maintain", "write"];
 const REVIEW_MACHINERY = /^(\.github\/|\.opencode\/|opencode\.jsonc?$|warden\.toml$|\.warden\/|\.agents\/skills\/|\.claude\/skills\/)/;
 const SIGN_OFF = /^Signed-off-by: .+ <([^<>\s]+)>\s*$/gm;
@@ -62,7 +67,8 @@ export function machineryFiles(files) {
     .filter((name) => typeof name === "string" && REVIEW_MACHINERY.test(name));
 }
 
-// `/test` alone asks for the head SHA; `/test <sha>` binds a reviewed commit.
+// `/test` binds the head as it was when the comment was written;
+// `/test <sha>` binds exactly the commit named.
 export function parseTestCommand(body) {
   const line = (body ?? "").trim().split("\n")[0].trim();
   const match = /^\/test(?:\s+([0-9a-fA-F]{7,40}))?$/.exec(line);
@@ -76,7 +82,8 @@ function blockers({ pr, commits, files }) {
     return {
       state: "failure",
       description: `${unsigned.length} commit(s) missing Signed-off-by. Run: git rebase --signoff origin/dev`,
-      detail: `These commits have no \`Signed-off-by\` trailer with their author's email: ${unsigned.map((sha) => `\`${short(sha)}\``).join(", ")}. Sign off with \`git rebase --signoff origin/dev\` and force-push. See CONTRIBUTING.md.`,
+      detail: `${unsigned.length === 1 ? "This commit has" : "These commits have"} no \`Signed-off-by\` line with the author's email: ${unsigned.map((sha) => `\`${short(sha)}\``).join(", ")}. Sign off with \`git rebase --signoff origin/dev\` and force-push. See CONTRIBUTING.md.`,
+      unsigned,
     };
   }
   const machinery = isFork(pr) ? machineryFiles(files) : [];
@@ -95,13 +102,30 @@ export function gateDecision({ pr, commits, files }) {
   const blocked = blockers({ pr, commits, files });
   if (blocked) return blocked;
   if (!isFork(pr)) return { state: "success", description: "Every commit is signed off" };
-  return {
-    state: "pending",
-    description: `Waiting for a maintainer to review and comment /test ${short(pr.head.sha)}`,
-  };
+  return { state: "pending", description: "Contributor screen, then a maintainer's /test" };
 }
 
-export function authorizeDecision({ permission, pr, command, commits, files }) {
+export function renderSignoffComment(decision) {
+  if (decision.unsigned?.length) {
+    return [
+      SIGNOFF_MARKER,
+      "### Sign-off missing",
+      "",
+      decision.detail,
+      "",
+      "```sh",
+      "git rebase --signoff origin/dev",
+      "git push --force-with-lease",
+      "```",
+      "",
+      "To sign off future commits, use `git commit -s`.",
+    ].join("\n");
+  }
+  return [SIGNOFF_MARKER, "### Sign-off: fixed", "", "Every commit is now signed off."].join("\n");
+}
+
+// `pushedAt` is when GitHub first saw the head (its earliest workflow run).
+export function authorizeDecision({ permission, pr, command, commits, files, pushedAt, commentedAt, screen }) {
   if (!MAINTAINER_PERMISSIONS.includes(permission)) {
     return { ok: false, reply: "Only maintainers with write access can run `/test`." };
   }
@@ -110,14 +134,17 @@ export function authorizeDecision({ permission, pr, command, commits, files }) {
     return { ok: false, reply: "`/test` is for fork pull requests. This branch is in the repository, so its checks run automatically." };
   }
   const head = lower(pr.head.sha);
-  if (!command.sha) {
-    return { ok: false, reply: `Review the diff at \`${head}\`, then comment \`/test ${short(head)}\` to bind that commit.` };
-  }
-  if (!head.startsWith(command.sha)) {
-    return { ok: false, reply: `The head is now \`${head}\`, not \`${command.sha}\`. Review the new commits, then comment \`/test ${short(head)}\`.` };
+  if (command.sha) {
+    if (!head.startsWith(command.sha)) {
+      return { ok: false, reply: `The head is now \`${head}\`, not \`${command.sha}\`. Review the new commits, then comment \`/test\` again.` };
+    }
+  } else if (!pushedAt || !commentedAt || Date.parse(pushedAt) > Date.parse(commentedAt)) {
+    return { ok: false, reply: `New commits arrived after your comment, or I can't tell when \`${short(head)}\` was pushed. Review the head, then comment \`/test\` again, or \`/test ${short(head)}\` to name it.` };
   }
   const blocked = blockers({ pr, commits, files });
   if (blocked) return { ok: false, reply: blocked.detail };
+  if (!screen) return { ok: false, reply: `The contributor screen hasn't finished for \`${short(head)}\` yet. Comment \`/test\` again when it has.` };
+  if (screen.state === "failure") return { ok: false, reply: `The contributor screen blocked \`${short(head)}\`: ${screen.description}. The contributor must fix this first.` };
   return { ok: true, sha: head };
 }
 
@@ -127,10 +154,26 @@ export function ciDecision(checkRuns) {
     .filter((run) => run.name === CI_CHECK && run.app?.slug === "github-actions")
     .sort((a, b) => Date.parse(b.started_at ?? 0) - Date.parse(a.started_at ?? 0));
   const latest = runs[0];
-  if (!latest) return { done: false };
-  if (latest.status !== "completed") return { done: false };
-  if (latest.conclusion === "success") return { done: true, state: "success", description: "Reviewed by a maintainer; CI passed" };
-  return { done: true, state: "failure", description: `${CI_CHECK} concluded ${latest.conclusion}`, url: latest.html_url };
+  if (!latest || latest.status !== "completed") return { done: false };
+  return { done: true, success: latest.conclusion === "success", conclusion: latest.conclusion, url: latest.html_url };
+}
+
+export function finalDecision({ ci, warden, screen }) {
+  if (screen?.state === "failure") return { state: "failure", description: `Contributor screen: ${screen.description}` };
+  if (warden?.state === "failure" || warden?.state === "error") return { state: "failure", description: `Warden: ${warden.description}` };
+  if (!ci.success) return { state: "failure", description: `${CI_CHECK} concluded ${ci.conclusion}`, url: ci.url };
+  return { state: "success", description: "Screened, reviewed by a maintainer, Warden clear, tests passed" };
+}
+
+// Latest status per context for a commit.
+export function latestStatuses(combined) {
+  const byContext = {};
+  for (const status of combined?.statuses ?? []) {
+    if (!byContext[status.context] || Date.parse(status.updated_at) > Date.parse(byContext[status.context].updated_at)) {
+      byContext[status.context] = status;
+    }
+  }
+  return byContext;
 }
 
 // --- GitHub I/O -------------------------------------------------------------
@@ -152,14 +195,15 @@ async function github(path, init = {}) {
     },
   });
   if (!response.ok) throw new Error(`${init.method ?? "GET"} ${path}: ${response.status} ${await response.text()}`);
-  return response.status === 204 ? null : response.json();
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
 }
 
-async function paginate(path) {
+async function paginate(path, key) {
   const items = [];
   for (let page = 1; page <= 30; page += 1) {
     const batch = await github(`${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`);
-    const list = Array.isArray(batch) ? batch : batch.check_runs;
+    const list = key ? batch[key] : batch;
     items.push(...list);
     if (list.length < 100) return items;
   }
@@ -175,11 +219,20 @@ async function loadPr(repo, number) {
   return { pr, commits, files };
 }
 
+async function statusesFor(repo, sha) {
+  return latestStatuses(await github(`/repos/${repo}/commits/${sha}/status?per_page=100`));
+}
+
 async function setStatus(repo, sha, { state, description, url }) {
   await github(`/repos/${repo}/statuses/${sha}`, {
     method: "POST",
     body: JSON.stringify({ state, context: STATUS_CONTEXT, description: description.slice(0, 140), target_url: url }),
   });
+}
+
+async function hasComment(repo, number, marker) {
+  const comments = await paginate(`/repos/${repo}/issues/${number}/comments`);
+  return comments.some((comment) => comment.user?.login === "github-actions[bot]" && comment.body?.startsWith(marker));
 }
 
 async function reply(repo, number, body) {
@@ -188,6 +241,26 @@ async function reply(repo, number, body) {
 
 async function output(name, value) {
   if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+}
+
+// Workflow runs GitHub created for this exact commit from `pull_request`
+// events. Fork runs wait as `action_required` until approved.
+async function pullRequestRuns(repo, sha) {
+  return paginate(`/repos/${repo}/actions/runs?head_sha=${sha}&event=pull_request`, "workflow_runs");
+}
+
+async function approveRuns(repo, sha) {
+  const waiting = (await pullRequestRuns(repo, sha)).filter((run) => run.status === "action_required" || run.conclusion === "action_required");
+  const failed = [];
+  for (const run of waiting) {
+    try {
+      await github(`/repos/${repo}/actions/runs/${run.id}/approve`, { method: "POST" });
+    } catch (error) {
+      failed.push(run.name);
+      console.log(`::warning::Could not approve ${run.name} (${run.id}): ${error.message}`);
+    }
+  }
+  return { approved: waiting.length - failed.length, failed };
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -201,7 +274,23 @@ async function main(mode) {
     const data = await loadPr(repo, number);
     const decision = gateDecision(data);
     await setStatus(repo, data.pr.head.sha, { ...decision, url: runUrl });
+    // Comment when sign-off is missing; mark it fixed once it is.
+    if (decision.unsigned?.length || await hasComment(repo, number, SIGNOFF_MARKER)) {
+      await upsertComment(repo, number, SIGNOFF_MARKER, renderSignoffComment(decision));
+    }
+    await output("fork", String(isFork(data.pr) && !isBot(data.pr)));
+    await output("ok", String(decision.state !== "failure"));
     console.log(`${STATUS_CONTEXT} on ${data.pr.head.sha}: ${decision.state} (${decision.description})`);
+    return;
+  }
+
+  if (mode === "approve-runs") {
+    const sha = env("HEAD_SHA");
+    const { approved, failed } = await approveRuns(repo, sha);
+    console.log(`Approved ${approved} waiting run(s) for ${sha}.`);
+    if (failed.length) {
+      await reply(repo, number, `I couldn't start these checks for \`${short(sha)}\`: ${failed.join(", ")}. A maintainer can approve them on the Checks tab.`);
+    }
     return;
   }
 
@@ -213,15 +302,23 @@ async function main(mode) {
       github(`/repos/${repo}/collaborators/${encodeURIComponent(actor)}/permission`),
       loadPr(repo, number),
     ]);
-    const decision = authorizeDecision({ permission, command, ...data });
+    const head = data.pr.head.sha;
+    const [runs, statuses] = await Promise.all([pullRequestRuns(repo, head), statusesFor(repo, head)]);
+    const pushedAt = runs.map((run) => run.created_at).sort()[0];
+    const decision = authorizeDecision({
+      permission, command, ...data, pushedAt, commentedAt: env("COMMENT_CREATED_AT"), screen: statuses[SCREEN_CONTEXT],
+    });
     if (!decision.ok) {
       await reply(repo, number, `@${actor} ${decision.reply}`);
       console.log(`Refused: ${decision.reply}`);
       return;
     }
-    await setStatus(repo, decision.sha, { state: "pending", description: `Reviewed by @${actor}; waiting for CI`, url: runUrl });
-    await reply(repo, number, `Checks for \`${decision.sha}\` were started by @${actor}: ${runUrl}`);
+    await setStatus(repo, decision.sha, { state: "pending", description: `Reviewed by @${actor}; waiting for tests and Warden`, url: runUrl });
+    const { failed } = await approveRuns(repo, decision.sha);
+    const note = failed.length ? ` I couldn't start ${failed.join(", ")}; approve them on the Checks tab.` : "";
+    await reply(repo, number, `Running tests and the Warden review for \`${decision.sha}\`, as reviewed by @${actor}: ${runUrl}${note}`);
     await output("sha", decision.sha);
+    await output("needs_review", String(statuses[WARDEN_CONTEXT]?.state !== "success"));
     return;
   }
 
@@ -229,19 +326,24 @@ async function main(mode) {
     const sha = env("HEAD_SHA");
     const deadline = Date.now() + Number(process.env.WAIT_MINUTES ?? 120) * 60_000;
     for (;;) {
-      const decision = ciDecision(await paginate(`/repos/${repo}/commits/${sha}/check-runs?check_name=${CI_CHECK}`));
-      if (decision.done) {
-        await setStatus(repo, sha, { state: decision.state, description: decision.description, url: decision.url ?? runUrl });
-        console.log(`${STATUS_CONTEXT} on ${sha}: ${decision.state}`);
+      const [checkRuns, statuses] = await Promise.all([
+        paginate(`/repos/${repo}/commits/${sha}/check-runs?check_name=${CI_CHECK}`, "check_runs"),
+        statusesFor(repo, sha),
+      ]);
+      const ci = ciDecision(checkRuns);
+      // A Warden job that crashed before reporting counts as not clear.
+      const warden = statuses[WARDEN_CONTEXT] ?? (process.env.REVIEW_JOB_RESULT === "failure"
+        ? { state: "failure", description: "the review job failed before reporting" } : undefined);
+      if (ci.done && warden && warden.state !== "pending") {
+        const decision = finalDecision({ ci, warden, screen: statuses[SCREEN_CONTEXT] });
+        await setStatus(repo, sha, { ...decision, url: decision.url ?? runUrl });
+        console.log(`${STATUS_CONTEXT} on ${sha}: ${decision.state} (${decision.description})`);
         if (decision.state !== "success") process.exitCode = 1;
         return;
       }
       if (Date.now() > deadline) {
-        await setStatus(repo, sha, {
-          state: "failure",
-          description: `${CI_CHECK} did not finish. Approve the fork's workflow runs, then comment /test again`,
-          url: runUrl,
-        });
+        const missing = [!ci.done && CI_CHECK, !warden && "Warden review"].filter(Boolean).join(" and ");
+        await setStatus(repo, sha, { state: "failure", description: `${missing} did not finish. Comment /test to try again`, url: runUrl });
         process.exitCode = 1;
         return;
       }

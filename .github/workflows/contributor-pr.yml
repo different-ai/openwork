@@ -1,21 +1,27 @@
 name: Contributor PR gate
 
-# Sets the `contributor-pr-required` commit status on every PR head: every
-# commit must be signed off (DCO), and fork PRs wait for a maintainer to
-# review and comment `/test <sha>` (contributor-pr-test.yml).
+# Every PR: every commit must be signed off (DCO); a comment says how to fix
+# it. Sets the `contributor-pr-required` status.
 #
-# pull_request_target runs this file and its script from dev, never from the
-# PR, so a fork cannot rewrite the gate. It only reads PR metadata through the
-# API. Never check out or run PR code here: this job can write statuses.
+# Fork PRs, on every push, in this order:
+#   1. Contributor screen (contributor-warden.yml, stage screen): hidden or
+#      malformed characters, dependency changes, database changes, binaries,
+#      obfuscation, plus Warden's contributor-screen skill.
+#   2. If the screen is clean: approve the fork's waiting test runs and run
+#      the standard Warden review. If it is held, nothing runs until a
+#      maintainer reviews and comments `/test` (contributor-pr-test.yml).
+#
+# The repository requires approval for all external contributors' workflow
+# runs, so a fork's tests never start before step 1.
+#
+# pull_request_target runs this file and its scripts from dev, never from the
+# PR, so a fork cannot rewrite the gate. Never check out or run PR code here.
 on:
   pull_request_target:
     branches: [dev]
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  pull-requests: read
-  statuses: write
+permissions: {}
 
 concurrency:
   group: contributor-pr-gate-${{ github.event.pull_request.number }}
@@ -25,6 +31,14 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    outputs:
+      fork: ${{ steps.gate.outputs.fork }}
+      ok: ${{ steps.gate.outputs.ok }}
     steps:
       - name: Checkout trusted gate script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -36,7 +50,67 @@ jobs:
         with:
           node-version: 24
       - name: Check sign-off and set contributor-pr-required
+        id: gate
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node .github/scripts/contributor-pr.mjs gate
+
+  screen:
+    needs: gate
+    if: needs.gate.outputs.fork == 'true'
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    uses: ./.github/workflows/contributor-warden.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      stage: screen
+    secrets:
+      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
+
+  start-tests:
+    needs: [gate, screen]
+    if: needs.gate.outputs.ok == 'true' && needs.screen.outputs.verdict == 'clean'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout trusted gate script from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Approve the fork's waiting test runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/contributor-pr.mjs approve-runs
+
+  review:
+    needs: [gate, screen]
+    if: needs.screen.outputs.verdict == 'clean'
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    uses: ./.github/workflows/contributor-warden.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      stage: review
+    secrets:
+      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}

@@ -45,23 +45,34 @@ git commit -s -m "your message"
 ```
 
 This adds a `Signed-off-by: Your Name <your@email>` trailer. Pull requests
-with unsigned commits cannot be merged. The `contributor-pr-required` check
-fails until every commit is signed off; fix older commits with
-`git rebase --signoff origin/dev` and force-push.
+with unsigned commits cannot be merged: the `contributor-pr-required` check
+fails and a comment on the pull request explains the fix
+(`git rebase --signoff origin/dev`, then force-push).
 
 ## How CI runs on a pull request from a fork
 
-- The first time you contribute, a maintainer approves your workflow runs.
-  After that, builds and tests run automatically on every push. They run
-  without access to any secrets.
-- A maintainer reviews your changes and comments `/test <commit>`. That marks
-  the exact commit they reviewed, and `contributor-pr-required` passes once
-  the tests pass on it. If you push again, a maintainer reviews the new
-  commits and comments `/test` again.
-- Changes to CI or agent configuration (`.github/`, `.opencode/`,
-  `opencode.json`, `warden.toml`, `.warden/`, agent skills) can't be tested
-  from a fork. A maintainer moves those commits to a branch in this
-  repository, keeping you as the author.
+On every push, in this order:
+
+1. **Contributor screen.** Before any of your code runs, an automated screen
+   reads your changes. It blocks hidden or malformed characters (invisible
+   Unicode, bidirectional overrides, look-alike letters, invalid UTF-8),
+   which you must remove. It holds for a maintainer: dependency or lockfile
+   changes, database schema or migration changes, binary files, and code
+   that looks encoded or obfuscated. A comment on the pull request lists
+   what it found.
+2. **Tests and security review.** If the screen is clean, the tests and the
+   Warden security review start automatically. They run without access to
+   any secrets.
+3. **Maintainer review.** A maintainer reviews your changes and comments
+   `/test`. That marks the commit they reviewed (it also starts the tests if
+   the screen held them). `contributor-pr-required` passes once the tests
+   pass and Warden is clear on that commit. If you push again, the screen
+   runs again and a maintainer reviews the new commits.
+
+Changes to CI or agent configuration (`.github/`, `.opencode/`,
+`opencode.json`, `warden.toml`, `.warden/`, agent skills) can't be tested
+from a fork. A maintainer moves those commits to a branch in this
+repository, keeping you as the author.
 
 ## Paid work
 

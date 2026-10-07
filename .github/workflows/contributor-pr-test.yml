@@ -1,15 +1,15 @@
 name: Contributor PR checks
 
-# A maintainer reviews a fork PR, then comments `/test <sha>` with the commit
-# they reviewed. This binds that exact commit: if the contributor pushes
-# again, the head no longer matches and the maintainer must review again.
-# Once bound, `contributor-pr-required` passes when `openwork-tests-required`
-# (ci-tests.yml, no secrets) succeeds on that commit.
+# A maintainer reviews a fork PR, then comments `/test` (the head when they
+# commented) or `/test <sha>` (exactly that commit). If the contributor pushed
+# after the comment, it is refused and needs a new review.
 #
-# issue_comment always runs this file from dev. Nothing here checks out or
-# runs PR code. Secret-backed checks (Warden, Freestyle and live proofs) for
-# forks are not wired yet; carry the commits to a same-repository branch for
-# those (.opencode/skills/review-a-contributor-pr).
+# Once bound: approve the fork's waiting test runs, run the Warden review if
+# it has not passed on that commit yet, then pass `contributor-pr-required`
+# when the contributor screen is not blocked, Warden is clear, and
+# `openwork-tests-required` (ci-tests.yml, no secrets) succeeds.
+#
+# issue_comment always runs this file from dev. Nothing here runs PR code.
 on:
   issue_comment:
     types: [created]
@@ -22,12 +22,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: write
       contents: read
       issues: write
       pull-requests: write
       statuses: write
     outputs:
       sha: ${{ steps.authorize.outputs.sha }}
+      needs_review: ${{ steps.authorize.outputs.needs_review }}
     steps:
       - name: Checkout trusted gate script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -45,11 +47,28 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
         run: node .github/scripts/contributor-pr.mjs authorize
 
-  finalize:
+  review:
     needs: authorize
-    if: needs.authorize.outputs.sha != ''
+    if: needs.authorize.outputs.sha != '' && needs.authorize.outputs.needs_review == 'true'
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    uses: ./.github/workflows/contributor-warden.yml
+    with:
+      pr_number: ${{ github.event.issue.number }}
+      head_sha: ${{ needs.authorize.outputs.sha }}
+      stage: review
+    secrets:
+      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
+
+  finalize:
+    needs: [authorize, review]
+    if: always() && needs.authorize.outputs.sha != ''
     runs-on: ubuntu-latest
     timeout-minutes: 130
     # A newer /test on the same PR supersedes this one.
@@ -70,10 +89,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
-      - name: Wait for openwork-tests-required on the reviewed commit
+      - name: Wait for tests and Warden on the reviewed commit
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ needs.authorize.outputs.sha }}
+          REVIEW_JOB_RESULT: ${{ needs.review.result }}
           WAIT_MINUTES: "120"
         run: node .github/scripts/contributor-pr.mjs finalize
