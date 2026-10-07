@@ -106,6 +106,7 @@ function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSki
       request.arguments = { id };
     }
   }
+  if (request.kind !== "tool") request.arguments = { availableSkills: skills };
   return { request, reply: "OpenWork: UNAVAILABLE" };
 }
 

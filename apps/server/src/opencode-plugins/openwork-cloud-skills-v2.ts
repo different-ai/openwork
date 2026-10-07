@@ -52,18 +52,17 @@ export function discoverySkills(value: unknown): NativeSkill[] {
   return result;
 }
 
-/** Setup registers a cheap synchronous transform, not a network dependency.
- * No storage, configuration rewrite, watcher, or admission hook is involved.
- * Refresh failures leave metadata visible; loading still requires live access. */
+/** Setup only starts background discovery, not a network dependency. Do not
+ * touch the native registry until opted-in metadata arrives: the off path must
+ * leave local skill discovery alone, including its cold initialization.
+ * No storage, configuration rewrite, watcher, or admission hook is involved. */
 export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
   let skills: NativeSkill[] = [];
   let fingerprint = "[]";
   let closed = false;
   let refreshing = false;
   const controller = new AbortController();
-  const registration = await context.skill.transform(editor => {
-    for (const skill of skills) if (!editor.get(skill.id)) editor.add(skill);
-  });
+  let registration: Awaited<ReturnType<CloudSkillContext["skill"]["transform"]>> | undefined;
   const refresh = async () => {
     if (closed || refreshing) return;
     refreshing = true;
@@ -79,8 +78,20 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
       const key = JSON.stringify(next);
       if (closed || key === fingerprint) return;
       skills = next;
+      if (skills.length === 0) {
+        const current = registration;
+        registration = undefined;
+        await current?.dispose();
+      } else if (!registration) {
+        const current = await context.skill.transform(editor => {
+          for (const skill of skills) if (!editor.get(skill.id)) editor.add(skill);
+        });
+        if (closed) { await current.dispose(); return; }
+        registration = current;
+      } else {
+        await context.skill.reload();
+      }
       fingerprint = key;
-      await context.skill.reload();
     } catch {
       // Cloud readiness is never a prerequisite to chatting. No body or access
       // grant is cached, so keeping old discovery hints cannot bypass Den.
@@ -96,6 +107,6 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     clearInterval(timer);
     controller.abort();
     skills = [];
-    await registration.dispose();
+    await registration?.dispose();
   };
 }
