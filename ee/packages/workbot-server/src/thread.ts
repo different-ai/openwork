@@ -141,14 +141,15 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
     })
 }
 
+/** One short line for a failed turn. The page puts "Try again" beside it, so the line doesn't say so again. */
 function friendlyError(code: string | null): string {
-  if (!code) return "Something went wrong. Try again."
-  if (code.startsWith("model_")) return "I couldn't reach the AI model just now. Try again in a moment."
-  if (code === "mcp_unavailable") return "I couldn't reach your connected apps just now. Try again in a moment."
+  if (!code) return "Something went wrong on my side."
+  if (code.startsWith("model_")) return "I couldn't reach the AI model just now."
+  if (code === "mcp_unavailable") return "I couldn't reach your connected apps just now."
   if (code === "turn_timeout") return "That took too long, so I stopped."
   if (code === "max_steps_exceeded") return "That needed more steps than I can take at once. Try a smaller piece of it."
   if (code === "stuck_repeating") return "I kept getting the same result, so I stopped. Try asking a different way."
-  return "Something went wrong. Try again."
+  return "Something went wrong on my side."
 }
 
 const APPS: Array<[RegExp, string]> = [

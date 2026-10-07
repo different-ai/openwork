@@ -108,6 +108,10 @@ test("a member understands Workbot and keeps chatting while a real background jo
   });
 });
 
+/** Both ways the hello can fail end the same: the drawn greeting, then this one line. */
+const helloFailed = "I couldn't check your day just now.";
+const drawnGreeting = "What can I take off your plate today?";
+
 const modelRecovery = spec.world(workbotModelGreetingRecovery, { resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, needs: { placement: "local" }, timeout: 900_000 });
 modelRecovery("a member retries a greeting that failed after it started", async ({ world, user, probe, step, evidence }) => {
   await step("before: the greeting starts but its model cannot answer", async () => {
@@ -116,14 +120,17 @@ modelRecovery("a member retries a greeting that failed after it started", async 
     await user.click("Get started");
     await user.click("Start chatting");
     await user.see({ role: "button", text: "Try again" }, { timeoutMs: 60_000 });
+    await user.see({ text: helloFailed });
+    await user.see({ text: drawnGreeting });
     expect(world.witness().rejectedGreetingModels).toBe(1);
     await user.screenshot();
-    evidence.recordAssertionEvidence("A failed greeting retains a real retry action", "The runner accepted the turn, its model failed, and the member can retry instead of sending an empty message.", true);
+    evidence.recordAssertionEvidence("A greeting that failed after starting reads like one that couldn't start", "The runner accepted the turn and its model failed; the drawn greeting stays, with one short line saying the hello didn't work and a Try again button.", true);
   });
   await step("the member retries the failed greeting", async () => {
     await user.click({ role: "button", text: "Try again" });
     await user.see({ text: world.hello }, { timeoutMs: 60_000 });
     await user.notSee({ role: "button", text: "Try again" });
+    await user.notSee({ text: helloFailed });
     await user.screenshot();
     evidence.recordAssertionEvidence("The retry runs a fresh read-only greeting", "The failed greeting was replaced by a successful one and the attempted connected-app write was refused.", world.witness().greetingWritesRejected);
   });
@@ -144,16 +151,18 @@ recovery("a member retries a failed greeting without losing the conversation", a
     await probe.eventually(async () => (await probe.dom("button:not([disabled])")).elements.some((button) => button.text === "Get started"), { within: 30_000, label: "The connection choice is ready" });
     await user.click("Get started");
     await user.click("Start chatting");
-    await user.see({ text: "Couldn't check your day." }, { timeoutMs: 60_000 });
+    await user.see({ text: helloFailed }, { timeoutMs: 60_000 });
+    await user.see({ text: drawnGreeting });
+    await user.see({ role: "button", text: "Try again" });
     await user.see(composer, { editable: true });
     expect(world.witness().rejectedStarts).toBe(1);
     await user.screenshot();
-    evidence.recordAssertionEvidence("A failed start offers recovery in a usable conversation", "The runner refused the turn after creating an empty session; the member sees Try again and can still type.", true);
+    evidence.recordAssertionEvidence("A failed start offers recovery in a usable conversation", "The runner refused the turn after creating an empty session; the drawn greeting stays with one short line and Try again, and the member can still type.", true);
   });
   await step("the member retries from the same conversation", async () => {
     await user.click({ role: "button", text: "Try again" });
     await user.see({ text: world.hello }, { timeoutMs: 60_000 });
-    await user.notSee({ text: "Couldn't check your day." });
+    await user.notSee({ text: helloFailed });
     await user.screenshot();
     evidence.recordAssertionEvidence("An existing empty session can start its greeting", "Retry reused the session and produced the greeting instead of an endless typing state.", true);
   });

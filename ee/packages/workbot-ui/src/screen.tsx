@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, Copy, FileText, Lock, Pencil } from "lucide-react";
+import { ArrowUp, Check, CircleAlert, Copy, FileText, Lock, Pencil } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
@@ -236,13 +236,13 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
       <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
       {empty && !starting ? (
-        <FirstOpen name={data.name} organizationName={data.organizationName} firstName={firstName} onSuggestion={(text) => submit(text)}>
-          {start.isError ? (
-            <div className="flex items-center gap-2 py-2 text-[13px] text-[var(--wb-muted)]" role="status">
-              <span>Couldn&apos;t check your day.</span>
-              <button type="button" onClick={() => { setGreetingAwaited(true); start.mutate(); }} className="rounded-full px-2 py-1 font-medium text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Try again</button>
-            </div>
-          ) : null}
+        <FirstOpen
+          name={data.name}
+          organizationName={data.organizationName}
+          firstName={firstName}
+          onSuggestion={(text) => submit(text)}
+          error={start.isError ? <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}
+        >
           {composer}
         </FirstOpen>
       ) : (
@@ -268,10 +268,14 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
               data.hasEarlier
                 ? null
                 : (() => {
-                    const at = data.turns[0]?.sentAt ?? pending[0]?.sentAt ?? Date.now();
-                    const spoken = starting || data.turns[0]?.greeting === true;
+                    const hello = data.turns[0];
+                    const at = hello?.sentAt ?? pending[0]?.sentAt ?? Date.now();
+                    // A hello that failed before writing anything leaves the drawn greeting in its place, the same
+                    // as one that couldn't start; its turn then adds only the line saying it didn't work.
+                    const helloFailed = hello?.greeting === true && hello.status === "failed" && !hello.parts.some((part) => part.kind === "text");
+                    const spoken = starting || (hello?.greeting === true && !helloFailed);
                     // Workbot's own hello carries the time; the drawn greeting brings its own.
-                    return { at: spoken ? 0 : at, node: <Intro name={data.name} organizationName={data.organizationName} firstName={firstName} at={at} spoken={spoken} /> };
+                    return { at: spoken ? 0 : at, joined: helloFailed, node: <Intro name={data.name} organizationName={data.organizationName} firstName={firstName} at={at} spoken={spoken} /> };
                   })()
             }
           />
@@ -454,7 +458,7 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
 }
 
 /** Screen 1: the assistant, who set it up, its greeting as its own bubbles, starters, the composer — one centered group. */
-function FirstOpen(props: { name: string; organizationName: string; firstName: string | null; onSuggestion: (text: string) => void; children: ReactNode }) {
+function FirstOpen(props: { name: string; organizationName: string; firstName: string | null; onSuggestion: (text: string) => void; error?: ReactNode; children: ReactNode }) {
   const apps = useConnectedApps().map((app) => app.name);
   const has = (pattern: RegExp) => apps.find((app) => pattern.test(app)) ?? null;
   const slack = has(/slack/i);
@@ -470,6 +474,8 @@ function FirstOpen(props: { name: string; organizationName: string; firstName: s
     <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 pb-18 sm:px-10">
       <div className={`${COLUMN} flex flex-col gap-1`}>
         <Intro name={props.name} organizationName={props.organizationName} firstName={props.firstName} at={now} />
+        {/* A hello that couldn't start says so right under the greeting, where the hello would have been. */}
+        {props.error}
         <ul className="flex flex-wrap gap-2 py-[18px]">
           {suggestions.map((suggestion) => (
             <li key={suggestion.text}>
@@ -509,7 +515,8 @@ function Conversation(props: {
   onRetry: (entry: Pending) => void;
   onRetryTurn: (turn: WorkbotTurn) => void;
   /** The greeting, kept above the first message once the start of the conversation is loaded. */
-  intro: { at: number; node: ReactNode } | null;
+  /** `joined`: the next row is the failed hello's line, which sits right under the greeting as on the first open. */
+  intro: { at: number; joined: boolean; node: ReactNode } | null;
   onSuggestion: (text: string) => void;
   /** Workbot is about to say hello (right after the welcome). */
   starting: boolean;
@@ -594,7 +601,7 @@ function Conversation(props: {
               {props.loadingEarlier ? "Loading earlier messages" : "Show earlier messages"}
             </button>
           ) : null}
-          {props.intro ? <div className="flex flex-col gap-1 pb-8">{props.intro.node}</div> : null}
+          {props.intro ? <div className={`flex flex-col gap-1 ${props.intro.joined ? "" : "pb-8"}`}>{props.intro.node}</div> : null}
           <ol className="flex flex-col" aria-label="Conversation">
             {rows.map((row, index) => {
               // The greeting has its own time; the first message only gets one after a quiet hour or a new day.
@@ -777,7 +784,7 @@ function OwnMessage(props: {
   return (
     <div className="flex flex-col items-end gap-1">
       <UserBubble text={turn.text} reaction={turn.reaction} action={<EditButton disabled={!props.canChange} onClick={() => setMode("editing")} />} />
-      {error ? <p className="pr-1 text-[13px] leading-4 text-[var(--wb-danger)]">{error}</p> : null}
+      {error ? <ErrorLine align="end">{error}</ErrorLine> : null}
     </div>
   );
 }
@@ -838,6 +845,28 @@ function TypingBubble() {
   );
 }
 
+/** Both ways Workbot's hello can fail read the same: the drawn greeting stays, and this one line says what didn't. */
+const HELLO_FAILED = "I couldn't check your day just now.";
+
+/**
+ * A failure, inline where it happened (DESIGN T2, C6): what didn't work in one short line and, when there is one, the
+ * next step as a quiet button. The red mark says it's a failure without turning the sentence into an alarm (C5); it
+ * eases in like any other new row and is announced politely.
+ */
+function ErrorLine({ children, action = null, align = "start" }: { children: ReactNode; action?: { label: string; onClick: () => void } | null; align?: "start" | "end" }) {
+  return (
+    <div role="status" className={`workbot-row-enter flex min-h-7 items-center gap-1.5 pt-1 text-[13px] leading-4 text-[var(--wb-muted)] ${align === "end" ? "justify-end pr-1" : "pl-1"}`}>
+      <CircleAlert size={14} strokeWidth={1.75} aria-hidden className="shrink-0 text-[var(--wb-danger)]" />
+      <span>{children}</span>
+      {action ? (
+        <button type="button" onClick={action.onClick} className="-my-1 ml-0.5 h-7 shrink-0 rounded-full px-2.5 font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+          {action.label}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 const Gap = () => <span aria-hidden className="h-3.5 w-px shrink-0" />;
 
 function pendingAttachments(entry: Pending): { attachments: WorkbotAttachment[]; urls: Record<string, string | null> } {
@@ -859,10 +888,7 @@ function PendingView({ entry, onRetry }: { entry: Pending; onRetry: () => void }
       {/* Holds Edit's place while sending, so the bubble doesn't move when its turn arrives. */}
       <UserBubble text={entry.text} muted={Boolean(entry.failed)} action={entry.failed ? undefined : <EditButton disabled />} />
       {entry.failed ? (
-        <p className="flex items-center justify-end gap-2 pt-1 text-[12px] leading-4 text-[var(--wb-muted)]">
-          {entry.failed}
-          <button type="button" onClick={onRetry} className="font-medium text-[var(--wb-text)] underline underline-offset-2">Send again</button>
-        </p>
+        <ErrorLine align="end" action={{ label: "Send again", onClick: onRetry }}>{entry.failed}</ErrorLine>
       ) : (
         <>
           <Gap />
@@ -1219,10 +1245,7 @@ function TurnView(props: {
         </ul>
       ) : null}
       {turn.status === "failed" ? (
-        <p className="flex items-center gap-2 pl-1 pt-1.5 text-[13px] leading-4 text-[var(--wb-danger)]">
-          {turn.error}
-          {props.latest ? <button type="button" onClick={props.onRetry} className="font-medium text-[var(--wb-text)] underline underline-offset-2">Try again</button> : null}
-        </p>
+        <ErrorLine action={props.latest ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
       ) : null}
       {turn.status === "stopped" ? <p className="pl-1 pt-1.5 text-[13px] leading-4 text-[var(--wb-muted)]">Stopped</p> : null}
     </>
