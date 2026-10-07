@@ -126,9 +126,9 @@ export function LibrarySharePage(props: {
       actions={(
         <>
           <Button variant="outline" disabled={busy} onClick={props.onCancel}>{t("common.cancel")}</Button>
-          <Button disabled={busy || unchanged || (!shared && !wasShared)} onClick={() => void submit()}>
+          <Button className="min-w-0 max-w-full" disabled={busy || unchanged || (!shared && !wasShared)} onClick={() => void submit()}>
             {busy ? <Loader2 size={14} className="animate-spin" /> : null}
-            {primaryLabel}
+            <span className="truncate">{primaryLabel}</span>
           </Button>
         </>
       )}

@@ -39,7 +39,7 @@ export function LibraryPage(props: {
       aria-labelledby="library-page-title"
       className="mx-auto flex w-full max-w-3xl flex-col animate-in fade-in duration-300"
     >
-      <nav aria-label={t("extensions.page_breadcrumb")} className="mb-4 flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
+      <nav aria-label={t("extensions.page_breadcrumb")} className="mb-4 flex min-w-0 items-center gap-1 pe-8 text-sm text-muted-foreground">
         <Button
           variant="ghost"
           size="sm"
@@ -73,7 +73,7 @@ export function LibraryPage(props: {
           </div>
         ) : null}
         <div className="min-w-0">
-          <h1 id="library-page-title" className="text-xl font-semibold tracking-[-0.01em] text-dls-text">
+          <h1 id="library-page-title" className="text-xl font-semibold tracking-[-0.01em] break-words text-dls-text">
             {props.title}
           </h1>
           {props.subtitle ? <p className="mt-0.5 text-[13px] text-dls-secondary">{props.subtitle}</p> : null}
@@ -81,8 +81,8 @@ export function LibraryPage(props: {
       </div>
       <div className="mt-6 flex flex-col gap-5">{props.children}</div>
       {props.actions ? (
-        <div className="mt-7 flex items-center gap-2 border-t border-dls-border pt-4">
-          {props.footerNote ? <p className="me-auto text-xs text-dls-secondary">{props.footerNote}</p> : <span className="me-auto" />}
+        <div className="mt-7 flex flex-wrap items-center justify-end gap-2 border-t border-dls-border pt-4">
+          {props.footerNote ? <p className="me-auto min-w-0 text-xs text-dls-secondary">{props.footerNote}</p> : <span className="me-auto" />}
           {props.actions}
         </div>
       ) : null}
