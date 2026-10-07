@@ -932,6 +932,13 @@
       "when": 1791394855047,
       "tag": "0133_deprecate_super_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "5",
+      "when": 1791413499507,
+      "tag": "0134_permission_set_rules",
+      "breakpoints": true
     }
   ]
 }

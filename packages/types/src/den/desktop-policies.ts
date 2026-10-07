@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PolicyRuleAction, SourcedPolicyRule } from "./policy-rules.js";
 
 /** Desktop feature-policy enforcement is suspended pending redesign. This is
  * not a Cloud authorization switch: schemas, assignments and resource
@@ -257,6 +258,29 @@ export function resolveDesktopExecutionPolicy(documents: unknown[]): DesktopExec
   return result;
 }
 
+// Permission rules (see ./policy-rules.ts, imported for types only so bundlers
+// never resolve it from here). They are enforced on their own, independently of
+// the suspended desktop policy flag above: the engine and the built-in browser
+// evaluate them locally and never wait on Den.
+export const POLICY_RULE_RESOURCE_MAX_LENGTH = 500;
+export const POLICY_RULES_MAX = 200;
+const policyRuleActions = ["shell", "webfetch", "skill", "mcp"] as const satisfies readonly PolicyRuleAction[];
+type AssertTrue<T extends true> = T;
+/** Fails to compile when ./policy-rules.ts gains an action this list lacks. */
+export type PolicyRuleActionsComplete = AssertTrue<[Exclude<PolicyRuleAction, (typeof policyRuleActions)[number]>] extends [never] ? true : false>;
+export const policyRuleSchema = z
+  .object({
+    action: z.enum(policyRuleActions),
+    resource: z.string().trim().min(1).max(POLICY_RULE_RESOURCE_MAX_LENGTH),
+    effect: z.enum(["allow", "deny"]),
+  })
+  .strict()
+  .meta({ ref: "DenPolicyRule" });
+export const sourcedPolicyRuleSchema = policyRuleSchema
+  .extend({ source: z.string().max(255) })
+  .meta({ ref: "DenSourcedPolicyRule" });
+const sourcedPolicyRulesSchema: z.ZodType<SourcedPolicyRule[]> = z.array(sourcedPolicyRuleSchema);
+
 export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
   .extend({
     access: teamAccessSchema.optional(),
@@ -374,6 +398,7 @@ export type BrandAccentColor = (typeof brandAccentColorValues)[number];
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
     execution: effectiveDesktopExecutionPolicySchema.optional(),
+    rules: sourcedPolicyRulesSchema.optional(),
     allowedDesktopVersions: z
       .array(z.string().trim().min(1).max(32))
       .optional(),
@@ -778,10 +803,12 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
   const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
+  const rules = sourcedPolicyRulesSchema.safeParse(raw?.rules);
 
   return {
     ...policy,
     ...(execution !== undefined ? { execution } : {}),
+    ...(rules.success ? { rules: rules.data } : {}),
     ...(allowedDesktopVersions !== undefined ? { allowedDesktopVersions } : {}),
     ...(brandAppName !== undefined ? { brandAppName } : {}),
     ...(brandLogoUrl !== undefined ? { brandLogoUrl } : {}),

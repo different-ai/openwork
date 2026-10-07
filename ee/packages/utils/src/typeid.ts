@@ -125,6 +125,7 @@ export const idTypesMapNameToPrefix = {
   permissionSet: "pms",
   permissionSetPermission: "psp",
   permissionSetTeam: "pst",
+  permissionSetRule: "psr",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

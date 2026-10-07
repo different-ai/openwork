@@ -2,7 +2,7 @@ import type { PermissionSetTable } from "@openwork-ee/den-db/schema"
 import type { AuditChangeEventInput } from "../request-capture.js"
 import { auditChangeEvent, auditText, auditTime, organizationParent, relatedResource, targetResource, type AuditSnapshot } from "./snapshot.js"
 
-// permission_set.created / permission_set.permissions_changed / permission_set.archived
+// permission_set.created / permission_set.permissions_changed / permission_set.archived / permission_set.rules_changed
 // (legacy organization.permission_set.*). Permission keys are listed as sorted
 // string arrays, never used as snapshot keys.
 
@@ -55,6 +55,27 @@ export function permissionSetPermissionsChangedEvent(
     before: serializePermissionSet(before),
     after: serializePermissionSet(after),
     annotations: { granted: keyList(delta.granted), revoked: keyList(delta.revoked) },
+  })
+}
+
+/** One action's whole rule list, before and after; each rule reads as "allow git *". */
+export function permissionSetRulesChangedEvent(
+  organizationId: string,
+  set: PermissionSetAuditRow,
+  teamId: string | null,
+  change: { action: string; before: readonly { resource: string; effect: string }[]; after: readonly { resource: string; effect: string }[] },
+): AuditChangeEventInput | null {
+  const snapshot = (rules: readonly { resource: string; effect: string }[]): AuditSnapshot => ({
+    id: set.id,
+    name: auditText(set.name),
+    action: change.action,
+    rules: rules.map((rule) => auditText(`${rule.effect} ${rule.resource}`, 512)).filter((rule): rule is string => rule !== null),
+  })
+  return auditChangeEvent({
+    action: "permission_set.rules_changed",
+    resources: resources(organizationId, { set, teamId, allowedKeys: [] }),
+    before: snapshot(change.before),
+    after: snapshot(change.after),
   })
 }
 
