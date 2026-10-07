@@ -18,6 +18,19 @@ const started = performance.now();
 const journeys = new Set(process.argv.flatMap((arg, index, all) => arg === "--journey" && all[index + 1] ? [all[index + 1]] : []));
 const selected = (journey) => journeys.size === 0 || journeys.has(journey);
 
+// The update path existing enterprise customers take: a profile the previous
+// public release created and signed in must still boot in this build. It needs
+// a local Den and that earlier release, so the fast gate never runs it; the
+// nightly names it with --journey (#4848). Without the baseline its update case
+// skips, the verdict reads incomplete and the command still exits 0, so refuse
+// to start instead of reporting a check that proved nothing.
+const UPGRADE_JOURNEY = "released-enterprise-activated";
+const baselineBinary = process.env.OPENWORK_EVAL_RELEASED_BASELINE_BINARY?.trim() || "";
+if (journeys.has(UPGRADE_JOURNEY)) {
+  if (!baselineBinary) throw new Error(`${UPGRADE_JOURNEY} needs OPENWORK_EVAL_RELEASED_BASELINE_BINARY: the executable of an earlier public enterprise release, whose profile this build must open.`);
+  accessSync(baselineBinary, constants.X_OK);
+}
+
 function run(name, command, args, timeout, extraEnv = {}, cwd = repo) {
   const phaseStarted = performance.now();
   const result = spawnSync(command, args, {
@@ -110,7 +123,10 @@ try {
     }
   }
   // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).
-  check("desktop-boot-enterprise-activated", "packaged-activated-launch", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 150_000);
+  const enterpriseBinary = join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise");
+  check("desktop-boot-enterprise-activated", "packaged-activated-launch", enterpriseBinary, 150_000);
+  // Opt-in only (see UPGRADE_JOURNEY): boots a local Den, then the baseline and this build on one profile.
+  if (journeys.has(UPGRADE_JOURNEY)) check("desktop-upgrade-enterprise", UPGRADE_JOURNEY, enterpriseBinary, 900_000);
   if (selected("desktop-quit-path")) matched.add("desktop-quit-path");
   const unknown = [...journeys].filter((journey) => !matched.has(journey));
   if (unknown.length) throw new Error(`No packaged smoke check runs journey ${unknown.join(", ")}.`);

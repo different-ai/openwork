@@ -57,9 +57,10 @@ const definitions = {
   'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local', needs: PACKAGED_BINARY },
   // Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
   'desktop-quit-path.e2e.test.ts': { name: 'Quit an enterprise install cleanly', placement: 'local', needs: PACKAGED_BINARY },
-  // Boots a RELEASED enterprise binary already activated against a real Den. Only its update case also needs
-  // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own and the lane that runs
-  // this journey must provide both binaries for it to pass (#4848).
+  // Boots an enterprise binary already activated against a real Den. Only its update case also needs
+  // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own. The nightly
+  // packaged-upgrade-path job (ci-tests.yml) provides both: this commit's enterprise package and the latest
+  // public release as the baseline; release validation runs it against the release itself (#4848).
   'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local', needs: PACKAGED_BINARY },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   // Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
