@@ -389,3 +389,59 @@ export function useRemoveTeamPermissions(orgId: string, setId: string) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: permissionsQueryKeys.all(orgId) }),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Permission rules (ee/apps/den-api/src/routes/org/permission-rules.ts):
+// OpenCode permission rules kept per set, one ordered list per action.
+// ---------------------------------------------------------------------------
+
+export const PERMISSION_RULE_ACTIONS = ["shell", "webfetch", "skill", "mcp"] as const;
+const ruleSchema = z.object({ action: z.enum(PERMISSION_RULE_ACTIONS), resource: z.string(), effect: statusSchema });
+export type PermissionRule = z.infer<typeof ruleSchema>;
+export type PermissionRuleAction = PermissionRule["action"];
+export type PermissionRuleListChange = { action: PermissionRuleAction; rules: { resource: string; effect: PermissionStatus }[] };
+
+const permissionRulesQueryKey = (orgId: string, setId: string) => ["permissions", orgId, "rules", setId];
+
+export function usePermissionSetRules(orgId: string | null, setId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: permissionRulesQueryKey(orgId ?? "", setId),
+    enabled: enabled && Boolean(orgId),
+    retry: false,
+    queryFn: async ({ signal }) => required(await permissionsRequest({
+      orgId: orgId ?? "",
+      path: `/v1/permissions/sets/${encodeURIComponent(setId)}/rules`,
+      schema: z.object({ rules: z.array(ruleSchema) }),
+      fallback: "Couldn't load these rules",
+      signal,
+    })).rules,
+  });
+}
+
+/** Saves each changed action's whole rule list, in order; resolves with the set's rules. */
+export function useUpdatePermissionSetRules(orgId: string, setId: string) {
+  const queryClient = useQueryClient();
+  const write = useReauthableWrite();
+  return useMutation({
+    mutationKey: [...permissionRulesQueryKey(orgId, setId), "update"],
+    retry: false,
+    mutationFn: (changes: PermissionRuleListChange[]) => write("update-permission-rules", async () => {
+      let rules: PermissionRule[] = [];
+      for (const change of changes) {
+        rules = required(await permissionsRequest({
+          orgId,
+          path: `/v1/permissions/sets/${encodeURIComponent(setId)}/rules`,
+          method: "PUT",
+          body: change,
+          schema: z.object({ rules: z.array(ruleSchema) }),
+          fallback: "Couldn't save rules",
+        })).rules;
+      }
+      return rules;
+    }),
+    onSuccess: (rules) => {
+      queryClient.setQueryData(permissionRulesQueryKey(orgId, setId), rules);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: permissionsQueryKeys.all(orgId) }),
+  });
+}
