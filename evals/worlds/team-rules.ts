@@ -1,4 +1,9 @@
+import { allocateFreePorts } from "@openwork/cdp";
+import { engineSessionProbe } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
+import { access, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { configureProvider } from "./chat.ts";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
 import { isRecord, records } from "./library.ts";
 
@@ -27,6 +32,91 @@ export async function teamRulesEditor(seed: Seed) {
     viewport: { width: 1280, height: 1400 },
   });
   return { ...world, web };
+}
+
+/**
+ * Riley's Contractors rules allow only `echo` commands. Riley and Morgan each
+ * chat in OpenWork Web on the v2 engine, signed in to Den, with a model that
+ * asks to save a note with `printf`.
+ */
+export async function teamRulesChat(seed: Seed) {
+  const webPorts = await allocateFreePorts(2);
+  const world = await teamRulesOrganization(seed, { web: true, trustedOrigins: webPorts.map((port) => `http://127.0.0.1:${port}`) });
+  await world.enableTeamRules();
+  await world.saveTeamRules([
+    { action: "shell", resource: "*", effect: "deny" },
+    { action: "shell", resource: "echo *", effect: "allow" },
+  ]);
+  const riley = await memberEngineChat(seed, world, "riley", webPorts[0]);
+  const morgan = await memberEngineChat(seed, world, "morgan", webPorts[1]);
+  // Send only once each engine has settled its plugins for the member's policy.
+  await riley.teamRulesPlugin({ until: (plugin) => plugin?.state === "active" });
+  await morgan.teamRulesPlugin({ until: (plugin) => plugin === null });
+  return { ...world, riley, morgan };
+}
+
+type TeamRulesOrganization = Awaited<ReturnType<typeof teamRulesOrganization>>;
+
+async function memberEngineChat(seed: Seed, world: TeamRulesOrganization, member: "riley" | "morgan", webPort: number | undefined) {
+  const signedIn = world.den.members[member];
+  if (!signedIn || !webPort) throw new Error(`Missing ${member}'s session or web port`);
+  const marker = `TEAM_RULES_NOTE_${member.toUpperCase()}`;
+  const workspacePath = seed.tmpPath(`team-rules-${member}`);
+  await mkdir(workspacePath, { recursive: true });
+  const note = "team-rule-note.txt";
+  const command = `printf '%s' 'saved by the agent' > '${note}'`;
+  const app = await seed.appWeb({
+    name: `team-rules-${member}`, workspacePath, webPort, headless: true, engine: "v2", den: world.den.ref,
+    mocks: { witness: seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
+      promptMarker: marker, finalReply: "I tried to save the note.",
+      steps: [{ tool: "shell", arguments: { command, description: "Save a note" } }],
+    }] }) },
+  });
+  await seed.signIn(app, signedIn, member);
+  const workspace = await seed.workspace(app, workspacePath);
+  const witness = app.mocks.witness;
+  if (!witness) throw new Error("Missing the witness model");
+  await configureProvider(seed, app, workspace.workspaceId, "team-rules-witness", "team-rules-model", {
+    provider: { "team-rules-witness": {
+      npm: "@ai-sdk/openai-compatible", name: "Team rules witness",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "fixture-only" },
+      models: { "team-rules-model": { name: "Team rules model", tool_call: true } },
+    } },
+  }, "v2");
+  const chat = await seed.session(app, { title: "Save a note" });
+  // The world reads engine state with the isolated app's own server token.
+  const token = await seed.evalIn(app, () => localStorage.getItem("openwork.server.token"));
+  if (typeof token !== "string" || !token) throw new Error("Missing isolated app-web token");
+  const native = engineSessionProbe({ engine: "v2", serverUrl: app.openworkUrl, token, workspaceId: workspace.workspaceId });
+  const pluginState = async () => {
+    const response = await fetch(`${app.openworkUrl}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode2/api/plugin`, {
+      headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Listing engine plugins failed: HTTP ${response.status}`);
+    const plugin = records(await response.json()).find((entry) => entry.id === "openwork.policies");
+    const state = isRecord(plugin?.state) && typeof plugin.state.status === "string" ? plugin.state.status : "unknown";
+    return plugin ? { state, error: isRecord(plugin.state) && typeof plugin.state.error === "string" ? plugin.state.error : null } : null;
+  };
+  return {
+    app, command,
+    prompt: `Save a short note in this folder with a shell command. ${marker}`,
+    /** The engine's own record of the shell call, once it has settled. */
+    async shellCall() {
+      const snapshot = await native.snapshot(chat.sessionId);
+      if (!snapshot.ok || !snapshot.data) return null;
+      return snapshot.data.messages.flatMap((message) => message.parts).find((part) => part.tool === "shell" && ["completed", "error"].includes(part.status)) ?? null;
+    },
+    wroteNote: () => access(join(workspacePath, note)).then(() => true, () => false),
+    /** The OpenWork policies plugin as the engine reports it, waiting up to a minute for `until`. */
+    async teamRulesPlugin({ until }: { until: (plugin: Awaited<ReturnType<typeof pluginState>>) => boolean }) {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const plugin = await pluginState();
+        if (until(plugin) || Date.now() > deadline) return plugin;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    },
+  };
 }
 
 async function teamRulesOrganization(seed: Seed, { web, trustedOrigins }: { web: boolean; trustedOrigins?: string[] }) {
