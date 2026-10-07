@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chrome, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
-import { browserScript, connect, debuggerUrlFor, evaluate, listTargets, type Surface } from "@openwork/cdp";
+import { browserScript, connect, debuggerUrlFor, evaluate, listTargets, locate, type Surface } from "@openwork/cdp";
 import type { EvalEngine, Place, Seed } from "@openwork/env";
 import type { MockMcpTool } from "@openwork/labs";
 import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
@@ -687,28 +687,30 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
       }, [label]));
       if (!clicked) throw new Error(`The App has no ${label} button`);
     },
-    /** The App frame, by title, that shows the given text: a reloaded App replaces a frame the browser may still list. */
+    /**
+     * The App frame, by title, where a person sees the given text. A reloaded App replaces a frame
+     * the browser may still list, and a closed or hidden frame keeps its text without rendering it.
+     */
     async appFrameShowing(title: string, text: string): Promise<Surface & AsyncDisposable> {
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
         for (const target of (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe" && entry.url === "about:srcdoc")) {
-          const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
-          const shown = await evaluate(client, browserScript((wanted: string) => [document.title, document.body?.innerText.includes(wanted) ?? false], [text])).catch(() => ["", false]);
-          if (Array.isArray(shown) && shown[0] === title && shown[1] === true) {
-            return { handle: app.handle, client, [Symbol.asyncDispose]: async () => client.close() };
-          }
-          client.close();
+          const frame = { handle: app.handle, client: await connect(debuggerUrlFor(app.handle.cdpUrl, target)) };
+          const shown = await evaluate(frame.client, () => document.title).catch(() => "") === title
+            && await locate(frame, { text }).then(found => found.visible && found.hitTestOk, () => false);
+          if (shown) return { ...frame, [Symbol.asyncDispose]: async () => frame.client.close() };
+          frame.client.close();
         }
         await delay(500);
       }
       const seen: string[] = [];
       for (const target of (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe")) {
         const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
-        seen.push(String(await evaluate(client, () => `${document.title} | ${(document.body?.innerText ?? "").slice(0, 200)}`).catch(() => "unreadable")));
+        seen.push(String(await evaluate(client, () => `${document.body?.getClientRects().length ? "" : "[not rendered] "}${document.title} | ${(document.body?.innerText ?? "").slice(0, 200)}`).catch(() => "unreadable")));
         client.close();
       }
       const host = await evaluate(app.client, () => Array.from(document.querySelectorAll("[data-mcp-app-resource], [role=alert], [role=status]")).map(node => `${node.tagName} ${node.getAttribute("role") ?? ""} ${(node.textContent ?? "").slice(0, 160)}`)).catch(() => []);
-      throw new Error(`No ${title} frame showed "${text}". Frames: ${JSON.stringify(seen)} Host: ${JSON.stringify(host)}`);
+      throw new Error(`No ${title} frame visibly showed "${text}". Frames: ${JSON.stringify(seen)} Host: ${JSON.stringify(host)}`);
     },
     /** An App's isolated frame in the conversation, by its title, for trusted input. */
     async appFrame(title: string): Promise<Surface & AsyncDisposable> {
