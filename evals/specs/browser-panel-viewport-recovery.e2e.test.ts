@@ -195,7 +195,7 @@ geometryTest("the native browser survives zoom, resizing, overlays and conversat
     expect(state.tabs.map(item => item.id)).toEqual([tab.tabId]);
     expect(await probe.browserTabMetrics(tab.targetId)).toMatchObject(identity);
   };
-  const palette = { placeholder: "Search actions, settings, and sessions…" };
+  const palette = { placeholder: "Search actions and settings…" };
   await step("A dialog hides the native sibling, and sidebar position changes restore the same page", async () => {
     const before = await aligned(1);
     for (let toggle = 0; toggle < 2; toggle++) {
