@@ -244,4 +244,17 @@ threadUI("a member keeps task cards in their original turn until all work finish
     await user.screenshot();
     evidence.recordAssertionEvidence("Editing is discoverable on hover and deletion is absent", "The edit icon is hidden away from the message, appears on its hover, opens the inline editor, and hides again after Cancel; no Delete message button exists.", true);
   });
+  await step("on a phone, Edit rests under each of the member's messages without hovering", async () => {
+    await world.phone();
+    await user.see({ role: "button", label: "Edit message" });
+    const layout = await probe.eventually(() => world.editLayout(), { within: 2_000, label: "Edit finishes fading in under each message", until: (edits) => edits.every((edit) => edit.shown) });
+    const shownUnder = { shown: true, underTrailingEdge: true, tapTarget: 44 };
+    expect(layout).toEqual([shownUnder, shownUnder]);
+    await user.screenshot();
+    await user.click({ role: "button", label: "Edit message", nth: 0 });
+    await user.see({ label: "Edit your message" }, { editable: true });
+    await user.click({ role: "button", text: "Cancel" });
+    await user.see({ text: "Draft the brief and meeting notes." });
+    evidence.recordAssertionEvidence("Touch shows Edit at rest, under each message", "With touch input at phone width and no hover, both Edit icons are visible under their bubbles' trailing edges with 44px tap targets, and a tap opens the inline editor.", true);
+  });
 });

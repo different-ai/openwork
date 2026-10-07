@@ -637,7 +637,7 @@ function UserBubble({ text, muted = false, reaction = null, action }: { text: st
         <p className={`whitespace-pre-wrap break-words rounded-[20px] bg-[var(--wb-user-bubble)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] transition-opacity duration-150 ${muted ? "opacity-60" : ""}`}>
           {text}
         </p>
-        {action ? <span className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/own:opacity-100 has-[:focus-visible]:opacity-100">{action}</span> : null}
+        {action ? <span className={ownAction}>{action}</span> : null}
         {reaction ? (
           <span className="absolute -left-3 -top-3.5">
             <Reaction emoji={reaction} />
@@ -651,7 +651,27 @@ function UserBubble({ text, muted = false, reaction = null, action }: { text: st
 const iconButton =
   "grid size-7 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:opacity-40";
 
-/** Edit appears beside its own message on hover or keyboard focus, without a delete action. */
+/**
+ * With a mouse, a message's action waits in the gutter beside the bubble until hover or keyboard focus. Touch can't
+ * hover, so there it rests under the bubble's trailing edge, clear of the reaction on the top-left corner.
+ */
+const ownAction =
+  "absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/own:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:mt-1 [@media(hover:none)]:flex [@media(hover:none)]:h-7 [@media(hover:none)]:translate-y-0 [@media(hover:none)]:items-center [@media(hover:none)]:justify-end [@media(hover:none)]:opacity-100";
+
+/**
+ * Edit for the person's own message. It stays in place, dimmed, while it can't be used (a reply is running or the
+ * message is still sending), so the conversation never shifts when it becomes available. On touch the 28px icon
+ * gets a 44px tap target without taking more room.
+ */
+function EditButton({ disabled, onClick }: { disabled: boolean; onClick?: () => void }) {
+  return (
+    <button type="button" aria-label="Edit message" title="Edit" disabled={disabled} onClick={onClick} className={`${iconButton} disabled:hover:bg-transparent disabled:hover:text-[var(--wb-muted)] [@media(hover:none)]:-my-2 [@media(hover:none)]:-mr-2 [@media(hover:none)]:size-11`}>
+      <Pencil size={14} strokeWidth={1.75} aria-hidden />
+    </button>
+  );
+}
+
+/** Edit appears beside its own message on hover or keyboard focus (at rest under it on touch), without a delete action. */
 function OwnMessage(props: {
   turn: WorkbotTurn;
   canChange: boolean;
@@ -734,11 +754,7 @@ function OwnMessage(props: {
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <UserBubble text={turn.text} reaction={turn.reaction} action={props.canChange ? (
-        <button type="button" aria-label="Edit message" title="Edit" onClick={() => setMode("editing")} className={iconButton}>
-          <Pencil size={14} strokeWidth={1.75} aria-hidden />
-        </button>
-      ) : null} />
+      <UserBubble text={turn.text} reaction={turn.reaction} action={<EditButton disabled={!props.canChange} onClick={() => setMode("editing")} />} />
       {error ? <p className="pr-1 text-[13px] leading-4 text-[var(--wb-danger)]">{error}</p> : null}
     </div>
   );
@@ -818,7 +834,8 @@ function PendingView({ entry, onRetry }: { entry: Pending; onRetry: () => void }
   return (
     <>
       <SentAttachments attachments={attachments} localUrls={urls} />
-      <UserBubble text={entry.text} muted={Boolean(entry.failed)} />
+      {/* Holds Edit's place while sending, so the bubble doesn't move when its turn arrives. */}
+      <UserBubble text={entry.text} muted={Boolean(entry.failed)} action={entry.failed ? undefined : <EditButton disabled />} />
       {entry.failed ? (
         <p className="flex items-center justify-end gap-2 pt-1 text-[12px] leading-4 text-[var(--wb-muted)]">
           {entry.failed}
@@ -1100,8 +1117,8 @@ function TurnView(props: {
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
-      {turn.text && !turn.greeting && turn.status !== "queued" ? (
-        <OwnMessage turn={turn} canChange={props.canChange} onEdit={props.onEdit} />
+      {turn.text && !turn.greeting ? (
+        <OwnMessage turn={turn} canChange={props.canChange && turn.status !== "queued"} onEdit={props.onEdit} />
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}

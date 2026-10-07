@@ -91,6 +91,22 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
         change();
       },
       editHidden: () => evaluateOnSurface(app, () => Array.from(document.querySelectorAll('button[aria-label="Edit message"]')).every((button) => button.parentElement !== null && getComputedStyle(button.parentElement).opacity === "0")),
+      /** A phone: touch input (so `hover: none`) at a phone's width. */
+      async phone() {
+        await app.client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+        await setViewport(app, { width: 390, height: 844, deviceScaleFactor: 1 });
+      },
+      /** Where each Edit sits relative to its own message bubble. */
+      editLayout: () => evaluateOnSurface(app, () => Array.from(document.querySelectorAll('button[aria-label="Edit message"]')).map((button) => {
+        const bubble = button.closest(".group\\/own")?.querySelector("p")?.getBoundingClientRect();
+        const icon = button.querySelector("svg")?.getBoundingClientRect();
+        const target = button.getBoundingClientRect();
+        return {
+          shown: button.parentElement !== null && getComputedStyle(button.parentElement).opacity === "1",
+          underTrailingEdge: Boolean(bubble && icon && icon.top >= bubble.bottom && icon.left >= bubble.left && icon.right <= bubble.right && bubble.right - icon.right < 16),
+          tapTarget: Math.min(target.width, target.height),
+        };
+      })),
       async cardNode(id: string) {
         const document = await app.client.send("DOM.getDocument", {});
         if (!record(document) || !record(document.root) || typeof document.root.nodeId !== "number") throw new Error("Missing document node");
