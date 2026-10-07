@@ -6,8 +6,9 @@ import { LOOKALIKE_ORIGINS, TYPED_ORIGIN, WORKSPACE_ORIGIN, orgWebOrigins } from
 // New journey: an organization owner approves the exact origin of their
 // self-hosted OpenWork web instance in Org settings. Members can then be
 // handed back to that origin after sign-in and the site can call Den from the
-// browser; admins can only read the list, and other organizations, lookalike
-// origins, and the removed origin stay refused.
+// browser; admins can manage the list too (super-admin was merged into admin,
+// so they hold web_origins.manage by default), members cannot read it, and
+// other organizations, lookalike origins, and the removed origin stay refused.
 const test = spec.world(orgWebOrigins, {
   timeout: 600_000,
   resources: { surfaces: ["web"], services: ["den"] },
@@ -146,22 +147,23 @@ test("an owner approves their self-hosted web origin so members can sign in ther
     await frame(phone);
   });
 
-  await step("an admin sees the approved origin with its controls locked and cannot change it", async () => {
+  await step("an admin sees the approved origin with working controls, while a member cannot read the list", async () => {
     await admin.reload();
     await admin.see(section, { timeoutMs: 90_000 });
     await admin.click(section);
     await admin.see(approvedRow);
-    await admin.see({ text: "Locked. Owners and super-admins can change approved origins." });
     await admin.see(approveButton);
     await admin.see(removeButton);
-    await admin.notSee({ text: "Members who sign in on an approved origin share their OpenWork session with that site." }, { timeoutMs: 2_000 });
-    const refused = await admin.click(removeButton).then(() => "clicked", (error: unknown) => (error instanceof Error ? error.message : String(error)));
-    const locked = await probe.on(world.adminWeb).dom(`input[type="url"]:disabled, button[aria-label="Remove ${WORKSPACE_ORIGIN}"]:disabled`);
+    await admin.notSee({ text: /^Locked\./ }, { timeoutMs: 2_000 });
+    const enabled = await probe.on(world.adminWeb).dom(`input[type="url"]:not(:disabled), button[aria-label="Remove ${WORKSPACE_ORIGIN}"]:not(:disabled)`);
+    const member = await probe.api(world.teammate, "/v1/org/web-origins", { headers: { "x-openwork-org-id": world.orgId } });
+    const requiredPermission = isRecord(member.body) ? member.body.requiredPermission : undefined;
     const origins = await approvedOrigins();
-    const ok = /disabled/i.test(refused) && locked.elements.length === 2 && origins.length === 1 && origins[0] === WORKSPACE_ORIGIN;
+    const ok = enabled.elements.length === 2 && member.response.status === 403 && requiredPermission === "web_origins.view"
+      && origins.length === 1 && origins[0] === WORKSPACE_ORIGIN;
     evidence.recordAssertionEvidence(
-      "The admin sees the controls but they are locked and nothing changes",
-      `clicking Remove → ${/disabled/i.test(refused) ? "refused (control disabled)" : refused}; disabled origin input and Remove button ${locked.elements.length}/2; approved origins ${JSON.stringify(origins)}`,
+      "Admins can now change approved origins; members still cannot see them",
+      `admin: enabled origin input and Remove button ${enabled.elements.length}/2, no Locked notice; member GET /v1/org/web-origins → ${member.response.status} requiredPermission ${String(requiredPermission)}; approved origins ${JSON.stringify(origins)}`,
       ok,
     );
     expect(ok).toBe(true);

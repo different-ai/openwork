@@ -918,6 +918,20 @@
       "when": 1791313243548,
       "tag": "0131_platform_audit_event",
       "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "5",
+      "when": 1791392839660,
+      "tag": "0132_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "5",
+      "when": 1791394855047,
+      "tag": "0133_deprecate_super_admin",
+      "breakpoints": true
     }
   ]
 }

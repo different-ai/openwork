@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, Plug, SlidersHorizontal, Sparkles, Users } from "lucide-react";
+import { LayoutDashboard, LockKeyhole, Plug, SlidersHorizontal, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
@@ -10,7 +10,8 @@ import { DenCard } from "../../_components/ui/card";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import { GatewaySpendBreakdown } from "./gateway-spend-breakdown";
@@ -33,6 +34,17 @@ const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "users-and-teams", label: "Users & Teams", icon: Users },
   { value: "openwork-models", label: "OpenWork Models", icon: Sparkles },
 ];
+
+const GATEWAY_TAB_AREAS: Record<Exclude<AiGatewayTab, "openwork-models">, GatewayDashboardArea> = {
+  overview: "overview",
+  "ai-providers": "providers",
+  limits: "limits",
+  "users-and-teams": "people",
+};
+
+function canOpenAiGatewayTab(access: DenOrgAccessFlags, tab: AiGatewayTab): boolean {
+  return tab === "openwork-models" ? access.canViewModelsSettings : canOpenGatewayArea(access, GATEWAY_TAB_AREAS[tab]);
+}
 
 function AiGatewayOverview({ orgId }: { orgId: string }) {
   const { orgSlug } = useOrgDashboard();
@@ -90,18 +102,26 @@ const EMPTY_STATE_PROVIDERS = [
 
 export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { providerContent?: ReactNode; pageContent?: ReactNode; pageTab?: AiGatewayTab }) {
   const { orgId, orgSlug, orgContext, orgError } = useOrgDashboard();
-  const access = useGatewayDashboardAccess();
+  const memberAccess = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  );
   const router = useRouter();
   const searchParams = useSearchParams();
   const nestedContent = providerContent ?? pageContent;
   const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
+  // Without an explicit tab, land on the first one this person can open.
+  const defaultTab = AI_GATEWAY_TABS.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
     ? nestedTab
-    : AI_GATEWAY_TABS.find((item) => item.value === searchParams.get("tab"))?.value ?? "overview";
+    : AI_GATEWAY_TABS.find((item) => item.value === searchParams.get("tab"))?.value ?? defaultTab;
+  const gatewayTabArea = tab === "openwork-models" ? "any" : GATEWAY_TAB_AREAS[tab];
+  const access = useGatewayDashboardAccess(gatewayTabArea);
 
   function setTab(next: AiGatewayTab) {
     const params = new URLSearchParams(searchParams.toString());
-    if (next === "overview") params.delete("tab");
+    if (next === defaultTab) params.delete("tab");
     else params.set("tab", next);
     const query = params.toString();
     const route = getAiGatewayRoute(orgSlug);
@@ -146,14 +166,14 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                     ) : null}
                   </>
                 )
-                  : <DenNotice tone="info" message={access === "checking"
-                    ? "Checking workspace access..."
-                    : access === "unavailable"
-                      ? "This feature is not part of your deployment system, please ask an instance admin to configure deployment"
-                      : "AI Gateway requires workspace admin permissions. Ask a workspace owner to update your role."} />
+                  : access === "denied"
+                    ? <DenNotice tone="neutral" icon={LockKeyhole} message={gatewayAreaLockedMessage(gatewayTabArea)} />
+                    : <DenNotice tone="info" message={access === "checking"
+                      ? "Checking workspace access..."
+                      : "This feature is not part of your deployment system, please ask an instance admin to configure deployment"} />
             ) : null}
             {tab === "openwork-models" ? <InferenceScreen embedded /> : null}
-            {tab === "ai-providers" && orgId && !orgError ? (
+            {tab === "ai-providers" && orgId && !orgError && memberAccess.canViewAllLlmProviders ? (
               <LegacyProvidersSection key={orgId} orgId={orgId} orgSlug={orgSlug} />
             ) : null}
           </>

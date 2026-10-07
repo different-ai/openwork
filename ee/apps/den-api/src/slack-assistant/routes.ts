@@ -24,21 +24,20 @@ import {
   textResponse,
   unauthorizedSchema,
 } from "../openapi.js"
-import { paramValidator, jsonValidator, orgMemberRoute, publicRoute, signedWebhookRoute } from "../middleware/index.js"
+import { paramValidator, jsonValidator, orgPermissionRoute, publicRoute, signedWebhookRoute } from "../middleware/index.js"
 import {
   idParamSchema,
-  ensureOrganizationAdmin,
-  ensureOrganizationAdminRole,
   orgAccessFailureStatus,
   type OrgRouteVariables,
 } from "../routes/org/shared.js"
+import { resolvePermissionsForMember } from "../permissions/resolve.js"
+import { ensureFreshPrivilegedSession } from "../privileged-session.js"
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
 import { listHeadlessModels, slackRuntimeForOrganization } from "./headless.js"
 import { getOrganizationFeatures } from "../features.js"
 import { publicRequestUrl } from "../request-url.js"
-import { getOrganizationContextForUser } from "../orgs.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   BOT_SCOPES,
@@ -128,7 +127,7 @@ const adminResponses = {
   400: jsonResponse("Invalid parameters or incomplete Slack setup.", z.union([invalidRequestSchema, setupErrorSchema])),
   401: jsonResponse("Authentication required.", unauthorizedSchema),
   403: jsonResponse(
-    "Admin access, recent verification, or Slack eligibility required.",
+    "Permission, recent verification, or Slack eligibility required.",
     z.union([forbiddenSchema, setupErrorSchema]),
   ),
   404: jsonResponse("Organization or connection not found.", notFoundSchema),
@@ -160,15 +159,13 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       tags: ["Authentication"],
       summary: "Read Slack assistant setup",
       description:
-        "Read connector configuration, organization eligibility, recent activity metrics, and the Slack app manifest. Only workspace admins can read setup; stored credentials are never returned.",
+        "Read connector configuration, organization eligibility, recent activity metrics, and the Slack app manifest. Requires the View all connections permission; stored credentials are never returned.",
       responses: { ...adminResponses, 200: jsonResponse("Slack assistant setup.", setupResponseSchema) },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("connections.view"),
     paramValidator(connectionParams),
     async (c) => {
       const org = c.get("organizationContext")
-      const admin = ensureOrganizationAdminRole(c, "Only workspace admins can manage the Slack assistant.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
       if (!org) return c.json({ error: "forbidden" }, 403)
       const connectionId = normalizeDenTypeId("externalMcpConnection", c.req.param("connectionId"))
       const connection = await getExternalMcpConnection({ organizationId: org.organization.id, connectionId })
@@ -204,19 +201,20 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       tags: ["Authentication"],
       summary: "Configure Slack assistant installation",
       description:
-        "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires a workspace admin browser session and recent verification.",
+        "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires the Manage connections permission, a browser session and recent verification.",
       responses: {
         ...adminResponses,
         200: jsonResponse("Slack assistant settings saved.", okSchema),
         409: jsonResponse("Connection changed while saving.", z.object({ error: z.literal("connection_changed") })),
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("connections.manage"),
     paramValidator(connectionParams),
     jsonValidator(configSchema),
     async (c) => {
-      const admin = ensureOrganizationAdmin(c, "Only workspace admins can configure the Slack assistant.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+      // connections.manage is not sensitive; Slack assistant setup keeps its recent sign-in check.
+      const fresh = ensureFreshPrivilegedSession(c)
+      if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
       const org = c.get("organizationContext")
       if (!org || !c.get("session")) return c.json({ error: "browser_session_required" }, 403)
       const connectionId = normalizeDenTypeId("externalMcpConnection", c.req.param("connectionId"))
@@ -280,11 +278,12 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         200: jsonResponse("Slack bot authorization URL.", z.object({ url: z.string().url() })),
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("connections.manage"),
     paramValidator(connectionParams),
     async (c) => {
-      const admin = ensureOrganizationAdmin(c, "Only workspace admins can install the Slack assistant.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+      // connections.manage is not sensitive; Slack assistant installation keeps its recent sign-in check.
+      const fresh = ensureFreshPrivilegedSession(c)
+      if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
       const org = c.get("organizationContext")
       if (!org || !c.get("session")) return c.json({ error: "browser_session_required" }, 403)
       const connectionId = normalizeDenTypeId("externalMcpConnection", c.req.param("connectionId"))
@@ -328,7 +327,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           headers: { Location: { schema: { type: "string", format: "uri" } } },
         },
         400: textResponse("Installation cancelled, expired, incomplete, or missing required permissions."),
-        403: textResponse("The installing member no longer has admin access."),
+        403: textResponse("The installing member no longer has the Manage connections permission."),
         409: textResponse("Slack workspace conflicts with an existing installation."),
       },
     }),
@@ -353,12 +352,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       const installation = await getInstallation(transaction.connectionId)
       const member = (await db.select().from(MemberTable).where(eq(MemberTable.id, transaction.memberId)).limit(1))[0]
       if (!installation || !member?.userId || member.removedAt) return c.text("Access denied.", 403)
-      const context = await getOrganizationContextForUser({
-        userId: member.userId,
-        organizationId: installation.organizationId,
-      })
-      const admin = ensureOrganizationAdminRole({ get: () => context ?? undefined }, "Access denied.")
-      if (!admin.ok) return c.text("Access denied.", 403)
+      const permissions = await resolvePermissionsForMember({ organizationId: installation.organizationId, memberId: member.id })
+      if (!permissions.has("connections.manage")) return c.text("Access denied.", 403)
       // Single-use state consumed and the installing admin re-verified: the
       // installation's organization is the tenant (state consumption precedes
       // attribution; nothing else has happened yet).

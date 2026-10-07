@@ -794,11 +794,17 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   };
 }
 
-/** Role assignments include built-in parent roles; custom members still match the member assignment. */
-export function matchingDesktopPolicyAssignmentRoles(memberRole: string) {
-  const levels = new Map<string, number>([["owner", 3], ["super-admin", 2], ["admin", 1], ["member", 0]]);
+/**
+ * Role assignments a member matches. Assignments include built-in parent
+ * roles (an owner also matches `admin`), every member matches `member`, and
+ * `admin` matches effective admins: a direct admin role or membership of a
+ * team that grants organization admin (`adminViaTeam`).
+ */
+export function matchingDesktopPolicyAssignmentRoles(memberRole: string, options: { adminViaTeam?: boolean } = {}) {
+  const levels = new Map<string, number>([["owner", 2], ["admin", 1], ["member", 0]]);
   const roles = memberRole.split(",").map((role) => role.trim()).filter(Boolean);
-  return (["owner", "admin", "member"] as const).filter((required) => roles.some((role) =>
-    required === "member" || (levels.get(role) ?? -1) >= (levels.get(required) ?? 0),
+  if (options.adminViaTeam) roles.push("admin");
+  return (["owner", "admin", "member"] as const).filter((required) => required === "member" || roles.some((role) =>
+    (levels.get(role) ?? -1) >= (levels.get(required) ?? 0),
   ));
 }

@@ -64,13 +64,13 @@ export function DesktopPoliciesScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canManage = access.canManageSettings;
+  const canManage = access.canManageDesktopPolicies;
 
   const softDeletePolicy = async (policy: DenDesktopPolicy) => {
     if (!canManage) {
-      setPageError("Only workspace owners and super-admins can delete desktop policies.");
+      setPageError("You don't have permission to delete desktop policies.");
       return;
     }
     if (policy.isDefault || !confirm(`Delete ${policy.policyName}?`)) return;

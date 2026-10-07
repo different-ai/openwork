@@ -1,5 +1,6 @@
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
+import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
 
 export type DenOrgSummary = {
   id: string;
@@ -84,39 +85,123 @@ export type DenInvitationPreview = {
   };
 };
 
-export type DenOrgRole = {
-  id: string;
-  role: string;
-  permission: Record<string, string[]>;
-  builtIn: boolean;
-  protected: boolean;
-  createdAt: string | null;
-  updatedAt: string | null;
-};
+export type DenCanonicalRole = "owner" | "admin" | "member";
 
-export type DenCanonicalRole = "owner" | "super-admin" | "admin" | "member";
+/** Roles the member pickers offer. Owner moves only by ownership transfer. */
+export const ASSIGNABLE_ORG_ROLES = ["member", "admin"] as const;
 
+/**
+ * What the signed-in member can do in the dashboard. Each `can*` flag is the
+ * catalog permission the matching Den API route requires (see
+ * docs/permissions/route-inventory.md), so the UI never offers an action the
+ * API will refuse. `isOwner`, `isAdmin` and `isMember` describe the role.
+ */
 export type DenOrgAccessFlags = {
   canonicalRole: DenCanonicalRole;
   isOwner: boolean;
-  isSuperAdmin: boolean;
-  isAdminRole: boolean;
   isMember: boolean;
+  /** Owner, admin role, or member of an Admin team. Role-derived; prefer a permission flag for gating an action. */
   isAdmin: boolean;
+  /**
+   * Holds at least one organization permission, so some admin page has
+   * something to show. Opens the admin area; each page then checks its own flag.
+   */
   canViewSettings: boolean;
+  /** `organization.update` */
   canManageSettings: boolean;
+  /** `sso.manage` or `scim.manage` */
   canManageSecurityConfiguration: boolean;
+  /** `invitations.manage` */
   canInviteMembers: boolean;
+  /** `invitations.manage` */
   canCancelInvitations: boolean;
+  /** `members.update` */
   canManageMembers: boolean;
+  /** `members.delete` */
   canRemoveMembers: boolean;
+  /** `members.update`: assign the Member or Admin role (also on invitations). */
   canManageRoles: boolean;
+  /** `teams.view`: open any team's details. */
+  canViewTeams: boolean;
+  /** `teams.manage` */
   canManageTeams: boolean;
+  /** `teams.manage_admin`: mark a team Admin, or change who is in an Admin team. */
+  canManageAdminTeams: boolean;
+  /** `api_keys.view` */
+  canViewApiKeys: boolean;
+  /** `api_keys.manage` */
   canManageApiKeys: boolean;
+  /** `scim.view` */
+  canViewScim: boolean;
+  /** `scim.manage` */
   canManageScim: boolean;
+  /** `sso.view` */
+  canViewSso: boolean;
+  /** `sso.manage` */
   canManageSso: boolean;
+  /** `branding.update` */
+  canManageBranding: boolean;
+  /** `web_origins.view` */
+  canViewWebOrigins: boolean;
+  /** `web_origins.manage` */
+  canManageWebOrigins: boolean;
+  /** `desktop_policies.view` */
+  canViewDesktopPolicies: boolean;
+  /** `desktop_policies.manage` */
+  canManageDesktopPolicies: boolean;
+  /** `egress_diagnostics.view` */
+  canViewEgressDiagnostics: boolean;
+  /** `egress_diagnostics.manage` */
+  canManageEgressDiagnostics: boolean;
+  /** `billing.view` */
+  canViewBilling: boolean;
+  /** `billing.manage` */
+  canManageBilling: boolean;
+  /** `audit.view` */
+  canViewAuditLogs: boolean;
+  /** `audit.manage`: turn audit capture on or off. */
+  canManageAuditCapture: boolean;
+  /** `inference.view`: OpenWork Models settings. */
+  canViewModelsSettings: boolean;
+  /** `inference.manage`: turn OpenWork Models on or off. */
+  canManageModelsSettings: boolean;
+  /** `llm_providers.view`: every provider, not only your own. */
+  canViewAllLlmProviders: boolean;
+  /** `gateway_providers.view` */
+  canViewGatewayProviders: boolean;
+  /** `gateway_providers.manage` */
+  canManageGatewayProviders: boolean;
+  /** `gateway_usage.view` */
+  canViewGatewayUsage: boolean;
+  /** `gateway_limits.view` */
+  canViewGatewayLimits: boolean;
+  /** `gateway_limits.manage` */
+  canManageGatewayLimits: boolean;
+  /** `connections.view`: every connection, its tools and tool policy. */
+  canViewAllConnections: boolean;
+  /** `connections.manage`: organization connections, any connection, shared accounts. */
+  canManageConnections: boolean;
+  /** `connections.delete`: remove or sign everyone out of any connection. */
+  canRemoveAnyConnection: boolean;
+  /** `marketplaces.manage` */
+  canManageMarketplaces: boolean;
+  /** `plugins.import` */
+  canImportPlugins: boolean;
+  /** `connectors.manage`: GitHub sync sources. */
+  canManageSyncSources: boolean;
+  /** `sharing.manage_all`: manager on every plugin, marketplace, skill and connector. */
+  canManageAllShared: boolean;
+  /** `sharing.share_org_wide` */
+  canShareWithEveryone: boolean;
+  /** `dashboards.view` */
+  canViewDashboards: boolean;
+  /** `dashboards.manage` */
+  canManageDashboards: boolean;
+  /** Owner only. */
   canTransferOwnership: boolean;
+  /** Owner only. */
   canDeleteOrganization: boolean;
+  /** `billing.manage` */
   canStartSeatCheckout: boolean;
 };
 
@@ -225,10 +310,11 @@ export type DenOrgContext = {
     isOwner: boolean;
     directRole: string;
     adminTeams: { id: string; name: string }[];
+    /** Effective permission keys from GET /v1/org. Null when an older server does not send them. */
+    permissions: PermissionKey[] | null;
   };
   members: DenOrgMember[];
   invitations: DenOrgInvitation[];
-  roles: DenOrgRole[];
   teams: DenOrgTeam[];
   currentMemberTeams: DenCurrentMemberTeam[];
   entitlements: DenOrgEntitlements;
@@ -293,15 +379,6 @@ export type DenManagedBrandAsset = {
   originalName: string;
   uploadedAt: string;
 };
-
-export const DEN_ROLE_PERMISSION_OPTIONS = {
-  organization: ["update", "delete"],
-  member: ["create", "update", "delete"],
-  invitation: ["create", "cancel"],
-  team: ["create", "update", "delete"],
-  ac: ["create", "read", "update", "delete"],
-  security_configuration: ["manage"],
-} as const;
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";
 export const PENDING_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:pending-workspace-claim";
@@ -413,19 +490,11 @@ export function getManagedBrandIconUrl(metadata: string | null): string | null {
   return getManagedBrandAssetFromMetadata(metadata, "icon")?.url ?? null;
 }
 
-function parsePermissionRecord(value: unknown): Record<string, string[]> {
-  if (!isRecord(value)) {
-    return {};
+function parsePermissionKeys(value: unknown): PermissionKey[] | null {
+  if (!Array.isArray(value)) {
+    return null;
   }
-
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter((entry): entry is [string, unknown[]] => Array.isArray(entry[1]))
-      .map(([resource, actions]) => [
-        resource,
-        actions.filter((entry: unknown): entry is string => typeof entry === "string"),
-      ])
-  );
+  return value.filter((entry): entry is PermissionKey => typeof entry === "string" && isPermissionKey(entry));
 }
 
 export function splitRoleString(value: string): string[] {
@@ -438,8 +507,8 @@ export function splitRoleString(value: string): string[] {
 function normalizeCanonicalRole(value: string): DenCanonicalRole | null {
   const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
   if (normalized === "owner") return "owner";
-  if (normalized === "super-admin") return "super-admin";
-  if (normalized === "admin") return "admin";
+  // Super-admin was merged into admin; a stray value reads as admin.
+  if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
 }
@@ -462,53 +531,101 @@ export function roleIncludesCanonicalRole(roleValue: string, role: DenCanonicalR
 export function getHighestCanonicalRole(roleValue: string, isOwner: boolean): DenCanonicalRole {
   const canonicalRoles = getCanonicalRoleSet(roleValue);
   if (isOwner || canonicalRoles.has("owner")) return "owner";
-  if (canonicalRoles.has("super-admin")) return "super-admin";
   if (canonicalRoles.has("admin")) return "admin";
   return "member";
 }
 
-export function isAssignableOrgRole(role: DenOrgRole): boolean {
-  return !roleIncludesCanonicalRole(role.role, "owner") && (role.builtIn || !role.protected);
+/** The picker value for a stored role: admin when it names admin, else member. */
+export function assignableOrgRole(roleValue: string): (typeof ASSIGNABLE_ORG_ROLES)[number] {
+  return getHighestCanonicalRole(roleValue, false) === "admin" ? "admin" : "member";
 }
 
 export function canRefreshInvitationRole(role: string, access: Pick<DenOrgAccessFlags, "canInviteMembers" | "canManageRoles">): boolean {
-  return access.canInviteMembers && (access.canManageRoles || role === "member");
+  return access.canInviteMembers && (access.canManageRoles || getHighestCanonicalRole(role, false) === "member");
 }
 
-export function getOrgAccessFlags(roleValue: string, isOwner: boolean, _roleDefinitions: readonly DenOrgRole[] = []): DenOrgAccessFlags {
+/**
+ * Access flags for a member. Pass `permissions` (`currentMember.permissions`
+ * from GET /v1/org) for the signed-in member. Without it, as for other members
+ * or an older server, flags follow the default permissions of the role, which
+ * is what the API applies while the Permissions feature is off.
+ */
+export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissions?: readonly PermissionKey[] | null): DenOrgAccessFlags {
   const canonicalRole = getHighestCanonicalRole(roleValue, isOwner);
   const resolvedIsOwner = canonicalRole === "owner";
-  const isSuperAdmin = canonicalRole === "super-admin";
-  const isAdminRole = canonicalRole === "admin";
-  const isAdmin = resolvedIsOwner || isSuperAdmin || isAdminRole;
-  const canManageSettings = resolvedIsOwner || isSuperAdmin;
+  const isAdmin = resolvedIsOwner || canonicalRole === "admin";
+  const held = new Set<PermissionKey>(
+    resolvedIsOwner
+      ? PERMISSION_KEYS
+      : permissions ?? [...permissionDefaultKeys("member"), ...(isAdmin ? permissionDefaultKeys("admin") : [])],
+  );
+  const can = (key: PermissionKey) => held.has(key);
 
   return {
     canonicalRole,
     isOwner: resolvedIsOwner,
-    isSuperAdmin,
-    isAdminRole,
     isMember: canonicalRole === "member",
     isAdmin,
-    canViewSettings: isAdmin,
-    canManageSettings,
-    canManageSecurityConfiguration: canManageSettings,
-    canInviteMembers: isAdmin,
-    canCancelInvitations: isAdmin,
-    canManageMembers: isAdmin,
-    canRemoveMembers: isAdmin,
-    canManageRoles: canManageSettings,
-    canManageTeams: isAdmin,
-    canManageApiKeys: canManageSettings,
-    canManageScim: canManageSettings,
-    canManageSso: canManageSettings,
+    canViewSettings: isAdmin || held.size > 0,
+    canManageSettings: can("organization.update"),
+    canManageSecurityConfiguration: can("sso.manage") || can("scim.manage"),
+    canInviteMembers: can("invitations.manage"),
+    canCancelInvitations: can("invitations.manage"),
+    canManageMembers: can("members.update"),
+    canRemoveMembers: can("members.delete"),
+    canManageRoles: can("members.update"),
+    canViewTeams: can("teams.view"),
+    canManageTeams: can("teams.manage"),
+    canManageAdminTeams: can("teams.manage_admin"),
+    canViewApiKeys: can("api_keys.view"),
+    canManageApiKeys: can("api_keys.manage"),
+    canViewScim: can("scim.view"),
+    canManageScim: can("scim.manage"),
+    canViewSso: can("sso.view"),
+    canManageSso: can("sso.manage"),
+    canManageBranding: can("branding.update"),
+    canViewWebOrigins: can("web_origins.view"),
+    canManageWebOrigins: can("web_origins.manage"),
+    canViewDesktopPolicies: can("desktop_policies.view"),
+    canManageDesktopPolicies: can("desktop_policies.manage"),
+    canViewEgressDiagnostics: can("egress_diagnostics.view"),
+    canManageEgressDiagnostics: can("egress_diagnostics.manage"),
+    canViewBilling: can("billing.view"),
+    canManageBilling: can("billing.manage"),
+    canViewAuditLogs: can("audit.view"),
+    canManageAuditCapture: can("audit.manage"),
+    canViewModelsSettings: can("inference.view"),
+    canManageModelsSettings: can("inference.manage"),
+    canViewAllLlmProviders: can("llm_providers.view"),
+    canViewGatewayProviders: can("gateway_providers.view"),
+    canManageGatewayProviders: can("gateway_providers.manage"),
+    canViewGatewayUsage: can("gateway_usage.view"),
+    canViewGatewayLimits: can("gateway_limits.view"),
+    canManageGatewayLimits: can("gateway_limits.manage"),
+    canViewAllConnections: can("connections.view"),
+    canManageConnections: can("connections.manage"),
+    canRemoveAnyConnection: can("connections.delete"),
+    canManageMarketplaces: can("marketplaces.manage"),
+    canImportPlugins: can("plugins.import"),
+    canManageSyncSources: can("connectors.manage"),
+    canManageAllShared: can("sharing.manage_all"),
+    canShareWithEveryone: can("sharing.share_org_wide"),
+    canViewDashboards: can("dashboards.view"),
+    canManageDashboards: can("dashboards.manage"),
     canTransferOwnership: resolvedIsOwner,
     canDeleteOrganization: resolvedIsOwner,
-    canStartSeatCheckout: isAdmin,
+    canStartSeatCheckout: can("billing.manage"),
   };
 }
 
+/** Plain reason for a control locked by a missing permission (DESIGN.md P4). */
+export function permissionLockReason(key: PermissionKey): string {
+  return `Needs the “${getPermissionDefinition(key).label}” permission. Ask an organization owner or admin for access.`;
+}
+
 export function formatRoleLabel(role: string): string {
+  const canonicalRole = normalizeCanonicalRole(role);
+  if (canonicalRole === "admin") return "Admin";
   return role
     .split(/[-_\s]+/)
     .filter(Boolean)
@@ -938,32 +1055,6 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
         .filter((entry): entry is DenOrgInvitation => entry !== null)
     : [];
 
-  const roles = Array.isArray(payload.roles)
-    ? payload.roles
-        .map((entry) => {
-          if (!isRecord(entry)) {
-            return null;
-          }
-
-          const id = asString(entry.id);
-          const role = asString(entry.role);
-          if (!id || !role) {
-            return null;
-          }
-
-          return {
-            id,
-            role,
-            permission: parsePermissionRecord(entry.permission),
-            builtIn: asBoolean(entry.builtIn),
-            protected: asBoolean(entry.protected),
-            createdAt: asIsoString(entry.createdAt),
-            updatedAt: asIsoString(entry.updatedAt),
-          } satisfies DenOrgRole;
-        })
-        .filter((entry): entry is DenOrgRole => entry !== null)
-    : [];
-
   const teams = Array.isArray(payload.teams)
     ? payload.teams
         .map((entry) => {
@@ -1041,10 +1132,10 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       adminTeams: parseAdminTeams(currentMember.adminTeams),
       createdAt: asIsoString(currentMember.createdAt),
       isOwner: asBoolean(currentMember.isOwner),
+      permissions: parsePermissionKeys(currentMember.permissions),
     },
     members,
     invitations,
-    roles,
     teams,
     currentMemberTeams,
     entitlements: parseOrgEntitlements(payload.entitlements),

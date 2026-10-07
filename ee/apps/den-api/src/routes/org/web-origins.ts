@@ -12,7 +12,7 @@ import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { auditChangeCapture } from "../../audit/request-capture.js"
-import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
+import { jsonValidator, orgPermissionRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import {
   approveOrganizationWebOrigin,
@@ -21,7 +21,7 @@ import {
   type OrganizationWebOriginRecord,
 } from "../../organization-web-origins.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdminRole, ensureOrganizationSuperAdmin, idParamSchema, orgAccessFailureStatus } from "./shared.js"
+import { idParamSchema } from "./shared.js"
 
 const INVALID_WEB_ORIGIN_MESSAGE = "Enter an exact HTTPS origin like https://workspace.example.com, with an optional port and no path."
 const WEB_ORIGIN_ALREADY_APPROVED_MESSAGE = "This origin is already approved."
@@ -100,15 +100,12 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
       responses: {
         200: jsonResponse("Approved web origins returned successfully.", organizationWebOriginListDocumentSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can view approved web origins.", forbiddenSchema),
+        403: jsonResponse("The caller needs the View approved web origins permission.", forbiddenSchema),
         404: jsonResponse("The organization was not found.", organizationNotFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("web_origins.view"),
     async (c) => {
-      const permission = ensureOrganizationAdminRole(c, "Only workspace owners and admins can view approved web origins.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const payload = c.get("organizationContext")
       const origins = await listOrganizationWebOrigins(payload.organization.id)
       return c.json({
@@ -128,17 +125,14 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
         201: jsonResponse("The web origin was approved.", organizationWebOriginDocumentSchema),
         400: jsonResponse("The origin was not an exact HTTPS origin.", approveWebOriginBadRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins with a recent sign-in can approve web origins.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage approved web origins permission and a recent sign-in.", forbiddenSchema),
         404: jsonResponse("The organization was not found.", organizationNotFoundSchema),
         409: jsonResponse("The origin is already approved or the organization reached its approved origin limit.", approveWebOriginConflictSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("web_origins.manage"),
     jsonValidator(organizationWebOriginInputDocumentSchema),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can approve web origins.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const payload = c.get("organizationContext")
       const origin = normalizeExactHttpsOrigin(c.req.valid("json").origin)
       if (!origin) {
@@ -177,16 +171,13 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
         204: emptyResponse("The approved web origin was removed."),
         400: jsonResponse("The web origin id was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins with a recent sign-in can remove approved web origins.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage approved web origins permission and a recent sign-in.", forbiddenSchema),
         404: jsonResponse("The approved web origin or organization was not found.", removeWebOriginNotFoundSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("web_origins.manage"),
     paramValidator(webOriginParamsSchema),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can remove approved web origins.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const payload = c.get("organizationContext")
       const capture = auditChangeCapture(c)
       const removed = await removeOrganizationWebOrigin({

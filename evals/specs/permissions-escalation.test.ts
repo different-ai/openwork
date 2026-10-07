@@ -1,0 +1,375 @@
+import { expect } from "vitest";
+import { spec } from "@openwork/testkit";
+import type { DenSession } from "@openwork/behaviors";
+import { permissionsWorld, storedDefaultSets, type PermissionsCall, type PermissionsWorld } from "../worlds/permissions.ts";
+
+// Permissions (enterprise RBAC) guard rails at the Den API boundary: nobody can
+// use Permissions to give themselves or anyone else more than they hold.
+// Feature off, the Permissions endpoints do not exist (writes included) and
+// admins keep assigning roles as before. Feature on, only the owner and admins
+// edit Admin permissions, an admin can restore an Admin permission they
+// removed, and making someone an admin needs every Admin permission. Booted
+// from the real migration chain; same world as permissions-api.test.ts.
+const test = spec.world(permissionsWorld, {
+  timeout: 600_000,
+  resources: { surfaces: [], services: ["den"] },
+});
+
+type Row = Record<string, unknown>;
+
+function isRecord(value: unknown): value is Row {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function rows(value: unknown): Row[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function field(value: unknown, key: string): unknown {
+  return isRecord(value) ? value[key] : undefined;
+}
+
+function summary(result: PermissionsCall): string {
+  return `${result.status} ${result.text.slice(0, 220)}`;
+}
+
+function bytes(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function said(result: PermissionsCall): string {
+  const required = field(result.body, "requiredPermission");
+  return `${result.status} ${String(field(result.body, "error"))}${typeof required === "string" ? ` requiredPermission ${required}` : ""}`;
+}
+
+async function memberContext(world: PermissionsWorld, session: DenSession): Promise<{ role: string; permissions: string[] }> {
+  const context = await world.request(session, "GET", "/v1/org");
+  expect(context.status, summary(context)).toBe(200);
+  const current = field(context.body, "currentMember");
+  return { role: String(field(current, "directRole")), permissions: strings(field(current, "permissions")) };
+}
+
+/** A member's stored role, as the owner's roster shows it (a demoted member's own sessions are signed out). */
+async function rosterRole(world: PermissionsWorld, memberId: string): Promise<string> {
+  const roster = await world.request(world.owner, "GET", "/v1/org");
+  expect(roster.status, summary(roster)).toBe(200);
+  return String(rows(field(roster.body, "members")).find((member) => member.id === memberId)?.role);
+}
+
+/** Catalog keys whose shipped defaults include `set`, in the order the API compares them. */
+async function catalogDefaults(world: PermissionsWorld, set: "member" | "admin"): Promise<string[]> {
+  const catalog = await world.request(world.maya, "GET", "/v1/permissions/catalog");
+  expect(catalog.status, summary(catalog)).toBe(200);
+  return rows(field(catalog.body, "permissions"))
+    .filter((entry) => strings(entry.defaultOn).includes(set))
+    .map((entry) => String(entry.key))
+    .sort(bytes);
+}
+
+async function adminSetId(world: PermissionsWorld): Promise<string> {
+  const sets = await world.request(world.owner, "GET", "/v1/permissions/sets");
+  expect(sets.status, summary(sets)).toBe(200);
+  return String(rows(field(sets.body, "sets")).find((set) => set.kind === "admin_default")?.id ?? "");
+}
+
+async function memberSetId(world: PermissionsWorld): Promise<string> {
+  const sets = await world.request(world.owner, "GET", "/v1/permissions/sets");
+  expect(sets.status, summary(sets)).toBe(200);
+  return String(rows(field(sets.body, "sets")).find((set) => set.kind === "member_default")?.id ?? "");
+}
+
+/** The owner gives the Permission editors team (Tess) exactly these permissions. */
+async function grantEditors(world: PermissionsWorld, keys: string[]): Promise<void> {
+  const created = await world.request(world.owner, "POST", "/v1/permissions/sets", {
+    teamId: world.teams.editors,
+    permissions: keys.map((key) => ({ key, status: "allow" })),
+  });
+  expect(created.status, summary(created)).toBe(201);
+}
+
+test("a platform admin turns Permissions on and the defaults exist at once; turned off, every Permissions endpoint but the catalog is gone, writes included", { timeout: 600_000 }, async ({ world, step, evidence }) => {
+  let adminDefaults: string[] = [];
+  let memberDefaults: string[] = [];
+  let storedAdminSetId = "";
+  let storedRowCount = 0;
+
+  await step("before: with Permissions off, a member's or admin's write to Permissions is answered as if the feature were absent, not refused", async () => {
+    adminDefaults = await catalogDefaults(world, "admin");
+    memberDefaults = await catalogDefaults(world, "member");
+    const fakeSet = "/v1/permissions/sets/permissionSet_00000000000000000000000000/permissions";
+    const maya = await world.request(world.maya, "PUT", fakeSet, { changes: [{ key: "teams.view", status: "allow" }] });
+    const adam = await world.request(world.adam, "PUT", fakeSet, { changes: [{ key: "teams.view", status: "allow" }] });
+    const create = await world.request(world.owner, "POST", "/v1/permissions/sets", { teamId: world.teams.support, permissions: [] });
+    const stored = await storedDefaultSets(world);
+    const ok = [maya, adam, create].every((call) => call.status === 404 && field(call.body, "error") === "feature_disabled")
+      && stored !== null && stored.length === 0;
+    evidence.recordAssertionEvidence(
+      "Permissions writes answer 404 feature_disabled before any permission check while the feature is off",
+      `member PUT …/permissions → ${said(maya)}; admin PUT …/permissions → ${said(adam)}; owner POST /v1/permissions/sets → ${said(create)}; default sets stored: ${stored === null ? "no database" : stored.length}`,
+      ok,
+    );
+    expect(maya.status, summary(maya)).toBe(404);
+    expect(maya.body).toMatchObject({ error: "feature_disabled", feature: "permissions" });
+    expect(adam.status, summary(adam)).toBe(404);
+    expect(adam.body).toMatchObject({ error: "feature_disabled" });
+    expect(create.status, summary(create)).toBe(404);
+    expect(create.body).toMatchObject({ error: "feature_disabled" });
+    expect(stored).toEqual([]);
+  });
+
+  await step("when a platform admin turns Permissions on, Member and Admin permissions are stored by the toggle itself", async () => {
+    const enabled = await world.setFeature("permissions", true);
+    expect(enabled.status, summary(enabled)).toBe(200);
+    const stored = (await storedDefaultSets(world)) ?? [];
+    const member = stored.find((set) => set.defaultKey === "member");
+    const admin = stored.find((set) => set.defaultKey === "admin");
+    storedAdminSetId = admin?.id ?? "";
+    storedRowCount = stored.reduce((total, set) => total + Object.values(set.rowsBySource).reduce((sum, count) => sum + count, 0), 0);
+    const ok = stored.length === 2 && member !== undefined && admin !== undefined
+      && JSON.stringify(admin.allowedKeys) === JSON.stringify([...adminDefaults].sort())
+      && JSON.stringify(member.allowedKeys) === JSON.stringify([...memberDefaults].sort())
+      && (admin.rowsBySource.user ?? 0) === 0;
+    evidence.recordAssertionEvidence(
+      "PUT /v1/admin/organizations/:id/capabilities { permissions: true } seeds both default sets before any Permissions request",
+      `toggle → ${enabled.status}; read straight from the database: ${stored.map((set) => `${set.defaultKey} set allows ${set.allowedKeys.length} (rows ${JSON.stringify(set.rowsBySource)})`).join("; ")}; catalog defaults: admin ${adminDefaults.length}, member ${memberDefaults.length}`,
+      ok,
+    );
+    expect(stored.map((set) => set.defaultKey)).toEqual(["member", "admin"]);
+    expect(admin?.allowedKeys).toEqual([...adminDefaults].sort());
+    expect(member?.allowedKeys).toEqual([...memberDefaults].sort());
+    expect(admin?.rowsBySource.user ?? 0).toBe(0);
+  });
+
+  await step("after: turned off again, even the owner's edit to the real Admin permissions is answered as absent, and nothing stored is lost", async () => {
+    const disabled = await world.setFeature("permissions", false);
+    expect(disabled.status, summary(disabled)).toBe(200);
+    const path = `/v1/permissions/sets/${storedAdminSetId}/permissions`;
+    const change = { changes: [{ key: "billing.manage", status: "deny" }] };
+    const owner = await world.request(world.owner, "PUT", path, change);
+    const adam = await world.request(world.adam, "PUT", path, change);
+    const maya = await world.request(world.maya, "PUT", path, change);
+    const history = await world.request(world.owner, "GET", `/v1/permissions/sets/${storedAdminSetId}/history`);
+    const catalog = await world.request(world.maya, "GET", "/v1/permissions/catalog");
+    const stored = (await storedDefaultSets(world)) ?? [];
+    const rowsNow = stored.reduce((total, set) => total + Object.values(set.rowsBySource).reduce((sum, count) => sum + count, 0), 0);
+    const ok = [owner, adam, maya, history].every((call) => call.status === 404 && field(call.body, "error") === "feature_disabled")
+      && catalog.status === 200 && stored.length === 2 && rowsNow === storedRowCount;
+    evidence.recordAssertionEvidence(
+      "With the feature off, no caller reaches a permission check on Permissions endpoints",
+      `owner PUT Admin permissions → ${said(owner)}; admin → ${said(adam)}; member → ${said(maya)}; owner GET history → ${said(history)}; catalog → ${catalog.status}; stored default sets ${stored.length}, rows ${rowsNow} (was ${storedRowCount})`,
+      ok,
+    );
+    for (const call of [owner, adam, maya, history]) {
+      expect(call.status, summary(call)).toBe(404);
+      expect(call.body).toMatchObject({ error: "feature_disabled" });
+    }
+    expect(catalog.status, summary(catalog)).toBe(200);
+    expect(stored).toHaveLength(2);
+    expect(rowsNow).toBe(storedRowCount);
+  });
+});
+
+test("with Permissions on, only the owner and admins change Admin permissions, and an admin can restore one they removed", { timeout: 600_000 }, async ({ world, step, evidence }) => {
+  let adminSet = "";
+  let memberSet = "";
+
+  await step("given Permissions is on and Tess may manage permissions through her team, without being an admin", async () => {
+    const enabled = await world.setFeature("permissions", true);
+    expect(enabled.status, summary(enabled)).toBe(200);
+    adminSet = await adminSetId(world);
+    memberSet = await memberSetId(world);
+    await grantEditors(world, ["permissions.view", "permissions.manage", "teams.view"]);
+    const tess = await memberContext(world, world.tess);
+    const ok = tess.role === "member" && tess.permissions.includes("permissions.manage") && adminSet !== "" && memberSet !== "";
+    evidence.recordAssertionEvidence(
+      "Tess holds Manage permissions from Permission editors Permissions",
+      `Tess's role ${tess.role}; permissions ${JSON.stringify(tess.permissions)}`,
+      ok,
+    );
+    expect(tess.role).toBe("member");
+    expect(tess.permissions).toEqual(expect.arrayContaining(["permissions.manage", "permissions.view", "teams.view"]));
+  });
+
+  await step("Tess cannot turn anything in Admin permissions off or on, even a permission she holds", async () => {
+    const deny = await world.request(world.tess, "PUT", `/v1/permissions/sets/${adminSet}/permissions`, { changes: [{ key: "billing.manage", status: "deny" }] });
+    const allowHeld = await world.request(world.tess, "PUT", `/v1/permissions/sets/${adminSet}/permissions`, { changes: [{ key: "teams.view", status: "allow" }] });
+    const ok = deny.status === 403 && field(deny.body, "error") === "admin_permissions_require_admin"
+      && allowHeld.status === 403 && field(allowHeld.body, "error") === "admin_permissions_require_admin";
+    evidence.recordAssertionEvidence(
+      "Admin permissions edits by a non-admin are refused whatever the change",
+      `deny billing.manage → ${said(deny)}: “${String(field(deny.body, "message"))}”; allow teams.view (which she holds) → ${said(allowHeld)}`,
+      ok,
+    );
+    expect(deny.status, summary(deny)).toBe(403);
+    expect(deny.body).toMatchObject({ error: "admin_permissions_require_admin", keys: ["billing.manage"] });
+    expect(allowHeld.status, summary(allowHeld)).toBe(403);
+    expect(allowHeld.body).toMatchObject({ error: "admin_permissions_require_admin" });
+  });
+
+  await step("Tess can still edit Member permissions with a permission she holds", async () => {
+    const allowed = await world.request(world.tess, "PUT", `/v1/permissions/sets/${memberSet}/permissions`, { changes: [{ key: "teams.view", status: "allow" }] });
+    const nora = await memberContext(world, world.nora);
+    const ok = allowed.status === 200 && nora.permissions.includes("teams.view");
+    evidence.recordAssertionEvidence(
+      "The refusal is about Admin permissions, not about Tess's right to manage permissions",
+      `Tess allows teams.view in Member permissions → ${allowed.status}; Nora (no team) now holds ${JSON.stringify(nora.permissions)}`,
+      ok,
+    );
+    expect(allowed.status, summary(allowed)).toBe(200);
+    expect(nora.permissions).toEqual(["teams.view"]);
+  });
+
+  await step("Adam, an admin, removes “Manage billing” from Admin permissions and so loses it himself", async () => {
+    const denied = await world.request(world.adam, "PUT", `/v1/permissions/sets/${adminSet}/permissions`, { changes: [{ key: "billing.manage", status: "deny" }] });
+    const adam = await memberContext(world, world.adam);
+    const ok = denied.status === 200 && !adam.permissions.includes("billing.manage");
+    evidence.recordAssertionEvidence(
+      "An admin edits Admin permissions",
+      `Adam denies billing.manage → ${denied.status}; Adam holds billing.manage: ${adam.permissions.includes("billing.manage")}`,
+      ok,
+    );
+    expect(denied.status, summary(denied)).toBe(200);
+    expect(adam.permissions).not.toContain("billing.manage");
+  });
+
+  await step("without it, Adam cannot hand “Manage billing” to every member", async () => {
+    const escalate = await world.request(world.adam, "PUT", `/v1/permissions/sets/${memberSet}/permissions`, { changes: [{ key: "billing.manage", status: "allow" }] });
+    const ok = escalate.status === 403 && field(escalate.body, "error") === "permission_not_held" && strings(field(escalate.body, "keys")).includes("billing.manage");
+    evidence.recordAssertionEvidence(
+      "Granting a permission you lack stays refused outside its shipped default set",
+      `Adam allows billing.manage in Member permissions → ${said(escalate)} keys ${JSON.stringify(field(escalate.body, "keys"))}`,
+      ok,
+    );
+    expect(escalate.status, summary(escalate)).toBe(403);
+    expect(escalate.body).toMatchObject({ error: "permission_not_held", keys: ["billing.manage"] });
+  });
+
+  await step("after: Adam turns “Manage billing” back on in Admin permissions, where it is on by default, and holds it again", async () => {
+    const restored = await world.request(world.adam, "PUT", `/v1/permissions/sets/${adminSet}/permissions`, { changes: [{ key: "billing.manage", status: "allow" }] });
+    const adam = await memberContext(world, world.adam);
+    const history = await world.request(world.owner, "GET", `/v1/permissions/sets/${adminSet}/history`);
+    const recent = rows(field(history.body, "items")).filter((item) => item.source === "user")
+      .map((item) => `${String(item.status)} ${String(item.key)} by ${String(field(item.changedBy, "name"))}`);
+    const ok = restored.status === 200 && adam.permissions.includes("billing.manage")
+      && recent.length === 2 && recent[0] === "allow billing.manage by Adam Admin" && recent[1] === "deny billing.manage by Adam Admin";
+    evidence.recordAssertionEvidence(
+      "Restoring a shipped Admin default does not require holding it",
+      `Adam allows billing.manage in Admin permissions → ${restored.status}; Adam holds it: ${adam.permissions.includes("billing.manage")}; history ${recent.join(" ← ")}`,
+      ok,
+    );
+    expect(restored.status, summary(restored)).toBe(200);
+    expect(adam.permissions).toContain("billing.manage");
+    expect(recent).toEqual(["allow billing.manage by Adam Admin", "deny billing.manage by Adam Admin"]);
+  });
+});
+
+test("with Permissions on, a member who may change roles through a team cannot make anyone an admin or change their own role; the owner can", { timeout: 600_000 }, async ({ world, step, evidence }) => {
+  let adminDefaults: string[] = [];
+  let firstMissing = "";
+
+  await step("before: with Permissions off, Adam, an admin, makes Nora an admin and back, as admins always could", async () => {
+    const promote = await world.request(world.adam, "POST", `/v1/members/${world.ids.nora}/role`, { role: "admin" });
+    const promoted = await memberContext(world, world.nora);
+    const demote = await world.request(world.adam, "POST", `/v1/members/${world.ids.nora}/role`, { role: "member" });
+    const demoted = { role: await rosterRole(world, world.ids.nora) };
+    const ok = promote.status === 200 && promoted.role === "admin" && demote.status === 200 && demoted.role === "member";
+    evidence.recordAssertionEvidence(
+      "Role assignment is unchanged while the feature is off",
+      `Adam POST role admin → ${promote.status} (Nora is ${promoted.role}); POST role member → ${demote.status} (Nora is ${demoted.role})`,
+      ok,
+    );
+    expect(promote.status, summary(promote)).toBe(200);
+    expect(promoted.role).toBe("admin");
+    expect(demote.status, summary(demote)).toBe(200);
+    expect(demoted.role).toBe("member");
+  });
+
+  await step("given Permissions is on and Tess may change roles and invite people through her team, without being an admin", async () => {
+    adminDefaults = await catalogDefaults(world, "admin");
+    const enabled = await world.setFeature("permissions", true);
+    expect(enabled.status, summary(enabled)).toBe(200);
+    await grantEditors(world, ["members.update", "invitations.manage"]);
+    const tess = await memberContext(world, world.tess);
+    firstMissing = adminDefaults.find((key) => !tess.permissions.includes(key)) ?? "";
+    const ok = tess.role === "member" && JSON.stringify([...tess.permissions].sort()) === JSON.stringify(["invitations.manage", "members.update"]) && firstMissing !== "";
+    evidence.recordAssertionEvidence(
+      "Tess holds Change member roles and Invite people, and lacks most Admin permissions",
+      `Tess's role ${tess.role}; permissions ${JSON.stringify(tess.permissions)}; Admin permissions allow ${adminDefaults.length}, first she lacks: ${firstMissing}`,
+      ok,
+    );
+    expect(tess.role).toBe("member");
+    expect([...tess.permissions].sort()).toEqual(["invitations.manage", "members.update"]);
+  });
+
+  await step("Tess cannot make Maya an admin, or invite someone as an admin, and is told the first Admin permission she lacks", async () => {
+    const promote = await world.request(world.tess, "POST", `/v1/members/${world.ids.maya}/role`, { role: "admin" });
+    const invite = await world.request(world.tess, "POST", "/v1/invitations", { email: `permissions-invitee+${Date.now().toString(36)}@example.test`, role: "admin" });
+    const maya = { role: await rosterRole(world, world.ids.maya) };
+    const ok = promote.status === 403 && field(promote.body, "requiredPermission") === firstMissing
+      && invite.status === 403 && field(invite.body, "requiredPermission") === firstMissing && maya.role === "member";
+    evidence.recordAssertionEvidence(
+      "Making someone an admin needs every Admin permission",
+      `POST /v1/members/:maya/role admin → ${said(promote)}: “${String(field(promote.body, "message"))}”; POST /v1/invitations role admin → ${said(invite)}; Maya is still ${maya.role}`,
+      ok,
+    );
+    expect(promote.status, summary(promote)).toBe(403);
+    expect(promote.body).toMatchObject({ error: "forbidden", requiredPermission: firstMissing });
+    expect(invite.status, summary(invite)).toBe(403);
+    expect(invite.body).toMatchObject({ error: "forbidden", requiredPermission: firstMissing });
+    expect(maya.role).toBe("member");
+  });
+
+  await step("Tess cannot make herself an admin, or demote Adam", async () => {
+    const self = await world.request(world.tess, "POST", `/v1/members/${world.ids.tess}/role`, { role: "admin" });
+    const demote = await world.request(world.tess, "POST", `/v1/members/${world.ids.adam}/role`, { role: "member" });
+    const tess = { role: await rosterRole(world, world.ids.tess) };
+    const adam = { role: await rosterRole(world, world.ids.adam) };
+    const ok = self.status === 403 && field(self.body, "error") === "forbidden"
+      && demote.status === 403 && field(demote.body, "error") === "forbidden"
+      && tess.role === "member" && adam.role === "admin";
+    evidence.recordAssertionEvidence(
+      "Own-role changes and demoting an admin are refused to a non-admin",
+      `Tess → admin herself: ${said(self)} “${String(field(self.body, "message"))}”; Tess demotes Adam: ${said(demote)} “${String(field(demote.body, "message"))}”; Tess is ${tess.role}, Adam is ${adam.role}`,
+      ok,
+    );
+    expect(self.status, summary(self)).toBe(403);
+    expect(self.body).toMatchObject({ error: "forbidden", message: "You can't change your own role. Ask the owner or another admin." });
+    expect(demote.status, summary(demote)).toBe(403);
+    expect(demote.body).toMatchObject({ error: "forbidden", message: "Only the owner or an admin can change an admin's role." });
+    expect(tess.role).toBe("member");
+    expect(adam.role).toBe("admin");
+  });
+
+  await step("even Adam, an admin, cannot change his own role", async () => {
+    const self = await world.request(world.adam, "POST", `/v1/members/${world.ids.adam}/role`, { role: "member" });
+    const adam = { role: await rosterRole(world, world.ids.adam) };
+    const ok = self.status === 403 && field(self.body, "error") === "forbidden" && adam.role === "admin";
+    evidence.recordAssertionEvidence(
+      "Nobody but the owner changes their own role",
+      `Adam → member himself: ${said(self)} “${String(field(self.body, "message"))}”; Adam is still ${adam.role}`,
+      ok,
+    );
+    expect(self.status, summary(self)).toBe(403);
+    expect(self.body).toMatchObject({ error: "forbidden", message: "You can't change your own role. Ask the owner or another admin." });
+    expect(adam.role).toBe("admin");
+  });
+
+  await step("after: the owner makes Tess an admin, and she holds every Admin permission", async () => {
+    const promote = await world.request(world.owner, "POST", `/v1/members/${world.ids.tess}/role`, { role: "admin" });
+    const tess = await memberContext(world, world.tess);
+    const missing = adminDefaults.filter((key) => !tess.permissions.includes(key));
+    const ok = promote.status === 200 && tess.role === "admin" && missing.length === 0;
+    evidence.recordAssertionEvidence(
+      "The owner assigns roles without these limits",
+      `owner POST /v1/members/:tess/role admin → ${promote.status}; Tess is ${tess.role} with ${tess.permissions.length} permissions; Admin permissions she lacks: ${JSON.stringify(missing)}`,
+      ok,
+    );
+    expect(promote.status, summary(promote)).toBe(200);
+    expect(tess.role).toBe("admin");
+    expect(missing).toEqual([]);
+  });
+});

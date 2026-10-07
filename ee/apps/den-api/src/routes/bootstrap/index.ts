@@ -45,7 +45,7 @@ import {
 } from "../../workspace-preclaim.js"
 import { DEFAULT_ORGANIZATION_LIMITS } from "../../organization-limits.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { seedDefaultOrganizationRoles, setSessionActiveOrganization } from "../../orgs.js"
+import { setSessionActiveOrganization } from "../../orgs.js"
 import { clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES } from "../org/plugin-system/projection-text.js"
 import type { AuthContextVariables } from "../../session.js"
 import {
@@ -588,7 +588,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       })
 
       await ensureDefaultDesktopPolicyForOrganization({ organizationId: result.organization.id, createdByOrgMemberId: result.setupMemberId })
-      await seedDefaultOrganizationRoles(result.organization.id)
 
       const assertion = await signPreclaimAssertion({
         bootstrapId: result.setup.id,

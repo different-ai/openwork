@@ -5,7 +5,7 @@ const SAFE_INCLUDED_TAGS = new Set([
   "Invitations",
   "API Keys",
   "Members",
-  "Roles",
+  "Permissions",
   "Teams",
   "Templates",
   "LLM Providers",

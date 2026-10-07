@@ -47,7 +47,7 @@ import {
   resolvePluginArchResourceRole,
   type PluginArchActorContext,
 } from "./routes/org/plugin-system/access.js"
-import { memberHasRole } from "./routes/org/shared.js"
+import { resolvePermissionsForMember } from "./permissions/resolve.js"
 import { assertWorkflowSourceSafe, getWorkflowAuthoringSource } from "./workflow-authoring-receipts.js"
 
 const DEFAULT_WORKFLOWS_PLUGIN_NAME = "My Workflows"
@@ -595,7 +595,9 @@ export async function validateWorkflowAutomationAction(input: {
   const configObjectVersionId = normalizeDenTypeId("configObjectVersion", input.action.script.configObjectVersionId)
   const member = await resolveOrganizationMemberAuthority({ organizationId, memberId: ownerMemberId })
   if (!member) throw new Error("automation_owner_inactive")
-  if (!memberHasRole(member.role, "admin")) {
+  // The owner's effective permissions (direct role, Admin teams, permission sets).
+  const ownerPermissions = await resolvePermissionsForMember({ organizationId, memberId: member.id })
+  if (!ownerPermissions.has("sharing.manage_all")) {
     const [teams, configObjectGrants, pluginGrants] = await Promise.all([
       db.select({ id: TeamMemberTable.teamId }).from(TeamMemberTable)
         .where(eq(TeamMemberTable.orgMembershipId, ownerMemberId)),

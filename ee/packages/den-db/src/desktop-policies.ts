@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, or } from "./drizzle"
 import { DesktopPolicyMemberTable, DesktopPolicyTable, MemberTable, TeamMemberTable, TeamTable } from "./schema"
 import type { createDenDb } from "./client"
+import { listAuthoritativeTeamMemberships } from "./permissions"
 import {
   allDesktopPolicies, calculateEffectiveDesktopPolicy, matchingDesktopPolicyAssignmentRoles,
   normalizeDesktopPolicyDocument, resolveDesktopExecutionPolicy, selectEffectiveOnboardingPromptConfig,
@@ -13,11 +14,10 @@ type OrgId = typeof DesktopPolicyTable.$inferSelect.organizationId
 type OrgMemberId = typeof DesktopPolicyTable.$inferSelect.createdByOrgMemberId
 type EffectiveDesktopPolicyConfig = Required<DesktopPolicyValue> & Pick<DesktopConfig, "onboardingPrompts" | "onboardingPromptDescriptions" | "execution">
 
-async function listTeamIdsForOrgMember(database: Database, input: { organizationId: OrgId; orgMemberId: OrgMemberId }) {
-  const rows = await database.select({ id: TeamTable.id }).from(TeamMemberTable)
+async function listTeamsForOrgMember(database: Database, input: { organizationId: OrgId; orgMemberId: OrgMemberId }) {
+  return database.select({ id: TeamTable.id }).from(TeamMemberTable)
     .innerJoin(TeamTable, eq(TeamMemberTable.teamId, TeamTable.id))
     .where(and(eq(TeamTable.organizationId, input.organizationId), eq(TeamMemberTable.orgMembershipId, input.orgMemberId)))
-  return rows.map((row) => row.id)
 }
 
 /** Den and Gateway resolve the same current defaults, roles, teams and member assignments. */
@@ -56,8 +56,18 @@ export async function readDesktopPolicyForOrgMember(database: Database, input: {
     ))
     .limit(1)
   const memberRole = memberRows[0]?.role ?? null
-  const teamIds = await listTeamIdsForOrgMember(database, input)
-  const matchingRoles = memberRole ? matchingDesktopPolicyAssignmentRoles(memberRole) : []
+  const teams = await listTeamsForOrgMember(database, input)
+  const adminTeams = await listAuthoritativeTeamMemberships(database, {
+    organizationId: input.organizationId,
+    memberId: input.orgMemberId,
+    adminTeamsOnly: true,
+  })
+  const teamIds = teams.map((team) => team.id)
+  // Admin assignments follow effective admin status: a direct admin role or
+  // an Admin team, with the same SCIM projection rule as den-api's authority.
+  const matchingRoles = memberRole
+    ? matchingDesktopPolicyAssignmentRoles(memberRole, { adminViaTeam: adminTeams.length > 0 })
+    : []
   const assignedWhere = teamIds.length > 0
     ? or(
         eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId),

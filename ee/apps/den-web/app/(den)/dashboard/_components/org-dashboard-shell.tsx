@@ -421,7 +421,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
 
   const pageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);

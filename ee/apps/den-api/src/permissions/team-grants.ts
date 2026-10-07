@@ -1,0 +1,164 @@
+import type { PermissionKey } from "@openwork/types/den/permissions"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import {
+  allowedKeys,
+  DefaultPermissionSetsMissingError,
+  getDefaultPermissionSets,
+  listActiveTeamPermissionSetsForTeams,
+  listAuthoritativeTeamMemberships,
+  readPermissionSetStates,
+  type PermissionDatabase,
+} from "@openwork-ee/den-db/permissions"
+import { MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError, type AgentErrorEnvelope } from "../agent-error-envelope.js"
+import { db } from "../db.js"
+import { appLogger } from "../observability/logger.js"
+import { ORGANIZATION_ADMIN_ROLE, isEffectiveOrganizationAdmin, organizationRoleValueIncludes } from "../organization-role-hierarchy.js"
+import { permissionDeniedResponse, type PermissionDeniedResponse } from "./check.js"
+import type { MemberPermissions } from "./effective.js"
+import {
+  decideRoleAssignment,
+  firstMissingPermission,
+  roleAssignmentNeedsAdminDefaultKeys,
+  type RoleAssignmentDenial,
+  type RoleAssignmentTarget,
+} from "./role-assignment.js"
+
+export { firstMissingPermission, type RoleAssignmentDenial, type RoleAssignmentTarget } from "./role-assignment.js"
+
+/**
+ * What joining a team grants (docs/permissions/overview.md, section 9.3):
+ * the keys its active team permission sets allow, plus the Admin default keys
+ * when the team is an Admin team. Only meaningful with the Permissions
+ * feature on; with it off team sets do not apply and Admin teams are gated by
+ * `teams.manage_admin` alone.
+ */
+
+type OrganizationId = typeof TeamTable.$inferSelect.organizationId
+type TeamId = typeof TeamTable.$inferSelect.id
+type MemberId = typeof MemberTable.$inferSelect.id
+
+const logger = appLogger.child({ component: "permissions" })
+
+export const TEAM_GRANTS_FORBIDDEN_MESSAGE = "You can't add people to this team because it grants permissions you don't have."
+export const ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE = "You can't make this an Admin team because Admin permissions include permissions you don't have."
+
+/**
+ * Keys the organization's Admin default set allows. A missing set throws
+ * DefaultPermissionSetsMissingError: callers run with the feature on, where the
+ * set is created before any check, so a missing set is a data problem and these
+ * grant checks fail closed rather than assuming the code defaults.
+ */
+export async function adminDefaultPermissionKeys(
+  organizationId: OrganizationId,
+  database: PermissionDatabase = db,
+): Promise<Set<PermissionKey>> {
+  const sets = await getDefaultPermissionSets(database, organizationId)
+  if (!sets.admin) {
+    logger.error("admin default permission set missing", { organization_id: organizationId })
+    throw new DefaultPermissionSetsMissingError(organizationId)
+  }
+  const states = await readPermissionSetStates(database, [sets.admin.id])
+  return allowedKeys(states.get(sets.admin.id))
+}
+
+/**
+ * Every key a member gains by joining the team. Pass `grantsOrganizationAdmin`
+ * when the request is changing it; otherwise the stored value is read.
+ */
+export async function teamGrantedPermissionKeys(input: {
+  organizationId: OrganizationId
+  teamId: TeamId
+  grantsOrganizationAdmin?: boolean
+  database?: PermissionDatabase
+}): Promise<Set<PermissionKey>> {
+  const database = input.database ?? db
+  let grantsOrganizationAdmin = input.grantsOrganizationAdmin
+  if (grantsOrganizationAdmin === undefined) {
+    const [team] = await database.select({ grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin })
+      .from(TeamTable)
+      .where(and(eq(TeamTable.id, input.teamId), eq(TeamTable.organizationId, input.organizationId)))
+      .limit(1)
+    grantsOrganizationAdmin = team?.grantsOrganizationAdmin ?? false
+  }
+
+  const teamSets = await listActiveTeamPermissionSetsForTeams(database, input.organizationId, [input.teamId])
+  const keys = new Set<PermissionKey>()
+  if (teamSets.length > 0) {
+    const states = await readPermissionSetStates(database, teamSets.map((teamSet) => teamSet.permissionSetId))
+    for (const teamSet of teamSets) {
+      for (const key of allowedKeys(states.get(teamSet.permissionSetId))) keys.add(key)
+    }
+  }
+  if (grantsOrganizationAdmin) {
+    for (const key of await adminDefaultPermissionKeys(input.organizationId, database)) keys.add(key)
+  }
+  return keys
+}
+
+/** 403 body for a team grant the caller does not fully hold. */
+export function teamGrantsForbiddenResponse(key: PermissionKey, message = TEAM_GRANTS_FORBIDDEN_MESSAGE): PermissionDeniedResponse {
+  return { ...permissionDeniedResponse(key), message }
+}
+
+/**
+ * The role-change target: whether its stored role names admin and whether it
+ * is an effective admin (directly or through an Admin team). Null when the
+ * member is not active in the organization.
+ */
+export async function roleAssignmentTarget(
+  organizationId: OrganizationId,
+  memberId: MemberId,
+  database: PermissionDatabase = db,
+): Promise<RoleAssignmentTarget | null> {
+  const [member] = await database.select({ role: MemberTable.role })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
+    .limit(1)
+  if (!member) return null
+  // Same authority filter as Admin-team admin status everywhere else (orphaned SCIM projections don't count).
+  const adminTeams = await listAuthoritativeTeamMemberships(database, { organizationId, memberId, adminTeamsOnly: true })
+  return {
+    memberId,
+    isDirectAdmin: organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE),
+    isEffectiveAdmin: isEffectiveOrganizationAdmin({ directRole: member.role, adminTeamIds: adminTeams.map((team) => team.teamId) }),
+  }
+}
+
+/**
+ * Who may assign a role (src/permissions/role-assignment.ts): reads the Admin
+ * default set only when the decision needs it. `target` is null for a new
+ * invitation. Null means allowed.
+ */
+export async function roleAssignmentDenial(input: {
+  organizationId: OrganizationId
+  caller: MemberPermissions
+  callerMemberId: string
+  target: RoleAssignmentTarget | null
+  nextRole: string
+  database?: PermissionDatabase
+}): Promise<RoleAssignmentDenial | null> {
+  const decision = {
+    caller: input.caller,
+    callerMemberId: input.callerMemberId,
+    target: input.target,
+    nextIsAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_ADMIN_ROLE),
+  }
+  const adminDefaultKeys = roleAssignmentNeedsAdminDefaultKeys(decision)
+    ? await adminDefaultPermissionKeys(input.organizationId, input.database ?? db)
+    : null
+  return decideRoleAssignment({ ...decision, adminDefaultKeys })
+}
+
+export type RoleAssignmentDeniedResponse = PermissionDeniedResponse | (AgentErrorEnvelope & { error: "forbidden" })
+
+/** 403 body for a denied role assignment: requiredPermission when a missing key is the reason. */
+export function roleAssignmentDeniedResponse(denial: RoleAssignmentDenial): RoleAssignmentDeniedResponse {
+  if (denial.requiredPermission) return { ...permissionDeniedResponse(denial.requiredPermission), message: denial.message }
+  return { error: "forbidden", ...requiresAdminError(denial.message) }
+}
+
+/** Headers for a denied role assignment: the insufficient-scope challenge when a missing permission is the reason. */
+export function roleAssignmentDeniedHeaders(denial: RoleAssignmentDenial): Record<string, string> {
+  return denial.requiredPermission ? { "WWW-Authenticate": INSUFFICIENT_SCOPE_CHALLENGE } : {}
+}

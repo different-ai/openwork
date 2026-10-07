@@ -31,8 +31,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import { isAuthoredMcpAppVersion, redactMcpAppRevision } from "@openwork/types/mcp-app"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { isPluginArchOrgAdmin, PluginArchAuthorizationError, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
-import { memberHasRole } from "../shared.js"
+import { canManageAllPluginArchResources, PluginArchAuthorizationError, pluginArchHasPermission, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -77,6 +76,7 @@ import {
 import { db } from "../../../db.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
+import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -2061,7 +2061,7 @@ export async function listTeamEffectivePluginAccess(input: { context: PluginArch
   if (!teams[0]) {
     throw new PluginArchRouteFailure(404, "team_not_found", "Team not found.")
   }
-  if (!isPluginArchOrgAdmin(input.context) && !input.context.memberTeams.some((team) => team.id === input.teamId)) {
+  if (!input.context.memberTeams.some((team) => team.id === input.teamId) && !(await pluginArchHasPermission(input.context, "teams.view"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization admins and team members can view this team's plugin access.")
   }
 
@@ -2598,7 +2598,7 @@ export async function listMeLibraryConnectionItems(input: {
 export async function createResourceAccessGrant(input: { context: PluginArchActorContext; value: AccessGrantWrite } & ResourceTarget) {
   await ensureResourceInOrganization(input.context, input)
   await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
-  if (input.value.orgWide === true && !isPluginArchOrgAdmin(input.context)) {
+  if (input.value.orgWide === true && !(await pluginArchHasPermission(input.context, "sharing.share_org_wide"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can grant org-wide access.")
   }
   await ensureGrantTargetsInOrganization(input.context, input.value)
@@ -2712,6 +2712,27 @@ function pluginAudienceCondition(organizationId: OrganizationId, memberId?: Memb
   )`
 }
 
+/**
+ * Whether a member (not necessarily the caller) holds `sharing.manage_all`,
+ * i.e. sees every plugin. Joined members resolve fully (Admin teams and team
+ * permission sets included); a member who has not joined yet resolves from
+ * their stored role alone, as before.
+ */
+async function memberManagesAllSharedResources(input: { organizationId: OrganizationId; memberId: MemberId; role: string; joined: boolean }) {
+  if (roleIncludesOwner(input.role)) return true
+  const permissions = input.joined
+    ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.memberId })
+    : await resolveMemberPermissions({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      isOwner: false,
+      directRole: input.role,
+      adminTeamIds: [],
+      teamIds: [],
+    })
+  return permissions.has("sharing.manage_all")
+}
+
 export async function listPlugins(input: { context: PluginArchActorContext; cursor?: KeysetCursor; includeAccess?: boolean; includeTotal?: boolean; includeFacets?: boolean; limit?: number; q?: string; name?: string; status?: PluginRow["status"]; teamId?: TeamId; memberId?: MemberId; ownerId?: MemberId }) {
   const organizationId = input.context.organizationContext.organization.id
   const limit = input.limit ?? 50
@@ -2722,14 +2743,13 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
     eq(TeamTable.id, input.teamId), eq(TeamTable.organizationId, organizationId),
   )).limit(1) : []
   if ((input.memberId && !targetMember) || (input.teamId && !targetTeam)) return { items: [], nextCursor: null, ...(input.includeTotal ? { total: 0 } : {}) }
-  const effectiveMember = input.memberId && targetMember?.userId && !roleIncludesOwner(targetMember.role) && !memberHasRole(targetMember.role, "admin")
-    ? await resolveOrganizationMemberAuthority({ organizationId, memberId: input.memberId })
-    : null
-  const adminAudience = targetMember && (roleIncludesOwner(targetMember.role) || memberHasRole(targetMember.role, "admin") || (effectiveMember ? memberHasRole(effectiveMember.role, "admin") : false))
+  const adminAudience = input.memberId && targetMember
+    ? await memberManagesAllSharedResources({ organizationId, memberId: input.memberId, role: targetMember.role, joined: Boolean(targetMember.userId) })
+    : false
   const audience = adminAudience ? undefined : input.memberId || input.teamId
     ? pluginAudienceCondition(organizationId, input.memberId, input.teamId)
     : undefined
-  const caller = isPluginArchOrgAdmin(input.context)
+  const caller = await canManageAllPluginArchResources(input.context)
     ? undefined
     : pluginAudienceCondition(organizationId, input.context.organizationContext.currentMember.id)
   const baseFilters = and(
@@ -2878,7 +2898,7 @@ export async function createPluginBundle(input: {
   orgWide?: boolean
   sourceRepositoryUrl?: string | null
 }) {
-  if (input.orgWide === true && !isPluginArchOrgAdmin(input.context)) {
+  if (input.orgWide === true && !(await pluginArchHasPermission(input.context, "sharing.share_org_wide"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
   }
 
@@ -2911,7 +2931,7 @@ export async function createPluginBundle(input: {
         throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "That connector was not found in this organization.")
       }
       // Members bundle only connectors they added themselves from My Library.
-      if (!isPluginArchOrgAdmin(input.context) && connection.createdByOrgMembershipId !== input.context.organizationContext.currentMember.id) {
+      if (connection.createdByOrgMembershipId !== input.context.organizationContext.currentMember.id && !(await pluginArchHasPermission(input.context, "connections.manage"))) {
         throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
       }
       const value: ConfigObjectInput = {
@@ -2939,7 +2959,7 @@ export async function createPluginBundle(input: {
     }
     deriveProjection({ objectType: component.type, value: component.value })
     if (component.connection) {
-      if (!isPluginArchOrgAdmin(input.context)) {
+      if (!(await pluginArchHasPermission(input.context, "connections.manage"))) {
         throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can configure plugin MCP connections.")
       }
       validatePluginMcpRequirementAuth(pluginMcpConnectionSetupInput(component.connection))
@@ -5919,7 +5939,7 @@ export async function previewGithubPluginMcpImport(input: { context: PluginArchA
   // Only admins import, and only they see which organization connections an import would use.
   return computeGithubPluginMcpImportPlan({
     githubUrl: input.githubUrl,
-    organizationId: isPluginArchOrgAdmin(input.context) ? input.context.organizationContext.organization.id : undefined,
+    organizationId: await pluginArchHasPermission(input.context, "plugins.import") ? input.context.organizationContext.organization.id : undefined,
   })
 }
 
@@ -6234,7 +6254,7 @@ export async function importGithubPluginMcps(input: {
   selectedServerKeys?: string[]
   selectedServerNames?: string[]
 }) {
-  if (!isPluginArchOrgAdmin(input.context)) {
+  if (!(await pluginArchHasPermission(input.context, "plugins.import"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can import plugins from GitHub.")
   }
 
@@ -6643,8 +6663,16 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
     throw new PluginArchRouteFailure(404, "member_not_joined", "Connector creator member has not joined the organization.")
   }
 
+  // The automation acts with the connector creator's own permissions.
+  const memberPermissions = await resolvePermissionsForMember({
+    organizationId: organization.id,
+    memberId: member.id,
+    featureEnabled: features.permissions,
+  })
+
   return {
     automation: true,
+    memberPermissions,
     memberTeams: [],
     session: null,
     organizationContext: {
@@ -6671,7 +6699,6 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         updatedAt: organization.updatedAt,
       },
       features,
-      roles: [],
       teams: [],
     },
   } satisfies PluginArchActorContext
@@ -7765,7 +7792,7 @@ export async function getGithubConnectorDiscoveryTree(input: { connectorInstance
 }
 
 export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugins: boolean; connectorInstanceId: ConnectorInstanceId; connectorSyncEventId?: ConnectorSyncEventId; context: PluginArchActorContext; forceRefresh?: boolean; selectedKeys: string[] }) {
-  if (!isPluginArchOrgAdmin(input.context)) {
+  if (!(await pluginArchHasPermission(input.context, "connectors.manage"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can apply connector discovery.")
   }
 

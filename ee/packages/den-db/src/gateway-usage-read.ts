@@ -41,10 +41,15 @@ export function usageFail(
   throw new GatewayUsageError(code, status, message)
 }
 
+/**
+ * The member row when it is active in the organization (optionally share-locked).
+ * Authorization is the caller's job: Den routes check the catalog permission
+ * (gateway_limits.view / gateway_limits.manage) before calling in, so a team
+ * permission set can grant usage-limit management without an admin role.
+ */
 export async function activeUsageMember(
   tx: UsageReader,
   scope: GatewayUsageScope,
-  admin = false,
   lock = false,
 ) {
   const query = tx
@@ -60,29 +65,6 @@ export async function activeUsageMember(
     )
   const [member] = await (lock ? query.for("share") : query)
   if (!member) return usageFail("member_not_found", 404, "Current organization member not found.")
-  if (
-    admin &&
-    !member.role.split(",").some((role) => ["owner", "admin", "super-admin"].includes(role.trim()))
-  ) {
-    const teams = tx
-      .select({ id: TeamTable.id })
-      .from(TeamMemberTable)
-      .innerJoin(
-        TeamTable,
-        and(
-          eq(TeamTable.id, TeamMemberTable.teamId),
-          eq(TeamTable.organizationId, scope.organizationId),
-          eq(TeamTable.grantsOrganizationAdmin, true),
-        ),
-      )
-      .where(eq(TeamMemberTable.orgMembershipId, scope.memberId))
-    if (!(await (lock ? teams.for("share") : teams)).length)
-      return usageFail(
-        "forbidden",
-        403,
-        "Only workspace owners and admins can manage usage limits.",
-      )
-  }
   return member
 }
 
@@ -343,7 +325,7 @@ export async function readUsageStatus(
   lock = false,
   admission = false,
 ) {
-  await activeUsageMember(tx, scope, false, lock)
+  await activeUsageMember(tx, scope, lock)
   const current = await currentUsage(tx, scope, now, lock, !admission)
   const [tracking] = await tx
     .select()

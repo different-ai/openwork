@@ -11,6 +11,7 @@ import {
   type DenOrgScimHealth,
   getOrgAccessFlags,
   parseOrgScimPayload,
+  permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -54,13 +55,13 @@ export function ScimScreen() {
       getOrgAccessFlags(
         orgContext?.currentMember.role ?? "member",
         orgContext?.currentMember.isOwner ?? false,
-        orgContext?.roles,
+        orgContext?.currentMember.permissions,
       ),
-    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
+    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.currentMember.permissions],
   );
 
   async function loadScimConfig(isCurrent = () => true) {
-    if (!orgId || !access.canViewSettings) {
+    if (!orgId || !access.canViewScim) {
       if (isCurrent()) {
         setBaseUrl(null);
         setSsoReady(false);
@@ -124,7 +125,7 @@ export function ScimScreen() {
     return () => {
       active = false;
     };
-  }, [orgId, access.canViewSettings]);
+  }, [orgId, access.canViewScim]);
 
   useEffect(() => {
     if (!copiedValue) {
@@ -150,7 +151,7 @@ export function ScimScreen() {
 
   async function handleRotateToken() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can create or rotate SCIM tokens.");
+      setError("You don't have permission to create or rotate SCIM tokens.");
       return;
     }
 
@@ -199,7 +200,7 @@ export function ScimScreen() {
 
   async function handleRunReconciliation() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can run SCIM reconciliation.");
+      setError("You don't have permission to run SCIM reconciliation.");
       return;
     }
 
@@ -237,7 +238,7 @@ export function ScimScreen() {
 
   async function handleGroupMappingChange() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can change SCIM mappings.");
+      setError("You don't have permission to change SCIM mappings.");
       return;
     }
 
@@ -275,7 +276,7 @@ export function ScimScreen() {
 
   async function handleDeleteConnection() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can delete SCIM connections.");
+      setError("You don't have permission to delete SCIM connections.");
       return;
     }
 
@@ -340,15 +341,15 @@ export function ScimScreen() {
       description="Create one SCIM connector per workspace, then give your identity provider the base URL and bearer token shown here."
       colors={["#ECFEFF", "#155E75", "#06B6D4", "#A5F3FC"]}
     >
-      {!access.canViewSettings ? (
+      {!access.canViewScim ? (
         <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
-          Only workspace admins can view SCIM.
+          {permissionLockReason("scim.view")}
         </div>
       ) : (
         <>
           {!access.canManageScim ? (
             <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-              Read-only: owners and super-admins can create tokens, reconcile, change mappings, or delete SCIM connections.
+              Read-only: creating tokens, reconciling, changing mappings or deleting SCIM connections needs permission to manage SCIM.
             </div>
           ) : null}
           <div className="mb-6 flex flex-wrap gap-2 rounded-[24px] border border-gray-200 bg-white px-5 py-4 text-[12px] font-semibold shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">

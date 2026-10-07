@@ -15,10 +15,10 @@ import { withAuditRetry } from "../../audit/retry.js"
 import { auditExportQuerySchema, auditOperationsQuerySchema, auditPageQuerySchema, listAuditEvents, listAuditExportEvents, listAuditOperations, readAuditUsage } from "../../audit/queries.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
-import { effectiveOrganizationRole, listOrganizationAdminTeamGrants } from "../../organization-team-roles.js"
+import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
+import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
-import { ensureOrganizationAdmin, ensureOrganizationAdminRole, memberHasRole, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
+import { permissionDeniedResponse, permissionFailureHeaders, type OrgRouteVariables } from "./shared.js"
 
 type Variables = OrgRouteVariables & RequestIdVariables
 type AuditRouteDescription = DescribeRouteOptions & { "x-mcp": false }
@@ -64,8 +64,6 @@ function parseQuery<T>(schema: z.ZodType<T>, c: AuditRouteContext): T {
 
 async function serveAudit(c: AuditRouteContext, action: "event_types" | "operations" | "events" | "usage" | "export", read: (organizationId: string) => Promise<Response>, operationId?: string) {
   c.header("Cache-Control", "no-store")
-  const permission = ensureOrganizationAdminRole(c, "Only organization owners and admins can read audit history.")
-  if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
   if (!("auditVisibilityEnabled" in env && env.auditVisibilityEnabled === true)) return c.json({ error: "audit_visibility_disabled" }, 403)
   const organization = c.get("organizationContext")
   if (!organization) return c.json({ error: "organization_not_found" }, 404)
@@ -115,10 +113,8 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
       403: jsonResponse("Administrator permission, fresh authentication, audit feature and visibility required.", z.union([forbiddenSchema, z.object({ error: z.enum(["audit_feature_disabled", "audit_visibility_disabled"]) })])),
       409: jsonResponse("Refresh a changed policy or wait for capture rollout.", z.object({ error: z.enum(["audit_policy_changed", "audit_policy_not_configured", "audit_capture_unavailable"]) })),
     },
-  } satisfies AuditRouteDescription), orgMemberRoute(), jsonValidator(auditCaptureUpdateSchema), async (c) => {
+  } satisfies AuditRouteDescription), orgPermissionRoute("audit.manage"), jsonValidator(auditCaptureUpdateSchema), async (c) => {
     c.header("Cache-Control", "no-store")
-    const permission = ensureOrganizationAdmin(c, "Only organization owners and admins can change audit capture.")
-    if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
     if (!env.auditVisibilityEnabled) return c.json({ error: "audit_visibility_disabled" }, 403)
     const organization = c.get("organizationContext")
     const input = c.req.valid("json")
@@ -127,8 +123,9 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
         const { entitlement } = await requireAuditFeature(tx, organization.organization.id)
         const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1).for("share")
         if (!member) return "forbidden"
-        const adminTeams = memberHasRole(member.role, "admin") ? [] : (await listOrganizationAdminTeamGrants(organization.organization.id, tx)).filter((grant) => grant.memberId === member.id)
-        if (!memberHasRole(effectiveOrganizationRole(member.role, adminTeams), "admin")) return "forbidden"
+        // Re-check the actor's live permissions while their member row is share-locked, so a concurrent demotion cannot slip in.
+        const actorPermissions = await resolvePermissionsForMember({ organizationId: organization.organization.id, memberId: member.id, featureEnabled: organization.features.permissions })
+        if (!actorPermissions.has("audit.manage")) return "forbidden"
         if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
         if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
         const initialization = await initializeAuditPolicyInTx(tx, organization.organization.id, env.auditCaptureEnabled)
@@ -144,7 +141,10 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
         } })
         return null
       })
-      if (rejection === "forbidden") return c.json({ error: rejection }, 403)
+      if (rejection === "forbidden") {
+        const denied = permissionDeniedResponse("audit.manage")
+        return c.json(denied, 403, permissionFailureHeaders(denied))
+      }
       if (rejection === "enterprise_plan_required") return c.json({ error: rejection, feature: "auditLogs", message: "Audit logs requires an Enterprise plan or explicit self-hosted installation entitlement." }, 402)
       if (rejection === "audit_capture_unavailable") return c.json({ error: rejection }, 409)
       return c.json(await readAuditUsage({ database: db, organizationId: organization.organization.id }, env.auditCaptureEnabled))
@@ -159,7 +159,7 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     operationId: "getAuditEventTypes", tags: ["Organizations"], "x-mcp": false, summary: "List supported audit event types",
     description: "Organization administrator, the auditLogs feature on for the organization (read fresh) and audit visibility required. Returns the static supported semantic action catalog from the executable provider, audit-read, capture-settings, default-policy and pilot-policy coverage registries, including hidden child actions and this endpoint's access events. Unique deterministic lexicographic order. This fixed bounded catalog needs no pagination or observed full-history DISTINCT scan. It is independent of loaded rows, time/filter selection and capture category enablement, including empty history; support does not imply this organization has events of every type or that every cloud action is captured. Legacy event types are excluded. Access capture uses the same content-free requested/served policy as other audit reads.",
     responses: { ...errors, 200: jsonResponse("The full static supported action catalog, not observed tenant event counts.", auditEventTypesResponseSchema) },
-  } satisfies AuditRouteDescription), orgMemberRoute(), (c) => serveAudit(c, "event_types", async () => {
+  } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "event_types", async () => {
     parseQuery(z.object({}).strict(), c)
     return c.json(auditEventTypesResponseSchema.parse({ eventTypes: supportedAuditEventTypes() }))
   }))
@@ -169,7 +169,7 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     description: `${coverage} ${pagination} ${filterDescription} Newest operations first, ordered by server first-recorded time then ID. Summary action and resources describe the FIRST event only (at most 256 stored references), not all affected resources. Expand events for complete evidence; X-Audit-Resource-Scope is first_event.`,
     parameters: [...pageParameters, ...filterParameters],
     responses: { ...errors, 200: { ...jsonResponse("One bounded summary per operation.", auditOperationsResponseSchema), headers: { "X-Audit-Resource-Scope": { schema: { type: "string", enum: ["first_event"] }, description: "Summary references are from the first event only, not an exhaustive operation inventory." } } } },
-  } satisfies AuditRouteDescription), orgMemberRoute(), (c) => serveAudit(c, "operations", async (organizationId) => {
+  } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "operations", async (organizationId) => {
     const query = parseQuery(auditOperationsQuerySchema, c)
     const result = await listAuditOperations({ database: db, organizationId, secret: env.betterAuthSecret }, query)
     c.header("X-Audit-Resource-Scope", "first_event")
@@ -181,7 +181,7 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     description: `${coverage} ${pagination} Events are in ascending tenant sequence order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.`,
     parameters: [...pageParameters, { in: "path", name: "operationId", required: true, schema: { type: "string", pattern: "^aop_[0-7][0-9a-hjkmnp-tv-z]{25}$" } }],
     responses: { ...errors, 200: jsonResponse("A bounded ascending page of event envelopes.", auditEventsResponseSchema) },
-  } satisfies AuditRouteDescription), orgMemberRoute(), (c) => {
+  } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => {
     const operationId = c.req.param("operationId")
     return serveAudit(c, "events", async (organizationId) => c.json(await listAuditEvents({ database: db, organizationId, secret: env.betterAuthSecret }, parseQuery(auditPageQuerySchema, c), operationId)), operationId)
   })
@@ -190,7 +190,7 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     operationId: "getAuditUsage", tags: ["Organizations"], "x-mcp": false, summary: "Read audit retention usage",
     description: `${coverage} Reads stored policy and tenant counters, plus the oldest retained operation. Capture requires audit entitlement, organization captureOn and the deployment capture flag. A ready organization without a policy is lazily initialized ON, including on this GET, with one system lifecycle event. Temporary defaults: 6,000,000 retained OPERATIONS (not child events), 300-second grouping window, change/security/execution/access/request/lifecycle categories, cloud/delete_oldest for Enterprise or operator/keep_all for explicit self-hosted entitlement. Existing OFF and custom policies are preserved. These are provisional declarations, not enforced caps: no billing, cleanup or deletion is activated. Drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.`,
     responses: { ...errors, 200: jsonResponse("Current stored audit policy and usage, without a history scan.", auditUsageResponseSchema) },
-  } satisfies AuditRouteDescription), orgMemberRoute(), (c) => serveAudit(c, "usage", async (organizationId) => {
+  } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "usage", async (organizationId) => {
     parseQuery(z.object({}).strict(), c)
     return c.json(await readAuditUsage({ database: db, organizationId }, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true))
   }))
@@ -204,7 +204,7 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
       "X-Audit-Snapshot-Sequence": { description: "Frozen committed tenant publication watermark.", schema: { type: "string", pattern: "^[0-9]+$" } },
       "Content-Disposition": { description: "Attachment filename for this page.", schema: { type: "string" } },
     } } },
-  } satisfies AuditRouteDescription), orgMemberRoute(), (c) => serveAudit(c, "export", async (organizationId) => {
+  } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "export", async (organizationId) => {
     const query = parseQuery(auditExportQuerySchema, c)
     const result = await listAuditExportEvents({ database: db, organizationId, secret: env.betterAuthSecret }, query)
     const content = query.format === "csv" ? auditCsv(result.events) : auditNdjson(result.events)

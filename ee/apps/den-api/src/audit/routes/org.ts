@@ -1,5 +1,5 @@
 // Org slice: tenant routes of the org/admin/platform inventory (r3). Organization context
-// routes (orgMemberRoute/orgRoleRoute), platform-admin routes that target one org through a
+// routes (orgMemberRoute/orgRoleRoute/orgPermissionRoute), platform-admin routes that target one org through a
 // validated path param, and token/webhook routes whose handler proves the org after
 // verification. Tenant-less routes of the same inventory live in ./platform.ts.
 //
@@ -18,7 +18,7 @@ function route(
   return { method, path, class: auditClass, action, kind, resource: { type, idParam }, attribution, ...extra }
 }
 
-/** orgMemberRoute()/orgRoleRoute(): organizationContext supplies org + member actor. */
+/** orgMemberRoute()/orgRoleRoute()/orgPermissionRoute(): organizationContext supplies org + member actor. */
 function member(
   method: AuditRouteMethod, path: string, auditClass: AuditRouteClass, action: string, kind: string,
   type: string, idParam: string | null, extra: Extra = {},
@@ -81,9 +81,17 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/invitations/:invitationId/cancel", "tenant_external", "invitation.cancel", "invitation.management", "invitation", "invitationId", { changeEvidence: DOMAIN("invitations"), external: SEAT_SYNC, notes: "Legacy organization.invitation.canceled; placeholder member removal is an alternate removeOrganizationMember path (members emitter)." }),
 
   // Roles
-  member("POST", "/v1/roles", "tenant_change", "role.create", "role.management", "role", null, { changeEvidence: DOMAIN("roles"), notes: "Legacy organization.role.created." }),
-  member("PATCH", "/v1/roles/:roleId", "tenant_change", "role.update", "role.management", "role", "roleId", { changeEvidence: DOMAIN("roles"), notes: "Legacy organization.role.updated; rename cascades to members/invitations in the same transaction, permission change revokes credentials afterwards (api_key.revoked)." }),
-  member("DELETE", "/v1/roles/:roleId", "tenant_change", "role.delete", "role.management", "role", "roleId", { changeEvidence: DOMAIN("roles"), notes: "Legacy organization.role.deleted." }),
+
+  // Permissions
+  member("GET", "/v1/permissions/catalog", "tenant_read", "permission.catalog.read", "permission.management", "permission", null),
+  member("GET", "/v1/permissions/sets", "tenant_read", "permission_set.list", "permission.management", "permission_set", null),
+  member("POST", "/v1/permissions/sets", "tenant_change", "permission_set.create", "permission.management", "permission_set", null, { changeEvidence: DOMAIN("permissions"), notes: "Legacy organization.permission_set.created; creates the set, its team link and its allow rows in one transaction." }),
+  member("GET", "/v1/permissions/sets/:permissionSetId", "tenant_read", "permission_set.read", "permission.management", "permission_set", "permissionSetId"),
+  member("PUT", "/v1/permissions/sets/:permissionSetId/permissions", "tenant_change", "permission_set.permissions.update", "permission.management", "permission_set", "permissionSetId", { changeEvidence: DOMAIN("permissions"), notes: "Legacy organization.permission_set.permissions_changed (only when a status changed); append-only rows, granted/revoked keys annotated." }),
+  member("GET", "/v1/permissions/sets/:permissionSetId/history", "tenant_read", "permission_set.history.read", "permission.management", "permission_set", "permissionSetId"),
+  member("DELETE", "/v1/permissions/sets/:permissionSetId", "tenant_change", "permission_set.archive", "permission.management", "permission_set", "permissionSetId", { changeEvidence: DOMAIN("permissions"), notes: "Legacy organization.permission_set.archived; archives the team set and soft-removes its team link, never deletes." }),
+  member("GET", "/v1/permissions/keys/:permissionKey", "tenant_read", "permission.read", "permission.management", "permission", "permissionKey"),
+  member("GET", "/v1/members/:memberId/permissions", "tenant_read", "member.permissions.read", "permission.management", "member", "memberId"),
 
   // Teams
   member("POST", "/v1/teams", "tenant_change", "team.create", "team.management", "team", null),
@@ -96,7 +104,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("DELETE", "/v1/teams/by-key/:externalKey", "tenant_change", "team.delete_by_key", "team.management", "team", "externalKey"),
 
   // Organization settings
-  member("GET", "/v1/org", "tenant_read", "organization.read", "organization.settings", "organization", null, { notes: "Limitation: refreshRoles=true (owner/admin only) re-seeds the default role rows (seedDefaultOrganizationRoles) inside this GET; that write is only covered by this read's request evidence (read category), with no intent and no role change snapshots." }),
+  member("GET", "/v1/org", "tenant_read", "organization.read", "organization.settings", "organization", null),
   member("PATCH", "/v1/org", "tenant_change", "organization.settings.update", "organization.settings", "organization", null, { notes: "Includes requireSso/allowedEmailDomains; brand icon URL validation fetch is incidental." }),
   route("DELETE", "/v1/org", "platform", "organization.delete", "organization.settings", "organization", null, "none", { notes: "Evidence is a platform_audit_event row (success and failure), written before the response is released, because the purge deletes the organization's tenant audit history (a failed insert is logged [platform-audit-lost] and does not fail the deletion): actor = authenticated user (+ API key), target = organization from the verified organizationContext (handler addAuditRequestResource before the purge; never request input). External effects: stripe (cancelOrganizationSubscriptions), linear (deletion ticket). No tenant intent is recorded." }),
   member("POST", "/v1/org/brand-assets", "tenant_change", "organization.brand_assets.update", "organization.settings", "organization", null),
@@ -126,7 +134,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/sso/test/:intentId/cancel", "tenant_change", "sso_test.cancel", "sso.configuration", "sso_test_intent", "intentId"),
 
   // Billing
-  member("GET", "/v1/billing", "tenant_access", "billing.read", "billing.management", "billing", null, { notes: "includePortalUrl creates a Stripe billing portal session and returns its URL (super-admin)." }),
+  member("GET", "/v1/billing", "tenant_access", "billing.read", "billing.management", "billing", null, { notes: "includePortalUrl creates a Stripe billing portal session and returns its URL (billing.manage)." }),
   member("GET", "/v1/billing/web", "tenant_read", "billing.web.read", "billing.management", "billing", null),
   member("POST", "/v1/billing/stripe/checkout", "tenant_external", "billing.checkout.create", "billing.management", "billing_subscription", null, { external: "stripe (checkout session)" }),
   member("POST", "/v1/billing/stripe/checkout/sync", "tenant_external", "billing.subscription.sync", "billing.management", "billing_subscription", null, { external: "stripe (subscription fetch + local entitlement sync)" }),

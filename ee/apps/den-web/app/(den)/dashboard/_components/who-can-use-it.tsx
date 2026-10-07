@@ -5,7 +5,7 @@ import { Check, Globe, Plus, Search, Users, type LucideIcon } from "lucide-react
 import { useMemo, useState, type ReactNode } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
-import type { DenOrgMember, DenOrgTeam } from "../../_lib/den-org";
+import { permissionLockReason, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
 import { type AccessDraft, peopleLabel } from "./access-summary";
 
 function initials(name: string): string {
@@ -212,7 +212,7 @@ export function WhoCanUseIt({
 
   const everyoneDescription = value.orgWide
     ? "On. Everyone in the organization can use it."
-    : canShareWithEveryone ? everyoneOffDescription : "Only admins can share with everyone.";
+    : canShareWithEveryone ? everyoneOffDescription : permissionLockReason("sharing.share_org_wide");
 
   return (
     <div className="flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white" data-testid="who-can-use-it">

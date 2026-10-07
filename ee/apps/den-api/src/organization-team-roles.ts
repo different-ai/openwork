@@ -1,5 +1,6 @@
-import { and, eq, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { listAuthoritativeTeamMemberships } from "@openwork-ee/den-db/permissions"
+import { InvitationTable, MemberTable, OrganizationTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
 import { withGatewayUsageEntitlementMutation } from "@openwork-ee/den-db/gateway-usage-limits"
 import { organizationRoleValueSatisfies } from "./organization-role-hierarchy.js"
@@ -55,39 +56,11 @@ export async function invitationHasAdminTeam(tx: TeamMutationTransaction, invita
 }
 
 // Never cache authority: IdP removals and designation changes apply on the next check.
+// The SCIM projection filter lives in den-db (listAuthoritativeTeamMemberships)
+// so team permission sets and desktop policies apply the same rule.
 export async function listOrganizationAdminTeamGrants(organizationId: typeof TeamTable.$inferSelect.organizationId, database: typeof db | TeamMutationTransaction = db) {
-  return database.select({ memberId: MemberTable.id, id: TeamTable.id, name: TeamTable.name })
-    .from(TeamTable)
-    .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
-    .innerJoin(MemberTable, and(
-      eq(MemberTable.id, TeamMemberTable.orgMembershipId),
-      eq(MemberTable.organizationId, TeamTable.organizationId),
-      isNull(MemberTable.removedAt),
-    ))
-    .leftJoin(ScimGroupTable, and(eq(ScimGroupTable.teamId, TeamTable.id), eq(ScimGroupTable.organizationId, organizationId)))
-    .leftJoin(ScimProviderTable, and(
-      eq(ScimProviderTable.providerId, ScimGroupTable.providerId),
-      eq(ScimProviderTable.organizationId, organizationId),
-    ))
-    .leftJoin(ScimGroupMemberTable, and(
-      eq(ScimGroupMemberTable.groupId, ScimGroupTable.id),
-      eq(ScimGroupMemberTable.providerId, ScimProviderTable.providerId),
-      eq(ScimGroupMemberTable.organizationId, organizationId),
-      eq(ScimGroupMemberTable.teamMemberId, TeamMemberTable.id),
-      eq(ScimGroupMemberTable.orgMembershipId, MemberTable.id),
-      eq(ScimGroupMemberTable.remoteUserId, MemberTable.userId),
-    ))
-    .where(and(
-      eq(TeamTable.organizationId, organizationId),
-      eq(TeamTable.grantsOrganizationAdmin, true),
-      // A mapped team projection is not itself authority. Orphaned projections
-      // fail closed; disconnected teams require their own manual reapproval.
-      or(
-        isNull(ScimGroupTable.id),
-        eq(ScimProviderTable.groupMappingMode, "metadata_only"),
-        and(eq(ScimProviderTable.groupMappingMode, "create_teams"), isNotNull(ScimGroupMemberTable.id)),
-      ),
-    ))
+  const grants = await listAuthoritativeTeamMemberships(database, { organizationId, adminTeamsOnly: true })
+  return grants.map((grant) => ({ memberId: grant.memberId, id: grant.teamId, name: grant.teamName }))
 }
 
 export async function resolveOrganizationMemberAuthority(input: {

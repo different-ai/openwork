@@ -27,7 +27,7 @@ Every tagged Den API product surface is allowed unless it is listed under blocke
 - `Worker Activity`
 - `Workers`
 
-`Desktop Policies` reads require org admin; mutations require super-admin + Enterprise entitlement. Both are enforced in-route.
+`Desktop Policies` reads require org admin; mutations require admin (the `desktop_policies.manage` permission) + Enterprise entitlement. Both are enforced in-route.
 
 ## Blocked Tags
 

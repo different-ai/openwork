@@ -157,7 +157,7 @@ export const authAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("POST", "/device/approve", "auth.device.approve", "platform.device", "device_code", null, `${TOKEN} ${USER_ONLY} Kept platform: the raw endpoint stages no organization (it writes status/userId only; device_code.organizationId is set solely by Den POST /v1/auth/device/decision, which is already attributed to the chosen member's organization before the code is decided). A code decided through Den is no longer pending, so this endpoint cannot act on a staged organization.`),
   platform("POST", "/device/deny", "auth.device.deny", "platform.device", "device_code", null, `${USER_ONLY} Kept platform: denial binds no organization (Den POST /v1/auth/device/decision is the org-aware path).`),
   // Organization plugin: user-scoped
-  platform("POST", "/organization/create", "auth.organization.create", "platform.organization", "organization", null, "Creates a new org that has no audit policy yet; alternate route to POST /v1/org (afterCreateOrganization seeds roles)."),
+  platform("POST", "/organization/create", "auth.organization.create", "platform.organization", "organization", null, "Creates a new org that has no audit policy yet; alternate route to POST /v1/org."),
   readOnly("/organization/list", "auth.organization.list", "platform.organization", "organization", null, USER_ONLY),
   readOnly("/organization/list-user-invitations", "auth.organization.user_invitation.list", "platform.organization", "invitation", null, USER_ONLY),
   readOnly("/organization/list-user-teams", "auth.organization.user_team.list", "platform.organization", "team", null, USER_ONLY),
@@ -177,8 +177,6 @@ export const authAuditRoutes: readonly AuditRouteDeclaration[] = [
   tenant("GET", "/organization/list-invitations", "tenant_read", "auth.organization.invitation.list", "organization.read", "invitation", null, { notes: ORG_READ }),
   tenant("GET", "/organization/get-active-member", "tenant_read", "auth.organization.active_member.read", "organization.read", "member", null, { notes: ORG_READ }),
   tenant("GET", "/organization/get-active-member-role", "tenant_read", "auth.organization.active_member_role.read", "organization.read", "member", null, { notes: ORG_READ }),
-  tenant("GET", "/organization/list-roles", "tenant_read", "auth.organization.role.list", "organization.read", "role", null, { notes: ORG_READ }),
-  tenant("GET", "/organization/get-role", "tenant_read", "auth.organization.role.read", "organization.read", "role", null, { notes: ORG_READ }),
   tenant("GET", "/organization/list-teams", "tenant_read", "auth.organization.team.list", "organization.read", "team", null, { notes: ORG_READ }),
   tenant("GET", "/organization/list-team-members", "tenant_read", "auth.organization.team_member.list", "organization.read", "team", null, { notes: ORG_READ }),
   // Organization plugin: refused raw mutations
@@ -186,9 +184,6 @@ export const authAuditRoutes: readonly AuditRouteDeclaration[] = [
   refused("/organization/delete", "auth.organization.delete", "organization", "Den DELETE /v1/org"),
   refused("/organization/update-member-role", "auth.organization.member.role.update", "member", "Den POST /v1/members/:memberId/role"),
   refused("/organization/remove-member", "auth.organization.member.remove", "member", "Den DELETE /v1/members/:memberId"),
-  refused("/organization/create-role", "auth.organization.role.create", "role", "Den POST /v1/roles"),
-  refused("/organization/update-role", "auth.organization.role.update", "role", "Den PATCH /v1/roles/:roleId"),
-  refused("/organization/delete-role", "auth.organization.role.delete", "role", "Den DELETE /v1/roles/:roleId"),
   refused("/organization/create-team", "auth.organization.team.create", "team", "Den POST /v1/teams"),
   refused("/organization/update-team", "auth.organization.team.update", "team", "Den PATCH /v1/teams/:teamId"),
   refused("/organization/remove-team", "auth.organization.team.remove", "team", "Den DELETE /v1/teams/:teamId"),

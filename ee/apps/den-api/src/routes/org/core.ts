@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
+import { permissionKeySchema } from "@openwork/types/den/permissions"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
@@ -16,7 +17,8 @@ import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } 
 import { env } from "../../env.js"
 import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
-import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
+import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
+import { sortedPermissionKeys } from "../../permissions/effective.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
@@ -28,13 +30,11 @@ import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
   acceptInvitationForUser,
   createOrganizationForUser,
-  getOrganizationContextForUser,
   getInvitationPreview,
   getSingletonSsoStatus,
   normalizeAllowedEmailDomains,
   OrganizationEmailDomainRestrictionError,
   serializeMemberFacingOrganizationMetadata,
-  seedDefaultOrganizationRoles,
   setSessionActiveOrganization,
   type AcceptInvitationForUserResult,
   updateOrganizationSettings,
@@ -42,7 +42,6 @@ import {
 import { getRequiredUserEmail } from "../../user.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdminRole, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -63,10 +62,6 @@ const updateOrganizationSchema = z.object({
 
 const resolveSsoByEmailQuerySchema = z.object({
   email: z.string().trim().email(),
-})
-
-const organizationContextQuerySchema = z.object({
-  refreshRoles: z.enum(["true", "false"]).optional().transform((value) => value === "true"),
 })
 
 const resolveSsoByEmailResponseSchema = z.object({
@@ -171,7 +166,11 @@ const organizationContextResponseSchema = z.object({
   organization: z.object({
     owner: organizationOwnerSchema.nullable().optional(),
   }).passthrough(),
-  currentMember: z.object({}).passthrough(),
+  currentMember: z.object({
+    permissions: z.array(permissionKeySchema).meta({
+      description: "The caller's effective permission keys in this organization, sorted. The owner gets every key; there is no wildcard. Gate UI on these rather than on role names. Older servers omit the field.",
+    }),
+  }).passthrough(),
   currentMemberTeams: z.array(z.object({}).passthrough()),
   capabilities: z.object({
     auditLogs: z.boolean(),
@@ -485,7 +484,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     describeRoute({
       tags: ["Organizations"],
       summary: "Update organization",
-      description: "Updates organization fields. Workspace owners and super-admins can change settings. The slug is immutable to avoid breaking dashboard URLs.",
+      description: "Updates organization fields. Requires the Edit organization settings permission. The slug is immutable to avoid breaking dashboard URLs.",
       responses: {
         200: jsonResponse("Organization updated successfully.", organizationResponseSchema),
         400: jsonResponse("The organization update request body was invalid, contained malformed email domains, or contained an invalid brand icon URL.", updateOrganizationBadRequestSchema),
@@ -495,15 +494,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("organization.update"),
     jsonValidator(updateOrganizationSchema),
     async (c) => {
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can update organization settings.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
 
       const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
         ? { domains: undefined, invalidDomains: [] }
@@ -679,31 +674,13 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       },
     }),
     orgMemberRoute(),
-    queryValidator(organizationContextQuerySchema),
     resolveMemberTeamsMiddleware,
+    resolveMemberPermissionsMiddleware,
     async (c) => {
-      let payload = c.get("organizationContext")
-      const query = c.req.valid("query")
+      const payload = c.get("organizationContext")
 
-      if (query.refreshRoles) {
-        const permission = ensureOrganizationAdminRole(c, "Only workspace owners and admins can refresh organization roles.")
-        if (!permission.ok) {
-          return c.json(permission.response, orgAccessFailureStatus(permission.response))
-        }
-
-        await seedDefaultOrganizationRoles(payload.organization.id)
-        const refreshedPayload = await getOrganizationContextForUser({
-          organizationId: payload.organization.id,
-          userId: normalizeDenTypeId("user", c.get("user").id),
-        })
-        if (!refreshedPayload) {
-          return c.json({ error: "organization_not_found" }, 404)
-        }
-
-        payload = refreshedPayload
-        c.set("organizationContext", payload)
-      }
-
+      // Same per-request resolution the middleware made.
+      const memberPermissions = await memberPermissionsForOrganizationContext(payload, c.get("memberTeams"))
       const [currentOrganization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, payload.organization.id)).limit(1)
       if (!currentOrganization) return c.json({ error: "organization_not_found" }, 404)
       const features = await getOrganizationFeatures(payload.organization.id)
@@ -728,6 +705,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
       return c.json({
         ...payload,
+        currentMember: {
+          ...payload.currentMember,
+          permissions: sortedPermissionKeys(memberPermissions.keys),
+        },
         organization: {
           ...payload.organization,
           metadata: serializeMemberFacingOrganizationMetadata(payload.organization.metadata),

@@ -8,7 +8,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { organizationBuildsMcpApps } from "../../mcp-app-rollout.js"
 import { listAccessibleMcpApps } from "../../mcp-apps.js"
-import { orgRoleRoute, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
+import { orgMemberRoute, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { connectMcpAppHostServerName, projectedMcpToolName } from "./mcp-connections.js"
@@ -51,7 +51,7 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
         403: jsonResponse("The caller must be an organization member.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["member"]),
+    orgMemberRoute(),
     resolveMemberTeamsMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")

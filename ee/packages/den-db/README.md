@@ -41,6 +41,15 @@ Containerized production installs run the precompiled artifact directly:
 node /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
+`db:migrate`, `db:push` and `bootstrap.js` finish by reconciling default
+permission sets: catalog permissions that are new since a Member or Admin set
+was created get a row (`source = 'reconcile'`). It is idempotent and needs no
+migration file, so the Den DB Migrate workflow also runs it on its own:
+
+```bash
+pnpm --dir ee/packages/den-db db:reconcile-permissions
+```
+
 ## Production 0097 upgrade preconditions
 
 For an existing database with canonical 0097 still pending, use the compiled

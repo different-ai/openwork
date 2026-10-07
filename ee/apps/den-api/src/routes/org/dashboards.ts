@@ -18,7 +18,7 @@ import { currentMcpAppRevisionIds } from "../../mcp-apps.js"
 import {
   jsonValidator,
   orgMemberRoute,
-  orgRoleRoute,
+  orgPermissionRoute,
   paramValidator,
   resolveMemberTeamsMiddleware,
 } from "../../middleware/index.js"
@@ -274,7 +274,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         403: jsonResponse("Only workspace owners and admins can list dashboards.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.view"),
     requireOrgManagedDashboards,
     async (c) => {
       const payload = c.get("organizationContext")
@@ -300,7 +300,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         403: jsonResponse("Only workspace owners and admins can create dashboards.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.manage"),
     requireOrgManagedDashboards,
     jsonValidator(dashboardCreateSchema),
     async (c) => {
@@ -336,7 +336,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.view"),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     async (c) => {
@@ -365,7 +365,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.manage"),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     jsonValidator(dashboardUpdateSchema),
@@ -406,7 +406,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.manage"),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     async (c) => {
@@ -437,7 +437,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard was not found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.view"),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     async (c) => {
@@ -473,7 +473,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard, member, or team was not found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.manage"),
     requireOrgManagedDashboards,
     paramValidator(dashboardParamsSchema),
     jsonValidator(dashboardAccessGrantWriteSchema),
@@ -558,7 +558,7 @@ export function registerOrgDashboardRoutes<T extends { Variables: OrgRouteVariab
         404: jsonResponse("The dashboard or grant was not found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("dashboards.manage"),
     requireOrgManagedDashboards,
     paramValidator(dashboardGrantParamsSchema),
     async (c) => {

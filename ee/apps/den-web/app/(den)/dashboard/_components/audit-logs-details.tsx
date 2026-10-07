@@ -7,7 +7,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenTable } from "../../_components/ui/table";
 import { DenSwitch } from "../../_components/ui/switch";
-import type { DenOrgMember } from "../../_lib/den-org";
+import { permissionLockReason, type DenOrgMember } from "../../_lib/den-org";
 import { auditCaptureLockReason, isAuditAccessError, useAuditCapture, useAuditEvents, type AuditReadError, type AuditScope } from "./audit-logs-data";
 
 export const auditSummaryClass = "flex cursor-pointer list-none items-center gap-2 py-3 font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-accent)] [&::-webkit-details-marker]:hidden";
@@ -78,7 +78,7 @@ export function AuditLocked({ error, unavailable = false, children }: { error?: 
     : error?.code === "audit_visibility_disabled"
       ? "Audit visibility is disabled for this deployment. Ask an instance administrator to enable it."
       : error?.status === 401 ? "Your session could not be verified. Sign in again to view audit history."
-        : "Audit history is restricted to organization admins, super-admins and owners. Ask an organization owner to review your access.";
+        : "Viewing audit history needs the “View audit history” permission. Ask an organization owner or admin for access.";
   return <div className="flex flex-col gap-3 py-6" data-testid="audit-locked">
     <DenNotice tone="neutral" icon={LockKeyhole} message={message} />
     {children}
@@ -226,6 +226,7 @@ export function AuditUsage({ scope, onAccessError }: DetailProps) {
       {capture.feedback ? <DenNotice tone={capture.feedback.tone} message={<>{capture.feedback.message}{capture.needsRefresh && query.data && !query.isError
         ? <> Showing the last verified state from <AuditTime value={new Date(query.dataUpdatedAt).toISOString()} />.</> : null}</>} /> : null}
       {reason ? <DenNotice tone="neutral" icon={LockKeyhole} message={reason} /> : null}
+      {!capture.canChange ? <DenNotice tone="neutral" icon={LockKeyhole} message={`Changing capture: ${permissionLockReason("audit.manage")}`} /> : null}
       {query.data && !query.data.captureEnabled && !capture.needsRefresh && !query.isError ? <p className="text-[var(--dls-text-secondary)]">New activity is not recorded. Retained history remains available.</p> : null}
     </div>
     {capture.needsRefresh || query.isError ? <div><DenButton variant="secondary" size="sm" disabled={capture.busy} onClick={capture.refresh}>Refresh status</DenButton></div> : null}

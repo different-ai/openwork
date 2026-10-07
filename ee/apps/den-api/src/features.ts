@@ -62,7 +62,7 @@ export async function deploymentFeatureEnabled(key: FeatureKey): Promise<boolean
 /**
  * Route guard for organization routes: answers 404 `feature_disabled` as if the
  * route did not exist when the feature is off for the caller's organization. Use after
- * orgMemberRoute()/orgRoleRoute().
+ * orgMemberRoute()/orgRoleRoute()/orgPermissionRoute().
  */
 export function requireFeature(key: FeatureKey): MiddlewareHandler<{ Variables: Partial<OrganizationContextVariables> }> {
   return async (c, next) => {

@@ -13,7 +13,7 @@ function route(
   return { method, path, class: auditClass, action, kind, resource: { type, idParam }, attribution, ...extra }
 }
 
-/** orgMemberRoute / orgRoleRoute: organizationContext supplies the member actor. */
+/** orgMemberRoute / orgRoleRoute / orgPermissionRoute: organizationContext supplies the member actor. */
 function member(
   method: AuditRouteMethod, path: string, auditClass: AuditRouteClass, action: string, kind: string,
   type: string, idParam: string | null, extra: Extra = {},

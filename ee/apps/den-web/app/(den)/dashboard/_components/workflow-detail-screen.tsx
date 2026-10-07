@@ -64,7 +64,7 @@ export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
   const orgAccess = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles ?? [],
+    orgContext?.currentMember.permissions,
   );
 
   if (state.loading || !state.libraryDetail || !state.detail || !state.fields) {
@@ -77,7 +77,7 @@ export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
 
   const { workflow } = state.libraryDetail;
   const manager = workflow.role === "manager" && state.detail.canManage;
-  const canEdit = state.detail.canManage || workflow.role === "editor" || orgAccess.isAdmin;
+  const canEdit = state.detail.canManage || workflow.role === "editor" || orgAccess.canManageAllShared;
   const activeTab = readTab(searchParams.get("tab"), manager);
   const tabs: readonly TabItem<WorkflowDetailTab>[] = manager
     ? [

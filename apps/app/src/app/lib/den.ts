@@ -219,7 +219,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
 
 export type DenDesktopConfig = SharedDesktopConfig;
 
-export type DenCanonicalOrgRole = "super-admin" | "owner" | "admin" | "member";
+export type DenCanonicalOrgRole = "owner" | "admin" | "member";
 export type DenOrgRole = string;
 
 export type DenOrgSummary = {
@@ -231,9 +231,9 @@ export type DenOrgSummary = {
 
 function normalizeDenCanonicalOrgRole(role: string): DenCanonicalOrgRole | null {
   const normalized = role.trim().toLowerCase().replace(/[\s_]+/g, "-");
-  if (normalized === "super-admin") return "super-admin";
   if (normalized === "owner") return "owner";
-  if (normalized === "admin") return "admin";
+  // Super-admin was merged into admin; a stray value from an older server reads as admin.
+  if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
 }
@@ -250,7 +250,6 @@ function denCanonicalOrgRoles(roleValue: string) {
 export function getDenCanonicalOrgRole(roleValue: string): DenCanonicalOrgRole {
   const roles = denCanonicalOrgRoles(roleValue);
   if (roles.has("owner")) return "owner";
-  if (roles.has("super-admin")) return "super-admin";
   if (roles.has("admin")) return "admin";
   return "member";
 }
@@ -261,13 +260,12 @@ export function isDenOrgAdminRole(roleValue: string | null | undefined) {
 }
 
 export function formatDenOrgRoleLabel(roleValue: string) {
-  return roleValue
+  const labels = roleValue
     .split(",")
     .map((role) => role.trim())
     .filter(Boolean)
     .map((role) => {
       const canonicalRole = normalizeDenCanonicalOrgRole(role);
-      if (canonicalRole === "super-admin") return "Super admin";
       if (canonicalRole === "owner") return "Owner";
       if (canonicalRole === "admin") return "Admin";
       if (canonicalRole === "member") return "Member";
@@ -276,8 +274,9 @@ export function formatDenOrgRoleLabel(roleValue: string) {
         .filter(Boolean)
         .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
         .join(" ");
-    })
-    .join(", ");
+    });
+  // "admin,super-admin" from an older server must not read "Admin, Admin".
+  return [...new Set(labels)].join(", ");
 }
 
 export type DenCloudInstance = {

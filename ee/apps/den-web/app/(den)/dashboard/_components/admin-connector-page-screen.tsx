@@ -4,7 +4,7 @@ import { ChevronDown, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getMcpConnectionsRoute, getToolTesterRoute } from "../../_lib/den-org";
+import { getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
@@ -131,6 +131,10 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
   const router = useRouter();
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
+  const memberAccess = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
+    : null;
+  const canShareWithEveryone = memberAccess?.canShareWithEveryone === true;
   const saveAccess = useSaveConnectionAccess();
   const deleteConnection = useDeleteMcpConnection();
   const disconnect = useDisconnectMcpConnection();
@@ -202,8 +206,8 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
               label={`More for ${name}`}
               entries={[
                 { label: "Edit settings", onSelect: () => setSettingsOpen(true) },
-                ...(!native && signedIn ? [{ label: "Test tools", href: `${getToolTesterRoute(orgSlug)}?connectionId=${encodeURIComponent(connectionId)}` }] : []),
-                ...(!native && connection.authType !== "none" && connection.connected ? [{
+                ...(!native && signedIn && memberAccess?.canManageConnections ? [{ label: "Test tools", href: `${getToolTesterRoute(orgSlug)}?connectionId=${encodeURIComponent(connectionId)}` }] : []),
+                ...(!native && connection.authType !== "none" && connection.connected && memberAccess?.canRemoveAnyConnection ? [{
                   label: "Sign everyone out",
                   onSelect: async () => {
                     await disconnect.mutateAsync(connectionId);
@@ -240,7 +244,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
             members={orgContext.members}
             teams={orgContext.teams}
             owner={null}
-            canShareWithEveryone
+            canShareWithEveryone={canShareWithEveryone}
             everyoneOffDescription={draft.memberIds.length === 0 && draft.teamIds.length === 0
               ? "Off. Nobody has it yet."
               : "Off. Only the people and teams below have it."}

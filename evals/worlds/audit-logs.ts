@@ -117,10 +117,19 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   // Seed only the auditLogs feature override, leaving every other feature alone.
   // Provider setup predates the grant; browser/API traffic initializes the real
   // default policy and records access events before the user's provider save.
+  // Custom roles were removed; the audited access change is now a team's
+  // permission set, which needs the Permissions feature and a team. Both are
+  // arranged before audit capture starts, so the journey's own team creation
+  // stays the only team operation in the history.
+  const reviewersTeamName = "Audit reviewers";
+  const reviewers = await seed.api(den.admin, "/v1/teams", { method: "POST", body: JSON.stringify({ name: reviewersTeamName, memberIds: [] }) });
+  if (reviewers.response.status !== 201) throw new Error(`Synthetic team setup failed: ${reviewers.response.status}`);
+  const reviewersTeamId = identifier(record(record(reviewers.body).team).id);
+  await seedAuditDatabase(den, "INSERT INTO organization_feature (organization_id, feature_key, enabled, source) VALUES (?, 'permissions', TRUE, 'platform') ON DUPLICATE KEY UPDATE enabled = TRUE", [orgId]);
   await seedAuditDatabase(den, "INSERT INTO organization_feature (organization_id, feature_key, enabled, source) VALUES (?, 'auditLogs', TRUE, 'platform') ON DUPLICATE KEY UPDATE enabled = TRUE", [orgId]);
   const viewport = { width: 1440, height: 1100 };
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: teammate, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const unflaggedWeb = await seed.web({ den, signedInAs: unflaggedOwner, startPath: "/dashboard", headless: true, viewport });
-  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, viewport };
+  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, reviewersTeamId, reviewersTeamName, viewport };
 }

@@ -7,7 +7,7 @@ import {
   Users,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { getAddConnectorRoute, getMcpConnectionsRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DashboardActivity } from "../_features/activity/dashboard-activity";
@@ -84,6 +84,12 @@ export function DashboardOverviewScreen() {
 
   const members = orgContext?.members.length ?? 0;
   const pending = (orgContext?.invitations ?? []).filter((invite) => invite.status === "pending").length;
+  // Quick add creates organization connections, which needs `connections.manage`.
+  const canAddConnectors = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  ).canManageConnections;
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
@@ -107,7 +113,7 @@ export function DashboardOverviewScreen() {
         <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Pending invites" value={`${pending}`} sub="Awaiting activation" tone="blue" />
       </div>
 
-      {orgFeatureEnabled(orgContext, "dashboardActivity") ? <DashboardActivity /> : <QuickAddConnectors />}
+      {orgFeatureEnabled(orgContext, "dashboardActivity") ? <DashboardActivity /> : canAddConnectors ? <QuickAddConnectors /> : null}
     </div>
   );
 }

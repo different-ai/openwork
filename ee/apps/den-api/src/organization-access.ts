@@ -1,13 +1,15 @@
+import type { PermissionKey } from "@openwork/types/den/permissions"
+import type { RoleAssignmentDenial } from "./permissions/role-assignment.js"
 import { createAccessControl } from "better-auth/plugins/access"
 import { defaultRoles, defaultStatements } from "better-auth/plugins/organization/access"
 import {
+  ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
   ORGANIZATION_OWNER_ROLE,
-  ORGANIZATION_ADMIN_ROLE,
-  ORGANIZATION_SUPER_ADMIN_ROLE,
+  isAssignableOrganizationRole,
   normalizeOrganizationRoleName,
-  organizationRoleValueSatisfies,
   splitOrganizationRoles,
+  type AssignableOrganizationRole,
 } from "./organization-role-hierarchy.js"
 
 export const SECURITY_CONFIGURATION_PERMISSION_RESOURCE = "security_configuration"
@@ -18,39 +20,13 @@ const denOrganizationStatements = {
   [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
 } as const
 
+/**
+ * Better Auth's organization plugin needs an access-control object and static
+ * roles. Den never authorizes through them: every Better Auth endpoint that
+ * checks them is denied (getRawBetterAuthMutationDenial) and Den routes check
+ * catalog permissions instead (src/permissions).
+ */
 export const denOrganizationAccess = createAccessControl(denOrganizationStatements)
-
-export type OrganizationPermissionRecord = Record<string, readonly string[]>
-
-export type OrganizationRolePermission = {
-  role: string
-  permission: OrganizationPermissionRecord
-}
-
-export type SecurityConfigurationPermissionPayload = {
-  currentMember: {
-    isOwner: boolean
-    role: string
-  }
-  roles: readonly OrganizationRolePermission[]
-}
-
-type PermissionValidationResult = {
-  ok: true
-} | {
-  ok: false
-  error: "invalid_permission"
-  message: string
-}
-
-type InvitationRoleValidationResult = {
-  ok: true
-  role: string
-} | {
-  ok: false
-  error: "invalid_role" | "forbidden"
-  message: string
-}
 
 const denOwnerStatements = {
   ...defaultRoles.owner.statements,
@@ -63,154 +39,46 @@ const denAdminStatements = {
   ac: ["read"],
 } as const
 
-const denOwnerRole = denOrganizationAccess.newRole(denOwnerStatements)
-const denSuperAdminRole = denOrganizationAccess.newRole(denOwnerStatements)
-const denAdminRole = denOrganizationAccess.newRole(denAdminStatements)
-const denMemberRole = denOrganizationAccess.newRole(defaultRoles.member.statements)
-
-const denOrganizationPermissionCatalogEntries = Object.entries(denOrganizationStatements)
-
 export const denOrganizationStaticRoles = {
-  owner: denOwnerRole,
-  "super-admin": denSuperAdminRole,
-  admin: denAdminRole,
-  member: denMemberRole,
+  owner: denOrganizationAccess.newRole(denOwnerStatements),
+  admin: denOrganizationAccess.newRole(denAdminStatements),
+  member: denOrganizationAccess.newRole(defaultRoles.member.statements),
 } as const
 
-export const denDefaultDynamicOrganizationRoles = {
-  "super-admin": denOwnerStatements,
-  admin: denAdminStatements,
-  member: defaultRoles.member.statements,
-} as const
-
-function getAllowedPermissionActions(resource: string): readonly string[] | null {
-  const entry = denOrganizationPermissionCatalogEntries.find(([knownResource]) => knownResource === resource)
-  return entry?.[1] ?? null
+/** Anything that answers "does this member hold this permission", e.g. MemberPermissions. */
+export type PermissionHolder = {
+  has(key: PermissionKey): boolean
 }
 
-function splitRoleValue(value: string) {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
+export type InvitationRoleValidationResult = {
+  ok: true
+  role: AssignableOrganizationRole
+} | {
+  ok: false
+  error: "invalid_role" | "forbidden"
+  message: string
+  /** Set when a missing permission is the reason. */
+  requiredPermission?: PermissionKey
 }
 
-function addPermissions(target: OrganizationPermissionRecord, source: OrganizationPermissionRecord) {
-  for (const [resource, actions] of Object.entries(source)) {
-    const merged = new Set(target[resource] ?? [])
-    for (const action of actions) {
-      merged.add(action)
-    }
-    target[resource] = [...merged]
-  }
-}
-
-function hasPermission(permission: OrganizationPermissionRecord, resource: string, action: string) {
-  return permission[resource]?.includes(action) ?? false
-}
-
-export function cloneOrganizationPermissionCatalog() {
-  const permission: OrganizationPermissionRecord = {}
-  for (const [resource, actions] of denOrganizationPermissionCatalogEntries) {
-    permission[resource] = [...actions]
-  }
-  return permission
-}
-
-export function filterOrganizationPermissionRecord(permission: OrganizationPermissionRecord) {
-  const filtered: OrganizationPermissionRecord = {}
-  for (const [resource, actions] of Object.entries(permission)) {
-    const allowedActions = getAllowedPermissionActions(resource)
-    if (!allowedActions) {
-      continue
-    }
-
-    const validActions = actions.filter((action) => allowedActions.includes(action))
-    if (validActions.length > 0) {
-      filtered[resource] = validActions
-    }
-  }
-  return filtered
-}
-
-export function validateOrganizationPermissionRecord(permission: OrganizationPermissionRecord): PermissionValidationResult {
-  for (const [resource, actions] of Object.entries(permission)) {
-    const allowedActions = getAllowedPermissionActions(resource)
-    if (!allowedActions) {
-      return {
-        ok: false,
-        error: "invalid_permission",
-        message: `Unsupported permission resource "${resource}".`,
-      }
-    }
-
-    for (const action of actions) {
-      if (!allowedActions.includes(action)) {
-        return {
-          ok: false,
-          error: "invalid_permission",
-          message: `Unsupported permission action "${resource}.${action}".`,
-        }
-      }
-    }
-  }
-
-  return { ok: true }
-}
-
-export function resolveOrganizationPermissionRecord(roleValue: string, roles: readonly OrganizationRolePermission[]) {
-  const roleNames = splitRoleValue(roleValue)
-  const permission: OrganizationPermissionRecord = {}
-
-  for (const role of roles) {
-    if (!roleNames.includes(role.role)) {
-      continue
-    }
-    addPermissions(permission, role.permission)
-  }
-
-  return filterOrganizationPermissionRecord(permission)
-}
-
-export function validateAssignableOrganizationPermissionRecord(input: {
-  permission: OrganizationPermissionRecord
-  roleValue: string
-  roles: readonly OrganizationRolePermission[]
-}): PermissionValidationResult {
-  const validPermission = validateOrganizationPermissionRecord(input.permission)
-  if (!validPermission.ok) {
-    return validPermission
-  }
-
-  const assignablePermission = resolveOrganizationPermissionRecord(input.roleValue, input.roles)
-  for (const [resource, actions] of Object.entries(input.permission)) {
-    for (const action of actions) {
-      if (!hasPermission(assignablePermission, resource, action)) {
-        return {
-          ok: false,
-          error: "invalid_permission",
-          message: `Cannot assign permission "${resource}.${action}".`,
-        }
-      }
-    }
-  }
-
-  return { ok: true }
-}
-
+/**
+ * Which role an invitation may carry, for the inviter's effective permissions.
+ * Inviting needs `invitations.manage`; inviting an admin also needs
+ * `members.update` and, with Permissions on, every Admin default permission:
+ * pass the role-assignment decision for an admin invitation as
+ * `adminAssignmentDenial` (permissions/team-grants.ts roleAssignmentDenial
+ * with no target). Only `member` and `admin` can be assigned: owner moves by
+ * ownership transfer and custom roles are removed. A legacy `super-admin`
+ * value is read as admin.
+ */
 export function validateInvitationRoleAssignment(input: {
   role: string
-  availableRoles: ReadonlySet<string>
-  currentMember: {
-    isOwner: boolean
-    role: string
-  }
-  roles: readonly OrganizationRolePermission[]
+  permissions: PermissionHolder
+  adminAssignmentDenial: RoleAssignmentDenial | null
 }): InvitationRoleValidationResult {
-  const requestedRoles = splitOrganizationRoles(input.role || ORGANIZATION_MEMBER_ROLE)
+  const requestedRoles = [...new Set(splitOrganizationRoles(input.role || ORGANIZATION_MEMBER_ROLE)
     .map((role) => normalizeOrganizationRoleName(role))
-    .filter(Boolean)
-  const roleValue = requestedRoles[0] ? requestedRoles.join(",") : ORGANIZATION_MEMBER_ROLE
+    .filter(Boolean))]
 
   if (requestedRoles.includes(ORGANIZATION_OWNER_ROLE)) {
     return {
@@ -220,69 +88,42 @@ export function validateInvitationRoleAssignment(input: {
     }
   }
 
-  const canInviteMembers = organizationRoleValueSatisfies({
-    roleValue: input.currentMember.role,
-    requiredRole: ORGANIZATION_ADMIN_ROLE,
-    isOwner: input.currentMember.isOwner,
-  })
-  if (!canInviteMembers) {
+  if (!input.permissions.has("invitations.manage")) {
     return {
       ok: false,
       error: "forbidden",
-      message: "Only workspace owners and admins can create invitations.",
+      message: "You don't have permission to invite members. Ask an admin to change your permissions.",
     }
   }
 
-  const canAssignRoles = organizationRoleValueSatisfies({
-    roleValue: input.currentMember.role,
-    requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
-    isOwner: input.currentMember.isOwner,
-  })
-  if (!canAssignRoles) {
-    if (roleValue === ORGANIZATION_MEMBER_ROLE) {
-      return { ok: true, role: ORGANIZATION_MEMBER_ROLE }
-    }
-
-    return {
-      ok: false,
-      error: "forbidden",
-      message: "Workspace admins can only invite members.",
-    }
-  }
-
-  const missingRole = requestedRoles.find((role) => !input.availableRoles.has(role))
-  if (missingRole) {
+  if (requestedRoles.some((role) => !isAssignableOrganizationRole(role))) {
     return {
       ok: false,
       error: "invalid_role",
-      message: "Choose one of the existing organization roles.",
+      message: "Choose Member or Admin.",
     }
   }
 
-  const assignableRole = validateAssignableOrganizationPermissionRecord({
-    permission: resolveOrganizationPermissionRecord(roleValue, input.roles),
-    roleValue: input.currentMember.role,
-    roles: input.roles,
-  })
-  if (!assignableRole.ok) {
+  if (!requestedRoles.includes(ORGANIZATION_ADMIN_ROLE)) {
+    return { ok: true, role: ORGANIZATION_MEMBER_ROLE }
+  }
+
+  if (!input.permissions.has("members.update")) {
     return {
       ok: false,
       error: "forbidden",
-      message: "You can only invite members into roles with permissions you already have.",
+      message: "You can only invite members. Inviting an admin needs permission to change member roles.",
     }
   }
 
-  return { ok: true, role: roleValue }
-}
-
-export function canManageSecurityConfiguration(payload: SecurityConfigurationPermissionPayload | null | undefined) {
-  if (!payload) {
-    return false
+  if (input.adminAssignmentDenial) {
+    return {
+      ok: false,
+      error: "forbidden",
+      message: input.adminAssignmentDenial.message,
+      ...(input.adminAssignmentDenial.requiredPermission ? { requiredPermission: input.adminAssignmentDenial.requiredPermission } : {}),
+    }
   }
 
-  return organizationRoleValueSatisfies({
-    roleValue: payload.currentMember.role,
-    requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
-    isOwner: payload.currentMember.isOwner,
-  })
+  return { ok: true, role: ORGANIZATION_ADMIN_ROLE }
 }

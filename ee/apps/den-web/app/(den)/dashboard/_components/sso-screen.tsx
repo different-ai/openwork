@@ -6,7 +6,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute, getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
+import { getBillingRoute, getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
@@ -61,12 +61,12 @@ export function SsoScreen() {
   const [tokenEndpointAuthentication, setTokenEndpointAuthentication] = useState<"" | "client_secret_basic" | "client_secret_post">("");
 
   const access = useMemo(
-    () => getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.roles),
-    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
+    () => getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.currentMember.permissions),
+    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.currentMember.permissions],
   );
 
   async function loadSsoConfig(isCurrent = () => true, quiet = false) {
-    if (!orgId || !access.canViewSettings) {
+    if (!orgId || !access.canViewSso) {
       if (isCurrent()) {
         setConnection(null);
       }
@@ -148,7 +148,7 @@ export function SsoScreen() {
     return () => {
       active = false;
     };
-  }, [orgId, access.canViewSettings]);
+  }, [orgId, access.canViewSso]);
 
   useEffect(() => {
     if (!copiedValue) return;
@@ -218,7 +218,7 @@ export function SsoScreen() {
       return;
     }
     if (!access.canManageSso) {
-      setError("Only workspace owners and super-admins can change SSO settings.");
+      setError("You don't have permission to change SSO settings.");
       return;
     }
 
@@ -271,7 +271,7 @@ export function SsoScreen() {
 
   async function handleDelete() {
     if (!access.canManageSso) {
-      setError("Only workspace owners and super-admins can delete SSO settings.");
+      setError("You don't have permission to delete SSO settings.");
       return;
     }
 
@@ -302,7 +302,7 @@ export function SsoScreen() {
 
   async function handleRequestDomainToken() {
     if (!access.canManageSso) {
-      setError("Only workspace owners and super-admins can request SSO domain verification tokens.");
+      setError("You don't have permission to request SSO domain verification tokens.");
       return;
     }
     if (!orgId || !connection) return;
@@ -334,7 +334,7 @@ export function SsoScreen() {
 
   async function handleVerifyDomain() {
     if (!access.canManageSso) {
-      setError("Only workspace owners and super-admins can verify SSO domains.");
+      setError("You don't have permission to verify SSO domains.");
       return;
     }
     if (!orgId || !connection) return;
@@ -463,7 +463,7 @@ export function SsoScreen() {
   }
 
   const formReadOnly = !access.canManageSso;
-  const showConnectionForm = access.canViewSettings && (!connection || editing || formReadOnly);
+  const showConnectionForm = access.canViewSso && (!connection || editing || formReadOnly);
 
   if (!orgContext) {
     return (
@@ -477,8 +477,8 @@ export function SsoScreen() {
 
   return (
     <DashboardPageTemplate icon={Shield} title="SSO" description="Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team." colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}>
-      {!access.canViewSettings ? (
-        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">Only workspace admins can view SSO.</div>
+      {!access.canViewSso ? (
+        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">{permissionLockReason("sso.view")}</div>
       ) : (
         <>
           {!orgContext.entitlements.sso ? (
@@ -487,7 +487,7 @@ export function SsoScreen() {
           {error ? <DenNotice message={error} className="mb-6" /> : null}
           {!access.canManageSso ? (
             <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-              Read-only: owners and super-admins can create, edit, delete, or verify SSO connections.
+              Read-only: creating, editing, deleting or verifying SSO connections needs permission to manage SSO.
             </div>
           ) : null}
 

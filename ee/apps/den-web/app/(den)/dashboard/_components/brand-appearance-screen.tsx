@@ -161,9 +161,9 @@ export function BrandAppearanceScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canManageBrandAppearance = access.canManageSettings;
+  const canManageBrandAppearance = access.canManageBranding;
   const metadata = parseOrganizationMetadata(orgContext?.organization.metadata ?? null);
   const currentLogoUrl = typeof metadata?.brandLogoUrl === "string" ? metadata.brandLogoUrl : null;
   const currentIconUrl = typeof metadata?.brandIconUrl === "string" ? metadata.brandIconUrl : null;
@@ -233,7 +233,7 @@ export function BrandAppearanceScreen() {
     setPageSuccess(null);
 
     if (!canManageBrandAppearance) {
-      setPageError("Only workspace owners and super-admins can change brand appearance.");
+      setPageError("You don't have permission to change brand appearance.");
       return;
     }
 
@@ -307,7 +307,7 @@ export function BrandAppearanceScreen() {
             </DenCard>
 
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[13px] text-gray-500">{!canManageBrandAppearance ? "Admins can view brand appearance. Owners and super-admins can change it." : null}</p>
+              <p className="text-[13px] text-gray-500">{!canManageBrandAppearance ? "You can view brand appearance. Changing it needs permission to change branding." : null}</p>
               <DenButton type="submit" loading={saveBusy} disabled={!canManageBrandAppearance}>Save brand appearance</DenButton>
             </div>
           </form>

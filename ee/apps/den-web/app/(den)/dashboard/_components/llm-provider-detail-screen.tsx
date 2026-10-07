@@ -44,7 +44,7 @@ export function LlmProviderDetailScreen({
     llmProviderId: string;
 }) {
     const router = useRouter();
-    const gatewayEnabled = useGatewayDashboardAccess() === "enabled";
+    const gatewayEnabled = useGatewayDashboardAccess("manage-providers") === "enabled";
     const { orgId, orgSlug, runReauthableAction } = useOrgDashboard();
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);

@@ -167,7 +167,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
                       variant="ghost"
                       size="xs"
                       aria-label={`Remove ${entry.origin}`}
-                      title={canManage ? "Remove" : "Owners and super-admins can remove approved origins"}
+                      title={canManage ? "Remove" : "Removing approved origins needs permission to manage them"}
                       disabled={!canManage || busy}
                       onClick={() => void handleRemove(entry)}
                     >
@@ -233,7 +233,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
               ) : (
                 <p className="flex items-center gap-2 text-gray-500">
                   <Lock size={16} strokeWidth={1.5} aria-hidden="true" className="shrink-0" />
-                  Locked. Owners and super-admins can change approved origins.
+                  Locked. Changing approved origins needs permission to manage them.
                 </p>
               )}
             </form>

@@ -81,6 +81,16 @@
       "development": "./src/gateway-usage-limits.ts",
       "default": "./dist/gateway-usage-limits.js"
     },
+    "./permission-states": {
+      "types": "./src/permission-states.ts",
+      "development": "./src/permission-states.ts",
+      "default": "./dist/permission-states.js"
+    },
+    "./permissions": {
+      "types": "./src/permissions.ts",
+      "development": "./src/permissions.ts",
+      "default": "./dist/permissions.js"
+    },
     "./drizzle": {
       "types": "./src/drizzle.ts",
       "development": "./src/drizzle.ts",
@@ -94,8 +104,9 @@
     "db:migrate:local": "node --import tsx scripts/dev-migrate.ts",
     "db:bootstrap": "pnpm run build && node dist/scripts/bootstrap.js",
     "db:generate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts",
-    "db:migrate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
-    "db:push": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
+    "db:migrate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts && node --conditions=development --import tsx scripts/reconcile-permissions.ts",
+    "db:push": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts && node --conditions=development --import tsx scripts/reconcile-permissions.ts",
+    "db:reconcile-permissions": "node --conditions=development --import tsx scripts/reconcile-permissions.ts",
     "db:verify-memory": "pnpm run build && node --import tsx scripts/verify-memory-schema.ts",
     "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
   },

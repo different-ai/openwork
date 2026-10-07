@@ -3,18 +3,23 @@ import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConnectorInstanceAccessGrantTable,
+  DashboardAccessGrantTable,
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
   InvitationTable,
   GatewayProviderAccessTable,
+  GatewayUsageAssignmentTable,
   LlmProviderAccessTable,
   MarketplaceAccessGrantTable,
   MemberTable,
+  PermissionSetTable,
+  PermissionSetTeamTable,
   PluginAccessGrantTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import type { PermissionKey } from "@openwork/types/den/permissions"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -24,16 +29,27 @@ import { isScimManagedTeam } from "../../scim-groups.js"
 import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "../../organization-team-roles.js"
 import {
   jsonValidator,
-  orgRoleRoute,
+  orgPermissionRoute,
   paramValidator,
 } from "../../middleware/index.js"
+import {
+  ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE,
+  adminDefaultPermissionKeys,
+  firstMissingPermission,
+  teamGrantedPermissionKeys,
+  teamGrantsForbiddenResponse,
+  TEAM_GRANTS_FORBIDDEN_MESSAGE,
+} from "../../permissions/team-grants.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
-  ensureTeamManager,
-  ensureOrganizationSuperAdmin,
   idParamSchema,
+  memberPermissionsForRequest,
   orgAccessFailureStatus,
+  permissionFailureHeaders,
+  requirePermission,
+  type PermissionCheckResult,
+  type PermissionRouteContext,
 } from "./shared.js"
 
 const createTeamSchema = z.object({
@@ -100,15 +116,34 @@ async function ensureMembersBelongToOrganization(input: {
   return input.memberIds.every((memberId) => memberIds.has(memberId))
 }
 
+/**
+ * Safety rule 9.3 (docs/permissions/overview.md): with the Permissions feature
+ * on, the caller must already hold every key the team would grant. The owner
+ * bypasses it. SCIM writes team membership through scim-groups.ts, not these
+ * routes, so identity-provider membership is exempt.
+ */
+async function checkHoldsTeamGrants(
+  c: PermissionRouteContext,
+  grantedKeys: () => Promise<Iterable<PermissionKey>>,
+  message: string,
+): Promise<PermissionCheckResult> {
+  const held = await memberPermissionsForRequest(c)
+  if (!held) return { ok: false, response: { error: "organization_not_found" } }
+  if (!held.featureEnabled || held.isOwner) return { ok: true }
+  const missing = firstMissingPermission(held, await grantedKeys())
+  return missing ? { ok: false, response: teamGrantsForbiddenResponse(missing, message) } : { ok: true }
+}
+
 async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
   return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
-  const permission = ensureTeamManager(c)
-  if (!permission.ok) {
-    return c.json(permission.response, orgAccessFailureStatus(permission.response))
-  }
   if (input.grantsOrganizationAdmin !== undefined) {
-    const rolePermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can designate an Admin team.")
-    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response))
+    const rolePermission = await requirePermission(c, "teams.manage_admin")
+    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
+  }
+  if (input.grantsOrganizationAdmin === true) {
+    // A new team has no team permission set yet, so it grants only the Admin defaults.
+    const grants = await checkHoldsTeamGrants(c, () => adminDefaultPermissionKeys(payload.organization.id, tx), ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE)
+    if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
   }
 
   let memberIds: MemberId[]
@@ -187,11 +222,6 @@ async function affectedTeamUsageMembers(tx: TeamMutationTransaction, organizatio
 
 async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof updateTeamSchema>) {
   return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
-  const permission = ensureTeamManager(c)
-  if (!permission.ok) {
-    return c.json(permission.response, orgAccessFailureStatus(permission.response))
-  }
-
   let teamId: TeamId
   try {
     teamId = parseTeamId(rawId)
@@ -214,8 +244,13 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "scim_managed_team", message: "Manage this team through the SCIM identity provider." }, 409)
   }
   if (input.grantsOrganizationAdmin !== undefined || (team.grantsOrganizationAdmin && input.memberIds !== undefined)) {
-    const rolePermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage Admin team grants and membership.")
-    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response))
+    const rolePermission = await requirePermission(c, "teams.manage_admin")
+    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
+  }
+  const nextGrantsOrganizationAdmin = input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin
+  if (nextGrantsOrganizationAdmin && !team.grantsOrganizationAdmin) {
+    const grants = await checkHoldsTeamGrants(c, () => adminDefaultPermissionKeys(payload.organization.id, tx), ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE)
+    if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
   }
 
   let memberIds: MemberId[] | undefined
@@ -232,6 +267,21 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     }, tx)
     if (!membersBelongToOrg) {
       return c.json({ error: "member_not_found" }, 404)
+    }
+
+    const currentMemberIds = new Set((await tx
+      .select({ id: TeamMemberTable.orgMembershipId })
+      .from(TeamMemberTable)
+      .where(eq(TeamMemberTable.teamId, team.id)))
+      .map((row) => row.id))
+    if (memberIds.some((memberId) => !currentMemberIds.has(memberId))) {
+      const grants = await checkHoldsTeamGrants(c, () => teamGrantedPermissionKeys({
+        organizationId: payload.organization.id,
+        teamId: team.id,
+        grantsOrganizationAdmin: nextGrantsOrganizationAdmin,
+        database: tx,
+      }), TEAM_GRANTS_FORBIDDEN_MESSAGE)
+      if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
     }
   }
 
@@ -283,13 +333,59 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }, (tx) => input.memberIds === undefined ? Promise.resolve([]) : affectedTeamUsageMembers(tx, payload.organization.id, rawId, input.memberIds))
 }
 
+/**
+ * Team delete cascade for permissions (overview section 10): soft-removes the
+ * team's active permission set links and archives each linked team set that
+ * no other team still uses. Default sets are never archived. Nothing is deleted.
+ */
+async function archiveTeamPermissionSets(tx: TeamMutationTransaction, input: {
+  organizationId: typeof TeamTable.$inferSelect.organizationId
+  teamId: TeamId
+  actorMemberId: MemberId
+  at: Date
+}) {
+  const links = await tx
+    .select({ id: PermissionSetTeamTable.id, permissionSetId: PermissionSetTeamTable.permissionSetId })
+    .from(PermissionSetTeamTable)
+    .where(and(
+      eq(PermissionSetTeamTable.organizationId, input.organizationId),
+      eq(PermissionSetTeamTable.teamId, input.teamId),
+      isNull(PermissionSetTeamTable.removedAt),
+    ))
+    .for("update")
+  if (links.length === 0) return
+
+  await tx
+    .update(PermissionSetTeamTable)
+    .set({ removedAt: input.at, removedByOrgMembershipId: input.actorMemberId })
+    .where(inArray(PermissionSetTeamTable.id, links.map((link) => link.id)))
+
+  const setIds = [...new Set(links.map((link) => link.permissionSetId))]
+  const stillLinked = new Set((await tx
+    .select({ permissionSetId: PermissionSetTeamTable.permissionSetId })
+    .from(PermissionSetTeamTable)
+    .where(and(
+      eq(PermissionSetTeamTable.organizationId, input.organizationId),
+      inArray(PermissionSetTeamTable.permissionSetId, setIds),
+      isNull(PermissionSetTeamTable.removedAt),
+    )))
+    .map((row) => row.permissionSetId))
+  const archiveIds = setIds.filter((setId) => !stillLinked.has(setId))
+  if (archiveIds.length === 0) return
+
+  await tx
+    .update(PermissionSetTable)
+    .set({ archivedAt: input.at, archivedByOrgMembershipId: input.actorMemberId })
+    .where(and(
+      eq(PermissionSetTable.organizationId, input.organizationId),
+      inArray(PermissionSetTable.id, archiveIds),
+      isNull(PermissionSetTable.defaultKey),
+      isNull(PermissionSetTable.archivedAt),
+    ))
+}
+
 async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
   return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
-  const permission = ensureTeamManager(c)
-  if (!permission.ok) {
-    return c.json(permission.response, orgAccessFailureStatus(permission.response))
-  }
-
   let teamId: TeamId
   try {
     teamId = parseTeamId(rawId)
@@ -311,8 +407,8 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "scim_managed_team", message: "Disable SCIM team mapping before deleting this team." }, 409)
   }
   if (team.grantsOrganizationAdmin) {
-    const rolePermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can delete Admin teams.")
-    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response))
+    const rolePermission = await requirePermission(c, "teams.manage_admin")
+    if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
   }
 
     const removedAt = new Date()
@@ -331,6 +427,12 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.teamId, team.id))
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
     await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
+    // Usage-limit assignments have no removed_at; unassigning deletes them. This
+    // runs inside the usage entitlement mutation, which re-evaluates the team's members.
+    await tx.delete(GatewayUsageAssignmentTable).where(and(
+      eq(GatewayUsageAssignmentTable.organizationId, payload.organization.id),
+      eq(GatewayUsageAssignmentTable.teamId, team.id),
+    ))
 
     await tx
       .update(MarketplaceAccessGrantTable)
@@ -348,6 +450,21 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       .update(ConnectorInstanceAccessGrantTable)
       .set({ removedAt })
       .where(and(eq(ConnectorInstanceAccessGrantTable.teamId, team.id), isNull(ConnectorInstanceAccessGrantTable.removedAt)))
+    await tx
+      .update(DashboardAccessGrantTable)
+      .set({ removedAt })
+      .where(and(
+        eq(DashboardAccessGrantTable.organizationId, payload.organization.id),
+        eq(DashboardAccessGrantTable.teamId, team.id),
+        isNull(DashboardAccessGrantTable.removedAt),
+      ))
+
+    await archiveTeamPermissionSets(tx, {
+      organizationId: payload.organization.id,
+      teamId: team.id,
+      actorMemberId: payload.currentMember.id,
+      at: removedAt,
+    })
 
     await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
     await tx.delete(TeamTable).where(eq(TeamTable.id, team.id))
@@ -364,7 +481,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       200: jsonResponse("Resource configuration.", teamResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("teams.view"),
     paramValidator(externalKeyParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -383,7 +500,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       200: jsonResponse("Resource configuration.", teamResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("teams.view"),
     paramValidator(orgTeamParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -404,13 +521,11 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       description: "Creates or replaces an organization-scoped resource. Names do not identify resources; existing unkeyed resources are never adopted automatically. Assignments are replaced. Omitted write-only secrets are preserved. Concurrent writes are last-write-wins; conditional headers are not supported on this route.",
       responses: declarativeResponses(teamResponseSchema),
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("teams.manage"),
     paramValidator(externalKeyParamsSchema),
     jsonValidator(createTeamSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const permission = ensureTeamManager(c)
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
       if (c.req.header("If-Match") || c.req.header("If-None-Match")) {
         return c.json({ error: "unsupported_precondition", message: "This endpoint uses last-write-wins. Serialize configuration writers." }, 400)
       }
@@ -445,12 +560,10 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       description: "Deletes the team identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.",
       responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("teams.manage"),
     paramValidator(externalKeyParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const permission = ensureTeamManager(c)
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
       const { externalKey } = c.req.valid("param")
       const [existing] = await db.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
@@ -472,11 +585,11 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         201: jsonResponse("Team created successfully.", teamResponseSchema),
         400: jsonResponse("The team creation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create teams.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can create teams.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in; making an Admin team also needs Manage Admin teams.", forbiddenSchema),
         404: jsonResponse("The organization or a referenced member could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("teams.manage"),
     jsonValidator(createTeamSchema),
     async (c) => createTeam(c, c.get("organizationContext"), c.req.valid("json")),
   )
@@ -491,11 +604,11 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Team updated successfully.", teamResponseSchema),
         400: jsonResponse("The team update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update teams.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can update teams.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in. Admin teams also need Manage Admin teams, and with Permissions on, adding people needs every permission the team grants.", forbiddenSchema),
         404: jsonResponse("The team, organization, or a referenced member could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("teams.manage"),
     paramValidator(orgTeamParamsSchema),
     jsonValidator(updateTeamSchema),
     async (c) => updateTeam(c, c.get("organizationContext"), c.req.valid("param").teamId, c.req.valid("json")),
@@ -511,11 +624,11 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         204: emptyResponse("Team deleted successfully."),
         400: jsonResponse("The team deletion path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete teams.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can delete teams.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in; deleting an Admin team also needs Manage Admin teams.", forbiddenSchema),
         404: jsonResponse("The team or organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("teams.manage"),
     paramValidator(orgTeamParamsSchema),
     async (c) => deleteTeam(c, c.get("organizationContext"), c.req.valid("param").teamId),
   )

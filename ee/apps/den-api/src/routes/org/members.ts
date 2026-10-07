@@ -6,11 +6,12 @@ import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { auditChangeCapture } from "../../audit/request-capture.js"
-import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
+import { jsonValidator, orgPermissionRoute, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, transferOrganizationOwnership, updateOrganizationMemberRole } from "../../orgs.js"
+import { roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, roleAssignmentTarget } from "../../permissions/team-grants.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureMemberRemover, ensureOrganizationSuperAdmin, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
+import { ensureOwner, idParamSchema, memberPermissionsForRequest, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
@@ -30,19 +31,14 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         200: jsonResponse("Member role updated successfully.", successSchema),
         400: jsonResponse("The member role update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update member roles.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins can update member roles.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Change member roles permission and a recent sign-in. With Permissions on, making someone an admin also needs every Admin permission, only the owner or an admin can change an admin's role, and nobody but the owner can change their own role.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("members.update"),
     paramValidator(orgMemberParamsSchema),
     jsonValidator(updateMemberRoleSchema),
     async (c) => {
-    const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can update member roles.")
-    if (!permission.ok) {
-      return c.json(permission.response, orgAccessFailureStatus(permission.response))
-    }
-
     const payload = c.get("organizationContext")
     const input = c.req.valid("json")
 
@@ -59,6 +55,19 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     if (!availableRoles.has(role)) {
       return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
     }
+
+    const caller = await memberPermissionsForRequest(c)
+    if (!caller) return c.json({ error: "organization_not_found" }, 404)
+    const target = await roleAssignmentTarget(payload.organization.id, memberId)
+    if (!target) return c.json({ error: "member_not_found", message: "The organization member could not be found." }, 404)
+    const denial = await roleAssignmentDenial({
+      organizationId: payload.organization.id,
+      caller,
+      callerMemberId: payload.currentMember.id,
+      target,
+      nextRole: role,
+    })
+    if (denial) return c.json(roleAssignmentDeniedResponse(denial), 403, roleAssignmentDeniedHeaders(denial))
 
     const updated = await updateOrganizationMemberRole({
       organizationId: payload.organization.id,
@@ -95,7 +104,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     describeRoute({
       tags: ["Members"],
       summary: "Transfer workspace ownership",
-      description: "Transfers the protected workspace owner role to another active super-admin member.",
+      description: "Transfers the protected workspace owner role to another active admin member.",
       responses: {
         200: jsonResponse("Workspace ownership transferred successfully.", successSchema),
         400: jsonResponse("The ownership transfer request was invalid.", invalidRequestSchema),
@@ -164,18 +173,13 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         204: emptyResponse("Member removed successfully."),
         400: jsonResponse("The member removal request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to remove organization members.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can remove members.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Remove members permission and a recent sign-in.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("members.delete"),
     paramValidator(orgMemberParamsSchema),
     async (c) => {
-    const permission = ensureMemberRemover(c)
-    if (!permission.ok) {
-      return c.json(permission.response, orgAccessFailureStatus(permission.response))
-    }
-
     const payload = c.get("organizationContext")
     const params = c.req.valid("param")
     let memberId: MemberId

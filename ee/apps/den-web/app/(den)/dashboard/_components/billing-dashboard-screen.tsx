@@ -156,9 +156,9 @@ export function BillingDashboardScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canManageBillingSettings = access.canManageSettings;
+  const canManageBillingSettings = access.canManageBilling;
 
   async function refreshStripeBilling(quiet = false) {
     const expectedOrgId = activeOrgId;
@@ -250,7 +250,7 @@ export function BillingDashboardScreen() {
 
   async function startSeatCheckout() {
     if (!canManageBillingSettings) {
-      setStripeError("Admins can start seat checkout from Members. Owners and super-admins manage Billing settings here.");
+      setStripeError("You don't have permission to manage billing.");
       return;
     }
 
@@ -277,7 +277,7 @@ export function BillingDashboardScreen() {
 
   async function openStripePortal() {
     if (!canManageBillingSettings) {
-      setStripeError("Only workspace owners and super-admins can open billing portals from Settings.");
+      setStripeError("You don't have permission to open billing portals from Settings.");
       return;
     }
 
@@ -371,7 +371,7 @@ export function BillingDashboardScreen() {
         <DenNotice
           tone="warning"
           className="mb-6"
-          message="Admins can view Billing settings here. Owners and super-admins can open billing portals or start Settings checkouts."
+          message="You can view Billing settings here. Opening billing portals or starting checkouts needs permission to manage billing."
         />
       )}
 

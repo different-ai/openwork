@@ -137,9 +137,10 @@ export default function WebPage() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canPurchaseWeb = access.isAdmin;
+  // Checkout and checkout sync need `billing.manage`.
+  const canPurchaseWeb = access.canManageBilling;
 
   async function requestWebBilling(expectedOrgId: string, quiet: boolean): Promise<StripeWebBilling | null> {
     if (!quiet && currentOrgIdRef.current === expectedOrgId) {
@@ -280,7 +281,7 @@ export default function WebPage() {
   async function startWebCheckout() {
     if (!orgId || checkoutStartingRef.current) return;
     if (!canPurchaseWeb) {
-      setErrorRecord({ orgId, message: "Ask a workspace owner or admin to purchase OpenWork Web for this organization." });
+      setErrorRecord({ orgId, message: "Purchasing OpenWork Web needs the “Manage billing” permission. Ask an organization owner or admin." });
       return;
     }
     if (!billing?.configured) {
@@ -419,7 +420,7 @@ export default function WebPage() {
               <DenNotice
                 className="mt-5"
                 tone="warning"
-                message="Ask a workspace owner or admin to purchase OpenWork Web for this organization. You'll get access as soon as it's active."
+                message="Ask someone who manages billing for this organization to purchase OpenWork Web. You'll get access as soon as it's active."
               />
             )}
           </DenCard>

@@ -33,4 +33,7 @@ export const LEGACY_ACTION_BRIDGE: Readonly<Record<LegacyOrganizationAuditAction
   "organization.dpa_signed.updated": "organization.dpa_signed.updated",
   "organization.web_origin.approved": "web_origin.approved",
   "organization.web_origin.removed": "web_origin.removed",
+  "organization.permission_set.created": "permission_set.created",
+  "organization.permission_set.permissions_changed": "permission_set.permissions_changed",
+  "organization.permission_set.archived": "permission_set.archived",
 }

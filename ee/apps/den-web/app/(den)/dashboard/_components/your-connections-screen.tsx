@@ -50,7 +50,7 @@ export function YourConnectionsScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
   const authorization = useMcpAccountAuthorization();
   const disconnectProvider = useDisconnectMyProviderAccount();
@@ -116,11 +116,11 @@ export function YourConnectionsScreen() {
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
           {visibleConnections.map((connection) => {
             const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
-            const setupTarget = marketplaceConnectionSetupTarget(connection, presets, access.isAdmin);
+            const setupTarget = marketplaceConnectionSetupTarget(connection, presets, access.canManageConnections);
             return <YourConnectionRow
               key={connection.id}
               connection={connection}
-              isAdmin={access.isAdmin}
+              canManageConnections={access.canManageConnections}
               needsAdminSetup={needsAdminSetup}
               setupTarget={setupTarget}
               presets={presets}
@@ -163,7 +163,7 @@ export function YourConnectionsScreen() {
 
 function YourConnectionRow({
   connection,
-  isAdmin,
+  canManageConnections,
   needsAdminSetup,
   setupTarget,
   presets,
@@ -179,7 +179,8 @@ function YourConnectionRow({
   toolTesterRoute,
 }: {
   connection: ExternalMcpConnection;
-  isAdmin: boolean;
+  /** `connections.manage`: finish setup, connect the org account, review OAuth and test tools. */
+  canManageConnections: boolean;
   needsAdminSetup: boolean;
   setupTarget: { connectionId: string; pluginId: string } | null;
   presets: ReturnType<typeof useMcpConnectionPresets>["data"];
@@ -205,12 +206,12 @@ function YourConnectionRow({
     && !needsAdminRecovery
     && (connection.needsReconnect === true || apiKeyStatus === "reconnect_required");
   const needsMyConnect = !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
-  const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
+  const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && canManageConnections && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
   // A saved personal key keeps one visible action (Replace key); removal lives in the row menu.
   const keyInMenu = canDisconnect && apiKeyStatus !== null && apiKeyStatus !== "missing";
   const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
-  const canTestTools = !needsAdminSetup && !needsAdminRecovery && isAdmin
+  const canTestTools = !needsAdminSetup && !needsAdminRecovery && canManageConnections
     && !isNativeProvider && connection.connectedForMe && !needsReconnect;
   const microsoftScopes = (connection.nativeProviderKey === "microsoft-365" || connection.id === "microsoft-365")
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
@@ -308,7 +309,7 @@ function YourConnectionRow({
               onSetup={onSetup}
             />
           ) : null}
-          {needsAdminRecovery && isAdmin ? (
+          {needsAdminRecovery && canManageConnections ? (
             <Link href="/dashboard/mcp-connections" className={buttonVariants({ variant: "primary", size: "sm" })}>
               Review OAuth
             </Link>

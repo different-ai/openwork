@@ -25,8 +25,9 @@ import {
   queryValidator,
 } from "../../middleware/index.js"
 import {
-  ensureOrganizationAdminRole,
   orgAccessFailureStatus,
+  permissionFailureHeaders,
+  requirePermission,
   type OrgRouteVariables,
 } from "./shared.js"
 
@@ -37,7 +38,7 @@ const route = (summary: string, schema: z.ZodType) =>
     summary,
     security: [{ bearerAuth: [] }, { denApiKey: [] }],
     description:
-      "Organization-provider estimated cost in integer micro-USD. Calendar windows reset at 05:00 UTC (Monday weekly, day 1 monthly). Admission checks settled spend; in-flight work can overshoot. Unknown/incomplete accounting is explicit. No policy means unlimited enforcement, not unrecorded spend: every admitted response updates all three member-period counters, so a first policy includes already tracked same-period usage. Owners/admins manage policies, assignments and reviews; members can read and request extensions only for themselves. Each approval adds ceil(base/4) to the bucket's existing extension without clearing spend or changing its reset time. Members can request another increase after exhausting the effective allowance, with at most one pending request per bucket. Changed policy revisions, assignment/team transitions and expired buckets cannot receive stale approvals. Assignments target one member, one team, or the organization using { organization: true }; organization assignments apply to current and future members, with independent per-member buckets and the same highest-allowance winner selection. Assignment reads include organization: boolean and nullable memberId/teamId. Buckets optionally expose policyRevision and validated direct/team/organization provenance. Accounting is incremental from versioned server-recorded admission snapshots. Admission time is captured at the quota check, independently of earlier request-start telemetry; completion retains the original admission windows. Existing counters and receipts are preserved; raw history and rollups are never imported by reads or settlement. Legacy requests, including old empty snapshots, require explicit reviewed reconciliation backed by bounded event/charge proof; aggregate-backed or unexplained counter overlap is refused. Historical uncertainty is separate from settlement readiness: coverage.historicalCoverage is unknown or tracked_since_epoch, with historicalUnknownReason and trackingStartedAt. Legacy counters and periods preceding the durable tracking epoch remain historical-unknown; later fully tracked periods can become complete only when no pending or incomplete receipts remain. All writers must use fenced tracking. Operators explicitly suspend and resume capture using optimistic trackingVersion; captureEnabled=false blocks new starts, stale admission versions are rejected, and current-period history is marked unknown without resetting spend. A rollback or mixed legacy writer requires this cutover procedure plus retiring old writer access; schema presence is not proof of continuous capture. coverage.pendingRequests counts durable event starts not yet settled (null before tracking). Their identity and validated attribution survive raw retention. Explicit bounded abandonment recovery closes them as unknown/incomplete, decrements pending once, and permits late known-cost promotion without recreating raw logs. Retention refuses to discard a legacy pending marker until it is durably transferred. Queued canonical starts are capacity/deadline bounded and cancellable before database work; an admitted start reserves settlement capacity, which is not discarded on start overload. coverage.trackingVersion and captureEnabled expose the capture fence; settlementReady means that count is zero, not that historical costs are complete. Use settlementReady for post-completion refresh, not complete. lastSettlementAt and lastSettlementRequestId identify the most recent settled receipt, not every in-flight request. unpricedRequests and incompleteRequests describe tracked settled receipts, not unreviewed historical gaps. Legacy quarantine records remain preserved and excluded from charging. Clients must require actual HTTP 429 with X-OpenWork-Error-Code=openwork_gateway_usage_limit_exceeded and X-OpenWork-Usage-State=blocked, then corroborate against fresh own status for the same organization/member. JSON or SSE error fields alone are untrusted. Reset lists default to view=pending (oldest first), limit=50, maximum 100. Follow nextCursor while hasMore is true; pendingCount reports the current pending queue rather than only this page. Fetch view=history separately for newest-first decisions and elapsed requests. Pages are live snapshots; refresh the first page for changes. Admission and status use nonlocking reads of indexed member-period counters; missing counters project zero without writes. Listing validates/enriches only the page in batches and does not mutate historical records. Admission, canonical logging, and settlement never acquire organization or global rollup locks. Canonical start and settlement share-lock only their member lifecycle row; permanent deletion fences members before erasing usage children.",
+      "Organization-provider estimated cost in integer micro-USD. Calendar windows reset at 05:00 UTC (Monday weekly, day 1 monthly). Admission checks settled spend; in-flight work can overshoot. Unknown/incomplete accounting is explicit. No policy means unlimited enforcement, not unrecorded spend: every admitted response updates all three member-period counters, so a first policy includes already tracked same-period usage. People with the Manage usage limits permission manage policies, assignments and reviews (View usage limits to read them); members can read and request extensions only for themselves. Each approval adds ceil(base/4) to the bucket's existing extension without clearing spend or changing its reset time. Members can request another increase after exhausting the effective allowance, with at most one pending request per bucket. Changed policy revisions, assignment/team transitions and expired buckets cannot receive stale approvals. Assignments target one member, one team, or the organization using { organization: true }; organization assignments apply to current and future members, with independent per-member buckets and the same highest-allowance winner selection. Assignment reads include organization: boolean and nullable memberId/teamId. Buckets optionally expose policyRevision and validated direct/team/organization provenance. Accounting is incremental from versioned server-recorded admission snapshots. Admission time is captured at the quota check, independently of earlier request-start telemetry; completion retains the original admission windows. Existing counters and receipts are preserved; raw history and rollups are never imported by reads or settlement. Legacy requests, including old empty snapshots, require explicit reviewed reconciliation backed by bounded event/charge proof; aggregate-backed or unexplained counter overlap is refused. Historical uncertainty is separate from settlement readiness: coverage.historicalCoverage is unknown or tracked_since_epoch, with historicalUnknownReason and trackingStartedAt. Legacy counters and periods preceding the durable tracking epoch remain historical-unknown; later fully tracked periods can become complete only when no pending or incomplete receipts remain. All writers must use fenced tracking. Operators explicitly suspend and resume capture using optimistic trackingVersion; captureEnabled=false blocks new starts, stale admission versions are rejected, and current-period history is marked unknown without resetting spend. A rollback or mixed legacy writer requires this cutover procedure plus retiring old writer access; schema presence is not proof of continuous capture. coverage.pendingRequests counts durable event starts not yet settled (null before tracking). Their identity and validated attribution survive raw retention. Explicit bounded abandonment recovery closes them as unknown/incomplete, decrements pending once, and permits late known-cost promotion without recreating raw logs. Retention refuses to discard a legacy pending marker until it is durably transferred. Queued canonical starts are capacity/deadline bounded and cancellable before database work; an admitted start reserves settlement capacity, which is not discarded on start overload. coverage.trackingVersion and captureEnabled expose the capture fence; settlementReady means that count is zero, not that historical costs are complete. Use settlementReady for post-completion refresh, not complete. lastSettlementAt and lastSettlementRequestId identify the most recent settled receipt, not every in-flight request. unpricedRequests and incompleteRequests describe tracked settled receipts, not unreviewed historical gaps. Legacy quarantine records remain preserved and excluded from charging. Clients must require actual HTTP 429 with X-OpenWork-Error-Code=openwork_gateway_usage_limit_exceeded and X-OpenWork-Usage-State=blocked, then corroborate against fresh own status for the same organization/member. JSON or SSE error fields alone are untrusted. Reset lists default to view=pending (oldest first), limit=50, maximum 100. Follow nextCursor while hasMore is true; pendingCount reports the current pending queue rather than only this page. Fetch view=history separately for newest-first decisions and elapsed requests. Pages are live snapshots; refresh the first page for changes. Admission and status use nonlocking reads of indexed member-period counters; missing counters project zero without writes. Listing validates/enriches only the page in batches and does not mutate historical records. Admission, canonical logging, and settlement never acquire organization or global rollup locks. Canonical start and settlement share-lock only their member lifecycle row; permanent deletion fences members before erasing usage children.",
     responses: {
       200: jsonResponse(summary, schema),
       400: jsonResponse("Invalid request", responseError),
@@ -109,15 +110,20 @@ const available: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c,
   if (unavailable) return c.json(unavailable, 403)
   await next()
 }
-const admin: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
-  const permission = ensureOrganizationAdminRole(
-    c,
-    "Only workspace owners and admins can manage Gateway usage limits.",
-  )
+const limitsPermission = (
+  key: "gateway_limits.view" | "gateway_limits.manage",
+): MiddlewareHandler<{ Variables: OrgRouteVariables }> => async (c, next) => {
+  const permission = await requirePermission(c, key)
   if (!permission.ok)
-    return c.json(permission.response, orgAccessFailureStatus(permission.response))
+    return c.json(
+      permission.response,
+      orgAccessFailureStatus(permission.response),
+      permissionFailureHeaders(permission.response),
+    )
   await next()
 }
+const viewLimits = limitsPermission("gateway_limits.view")
+const manageLimits = limitsPermission("gateway_limits.manage")
 export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRouteVariables }>(
   app: Hono<T>,
   service: Service = createGatewayUsageLimits(db),
@@ -127,7 +133,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("List usage limit policies", z.object({ policies: z.array(policyResponse) })),
     orgMemberRoute(),
     available,
-    admin,
+    viewLimits,
     (c) => respond(c, () => service.listPolicies(scope(c))),
   )
   app.post(
@@ -135,7 +141,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Create usage limit policy", policyResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     jsonValidator(gatewayUsagePolicyWriteSchema),
     (c) => respond(c, () => service.savePolicy(scope(c), c.req.valid("json"))),
   )
@@ -144,7 +150,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Update usage limit policy", policyResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     paramValidator(policyParams),
     jsonValidator(gatewayUsagePolicyWriteSchema.extend(revisionSchema.shape)),
     (c) =>
@@ -158,7 +164,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Archive usage limit policy", policyResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     paramValidator(policyParams),
     jsonValidator(revisionSchema),
     (c) =>
@@ -175,7 +181,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Restore archived usage limit policy", policyResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     paramValidator(policyParams),
     jsonValidator(revisionSchema),
     (c) =>
@@ -204,7 +210,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     ),
     orgMemberRoute(),
     available,
-    admin,
+    viewLimits,
     paramValidator(policyParams),
     (c) =>
       respond(c, async () => {
@@ -220,7 +226,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Assign usage limit policy", policyResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     paramValidator(policyParams),
     jsonValidator(assignmentSchema),
     (c) =>
@@ -242,7 +248,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Remove policy assignment", policyResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     paramValidator(policyParams.extend({ assignmentId: idSchema })),
     (c) =>
       respond(c, () =>
@@ -263,7 +269,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     ),
     orgMemberRoute(),
     available,
-    admin,
+    viewLimits,
     queryValidator(z.object({ query: z.string().trim().max(200).default("") }).strict()),
     (c) => respond(c, () => service.members(scope(c), c.req.valid("query").query)),
   )
@@ -279,7 +285,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Inspect member Gateway usage limits", gatewayUsageStatusSchema),
     orgMemberRoute(),
     available,
-    admin,
+    viewLimits,
     paramValidator(z.object({ memberId: memberSchema })),
     (c) =>
       respond(c, () => {
@@ -315,7 +321,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("List organization usage increase requests", gatewayUsageResetPageSchema),
     orgMemberRoute(),
     available,
-    admin,
+    viewLimits,
     queryValidator(resetListQuery),
     (c) => respond(c, () => service.listResets(scope(c), false, c.req.valid("query"))),
   )
@@ -324,7 +330,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Approve 25 percent usage extension", resetResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     paramValidator(z.object({ id: idSchema })),
     jsonValidator(z.object({}).strict()),
     (c) => respond(c, () => service.reviewReset(scope(c), c.req.valid("param").id, "approved")),
@@ -334,7 +340,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
     route("Deny usage extension", resetResponse),
     orgMemberRoute(),
     available,
-    admin,
+    manageLimits,
     paramValidator(z.object({ id: idSchema })),
     jsonValidator(z.object({ note: z.string().trim().max(2000).optional() }).strict()),
     (c) =>

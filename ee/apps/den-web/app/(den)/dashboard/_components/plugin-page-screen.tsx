@@ -168,9 +168,13 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const data = plugin.data;
   const viewerId = orgContext?.currentMember.id ?? null;
   const mine = data.createdByOrgMembershipId !== null && data.createdByOrgMembershipId === viewerId;
-  const canManage = mine || Boolean(orgContext && getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner).isAdmin);
+  const memberAccess = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
+    : null;
   const draft = access.data ? draftFromPluginGrants(access.data) : null;
   const item = libraryItems?.find((entry) => entry.type === "plugin" && entry.id === pluginId);
+  // Creator, a manager on this plugin, or `sharing.manage_all` (manager on everything shared).
+  const canManage = mine || (item?.type === "plugin" && item.role === "manager") || memberAccess?.canManageAllShared === true;
   const creator = orgContext?.members.find((member) => member.id === data.createdByOrgMembershipId);
   const who = mine && orgContext && draft
     ? ownedAccessStatus(draft, orgContext, viewerId)
@@ -246,7 +250,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
             members={orgContext.members}
             teams={orgContext.teams}
             owner={creator ? { id: creator.id, name: creator.user.name || creator.user.email, isYou: creator.id === viewerId } : null}
-            canShareWithEveryone
+            canShareWithEveryone={memberAccess?.canShareWithEveryone === true}
             everyoneOffDescription={draft.memberIds.filter((id) => id !== data.createdByOrgMembershipId).length === 0 && draft.teamIds.length === 0
               ? "Off. Only you have it so far."
               : "Off. Only the people and teams below have it."}

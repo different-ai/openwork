@@ -12,11 +12,10 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../../env.js"
 import { db } from "../../db.js"
-import { orgRoleRoute } from "../../middleware/index.js"
+import { orgPermissionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { runEgressDiagnostic } from "../../egress-diagnostics.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const unavailableSchema = z.object({
   error: z.literal("egress_diagnostics_not_configured"),
@@ -67,10 +66,10 @@ export function registerOrgEgressDiagnosticRoutes<T extends { Variables: OrgRout
       responses: {
         200: jsonResponse("Egress diagnostic configuration returned successfully.", egressDiagnosticConfigurationSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can inspect egress diagnostics.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the View network diagnostics permission.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("egress_diagnostics.view"),
     async (c) => {
       const organizationId = c.get("organizationContext")?.organization.id
       if (!organizationId) return c.json({ error: "organization_not_found" }, 404)
@@ -87,14 +86,11 @@ export function registerOrgEgressDiagnosticRoutes<T extends { Variables: OrgRout
       responses: {
         204: { description: "The diagnostic token was stored." },
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins can configure egress diagnostics.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the Run network diagnostics permission.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("egress_diagnostics.manage"),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can configure egress diagnostics.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const input = diagnosticTokenSchema.parse(await c.req.json())
       const organizationId = c.get("organizationContext")?.organization.id
       if (!organizationId) return c.json({ error: "organization_not_found" }, 404)
@@ -117,15 +113,12 @@ export function registerOrgEgressDiagnosticRoutes<T extends { Variables: OrgRout
       responses: {
         200: jsonResponse("The completed diagnostic run, including a failed result when a layer did not pass.", egressDiagnosticRunDocumentSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins can run egress diagnostics.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the Run network diagnostics permission.", forbiddenSchema),
         503: jsonResponse("The Den operator has not configured the Diagnostics target.", unavailableSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("egress_diagnostics.manage"),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can run egress diagnostics.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const organizationId = c.get("organizationContext")?.organization.id
       if (!organizationId) return c.json({ error: "organization_not_found" }, 404)
       const bearerToken = await configuredBearerToken(organizationId)

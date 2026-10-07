@@ -75,6 +75,11 @@
       "development": "./src/den/desktop-app-restrictions.ts",
       "default": "./src/den/desktop-app-restrictions.ts"
     },
+    "./den/permissions": {
+      "types": "./src/den/permissions.ts",
+      "development": "./src/den/permissions.ts",
+      "default": "./src/den/permissions.ts"
+    },
     "./den/desktop-policies": {
       "types": "./src/den/desktop-policies.ts",
       "development": "./src/den/desktop-policies.ts",

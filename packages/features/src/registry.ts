@@ -130,6 +130,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  permissions: {
+    label: "Permissions",
+    description: "Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   platformAuditReads: {
     label: "Platform audit: read-only requests",
     description: "Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.",

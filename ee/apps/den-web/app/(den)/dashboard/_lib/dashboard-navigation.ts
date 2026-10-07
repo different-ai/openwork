@@ -38,6 +38,7 @@ import {
   getWebRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
+import { canOpenAdminRoute } from "./admin-route-access";
 
 export type DashboardNavChild = {
   href: string;
@@ -112,7 +113,9 @@ export function buildDashboardNavSections({
       : []),
   ];
 
-  const manageItems: DashboardNavItem[] = access.isAdmin && orgSlug
+  // Admin-area entries appear only where the member holds the page's permission.
+  const canOpen = (href: string) => canOpenAdminRoute(href, access);
+  const manageItems: DashboardNavItem[] = orgSlug
     ? [
         { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
@@ -121,29 +124,34 @@ export function buildDashboardNavSections({
           : []),
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
-      ]
+      ].filter((item) => canOpen(item.href))
     : [];
   const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
-        ...(capabilities.auditLogs ? [{ href: getAuditLogsRoute(orgSlug), label: "Audit logs", icon: access.isAdmin ? ScrollText : LockKeyhole, ...(access.isAdmin ? {} : { badge: "Admin access" }) }] : []),
+        ...(capabilities.auditLogs
+          ? [{
+              href: getAuditLogsRoute(orgSlug),
+              label: "Audit logs",
+              icon: access.canViewAuditLogs ? ScrollText : LockKeyhole,
+              ...(access.canViewAuditLogs ? {} : { badge: "Locked" }),
+            }]
+          : []),
       ]
     : [];
   const settingsChildren: DashboardNavChild[] = orgSlug
     ? [
-        ...(access.canViewSettings
-          ? [
-              { href: getOrgSettingsRoute(orgSlug), label: "General" },
-              { href: getDiagnosticsRoute(orgSlug), label: "Diagnostics" },
-              { href: getBillingRoute(orgSlug), label: "Billing" },
-              { href: getApiKeysRoute(orgSlug), label: "API Keys" },
-              { href: getSsoRoute(orgSlug), label: "SSO" },
-              { href: getScimRoute(orgSlug), label: "SCIM" },
-            ]
-          : []),
-        ...(access.isAdmin
+        ...[
+          { href: getOrgSettingsRoute(orgSlug), label: "General" },
+          { href: getDiagnosticsRoute(orgSlug), label: "Diagnostics" },
+          { href: getBillingRoute(orgSlug), label: "Billing" },
+          { href: getApiKeysRoute(orgSlug), label: "API Keys" },
+        ].filter((item) => canOpen(item.href)),
+        ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
+        ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
+        ...(canOpen(getMarketplacesRoute(orgSlug))
           ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
-        ...(capabilities.mcpConnections && access.isAdmin
+        ...(capabilities.mcpConnections && canOpen(getToolTesterRoute(orgSlug))
           ? [{ href: getToolTesterRoute(orgSlug), label: "Tool Tester" }]
           : []),
       ]
@@ -157,7 +165,7 @@ export function buildDashboardNavSections({
       }
     : null;
   const teamItems: DashboardNavItem[] = [
-    ...(access.isAdmin && orgSlug
+    ...(orgSlug && canOpen(getMembersRoute(orgSlug))
       ? [{ href: getMembersRoute(orgSlug), label: "Members", icon: Users }]
       : []),
     ...(settingsGroup ? [settingsGroup] : []),

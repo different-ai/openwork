@@ -14,12 +14,12 @@ export function useDashboardActivity() {
   const { user } = useDenFlow();
   const { orgId, orgSlug, orgContext, orgBusy, orgError, mutationBusy } = dashboard;
   const member = orgContext?.currentMember;
-  const isAdmin = member ? getOrgAccessFlags(member.role, member.isOwner, orgContext?.roles).isAdmin : false;
+  const isAdmin = member ? getOrgAccessFlags(member.role, member.isOwner, member.permissions).isAdmin : false;
   const enabled = Boolean(
     user && member?.userId === user.id && orgId && orgContext?.organization.id === orgId &&
     isAdmin && orgFeatureEnabled(orgContext, "dashboardActivity") && !orgBusy && !orgError && mutationBusy !== "switch-organization",
   );
-  const gatewayEnabled = getGatewayDashboardAccess(dashboard) === "enabled";
+  const gatewayEnabled = getGatewayDashboardAccess(dashboard, "providers") === "enabled";
 
   return useQuery({
     // Include both identity and readiness: neither an organization switch nor a

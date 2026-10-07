@@ -31,7 +31,7 @@ import {
 import {
   jsonValidator,
   orgMemberRoute,
-  orgRoleRoute,
+  orgPermissionRoute,
   paramValidator,
   queryValidator,
   resolveMemberTeamsMiddleware,
@@ -43,7 +43,7 @@ import { organizationAllowsManagedModels, repairMemberInferenceAccessIfNeeded } 
 import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
 import { listAccessibleLlmProviderAccess, listGrantedLlmProviderMemberIds } from "./llm-provider-access.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
+import { hasPermission, idParamSchema, orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
 
 type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
 type LlmProviderAccessId = typeof LlmProviderAccessTable.$inferSelect.id
@@ -249,15 +249,26 @@ function isRouteFailure(value: unknown): value is RouteFailure {
   return typeof value === "object" && value !== null && "status" in value && "error" in value
 }
 
-function isOrganizationAdmin(payload: { currentMember: { isOwner: boolean; role: string } }) {
-  return payload.currentMember.isOwner || memberHasRole(payload.currentMember.role, "admin")
-}
-
-function canManageLlmProvider(
-  payload: { currentMember: { id: MemberId; isOwner: boolean; role: string } },
+/**
+ * The provider's creator may always change it. Anyone else needs `key`; holders
+ * of `key` (sensitive) also need a recent sign-in, even for their own provider.
+ * Returns the failure response, or null when allowed.
+ */
+async function authorizeLlmProviderChange(
+  c: ResourceActionContext,
+  payload: ResourceOrganizationContext,
   provider: LlmProviderRow,
+  key: "llm_providers.update" | "llm_providers.delete",
+  message: string,
 ) {
-  return isOrganizationAdmin(payload) || provider.createdByOrgMembershipId === payload.currentMember.id
+  if (await hasPermission(c, key)) {
+    const permission = await requirePermission(c, key)
+    if (permission.ok) return null
+    return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
+  }
+
+  if (provider.createdByOrgMembershipId === payload.currentMember.id) return null
+  return c.json({ error: "forbidden", message }, 403)
 }
 
 async function canAccessLlmProvider(input: {
@@ -920,19 +931,8 @@ async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrga
     return c.json({ error: "llm_provider_not_found" }, 404)
   }
 
-  if (!canManageLlmProvider(payload, provider)) {
-    return c.json({
-      error: "forbidden",
-      message: "Only the provider creator or a workspace admin can update providers.",
-    }, 403)
-  }
-
-  if (isOrganizationAdmin(payload)) {
-    const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can update providers.")
-    if (!permission.ok) {
-      return c.json(permission.response, orgAccessFailureStatus(permission.response))
-    }
-  }
+  const denied = await authorizeLlmProviderChange(c, payload, provider, "llm_providers.update", "Only the provider creator or a workspace admin can update providers.")
+  if (denied) return denied
 
   try {
     const normalized = await normalizeLlmProviderInput(input, provider)
@@ -1070,19 +1070,8 @@ async function deleteLlmProvider(c: ResourceActionContext, payload: ResourceOrga
     return c.json({ error: "llm_provider_not_found" }, 404)
   }
 
-  if (!canManageLlmProvider(payload, provider)) {
-    return c.json({
-      error: "forbidden",
-      message: "Only the provider creator or a workspace admin can delete providers.",
-    }, 403)
-  }
-
-  if (isOrganizationAdmin(payload)) {
-    const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can delete providers.")
-    if (!permission.ok) {
-      return c.json(permission.response, orgAccessFailureStatus(permission.response))
-    }
-  }
+  const denied = await authorizeLlmProviderChange(c, payload, provider, "llm_providers.delete", "Only the provider creator or a workspace admin can delete providers.")
+  if (denied) return denied
 
   await db.transaction(async (tx) => {
     await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.llmProviderId, provider.id))
@@ -1102,7 +1091,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("llm_providers.view"),
     paramValidator(externalKeyParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -1121,7 +1110,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("llm_providers.view"),
     paramValidator(orgLlmProviderParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
@@ -1142,13 +1131,11 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       description: "Creates or replaces an organization-scoped resource. Names do not identify resources; existing unkeyed resources are never adopted automatically. Assignments are replaced. Omitted write-only secrets are preserved. Concurrent writes are last-write-wins; conditional headers are not supported on this route.",
       responses: declarativeResponses(llmProviderResponseSchema),
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("llm_providers.update"),
     paramValidator(externalKeyParamsSchema),
     jsonValidator(llmProviderWriteSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
       if (c.req.header("If-Match") || c.req.header("If-None-Match")) {
         return c.json({ error: "unsupported_precondition", message: "This endpoint uses last-write-wins. Serialize configuration writers." }, 400)
       }
@@ -1195,12 +1182,10 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       description: "Deletes the LLM provider identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.",
       responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("llm_providers.delete"),
     paramValidator(externalKeyParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
       const { externalKey } = c.req.valid("param")
       const [existing] = await db.select().from(LlmProviderTable).where(and(
         eq(LlmProviderTable.organizationId, payload.organization.id),
@@ -1348,11 +1333,15 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         }
       }
 
+      const [canViewAll, canUpdateAll] = await Promise.all([
+        hasPermission(c, "llm_providers.view"),
+        hasPermission(c, "llm_providers.update"),
+      ])
       const providers = await loadLlmProviders({
         organizationId: payload.organization.id,
         currentMemberId: payload.currentMember.id,
         memberTeams,
-        isAdmin: isOrganizationAdmin(payload),
+        isAdmin: canViewAll,
         scope: query.scope,
       })
 
@@ -1360,7 +1349,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         llmProviders: providers.map((provider) => ({
           ...provider,
           apiKey: undefined,
-          canManage: canManageLlmProvider(payload, provider),
+          canManage: canUpdateAll || provider.createdByOrgMembershipId === payload.currentMember.id,
         })),
       })
     },
@@ -1629,22 +1618,19 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List member credential states for an LLM provider",
-      description: "Admin-only. Lists credential state and external identifiers for every granted member without returning secret material.",
+      description: "Requires the Manage people's provider keys permission. Lists credential state and external identifiers for every granted member without returning secret material.",
       responses: {
         200: jsonResponse("Granted member credential states returned.", memberCredentialListResponseSchema),
         400: jsonResponse("The provider id is invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can list member credentials.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the Manage people's provider keys permission.", forbiddenSchema),
         404: jsonResponse("The provider could not be found.", notFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("llm_provider_credentials.manage"),
     paramValidator(orgLlmProviderParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can list member credentials.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
-
       const params = c.req.valid("param")
       const llmProviderId = parseLlmProviderId(params.llmProviderId)
       const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
@@ -1687,24 +1673,21 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Set one member's LLM provider credential",
-      description: "Admin-only. Stores write-only credential material and optional external provisioner identifiers.",
+      description: "Requires the Manage people's provider keys permission. Stores write-only credential material and optional external provisioner identifiers.",
       responses: {
         200: jsonResponse("Member credential stored.", memberCredentialSummarySchema),
         400: jsonResponse("The provider is not per-member or the credential is invalid.", memberCredentialBadRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can provision member credentials.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the Manage people's provider keys permission.", forbiddenSchema),
         404: jsonResponse("The provider or member could not be found.", notFoundSchema),
         409: jsonResponse("The member credential version changed.", versionConflictSchema),
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("llm_provider_credentials.manage"),
     paramValidator(orgLlmProviderMemberCredentialParamsSchema),
     jsonValidator(adminMemberCredentialWriteSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can provision member credentials.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
-
       const params = c.req.valid("param")
       const input = c.req.valid("json")
       const llmProviderId = parseLlmProviderId(params.llmProviderId)
@@ -1759,22 +1742,19 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Block one member's LLM provider credential",
-      description: "Admin-only. Marks one member's credential on the provider as blocked: it is no longer used for inference and the member can neither delete nor overwrite it. Storing a new credential for that member through the admin PUT endpoint is the unblock path.",
+      description: "Requires the Manage people's provider keys permission. Marks one member's credential on the provider as blocked: it is no longer used for inference and the member can neither delete nor overwrite it. Storing a new credential for that member through the admin PUT endpoint is the unblock path.",
       responses: {
         200: jsonResponse("Member credential blocked.", memberCredentialSummarySchema),
         400: jsonResponse("The provider or member id is invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can block member credentials.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the Manage people's provider keys permission.", forbiddenSchema),
         404: jsonResponse("The provider or member credential could not be found.", notFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("llm_provider_credentials.manage"),
     paramValidator(orgLlmProviderMemberCredentialParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can block member credentials.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
-
       const params = c.req.valid("param")
       const llmProviderId = parseLlmProviderId(params.llmProviderId)
       const orgMembershipId = parseMemberId(params.orgMembershipId)
@@ -1905,16 +1885,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "llm_provider_not_found" }, 404)
       }
 
-      if (!canManageLlmProvider(payload, provider)) {
-        return c.json({ error: "forbidden", message: "Only the provider creator or a workspace admin can manage access." }, 403)
-      }
-
-      if (isOrganizationAdmin(payload)) {
-        const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can manage access.")
-        if (!permission.ok) {
-          return c.json(permission.response, orgAccessFailureStatus(permission.response))
-        }
-      }
+      const denied = await authorizeLlmProviderChange(c, payload, provider, "llm_providers.update", "Only the provider creator or a workspace admin can manage access.")
+      if (denied) return denied
 
       const accessRows = await db
         .select()

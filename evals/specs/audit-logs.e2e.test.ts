@@ -487,66 +487,66 @@ test("a flagged owner records and filters audit history by default while an unfl
     await owner.screenshot();
   });
 
-  const roleName = "audit-reviewers";
-  let roleOperation: Awaited<ReturnType<typeof onlyOperationWith>> | null = null;
+  const setName = `${world.reviewersTeamName} Permissions`;
+  let setOperation: Awaited<ReturnType<typeof onlyOperationWith>> | null = null;
 
-  await step("the owner creates a custom role and types “role created” into the Event type search", async () => {
-    const created = await seed.api(world.den.admin, "/v1/roles", { method: "POST", body: JSON.stringify({ roleName, permission: { invitation: ["create"] } }) });
+  await step("the owner gives the Audit reviewers team its own permissions and types “permission set created” into the Event type search", async () => {
+    const created = await seed.api(world.den.admin, "/v1/permissions/sets", { method: "POST", body: JSON.stringify({ teamId: world.reviewersTeamId, permissions: [{ key: "audit.view", status: "allow" }] }) });
     expect(created.response.status).toBe(201);
     await owner.click({ text: "Capture and storage" });
     await openEventTypes();
-    await owner.type({ label: "Search event types" }, "role created", { verify: true });
-    const options = await audit.eventually(() => audit.dom('[role="listbox"] [role="option"]'), { within: 10_000, label: "Search narrows the event types", until: (value) => value.elements.some((option) => option.text === "Role created") });
+    await owner.type({ label: "Search event types" }, "permission set created", { verify: true });
+    const options = await audit.eventually(() => audit.dom('[role="listbox"] [role="option"]'), { within: 10_000, label: "Search narrows the event types", until: (value) => value.elements.some((option) => option.text === "Permission set created") });
     const labels = options.elements.map((option) => option.text);
-    expect(labels).toContain("Role created");
-    expect(labels.every((label) => label.toLowerCase().includes("role created"))).toBe(true);
-    evidence.recordAssertionEvidence("The searchable Event type select narrows the catalog", `POST /v1/roles returned ${created.response.status}; typing “role created” leaves ${labels.length} options: ${labels.join(", ")}.`, labels.includes("Role created"));
+    expect(labels).toContain("Permission set created");
+    expect(labels.every((label) => label.toLowerCase().includes("permission set created"))).toBe(true);
+    evidence.recordAssertionEvidence("The searchable Event type select narrows the catalog", `POST /v1/permissions/sets returned ${created.response.status}; typing “permission set created” leaves ${labels.length} options: ${labels.join(", ")}.`, labels.includes("Permission set created"));
     await owner.screenshot();
   });
 
-  await step("after: picking Role created lists the owner's role creation as one operation", async () => {
-    await owner.click({ text: "Role created" });
-    await owner.see({ role: "button", label: "Event type" }, { text: "Role created" });
+  await step("after: picking Permission set created lists the owner's change as one operation", async () => {
+    await owner.click({ text: "Permission set created" });
+    await owner.see({ role: "button", label: "Event type" }, { text: "Permission set created" });
     await owner.click({ role: "button", label: "Apply filters" });
     await historySettled();
-    await owner.see({ role: "button", label: "View changes for Role create requested" }, { timeoutMs: 30_000 });
-    roleOperation = await onlyOperationWith("role.created");
-    const { operation, events } = roleOperation;
-    expect(operation.action).toBe("role.create.requested");
+    await owner.see({ role: "button", label: "View changes for Permission set create requested" }, { timeoutMs: 30_000 });
+    setOperation = await onlyOperationWith("permission_set.created");
+    const { operation, events } = setOperation;
+    expect(operation.action).toBe("permission_set.create.requested");
     expect(operation.origin).toBe("api");
-    expect(events.map((event) => event.action)).toEqual(["role.create.requested", "role.created", "role.create.succeeded"]);
+    expect(events.map((event) => event.action)).toEqual(["permission_set.create.requested", "permission_set.created", "permission_set.create.succeeded"]);
     expect(new Set(events.map((event) => event.requestId)).size).toBe(1);
     const row = await operationRow(operation);
-    expect(row).toMatchObject({ action: "Role create requested", actor: "Audit Owner", origin: "API" });
+    expect(row).toMatchObject({ action: "Permission set create requested", actor: "Audit Owner", origin: "API" });
     evidence.recordAssertionEvidence("One request, one operation, three events", `Operation ${operation.id} holds ${events.map((event) => event.action).join(" → ")} from one request; the row reads “${row.summary}”.`, events.length === 3);
     await owner.screenshot();
   });
 
-  await step("after: expanding it shows the role before (empty) and after, and the request's HTTP method, route and status", async () => {
-    if (!roleOperation) throw new Error("Role operation was not found");
-    const { operation, events } = roleOperation;
-    await owner.click({ role: "button", label: "View changes for Role create requested" });
+  await step("after: expanding it shows the permission set before (empty) and after, and the request's HTTP method, route and status", async () => {
+    if (!setOperation) throw new Error("Permission set operation was not found");
+    const { operation, events } = setOperation;
+    await owner.click({ role: "button", label: "View changes for Permission set create requested" });
     const timeline = await expandedTimeline(operation, events.length);
-    expect(timeline.events[1]?.headline).toBe("Role created · Succeeded · Audit Owner");
-    expect(timeline.changes).toContain(`Role | None | ${roleName}`);
-    expect(timeline.changes).toContain("Permissions | None | invitation:create");
-    const change = events.find((event) => event.action === "role.created")?.changes;
+    expect(timeline.events[1]?.headline).toBe("Permission set created · Succeeded · Audit Owner");
+    expect(timeline.changes).toContain(`Name | None | ${setName}`);
+    expect(timeline.changes).toContain("Allowed | None | audit.view");
+    const change = events.find((event) => event.action === "permission_set.created")?.changes;
     expect(change?.before).toBeNull();
-    expect(change?.after).toMatchObject({ role: roleName, permissions: ["invitation:create"] });
-    const requested = events.find((event) => event.action === "role.create.requested");
-    const succeeded = events.findIndex((event) => event.action === "role.create.succeeded");
-    expect(requested?.http).toEqual({ method: "POST", route: "/v1/roles" });
-    expect(events[succeeded]?.http).toEqual({ method: "POST", route: "/v1/roles", status: 201 });
+    expect(change?.after).toMatchObject({ name: setName, kind: "team", teamId: world.reviewersTeamId, allowed: ["audit.view"] });
+    const requested = events.find((event) => event.action === "permission_set.create.requested");
+    const succeeded = events.findIndex((event) => event.action === "permission_set.create.succeeded");
+    expect(requested?.http).toEqual({ method: "POST", route: "/v1/permissions/sets" });
+    expect(events[succeeded]?.http).toEqual({ method: "POST", route: "/v1/permissions/sets", status: 201 });
     await owner.click({ text: "Technical details", nth: succeeded });
     await owner.click({ text: "HTTP status" });
     const details = await audit.dom(`[id="audit-operation-${operation.id}"] details[open] dd`);
     const values = details.elements.map((value) => value.text);
-    expect(values).toContain("POST /v1/roles");
+    expect(values).toContain("POST /v1/permissions/sets");
     expect(values).toContain("201");
-    expect(values).toContain("role.create.succeeded");
-    evidence.recordAssertionEvidence("Readable change and request evidence", `Changes: ${timeline.changes.join("; ")}. Technical details of role.create.succeeded show “POST /v1/roles” and status 201 (the requested intent has no status).`, change?.before === null && values.includes("201"));
+    expect(values).toContain("permission_set.create.succeeded");
+    evidence.recordAssertionEvidence("Readable change and request evidence", `Changes: ${timeline.changes.join("; ")}. Technical details of permission_set.create.succeeded show “POST /v1/permissions/sets” and status 201 (the requested intent has no status).`, change?.before === null && values.includes("201"));
     await owner.screenshot();
-    await owner.click({ role: "button", label: "Hide changes for Role create requested" });
+    await owner.click({ role: "button", label: "Hide changes for Permission set create requested" });
   });
 
   await step("an ordinary team creation is one operation with a requested and a succeeded request event", async () => {
@@ -566,25 +566,25 @@ test("a flagged owner records and filters audit history by default while an unfl
     await owner.click({ role: "button", label: "Hide changes for Team create requested" });
   });
 
-  await step("a teammate's denied attempt to create a role appears as a denied security event attributed to the teammate", async () => {
-    const denied = await seed.api(world.teammate, "/v1/roles", { method: "POST", body: JSON.stringify({ roleName: "teammate-escalation", permission: {} }) });
+  await step("a teammate's denied attempt to create team permissions appears as a denied security event attributed to the teammate", async () => {
+    const denied = await seed.api(world.teammate, "/v1/permissions/sets", { method: "POST", body: JSON.stringify({ teamId: world.reviewersTeamId, permissions: [{ key: "audit.view", status: "allow" }] }) });
     expect(denied.response.status).toBe(403);
-    await filterAndFindOperation("Role create attempted", "role create attempted", "Role create requested");
-    const { operation, events } = await onlyOperationWith("role.create.attempted");
+    await filterAndFindOperation("Permission set create attempted", "permission set create attempted", "Permission set create requested");
+    const { operation, events } = await onlyOperationWith("permission_set.create.attempted");
     expect(operation.initiatingActor).toMatchObject({ type: "user", id: world.teammateUserId });
-    const attempt = events.find((event) => event.action === "role.create.attempted");
-    expect(attempt).toMatchObject({ category: "security", outcome: "denied", reasonCode: "request_denied", actor: { type: "user", id: world.teammateUserId }, http: { method: "POST", route: "/v1/roles", status: 403 } });
-    expect(events.some((event) => event.action === "role.created")).toBe(false);
+    const attempt = events.find((event) => event.action === "permission_set.create.attempted");
+    expect(attempt).toMatchObject({ category: "security", outcome: "denied", reasonCode: "request_denied", actor: { type: "user", id: world.teammateUserId }, http: { method: "POST", route: "/v1/permissions/sets", status: 403 } });
+    expect(events.some((event) => event.action === "permission_set.created")).toBe(false);
     const row = await operationRow(operation);
-    expect(row).toMatchObject({ action: "Role create requested", actor: "Audit Teammate", origin: "API" });
-    await owner.click({ role: "button", label: "View changes for Role create requested" });
+    expect(row).toMatchObject({ action: "Permission set create requested", actor: "Audit Teammate", origin: "API" });
+    await owner.click({ role: "button", label: "View changes for Permission set create requested" });
     const timeline = await expandedTimeline(operation, events.length);
-    const shown = timeline.events.find((event) => event.headline.startsWith("Role create attempted"));
-    expect(shown?.headline).toBe("Role create attempted · Denied · Audit Teammate");
+    const shown = timeline.events.find((event) => event.headline.startsWith("Permission set create attempted"));
+    expect(shown?.headline).toBe("Permission set create attempted · Denied · Audit Teammate");
     expect(shown?.text).toContain("Request denied");
-    evidence.recordAssertionEvidence("A denied admin-route attempt is retained for the owner", `The teammate's POST /v1/roles returned 403; the owner's row reads “${row.summary}” and the event reads “${shown?.headline} · Request denied” (category ${attempt?.category}, outcome ${attempt?.outcome}); no role was created.`, attempt?.outcome === "denied" && attempt.category === "security");
+    evidence.recordAssertionEvidence("A denied admin-route attempt is retained for the owner", `The teammate's POST /v1/permissions/sets returned 403; the owner's row reads “${row.summary}” and the event reads “${shown?.headline} · Request denied” (category ${attempt?.category}, outcome ${attempt?.outcome}); no permission set was created.`, attempt?.outcome === "denied" && attempt.category === "security");
     await owner.screenshot();
-    await owner.click({ role: "button", label: "Hide changes for Role create requested" });
+    await owner.click({ role: "button", label: "Hide changes for Permission set create requested" });
   });
 
   await step("a platform administrator's DPA change shows actor Platform administrator and origin Platform admin", async () => {

@@ -40,6 +40,7 @@ import { adminRoute, jsonValidator, queryValidator } from "../../middleware/inde
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
+import { seedDefaultPermissionSetsOnEnable } from "../../permissions/default-sets.js"
 import {
   describeFeatures,
   readFeatureRollouts,
@@ -2137,6 +2138,11 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       })
 
       const described = describeOrganization(await readFeatureRollouts(db), overrides)
+      // Turning Permissions on copies the default sets in now (docs/permissions/overview.md,
+      // section 8). Never fails the toggle: resolution seeds lazily if this does.
+      if (changes.permissions === true && described.permissions.enabled) {
+        await seedDefaultPermissionSetsOnEnable(organizationId)
+      }
       return c.json({ ok: true, organization: { id: organizationId }, capabilities: readAdminVisibleOrganizationCapabilities(described), featureStates: readAdminFeatureStates(described) })
     },
   )
@@ -2182,6 +2188,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       if (!featureAvailableOn(key.data, env.features.deployment)) {
         return c.json({ error: "invalid_request", message: `${key.data} is not part of this deployment.` }, 400)
       }
+      // Turning Permissions on for everyone does not seed here: that could be
+      // every organization. Each organization's default sets are created on
+      // first use by permission resolution (ensureDefaultPermissionSets), and
+      // deploy-time reconciliation keeps existing sets current.
       const rollouts = await setFeatureRollout(db, {
         key: key.data,
         enabled: body.data.enabled,

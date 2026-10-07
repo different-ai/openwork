@@ -340,6 +340,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
 | `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
 | `litellm` | `DEN_FEATURE_LITELLM` | default off | Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person. |
+| `permissions` | `DEN_FEATURE_PERMISSIONS` | default off | Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults. |
 | `platformAuditReads` | `DEN_FEATURE_PLATFORM_AUDIT_READS` | default off | Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect. |
 <!-- END GENERATED features -->
 

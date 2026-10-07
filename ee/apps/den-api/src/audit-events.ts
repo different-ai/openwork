@@ -29,6 +29,9 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   dpaSignedUpdated: "organization.dpa_signed.updated",
   webOriginApproved: "organization.web_origin.approved",
   webOriginRemoved: "organization.web_origin.removed",
+  permissionSetCreated: "organization.permission_set.created",
+  permissionSetPermissionsChanged: "organization.permission_set.permissions_changed",
+  permissionSetArchived: "organization.permission_set.archived",
 }
 
 export type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -77,6 +80,9 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginApproved:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetPermissionsChanged:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetArchived:
       return true
     // Intentionally unchanged by the operation audit work: ownership transfer
     // has never raised an operator [audit-alert]; widening that contract is out of scope.

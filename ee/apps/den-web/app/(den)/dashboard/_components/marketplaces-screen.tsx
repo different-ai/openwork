@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Cable, Loader2, Plus, Search } from "lucide-react";
+import { Cable, Loader2, LockKeyhole, Plus, Search } from "lucide-react";
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getMarketplaceRoute, getOrgAccessFlags, getPluginSourcesRoute } from "../../_lib/den-org";
+import { getMarketplaceRoute, getOrgAccessFlags, getPluginSourcesRoute, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import {
@@ -30,7 +30,7 @@ export function MarketplacesScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles ?? [],
+    orgContext?.currentMember.permissions,
   );
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -61,11 +61,17 @@ export function MarketplacesScreen() {
             placeholder="Search collections..."
           />
         </div>
-        {access.isAdmin ? (
+        {access.canManageMarketplaces ? (
           <DenButton icon={Plus} onClick={() => setCreateOpen(true)}>
             New collection
           </DenButton>
-        ) : null}
+        ) : (
+          <span title={permissionLockReason("marketplaces.manage")}>
+            <DenButton icon={LockKeyhole} variant="secondary" disabled aria-label={`New collection. ${permissionLockReason("marketplaces.manage")}`}>
+              New collection
+            </DenButton>
+          </span>
+        )}
       </div>
 
       {error ? (
@@ -118,7 +124,7 @@ export function MarketplacesScreen() {
           ))}
         </DenCatalogList>
       )}
-      {access.isAdmin ? (
+      {access.canManageMarketplaces ? (
         <CreateMarketplaceDialog
           open={createOpen}
           onClose={() => setCreateOpen(false)}

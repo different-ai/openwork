@@ -2,11 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { LayoutDashboard, Loader2, Plus, Search } from "lucide-react";
+import { LayoutDashboard, Loader2, LockKeyhole, Plus, Search } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
 import { DenButton } from "../../_components/ui/button";
-import { getManagedDashboardRoute } from "../../_lib/den-org";
+import { getManagedDashboardRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
@@ -19,7 +19,12 @@ function formatDashboardTimestamp(value: string) {
 }
 
 export function OrgDashboardsScreen() {
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const canManageDashboards = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  ).canManageDashboards;
   const router = useRouter();
   const { data: dashboards = [], isLoading, error } = useManagedDashboards();
   const [query, setQuery] = useState("");
@@ -50,9 +55,17 @@ export function OrgDashboardsScreen() {
             placeholder="Search dashboards..."
           />
         </div>
-        <DenButton icon={Plus} onClick={() => setCreateOpen(true)}>
-          New dashboard
-        </DenButton>
+        {canManageDashboards ? (
+          <DenButton icon={Plus} onClick={() => setCreateOpen(true)}>
+            New dashboard
+          </DenButton>
+        ) : (
+          <span title={permissionLockReason("dashboards.manage")}>
+            <DenButton icon={LockKeyhole} variant="secondary" disabled aria-label={`New dashboard. ${permissionLockReason("dashboards.manage")}`}>
+              New dashboard
+            </DenButton>
+          </span>
+        )}
       </div>
 
       {error ? (
@@ -100,7 +113,7 @@ export function OrgDashboardsScreen() {
         </DenCatalogList>
       )}
 
-      {createOpen ? (
+      {createOpen && canManageDashboards ? (
         <CreateDashboardDialog
           onClose={() => setCreateOpen(false)}
           onCreated={(dashboardId) => {

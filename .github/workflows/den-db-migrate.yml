@@ -26,6 +26,11 @@ on:
       - dev
     paths:
       - "ee/packages/den-db/drizzle/**"
+      # New catalog permissions need rows in existing default permission sets.
+      - "packages/types/src/den/permissions.ts"
+      - "ee/packages/den-db/src/permissions.ts"
+      - "ee/packages/den-db/scripts/permission-reconciliation.ts"
+      - "ee/packages/den-db/scripts/reconcile-permissions.ts"
       # Also run when this workflow itself changes: a broken migrate run fixed
       # by a workflow-only PR must re-apply pending migrations on merge instead
       # of waiting for a manual dispatch (migrate is idempotent via the journal).
@@ -266,6 +271,13 @@ jobs:
             return 1
           }
           run_with_ddl_retry pnpm --filter @openwork-ee/den-db db:migrate
+
+      # Data only (no DDL), so it runs outside the safe-migrations window and on
+      # every run, including idle scheduled ticks: catalog changes ship without
+      # a migration file. Idempotent; a no-op when nothing is new.
+      - name: Reconcile default permission sets
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: pnpm --filter @openwork-ee/den-db db:reconcile-permissions
 
       - name: Re-enable safe migrations
         if: always() && steps.setup-pscale.conclusion == 'success'

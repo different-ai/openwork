@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import { useConnectorSetup } from "./connector-setup";
@@ -70,6 +70,9 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
   const searchParams = useSearchParams();
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
+  const canShareWithEveryone = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canShareWithEveryone
+    : false;
   const { target, loading, missing, failed } = useConnectorTarget(catalogId);
   const updateConnection = useUpdateMcpConnection();
   const saveAccess = useSaveConnectionAccess();
@@ -235,7 +238,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
           members={orgContext.members}
           teams={orgContext.teams}
           owner={viewerId ? { id: viewerId, name: viewerName, isYou: true } : null}
-          canShareWithEveryone
+          canShareWithEveryone={canShareWithEveryone}
           everyoneOffDescription="Off. Only the people and teams below get it."
           disabled={busy}
         />

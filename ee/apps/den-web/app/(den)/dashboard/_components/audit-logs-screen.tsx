@@ -24,7 +24,7 @@ export function getAuditAccess(input: {
   if (input.orgError) return "error";
   if (!input.orgId || !input.orgContext || input.orgId !== input.orgContext.organization.id) return "checking";
   if (!input.orgContext.capabilities.auditLogs) return "unavailable";
-  return getOrgAccessFlags(input.orgContext.currentMember.role, input.orgContext.currentMember.isOwner, input.orgContext.roles).isAdmin ? "allowed" : "locked";
+  return getOrgAccessFlags(input.orgContext.currentMember.role, input.orgContext.currentMember.isOwner, input.orgContext.currentMember.permissions).canViewAuditLogs ? "allowed" : "locked";
 }
 
 function AuditPage({ children, action }: { children: ReactNode; action?: ReactNode }) {
@@ -41,7 +41,7 @@ export function AuditLogsScreen() {
   if (access === "unavailable") return <AuditPage><AuditLocked unavailable /></AuditPage>;
   if (access === "locked" || !dashboard.orgContext || !dashboard.orgId) return <AuditPage><AuditLocked /></AuditPage>;
   const member = dashboard.orgContext.currentMember;
-  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} />;
+  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} />;
 }
 
 function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {

@@ -232,7 +232,7 @@ export function OrgSettingsScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
   const canManageSettings = access.canManageSettings;
   const canManageDesktopVersions = access.canManageSettings;
@@ -433,7 +433,7 @@ export function OrgSettingsScreen() {
     clearOrgSettingsCompletion();
 
     if (!canManageSettings) {
-      setPageError("Only workspace owners and super-admins can change settings.");
+      setPageError("You don't have permission to change settings.");
       return;
     }
 
@@ -800,7 +800,7 @@ export function OrgSettingsScreen() {
 
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
           <p className="text-[13px] text-gray-500">
-            {!canManageSettings ? "Admins can view settings here. Owners and super-admins can change them." : null}
+            {!canManageSettings ? "You can view these settings. Changing them needs permission to edit organization settings." : null}
           </p>
           <DenButton
             type="submit"
@@ -812,8 +812,8 @@ export function OrgSettingsScreen() {
         </div>
       </form>
 
-      {access.canViewSettings ? (
-        <OrgWebOriginsSection orgId={organizationId} canManage={canManageSettings} />
+      {access.canViewWebOrigins ? (
+        <OrgWebOriginsSection orgId={organizationId} canManage={access.canManageWebOrigins} />
       ) : null}
 
       {canDeleteOrganization ? (

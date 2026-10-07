@@ -18,11 +18,9 @@ export function OrgMemberIdentity({
   const access = getOrgAccessFlags(member.role, member.isOwner);
   const roleBadge = access.isOwner
     ? "Owner"
-    : access.isSuperAdmin
-      ? "Super admin"
-      : access.isAdminRole
-        ? "Admin"
-        : null;
+    : access.canonicalRole === "admin"
+      ? "Admin"
+      : null;
   const isInvited = !member.joinedAt;
 
   return (

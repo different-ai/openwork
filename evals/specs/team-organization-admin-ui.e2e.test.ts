@@ -4,8 +4,13 @@ import { browserScript, navigate } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
 import { eventually, needs, server, test } from "@openwork/testkit";
 import { parseTeamAdminContext } from "./helpers/team-admin-context.ts";
+import { denyInAdminPermissions } from "../worlds/permissions.ts";
 
-test("owners toggle team Admin in Den Web while inherited admins see a disabled checkbox and provenance", { timeout: 600_000 }, async ({ place, evidence }) => {
+// Super-admin was merged into admin, so by default every admin holds Manage
+// Admin teams. This organization turns Permissions on and withholds that one
+// permission from Admin permissions, so an inherited admin still sees the
+// checkbox but cannot change it.
+test("owners toggle team Admin in Den Web while inherited admins without Manage Admin teams see a disabled checkbox and provenance", { timeout: 600_000 }, async ({ place, evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
   await using den = await server({ place, web: true, org: { name: "Team Admin UI", members: { teammate: { name: "Inherited Teammate" } } } });
   const teammate = den.members.teammate;
@@ -23,6 +28,7 @@ test("owners toggle team Admin in Den Web while inherited admins see a disabled 
   expect(created.response.status, created.text).toBe(201);
   const team = (await org()).teams.find((entry) => entry.name === teamName);
   if (!team) throw new Error("Missing team");
+  await denyInAdminPermissions(den.admin, initial.organization.id, ["teams.manage_admin"]);
   await using browser = await chrome({ name: "team-admin-ui", host: place.host(), startUrl: den.ref.webUrl, headless: true });
   await navigate(browser.client, den.ref.webUrl);
   await waitFor(browser, browserScript((url) => location.href.startsWith(url) && document.readyState === "complete", [den.ref.webUrl]), { timeoutMs: 60_000, label: "Den Web origin loaded" });
@@ -84,5 +90,5 @@ test("owners toggle team Admin in Den Web while inherited admins see a disabled 
   await clickCheckbox();
   await eventually(async () => (await org(teammate)).currentMember.role, { within: 15_000, until: (role) => role === "member", label: "owner unchecked Admin grant" });
   expect((await org(teammate)).currentMember.adminTeams).toEqual([]);
-  evidence.recordAssertionEvidence("Team Admin checkbox persists grants and displays provenance without granting role management", "The owner checked and unchecked the real checkbox; API authority changed both times. The inherited admin saw it checked but disabled, saw Admin via UI Operations, and the control fit desktop and mobile viewports without horizontal overflow.", true);
+  evidence.recordAssertionEvidence("Team Admin checkbox persists grants and displays provenance without granting Admin team management", "With Manage Admin teams denied in Admin permissions, the owner checked and unchecked the real checkbox; API authority changed both times. The inherited admin saw it checked but disabled, saw Admin via UI Operations, and the control fit desktop and mobile viewports without horizontal overflow.", true);
 });

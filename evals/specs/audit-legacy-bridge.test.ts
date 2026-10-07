@@ -94,10 +94,6 @@ async function eventsAfter(dbUrl: string, orgId: string, after: number): Promise
   const rows = await sql(dbUrl, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND sequence > ? ORDER BY sequence", [orgId, after]);
   return rows.map((row) => envelopeOf(row.envelope));
 }
-async function roleId(dbUrl: string, orgId: string, role: string): Promise<string> {
-  const rows = await sql(dbUrl, "SELECT id FROM organization_role WHERE organization_id = ? AND role = ?", [orgId, role]);
-  return text(rows[0]?.id, `role ${role}`);
-}
 
 function orgHeaders(session: DenSession, orgId: string): Record<string, string> {
   return { authorization: `Bearer ${session.token}`, "x-openwork-org-id": orgId };
@@ -143,10 +139,20 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
   const headers = orgHeaders(admin, orgId);
   const adminHeaders = { authorization: `Bearer ${admin.token}` };
 
+  // Permission sets (the audited replacement for custom roles) need the
+  // Permissions feature; it is independent of the auditLogs rollout.
+  const permissionsOn = await denFetch(admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", headers: adminHeaders, body: JSON.stringify({ capabilities: { permissions: true } }) });
+  expect(permissionsOn.response.status, permissionsOn.text).toBe(200);
+  const createTeam = async (name: string) => {
+    const created = await denFetch(admin, "/v1/teams", { method: "POST", headers, body: JSON.stringify({ name, memberIds: [] }) });
+    expect(created.response.status, created.text).toBe(201);
+    return text(record(record(created.body, "team response").team, "team").id, `team ${name}`);
+  };
+
   // 1. Unflagged: legacy rows exactly as before, no operation evidence at all.
-  const unflaggedRole = `legacy-viewer-${stamp}`;
-  const legacyRole = await denFetch(admin, "/v1/roles", { method: "POST", headers, body: JSON.stringify({ roleName: unflaggedRole, permission: { member: ["create"] } }) });
-  expect(legacyRole.response.status, legacyRole.text).toBe(201);
+  const legacyTeamId = await createTeam(`Legacy reviewers ${stamp}`);
+  const legacySet = await denFetch(admin, "/v1/permissions/sets", { method: "POST", headers, body: JSON.stringify({ teamId: legacyTeamId, permissions: [{ key: "teams.view", status: "allow" }] }) });
+  expect(legacySet.response.status, legacySet.text).toBe(201);
   const legacyDpa = await denFetch(admin, `/v1/admin/organizations/${orgId}/dpa`, { method: "PATCH", headers: adminHeaders, body: JSON.stringify({ dpaSigned: false, reason: "Synthetic unsigned agreement" }) });
   expect(legacyDpa.response.status, legacyDpa.text).toBe(200);
   const unflaggedLegacy = await legacyRows(dbUrl, orgId);
@@ -154,13 +160,13 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
   const legacyActions = unflaggedLegacy.map((row) => String(row.action));
   const dpaPayload = unflaggedLegacy.find((row) => row.action === "organization.dpa_signed.updated")?.payload;
   const dpaPayloadRecord = record(typeof dpaPayload === "string" ? JSON.parse(dpaPayload) : dpaPayload, "legacy DPA payload");
-  expect(legacyActions).toEqual(expect.arrayContaining(["organization.role.created", "organization.dpa_signed.updated"]));
+  expect(legacyActions).toEqual(expect.arrayContaining(["organization.permission_set.created", "organization.dpa_signed.updated"]));
   expect(dpaPayloadRecord).toEqual({ previousDpaSigned: null, dpaSigned: false, reason: "Synthetic unsigned agreement" });
   expect(Number(unflaggedOperations[0]?.n ?? -1)).toBe(0);
   evidence.recordAssertionEvidence(
     "1. Without the auditLogs rollout the legacy audit_event rows are written unchanged",
     `Legacy rows: ${legacyActions.join(", ")}; DPA payload ${JSON.stringify(dpaPayloadRecord)}; operation-bound audit rows: ${String(unflaggedOperations[0]?.n)}.`,
-    legacyActions.includes("organization.role.created") && Number(unflaggedOperations[0]?.n) === 0,
+    legacyActions.includes("organization.permission_set.created") && Number(unflaggedOperations[0]?.n) === 0,
   );
 
   const enabled = await denFetch(admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", headers: adminHeaders, body: JSON.stringify({ capabilities: { auditLogs: true } }) });
@@ -169,15 +175,16 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
   const start = await watermark(dbUrl, orgId);
   const secrets: string[] = [];
 
-  // 2. Roles: create, rename + permission change, delete.
-  const roleName = `audit-reviewer-${stamp}`;
-  const renamed = `audit-approver-${stamp}`;
-  const created = await denFetch(admin, "/v1/roles", { method: "POST", headers, body: JSON.stringify({ roleName, permission: { member: ["create"] } }) });
+  // 2. Team permission set: create, change permissions, archive (custom roles were removed).
+  const reviewersTeamName = `Audit reviewers ${stamp}`;
+  const reviewersTeamId = await createTeam(reviewersTeamName);
+  const setName = `${reviewersTeamName} Permissions`;
+  const created = await denFetch(admin, "/v1/permissions/sets", { method: "POST", headers, body: JSON.stringify({ teamId: reviewersTeamId, permissions: [{ key: "teams.view", status: "allow" }] }) });
   expect(created.response.status, created.text).toBe(201);
-  const createdRoleId = await roleId(dbUrl, orgId, roleName);
-  const updated = await denFetch(admin, `/v1/roles/${createdRoleId}`, { method: "PATCH", headers, body: JSON.stringify({ roleName: renamed, permission: { member: ["create", "update"], invitation: ["create"] } }) });
+  const createdSetId = text(record(record(created.body, "permission set response").set, "permission set").id, "permission set id");
+  const updated = await denFetch(admin, `/v1/permissions/sets/${createdSetId}/permissions`, { method: "PUT", headers, body: JSON.stringify({ changes: [{ key: "api_keys.view", status: "allow" }, { key: "teams.view", status: "deny" }] }) });
   expect(updated.response.status, updated.text).toBe(200);
-  const deleted = await denFetch(admin, `/v1/roles/${createdRoleId}`, { method: "DELETE", headers });
+  const deleted = await denFetch(admin, `/v1/permissions/sets/${createdSetId}`, { method: "DELETE", headers });
   expect(deleted.response.status, deleted.text).toBe(204);
 
   // 3. Invitation create + cancel (placeholder member removal joins the same operation).
@@ -192,9 +199,9 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
 
   // 4. Member role changes; the teammate's own key is implicitly revoked on the downgrade.
   const teammateMemberId = (await memberIdentity(admin, orgId, teammate.email)).memberId;
-  const promoted = await denFetch(admin, `/v1/members/${teammateMemberId}/role`, { method: "POST", headers, body: JSON.stringify({ role: "super-admin" }) });
+  const promoted = await denFetch(admin, `/v1/members/${teammateMemberId}/role`, { method: "POST", headers, body: JSON.stringify({ role: "admin" }) });
   expect(promoted.response.status, promoted.text).toBe(200);
-  const unchanged = await denFetch(admin, `/v1/members/${teammateMemberId}/role`, { method: "POST", headers, body: JSON.stringify({ role: "super-admin" }) });
+  const unchanged = await denFetch(admin, `/v1/members/${teammateMemberId}/role`, { method: "POST", headers, body: JSON.stringify({ role: "admin" }) });
   expect(unchanged.response.status, unchanged.text).toBe(200);
   const teammateKey = await denFetch(teammate, "/v1/api-keys", { method: "POST", headers: orgHeaders(teammate, orgId), body: JSON.stringify({ name: `Teammate key ${stamp}` }) });
   expect(teammateKey.response.status, teammateKey.text).toBe(201);
@@ -240,22 +247,25 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
     return event;
   };
 
-  const roleCreated = one("role.created");
-  const roleUpdated = one("role.updated");
-  const roleDeleted = one("role.deleted");
-  expect(roleCreated.changes).toMatchObject({ before: null, after: { id: createdRoleId, role: roleName, permissions: ["member:create"] } });
-  expect(roleUpdated.changes?.before).toMatchObject({ role: roleName, permissions: ["member:create"] });
-  expect(roleUpdated.changes?.after).toMatchObject({ role: renamed, permissions: ["invitation:create", "member:create", "member:update"] });
-  expect(roleUpdated.changes?.changedFields).toEqual(["permissions", "role"]);
-  expect(roleDeleted.changes).toMatchObject({ before: { id: createdRoleId, role: renamed }, after: null });
-  expect(roleCreated.resources).toEqual(expect.arrayContaining([
-    expect.objectContaining({ type: "role", id: createdRoleId, relationship: "target" }),
+  const setCreated = one("permission_set.created");
+  const setChanged = one("permission_set.permissions_changed");
+  const setArchived = one("permission_set.archived");
+  expect(setCreated.changes).toMatchObject({ before: null, after: { id: createdSetId, name: setName, kind: "team", teamId: reviewersTeamId, allowed: ["teams.view"], archivedAt: null } });
+  expect(setChanged.changes?.before).toMatchObject({ id: createdSetId, allowed: ["teams.view"] });
+  expect(setChanged.changes?.after).toMatchObject({ id: createdSetId, allowed: ["api_keys.view"] });
+  expect(setChanged.changes?.changedFields).toEqual(["allowed"]);
+  expect(setArchived.changes?.before).toMatchObject({ id: createdSetId, archivedAt: null });
+  expect(typeof setArchived.changes?.after?.archivedAt).toBe("string");
+  expect(setArchived.changes?.changedFields).toEqual(["archivedAt"]);
+  expect(setCreated.resources).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: "permission_set", id: createdSetId, relationship: "target" }),
+    expect.objectContaining({ type: "team", id: reviewersTeamId }),
     expect.objectContaining({ type: "organization", id: orgId, relationship: "parent" }),
   ]));
   evidence.recordAssertionEvidence(
-    "2. Role create, update and delete append role.* change events with before/after snapshots",
-    `role.created after=${JSON.stringify(roleCreated.changes?.after)}; role.updated changedFields=${JSON.stringify(roleUpdated.changes?.changedFields)}; role.deleted after=${JSON.stringify(roleDeleted.changes?.after)}.`,
-    roleCreated.changes?.before === null && roleDeleted.changes?.after === null,
+    "2. Team permission set create, change and archive append permission_set.* change events with before/after snapshots",
+    `permission_set.created after=${JSON.stringify(setCreated.changes?.after)}; permission_set.permissions_changed allowed ${JSON.stringify(setChanged.changes?.before?.allowed)} → ${JSON.stringify(setChanged.changes?.after?.allowed)}; permission_set.archived changedFields=${JSON.stringify(setArchived.changes?.changedFields)}.`,
+    setCreated.changes?.before === null && setArchived.changes?.changedFields.includes("archivedAt") === true,
   );
 
   const invitationCreated = one("invitation.created");
@@ -271,7 +281,7 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
   );
 
   const roleChanges = byAction("member.role_updated");
-  expect(roleChanges.map((event) => [event.changes?.before?.role, event.changes?.after?.role])).toEqual([["member", "super-admin"], ["super-admin", "member"]]);
+  expect(roleChanges.map((event) => [event.changes?.before?.role, event.changes?.after?.role])).toEqual([["member", "admin"], ["admin", "member"]]);
   const revoked = one("api_key.revoked");
   const demotion = roleChanges[1];
   expect(revoked.operationId).toBe(demotion?.operationId);
@@ -330,17 +340,17 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
   );
 
   // The audit API serves the same change events and lists the new actions as filterable types.
-  const operationEvents = await denFetch(admin, `/v1/audit/operations/${encodeURIComponent(roleUpdated.operationId)}/events?limit=50`, { headers });
+  const operationEvents = await denFetch(admin, `/v1/audit/operations/${encodeURIComponent(setChanged.operationId)}/events?limit=50`, { headers });
   expect(operationEvents.response.status, operationEvents.text).toBe(200);
   const served = isRecord(operationEvents.body) && Array.isArray(operationEvents.body.events) ? operationEvents.body.events.map(envelopeOf) : [];
   const catalog = await denFetch(admin, "/v1/audit/event-types", { headers });
   expect(catalog.response.status, catalog.text).toBe(200);
   const eventTypes = isRecord(catalog.body) && Array.isArray(catalog.body.eventTypes) ? catalog.body.eventTypes : [];
-  expect(served.map((event) => event.action)).toEqual(expect.arrayContaining(["role.update.requested", "role.updated", "role.update.succeeded"]));
-  expect(eventTypes).toEqual(expect.arrayContaining(["role.created", "invitation.canceled", "member.removed", "api_key.revoked", "organization.dpa_signed.updated", "web_origin.removed"]));
+  expect(served.map((event) => event.action)).toEqual(expect.arrayContaining(["permission_set.permissions.update.requested", "permission_set.permissions_changed", "permission_set.permissions.update.succeeded"]));
+  expect(eventTypes).toEqual(expect.arrayContaining(["permission_set.created", "invitation.canceled", "member.removed", "api_key.revoked", "organization.dpa_signed.updated", "web_origin.removed"]));
   evidence.recordAssertionEvidence(
     "8. GET /v1/audit serves the change event inside the request operation and catalogs the bridged actions",
-    `Operation ${roleUpdated.operationId} events: ${summary(served)}; catalog has ${eventTypes.length} event types including the bridged change actions.`,
-    served.some((event) => event.action === "role.updated"),
+    `Operation ${setChanged.operationId} events: ${summary(served)}; catalog has ${eventTypes.length} event types including the bridged change actions.`,
+    served.some((event) => event.action === "permission_set.permissions_changed"),
   );
 });

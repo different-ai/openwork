@@ -24,7 +24,7 @@ import {
 } from "../../desktop-connect-grants.js"
 import { env } from "../../env.js"
 import { hashInstallLinkToken, mintOrganizationInstallLink } from "../../install-links.js"
-import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, publicRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { featureKeySchema } from "@openwork/features"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
@@ -36,7 +36,7 @@ import {
 } from "../../utils/installer-artifacts.js"
 import { checkRateLimit, enforceRateLimit } from "../../utils/rate-limit.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
+import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
 
 const INSTALL_LINK_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const INSTALL_LINK_MINT_RATE_LIMIT_MAX = 30
@@ -394,13 +394,13 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         200: jsonResponse("Install link created successfully.", createInstallLinkResponseSchema),
         400: jsonResponse("The install-link request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create install links.", unauthorizedSchema),
-        403: jsonResponse("The organization needs the installLinks capability enabled, and only workspace owners and admins can rotate existing links.", forbiddenSchema.or(capabilityDisabledSchema)),
+        403: jsonResponse("The organization needs the installLinks capability enabled, and rotating existing links needs the Rotate install links permission.", forbiddenSchema.or(capabilityDisabledSchema)),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
         429: jsonResponse("The member has created too many install links.", rateLimitedSchema),
       },
     }),
     setActiveOrganizationFromParam,
-    orgRoleRoute(["member"]),
+    orgMemberRoute(),
     jsonValidator(createInstallLinkBodySchema),
     async (c) => {
       const input = c.req.valid("json")
@@ -411,9 +411,9 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       }
 
       if (input.rotate) {
-        const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can rotate install links.")
+        const permission = await requirePermission(c, "install_links.update")
         if (!permission.ok) {
-          return c.json(permission.response, orgAccessFailureStatus(permission.response))
+          return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
         }
       }
 
