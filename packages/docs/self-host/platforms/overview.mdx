@@ -12,14 +12,14 @@ The [desktop app](https://openworklabs.com/download) is MIT-licensed. The team c
 
 ## Choose your environment
 
-The Helm guides document the tested production path on EKS, AKS, and GKE. The ECS Terraform module is a draft. The other pages below are planning guides based on OpenWork's service requirements and the platform's capabilities; they are not tested installation recipes.
+The Helm guides document the tested production path on EKS, AKS, and GKE. Google Cloud also has a Cloud Run starter for Den Web and Den API. The ECS Terraform module is a draft. The other pages below are planning guides based on OpenWork's service requirements and the platform's capabilities; they are not tested installation recipes.
 
 | Environment | Deployment path |
 | --- | --- |
 | [Docker Compose and virtual machines](/self-host/platforms/docker-and-vms) | Docker Compose for evaluation; your own container setup for production. Includes EC2, Azure VMs, Compute Engine, Hetzner, and other Linux hosts. |
 | [AWS ECS / Fargate](/self-host/platforms/aws-ecs) | Existing draft Terraform module with RDS and HTTPS. |
 | [Azure Container Apps](/self-host/platforms/azure-container-apps) | Adapt the web and API images to Container Apps and managed MySQL. |
-| [Google Cloud Run](/self-host/platforms/google-cloud-run) | Assess the control plane separately from background work and durable workers. |
+| [Google Cloud Run](/self-host/platforms/google-cloud-run) | Cloud Run starter for Den Web and Den API; assess background work and durable workers separately. |
 | [Render](/self-host/platforms/render) | Container services with an external MySQL-compatible database. |
 | [Railway](/self-host/platforms/railway) | Separate container services, MySQL, and persistent volumes where needed. |
 | [Fly.io](/self-host/platforms/fly-io) | Machines, service routing, and a MySQL-compatible database. |
