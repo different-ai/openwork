@@ -16,6 +16,10 @@
 //                 commented /test again to proceed anyway.
 //   finalize      waits for the tests and the Warden review on that commit,
 //                 then passes or fails `contributor-pr-required`.
+//   backfill      manual run: sets `contributor-pr-required` on every open PR
+//                 to dev (or one, with PR_NUMBER) without commenting, and
+//                 lists the fork PRs that still need the free screen. For
+//                 PRs opened before this gate existed.
 //
 // A fork's own `pull_request` workflows come from the PR's merge commit, so a
 // fork could rewrite them. Changes to CI or agent configuration are therefore
@@ -187,7 +191,7 @@ function env(name) {
   return value;
 }
 
-async function github(path, init = {}) {
+async function github(path, init = {}, attempt = 0) {
   const response = await fetch(`${process.env.GITHUB_API_URL ?? "https://api.github.com"}${path}`, {
     ...init,
     headers: {
@@ -197,6 +201,15 @@ async function github(path, init = {}) {
       ...(init.body ? { "content-type": "application/json" } : {}),
     },
   });
+  // Out of API quota: wait for the reset (at most an hour) and try again.
+  if ((response.status === 403 || response.status === 429) && attempt < 3 &&
+      (response.headers.get("x-ratelimit-remaining") === "0" || response.headers.get("retry-after"))) {
+    const reset = Number(response.headers.get("x-ratelimit-reset") ?? 0) * 1000;
+    const wait = Math.min(Math.max(reset - Date.now(), Number(response.headers.get("retry-after") ?? 0) * 1000, 30_000), 3_600_000);
+    console.log(`Rate limited on ${path}; waiting ${Math.round(wait / 1000)}s.`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    return github(path, init, attempt + 1);
+  }
   if (!response.ok) throw new Error(`${init.method ?? "GET"} ${path}: ${response.status} ${await response.text()}`);
   const text = await response.text();
   return text ? JSON.parse(text) : null;
@@ -268,8 +281,36 @@ async function approveRuns(repo, sha) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function backfill(repo, runUrl) {
+  const only = (process.env.PR_NUMBER ?? "").trim();
+  if (only && !/^\d+$/.test(only)) throw new Error(`PR_NUMBER must be a number, got: ${only}`);
+  const prs = only
+    ? [await github(`/repos/${repo}/pulls/${only}`)]
+    : await paginate(`/repos/${repo}/pulls?state=open&base=dev`);
+  const forks = [];
+  for (const pr of prs.filter((item) => item.state === "open")) {
+    // Files only matter for forks (CI and agent configuration check).
+    const [commits, files] = await Promise.all([
+      paginate(`/repos/${repo}/pulls/${pr.number}/commits`),
+      isFork(pr) ? paginate(`/repos/${repo}/pulls/${pr.number}/files`) : Promise.resolve([]),
+    ]);
+    const decision = gateDecision({ pr, commits, files });
+    await setStatus(repo, pr.head.sha, { ...decision, url: runUrl });
+    console.log(`#${pr.number} ${pr.head.sha.slice(0, 10)}: ${decision.state} (${decision.description})`);
+    // Forks that fail the gate get the free screen on their next push.
+    if (isFork(pr) && !isBot(pr) && decision.state !== "failure") forks.push({ number: pr.number, sha: pr.head.sha });
+  }
+  // A job matrix holds at most 256 entries.
+  await output("forks", JSON.stringify(forks.slice(0, 256)));
+  console.log(`Checked ${prs.length} PR(s); ${forks.length} fork PR(s) queued for the free screen.`);
+}
+
 async function main(mode) {
   const repo = env("GITHUB_REPOSITORY");
+  if (mode === "backfill") {
+    const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`;
+    return backfill(repo, runUrl);
+  }
   const number = Number(env("PR_NUMBER"));
   const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`;
 

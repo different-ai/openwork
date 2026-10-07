@@ -20,15 +20,25 @@ on:
   pull_request_target:
     branches: [dev]
     types: [opened, synchronize, reopened]
+  # Re-check PRs that were opened before this gate existed, or any one PR.
+  # Only people with write access can run it. It sets statuses without
+  # commenting and runs the free screen on fork PRs.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to re-check (leave empty for every open PR to dev)
+        required: false
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: contributor-pr-gate-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: contributor-pr-gate-${{ github.event.pull_request.number || 'backfill' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
   gate:
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -68,4 +78,49 @@ jobs:
     with:
       pr_number: ${{ github.event.pull_request.number }}
       head_sha: ${{ github.event.pull_request.head.sha }}
+      stage: scan
+
+  backfill:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      forks: ${{ steps.backfill.outputs.forks }}
+    steps:
+      - name: Checkout trusted gate script from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Set contributor-pr-required on open PRs
+        id: backfill
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr }}
+        run: node .github/scripts/contributor-pr.mjs backfill
+
+  backfill-screen:
+    needs: backfill
+    if: needs.backfill.outputs.forks != '' && needs.backfill.outputs.forks != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.backfill.outputs.forks) }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    uses: ./.github/workflows/contributor-warden.yml
+    with:
+      pr_number: ${{ matrix.number }}
+      head_sha: ${{ matrix.sha }}
       stage: scan
