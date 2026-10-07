@@ -779,4 +779,69 @@ test("an owner saves and reopens a snapshot app, and external Workflows run live
     `Provider calls from the unattended run: ${unattendedExternalCalls.map(call => call.name).join(", ")}`,
     unattendedRun.status === "succeeded" && unattendedExternalCalls.length === 2,
   )
+
+  await step("an authoring test whose result is over 64 KB says how big it is instead of failing its outputSchema", async () => {
+    const authoringFailure = async (code: string, topic: string) => {
+      const tested = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+        name: "execute_capability_script",
+        arguments: { code, input: { topic }, inputSchema, outputSchema },
+      })
+      expect(tested.isError).toBe(true)
+      const text = records(tested.content).find((part) => part.type === "text")?.text
+      if (typeof text !== "string") throw new Error("The authoring test returned no failure text")
+      return requireRecord(JSON.parse(text), "authoring test failure")
+    }
+    // The value fits outputSchema; only its serialized size is over the 65,536-byte limit.
+    const oversizedTopic = `launch-oversized-${stamp}`
+    const oversizedBytes = JSON.stringify({ briefing: { topic: oversizedTopic, detail: "x".repeat(70000) } }).length
+    const oversized = await authoringFailure("return { briefing: { topic: input.topic, detail: \"x\".repeat(70000) } }", oversizedTopic)
+    expect(oversized.error).toBe("invalid_result")
+    expect(oversized.message).toBe(`The result is ${Math.ceil(oversizedBytes / 1024)} KB, over the 64 KB limit. Return only the fields the Workflow needs.`)
+    // Negative: a small result that really misses outputSchema still says so.
+    const offSchema = await authoringFailure("return { summary: input.topic }", `launch-off-schema-${stamp}`)
+    expect(offSchema.error).toBe("invalid_result")
+    expect(offSchema.message).toBe("The result does not match outputSchema.")
+    evidence.recordAssertionEvidence(
+      "An oversized authoring test reports its size and the limit; a real schema mismatch is still reported as one",
+      `${oversizedBytes} bytes: "${String(oversized.message)}"; under the limit but off-schema: "${String(offSchema.message)}"`,
+      true,
+    )
+  })
+
+  // Last: this step stops the report source, which nothing after it may use.
+  await step("when the report source stops answering between the test and the save, saving returns a retryable 503 and saves nothing", async () => {
+    const unreachableTopic = `launch-unreachable-${stamp}`
+    const unreachableCode = "return { briefing: await tools.report_source.mock_echo({ text: input.topic }) }"
+    const tested = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+      name: "execute_capability_script",
+      arguments: { code: unreachableCode, input: { topic: unreachableTopic }, inputSchema, outputSchema },
+    })
+    expect(tested.isError).not.toBe(true)
+    expect(JSON.stringify(tested.content)).toContain(unreachableTopic)
+    await den.mocks.reports.stop()
+    // Witness: Den itself can no longer read the report source's tool list.
+    const unreadable = await appRequest(den.admin, `/v1/mcp-connections/${connection.id}/tools`)
+    expect(unreadable.response.status, unreadable.text).toBe(502)
+    const unreachableName = `${scriptName} unreachable`
+    const rejected = await saveWorkflow(den.admin, {
+      name: unreachableName,
+      code: unreachableCode,
+      currentInput: { topic: unreachableTopic },
+      inputSchema,
+      outputSchema,
+    })
+    expect(rejected.status, rejected.text).toBe(503)
+    const rejectedBody = requireRecord(rejected.body, "unreachable save")
+    expect(rejectedBody.error).toBe("workflow_capability_unreachable")
+    expect(rejectedBody.capability).toBe("report_source.mock_echo")
+    expect(String(rejectedBody.message ?? "")).toContain("Couldn't reach report_source")
+    expect(String(rejectedBody.message ?? "")).toContain("Try saving again")
+    const unreachableSaved = (await listWorkflows(den.admin)).items.some((item) => item.title === unreachableName)
+    expect(unreachableSaved).toBe(false)
+    evidence.recordAssertionEvidence(
+      "Saving while a connection's tools cannot be read returns a retryable 503 and saves nothing",
+      `report source tool list: HTTP ${unreadable.response.status}; save: HTTP ${rejected.status} ${String(rejectedBody.error)} for ${String(rejectedBody.capability)}: "${String(rejectedBody.message)}"; Workflow saved: ${unreachableSaved}`,
+      true,
+    )
+  })
 })
