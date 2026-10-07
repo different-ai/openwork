@@ -44,6 +44,8 @@ export type ProviderCapabilities = {
   /** Legacy defaults are true; new adapters explicitly report unsupported operations. */
   createEnvironment?: boolean
   endpoints?: boolean
+  /** False means exec is synchronous only; run/files jobs do not require detach. */
+  detachedExec?: boolean
 }
 
 export type SandboxState =

@@ -59,7 +59,10 @@ PowerShell before launching anything. Windows world support remains a follow-up,
 not an advertised implementation.
 
 Freestyle rejects create-time env, storage attachments, resource overrides and
-archive policy rather than dropping them. Pass process env through `run`.
+archive policy rather than dropping them. It reports `detachedExec: false`: Web
+bootstrap requires detached exec and must not select this adapter yet. Workbot
+computers use synchronous `run`, with their own background-job helper. Pass
+process env through `run`.
 Its firewall must be explicit, even when it is `{ rules: [] }`.
 
 ### Lifecycle and ownership

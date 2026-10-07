@@ -60,7 +60,7 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
   }
   const provider: SandboxProvider = {
     id,
-    describe: () => ({ stopResume: true, persistentStorage: false, memorySnapshotRestore: true, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: false, endpoints: Boolean(options.endpoint), platform: { os: "linux", isolation: "vm" } }),
+    describe: () => ({ stopResume: true, persistentStorage: false, memorySnapshotRestore: true, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: false, detachedExec: false, endpoints: Boolean(options.endpoint), platform: { os: "linux", isolation: "vm" } }),
     currentImage: () => ({ id: options.snapshot, version: options.snapshot }),
     async create(spec, opts) {
       if (spec.storage.length || spec.resources || spec.lifecycle?.autoArchiveMinutes !== undefined) unsupported("storage attachments, resource overrides or auto-archive")
