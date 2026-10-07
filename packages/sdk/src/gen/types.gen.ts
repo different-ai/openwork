@@ -148,6 +148,7 @@ export type AdminFeature = {
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
+    | "nativeSlack"
     | "slackAssistant"
     | "slackAssistantHeadless"
     | "headlessAutomations"
@@ -197,6 +198,7 @@ export type AdminOrganizationsPageResponse = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      nativeSlack: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
@@ -251,6 +253,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      nativeSlack: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -381,6 +392,7 @@ export type AdminOverviewResponse = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      nativeSlack: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
@@ -435,6 +447,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      nativeSlack: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1610,6 +1631,7 @@ export type CapabilityDisabledError = {
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
+    | "nativeSlack"
     | "slackAssistant"
     | "slackAssistantHeadless"
     | "headlessAutomations"
@@ -2805,6 +2827,10 @@ export type ExternalMcpConnectionResponse = {
   issuerReviewRequired?: boolean;
   reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: Array<string>;
+  nativeProviderKey?: string | null;
+  policyBlocked?: boolean;
+  policyMessage?: string;
+  policyOwner?: "openwork";
   externalAccountId?: string | null;
   grantedScopes?: Array<string>;
   tenantId?: string | null;
@@ -3070,6 +3096,10 @@ export type ExternalMcpConnectionCreatedResponse = {
   issuerReviewRequired?: boolean;
   reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: Array<string>;
+  nativeProviderKey?: string | null;
+  policyBlocked?: boolean;
+  policyMessage?: string;
+  policyOwner?: "openwork";
   externalAccountId?: string | null;
   grantedScopes?: Array<string>;
   tenantId?: string | null;
@@ -3142,6 +3172,10 @@ export type ExternalMcpConnectionUpdatedResponse = {
   issuerReviewRequired?: boolean;
   reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: Array<string>;
+  nativeProviderKey?: string | null;
+  policyBlocked?: boolean;
+  policyMessage?: string;
+  policyOwner?: "openwork";
   externalAccountId?: string | null;
   grantedScopes?: Array<string>;
   tenantId?: string | null;
@@ -5483,6 +5517,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      nativeSlack: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
@@ -5537,6 +5572,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      nativeSlack: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5655,6 +5699,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      nativeSlack: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
@@ -5709,6 +5754,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       orgManagedDashboards: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      nativeSlack: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -18517,6 +18571,10 @@ export type GetV1OauthProvidersByProviderIdConnectStartErrors = {
    */
   401: UnauthorizedError;
   /**
+   * The provider is blocked by rollout or organization policy.
+   */
+  403: ForbiddenError;
+  /**
    * The org has not configured an OAuth client for this provider yet.
    */
   404: OAuthClientNotConfiguredError;
@@ -18535,6 +18593,45 @@ export type GetV1OauthProvidersByProviderIdConnectStartResponses = {
 export type GetV1OauthProvidersByProviderIdConnectStartResponse =
   GetV1OauthProvidersByProviderIdConnectStartResponses[keyof GetV1OauthProvidersByProviderIdConnectStartResponses];
 
+export type GetV1McpConnectionsSlackConnectStartData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/mcp-connections/slack/connect/start";
+};
+
+export type GetV1McpConnectionsSlackConnectStartErrors = {
+  /**
+   * The OAuth client configuration is incomplete.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * The provider is blocked by rollout or organization policy.
+   */
+  403: ForbiddenError;
+  /**
+   * The org has not configured an OAuth client for this provider yet.
+   */
+  404: OAuthClientNotConfiguredError;
+};
+
+export type GetV1McpConnectionsSlackConnectStartError =
+  GetV1McpConnectionsSlackConnectStartErrors[keyof GetV1McpConnectionsSlackConnectStartErrors];
+
+export type GetV1McpConnectionsSlackConnectStartResponses = {
+  /**
+   * Authorize URL, or already connected.
+   */
+  200: NativeProviderConnectStartResponse;
+};
+
+export type GetV1McpConnectionsSlackConnectStartResponse =
+  GetV1McpConnectionsSlackConnectStartResponses[keyof GetV1McpConnectionsSlackConnectStartResponses];
+
 export type GetV1McpConnectionsGoogleWorkspaceConnectStartData = {
   body?: never;
   path?: never;
@@ -18551,6 +18648,10 @@ export type GetV1McpConnectionsGoogleWorkspaceConnectStartErrors = {
    * The caller must be signed in.
    */
   401: UnauthorizedError;
+  /**
+   * The provider is blocked by rollout or organization policy.
+   */
+  403: ForbiddenError;
   /**
    * The org has not configured an OAuth client for this provider yet.
    */
@@ -18587,6 +18688,10 @@ export type GetV1McpConnectionsMicrosoft365ConnectStartErrors = {
    */
   401: UnauthorizedError;
   /**
+   * The provider is blocked by rollout or organization policy.
+   */
+  403: ForbiddenError;
+  /**
    * The org has not configured an OAuth client for this provider yet.
    */
   404: OAuthClientNotConfiguredError;
@@ -18619,6 +18724,10 @@ export type GetV1OauthProvidersByProviderIdConnectCallbackErrors = {
    * Missing or invalid code/state.
    */
   400: InvalidRequestError;
+  /**
+   * The provider is blocked by rollout or organization policy.
+   */
+  403: ForbiddenError;
 };
 
 export type GetV1OauthProvidersByProviderIdConnectCallbackError =
@@ -18648,6 +18757,10 @@ export type GetV1OauthProvidersByProviderIdStatusErrors = {
    * The caller must be signed in.
    */
   401: UnauthorizedError;
+  /**
+   * The provider is blocked by rollout or organization policy.
+   */
+  403: ForbiddenError;
   /**
    * Unknown providerId.
    */
@@ -21725,6 +21838,351 @@ export type PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses = 
 
 export type PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponse =
   PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses[keyof PostV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses];
+
+export type GetV1CapabilitiesSlackThreadsData = {
+  body?: never;
+  path?: never;
+  query: {
+    /**
+     * Slack conversation ID from a search result.
+     */
+    channelId: string;
+    /**
+     * Timestamp of a parent message or reply returned by Slack.
+     */
+    ts: string;
+    /**
+     * nextCursor from the same thread lookup. Reads one page only.
+     */
+    cursor?: string;
+    limit?: number;
+  };
+  url: "/v1/capabilities/slack/threads";
+};
+
+export type GetV1CapabilitiesSlackThreadsErrors = {
+  /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Slack or Connect is disabled by policy.
+   */
+  403: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Conversation or message unavailable to this member.
+   */
+  404: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Connect Slack or grant the requested permissions.
+   */
+  409: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Slack rate limit; no automatic retry.
+   */
+  429: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Slack could not complete the lookup.
+   */
+  502: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Bounded Slack lookup timed out.
+   */
+  504: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+};
+
+export type GetV1CapabilitiesSlackThreadsError =
+  GetV1CapabilitiesSlackThreadsErrors[keyof GetV1CapabilitiesSlackThreadsErrors];
+
+export type GetV1CapabilitiesSlackThreadsResponses = {
+  /**
+   * Bounded Slack thread excerpt.
+   */
+  200: {
+    ok: true;
+    messages: Array<{
+      channelId: string;
+      ts: string;
+      threadTs: string | null;
+      userId: string | null;
+      text: string;
+      permalink: string;
+      truncated: boolean;
+    }>;
+    nextCursor: string | null;
+    /**
+     * Whether Slack advertised another page. False does not establish complete context.
+     */
+    hasMore: boolean;
+    /**
+     * A bounded live excerpt, never a complete conversation or archive.
+     */
+    partial: true;
+    /**
+     * Message count or text was trimmed by OpenWork's bounds.
+     */
+    truncated: boolean;
+    warnings: Array<string>;
+    context: "thread_excerpt";
+    channelId: string;
+    ts: string;
+    /**
+     * Slack reported a history/plan limit. Absent accessible older messages cannot be recovered by paging.
+     */
+    historyLimited: boolean;
+  };
+};
+
+export type GetV1CapabilitiesSlackThreadsResponse =
+  GetV1CapabilitiesSlackThreadsResponses[keyof GetV1CapabilitiesSlackThreadsResponses];
+
+export type GetV1CapabilitiesSlackSearchData = {
+  body?: never;
+  path?: never;
+  query: {
+    /**
+     * Live Slack message search. Slack query filters are supported; file search is not.
+     */
+    query: string;
+    /**
+     * Comma-separated public_channel,private_channel,im,mpim. Omit to search granted categories. Explicit ungranted categories return missing_permission, never empty results.
+     */
+    conversationTypes?: string;
+    /**
+     * nextCursor from the same search. Reads one page only.
+     */
+    cursor?: string;
+    limit?: number;
+  };
+  url: "/v1/capabilities/slack/search";
+};
+
+export type GetV1CapabilitiesSlackSearchErrors = {
+  /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Slack or Connect is disabled by policy.
+   */
+  403: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Conversation or message unavailable to this member.
+   */
+  404: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Connect Slack or grant the requested permissions.
+   */
+  409: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Slack rate limit; no automatic retry.
+   */
+  429: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Slack could not complete the lookup.
+   */
+  502: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+  /**
+   * Bounded Slack lookup timed out.
+   */
+  504: {
+    error:
+      | "needs_connection"
+      | "missing_permission"
+      | "policy_blocked"
+      | "rate_limited"
+      | "slack_api_error"
+      | "invalid_request"
+      | "not_found";
+    message: string;
+    missingScopes?: Array<string>;
+    retryAfterSeconds?: number;
+  };
+};
+
+export type GetV1CapabilitiesSlackSearchError =
+  GetV1CapabilitiesSlackSearchErrors[keyof GetV1CapabilitiesSlackSearchErrors];
+
+export type GetV1CapabilitiesSlackSearchResponses = {
+  /**
+   * Bounded Slack search excerpts.
+   */
+  200: {
+    ok: true;
+    messages: Array<{
+      channelId: string;
+      ts: string;
+      threadTs: string | null;
+      userId: string | null;
+      text: string;
+      permalink: string;
+      truncated: boolean;
+    }>;
+    nextCursor: string | null;
+    /**
+     * Whether Slack advertised another page. False does not establish complete context.
+     */
+    hasMore: boolean;
+    /**
+     * A bounded live excerpt, never a complete conversation or archive.
+     */
+    partial: true;
+    /**
+     * Message count or text was trimmed by OpenWork's bounds.
+     */
+    truncated: boolean;
+    warnings: Array<string>;
+    context: "search_results";
+    searchedConversationTypes: Array<"public_channel" | "private_channel" | "im" | "mpim">;
+    /**
+     * Categories not searched because the connected member has not granted their search scopes.
+     */
+    omittedConversationTypes: Array<"public_channel" | "private_channel" | "im" | "mpim">;
+  };
+};
+
+export type GetV1CapabilitiesSlackSearchResponse =
+  GetV1CapabilitiesSlackSearchResponses[keyof GetV1CapabilitiesSlackSearchResponses];
 
 export type PostV1McpConnectionsDiscoverData = {
   body: ExternalMcpRequirementsDiscoveryInput;

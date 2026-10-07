@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { CheckCircle2, CircleAlert, CircleX, Copy, ShieldCheck } from "lucide-react";
+import { CheckCircle2, CircleAlert, CircleX, Copy, Lock, ShieldCheck } from "lucide-react";
 import type {
   AgentContextDiagnosticCheck,
   AgentContextDiagnosticCheckId,
@@ -185,13 +185,15 @@ function detailValue(value: AgentContextDiagnosticCheck["details"][string]) {
 
 function StatusChip(props: {
   label: string;
-  status: AgentContextDiagnosticStatus | AgentContextDiagnosticOverall;
+  status: AgentContextDiagnosticStatus | AgentContextDiagnosticOverall | "blocked";
 }) {
-  const Icon = props.status === "passed"
-    ? CheckCircle2
-    : props.status === "failed"
-      ? CircleX
-      : CircleAlert;
+  const Icon = props.status === "blocked"
+    ? Lock
+    : props.status === "passed"
+      ? CheckCircle2
+      : props.status === "failed"
+        ? CircleX
+        : CircleAlert;
   return (
     <span
       className={cn(
@@ -199,10 +201,10 @@ function StatusChip(props: {
         props.status === "passed" && "border-green-7/30 bg-green-2 text-green-11",
         props.status === "warning" && "border-amber-7/30 bg-amber-2 text-amber-11",
         props.status === "failed" && "border-red-7/30 bg-red-2 text-red-11",
-        props.status === "skipped" && "border-gray-7/30 bg-gray-2 text-gray-11",
+        (props.status === "skipped" || props.status === "blocked") && "border-gray-7/30 bg-gray-2 text-gray-11",
       )}
     >
-      <Icon size={13} />
+      <Icon size={props.status === "blocked" ? 16 : 13} strokeWidth={props.status === "blocked" ? 1.5 : undefined} aria-hidden="true" />
       {props.label}
     </span>
   );
@@ -299,7 +301,18 @@ function DiagnosticCheckRow(props: {
   );
 }
 
-export function organizationConnectionState(connection: AgentContextOrganizationConnectionSummary) {
+export function organizationConnectionState(connection: AgentContextOrganizationConnectionSummary): {
+  label: string;
+  status: AgentContextDiagnosticStatus | "blocked";
+} {
+  if (connection.policyBlocked) return { label: "Blocked", status: "blocked" };
+  if (
+    connection.limitedAccess
+    && !connection.needsReconnect
+    && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe)
+  ) {
+    return { label: "Connected with limited access", status: "passed" };
+  }
   if (connection.missingFeatureCount > 0) {
     return connection.credentialMode === "per_member"
       ? { label: t("connect.diagnostics_connection_reconnect"), status: "warning" as const }
@@ -573,6 +586,13 @@ function OrganizationConnections(props: { report: AgentContextDiagnosticsReport 
                       ? ` · ${t("connect.diagnostics_missing_features", { count: connection.missingFeatureCount })}`
                       : ""}
                   </div>
+                  {connection.policyBlocked ? (
+                    <div className="text-xs text-dls-secondary">
+                      {connection.policyOwner === "openwork"
+                        ? "Access is blocked by policy. Ask an OpenWork administrator to review availability."
+                        : "Access is blocked by policy. Review the availability explanation for this connection in Settings > Connect to find who can change access."}
+                    </div>
+                  ) : null}
                 </div>
                 <StatusChip label={state.label} status={state.status} />
               </div>

@@ -1,0 +1,5 @@
+# Build multi-workspace Cloud Slack before distribution approval
+
+On 2026-09-30 the user clarified that ENG-76 targets hosted OpenWork Cloud, with one centrally configured Slack app and no customer workspace-ID or developer configuration. Build and demo that integration before seeking Slack Marketplace/RTS distribution approval; replace the internal organization/workspace allowlist with a default-off Cloud deployment gate, while retaining organization Connect policy and verified, member-owned workspace grants. Synthetic demos may cover multiple organizations and workspaces now; provider approval and real-data processing decisions are launch prerequisites, not prerequisites to implementing or demonstrating the product.
+
+Workspace identity comes from OAuth plus `auth.test`. Explicit reauthorization may replace a member's workspace; refresh cannot silently change workspace or member. App Home installation grants are encrypted and keyed by platform app and Slack workspace, separate from member search credentials. Single-org self-hosted deployments do not expose the native Cloud app; existing MCP/BYO integrations retain their own behavior.

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Lock } from "lucide-react";
 import type { EnablementResult } from "../../app/extensions";
 import { t } from "../../i18n";
 import {
@@ -61,8 +61,8 @@ export type ExtensionCardProps = {
   onNextAction?: () => void;
   /** Click handler. */
   onClick?: () => void;
-  /** A short state for assistive tech and filters, e.g. Sign in or Set up. */
-  statusChip?: { label: string; tone: "attention" | "setup" };
+  /** A short state for assistive tech and filters; blocked states also show a lock chip. */
+  statusChip?: { label: string; tone: "attention" | "setup" | "blocked" };
   /** A control after the row, outside its button, e.g. a ⋯ menu. */
   trailing?: ReactNode;
 };
@@ -138,7 +138,10 @@ export function ExtensionCard(props: ExtensionCardProps) {
   ) : readiness === "partial" ? (
     <span className="size-1.5 shrink-0 rounded-full bg-amber-9" />
   ) : null;
-  const summary = disabledReason ?? description;
+  // A specific connected state (such as limited access) must be visible at every width, not only the dot's accessible label.
+  const connectedState = readiness === "ready" && connectedLabel !== "Connected" ? connectedLabel : null;
+  const summary = disabledReason ?? connectedState ?? description;
+  const caption = disabledReason ?? connectedState ?? meta ?? description;
 
   return (
     <div className={`group flex h-[52px] w-full items-center gap-3 ${hidden ? "opacity-60" : ""}`}>
@@ -155,14 +158,24 @@ export function ExtensionCard(props: ExtensionCardProps) {
           <h4 className="min-w-0 truncate text-[13px] font-medium text-dls-text group-hover:underline group-hover:decoration-dls-border group-hover:underline-offset-4">{name}</h4>
           {readyDot}
           {props.statusChip ? (
-            <span data-library-status={props.statusChip.label} className="sr-only">{props.statusChip.label}</span>
+            props.statusChip.tone === "blocked" ? (
+              <span data-library-status={props.statusChip.label} className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-dls-hover px-1.5 py-0.5 text-[10px] font-medium text-dls-text">
+                <Lock size={16} strokeWidth={1.5} aria-hidden />
+                {props.statusChip.label}
+              </span>
+            ) : (
+              <span data-library-status={props.statusChip.label} className="sr-only">{props.statusChip.label}</span>
+            )
           ) : null}
           {preview ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">Preview</span> : null}
           {beta ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">{t("common.beta")}</span> : null}
         </div>
         <span data-library-kind className={`shrink-0 text-xs text-dls-secondary ${libraryRowLanes.kind}`}>{extensionTaxonomyLabel(taxonomy)}</span>
         {meta ? (
-          <p data-library-caption className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>{meta}</p>
+          <p data-library-caption className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>
+            <span className="lg:hidden">{caption}</span>
+            <span className="hidden lg:inline">{meta}</span>
+          </p>
         ) : (
           // Nothing to say about the source: narrow rows fall back to what it
           // does, wide rows keep the empty lane so the next column stays aligned.

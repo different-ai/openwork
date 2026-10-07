@@ -1,10 +1,11 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { DenBadge } from "../../_components/ui/badge";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import {
   getLibraryAddConnectorRoute,
@@ -75,10 +76,10 @@ function OwnedPluginStatus({ pluginId }: { pluginId: string }) {
   return <>{ownedAccessStatus(draftFromPluginGrants(access.data), orgContext, orgContext.currentMember.id)}</>;
 }
 
-function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
+function LibraryItemRow({ item, mine, connection, signIn }: {
   item: LibraryItem;
   mine: boolean;
-  ownedConnection: ExternalMcpConnection | undefined;
+  connection: ExternalMcpConnection | undefined;
   signIn: ReturnType<typeof useMemberSignIn>;
 }) {
   const router = useRouter();
@@ -100,12 +101,15 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
     toast({ title: `${item.name} is removed`, description: "Nobody can use it anymore." });
   }
 
-  const status = mine
-    ? item.type === "connection" ? <OwnedConnectionStatus connection={ownedConnection} />
+  const policyMessage = connection?.policyBlocked
+    ? connection.policyMessage ?? "An administrator controls access to this connection."
+    : undefined;
+  const status = connection?.policyBlocked ? policyMessage : mine
+    ? item.type === "connection" ? <OwnedConnectionStatus connection={connection} />
       : item.type === "plugin" ? <OwnedPluginStatus pluginId={item.id} /> : "Only you"
     : receivedStatus(item.edges);
 
-  const needsSignIn = item.type === "connection" && item.state === "needs_signin";
+  const needsSignIn = !connection?.policyBlocked && item.type === "connection" && item.state === "needs_signin";
   const apiKeyStatus = item.type === "connection" ? signIn.apiKeyStatus(item.id) : null;
   const action = needsSignIn && item.type === "connection" ? (
     item.transport === "native" ? (
@@ -120,20 +124,21 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
       label={`More for ${item.name}`}
       entries={[
         { label: "Open", onSelect: () => router.push(href) },
-        ...(mine && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
+        ...(mine && !connection?.policyBlocked && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type === "plugin" ? [{ label: "Share", onSelect: () => router.push(getLibraryPluginShareRoute(orgSlug, item.id)) }] : []),
-        ...(mine && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
+        ...(mine && !connection?.policyBlocked && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
       ]}
     />
   );
 
   return (
-    <div data-library-item={item.name} data-library-kind={item.type} title={libraryItemDescription(item)}>
+    <div data-library-item={item.name} data-library-kind={item.type} title={policyMessage ?? libraryItemDescription(item)}>
       <LibraryListRow
         href={href}
         logo={<ItemLogo item={item} />}
         title={item.name}
-        ready={libraryItemReady(item)}
+        ready={!connection?.policyBlocked && libraryItemReady(item)}
+        tag={connection?.policyBlocked ? <DenBadge icon={Lock}>Blocked</DenBadge> : undefined}
         kind={libraryKindLabel(item)}
         status={status}
         action={action}
@@ -188,7 +193,19 @@ function LibraryContent() {
 
   const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
   const viewerId = orgContext?.currentMember.id ?? null;
-  const items = library.data ?? [];
+  const connectionsById = new Map((usable.data ?? []).map((connection) => [connection.id, connection]));
+  const listedItems = library.data ?? [];
+  // The capability-backed Library omits blocked native providers. Preserve only
+  // accounts the server explicitly retained for this member's management.
+  const retainedAccounts: LibraryItem[] = (usable.data ?? [])
+    .filter((connection) => connection.policyBlocked && connection.connectedForMe && connection.nativeProviderKey === "slack"
+      && !listedItems.some((item) => item.type === "connection" && item.id === connection.id))
+    .map((connection) => ({
+      type: "connection", id: connection.id, name: connection.name, url: connection.url,
+      description: connection.policyMessage ?? null, transport: "native", provider: connection.nativeProviderKey ?? null,
+      state: "blocked", connectedAt: connection.connectedAt, edges: [],
+    }));
+  const items = [...listedItems, ...retainedAccounts];
   const groups = groupLibrary({
     items,
     filter,
@@ -292,7 +309,7 @@ function LibraryContent() {
             <ItemSection title="Added by you" meta={String(groups.mine.length)} testId="library-section-mine" variant="rule">
               <ItemFlatList>
                 {groups.mine.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine ownedConnection={ownedConnections.get(item.id)} signIn={signIn} />
+                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine connection={item.type === "connection" ? connectionsById.get(item.id) : undefined} signIn={signIn} />
                 ))}
               </ItemFlatList>
             </ItemSection>
@@ -302,7 +319,7 @@ function LibraryContent() {
             <ItemSection title="From OpenWork" meta={`${groups.received.length + modelRows.length} shared with you`} testId="library-section-received" variant="rule">
               <ItemFlatList>
                 {groups.received.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} ownedConnection={undefined} signIn={signIn} />
+                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} connection={item.type === "connection" ? connectionsById.get(item.id) : undefined} signIn={signIn} />
                 ))}
                 {modelRows.map((provider) => (
                   <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />

@@ -4,9 +4,9 @@
  * external MCP connections, which are discovered dynamically at connect
  * time and never need a registry entry — see ../external-mcp/ ).
  *
- * Adding a new native provider is: one entry here, plus whatever capability
- * routes call `getValidAccessToken(providerId, ...)`. No new tables, no new
- * OAuth plumbing — `generic-oauth.ts` drives every provider the same way.
+ * Native capability routes share the OAuth driver and credential storage.
+ * Provider-specific authorization/token dialects (such as Slack's nested
+ * user grant) are normalized by the driver, not by capability callers.
  */
 
 import { MICROSOFT_365_DEFAULT_FEATURES } from "@openwork/types/den/microsoft-365"
@@ -23,6 +23,8 @@ export type NativeOAuthProviderConfig = {
   defaultScopes: string[]
   defaultFeatures?: string[]
   optionalFeatures?: Record<string, string[]>
+  /** Declining optional grants leaves the base connection usable. */
+  allowsPartialConsent?: boolean
   /** Google (and most modern providers) support PKCE even for confidential clients; harmless to always send. */
   usesPkce: boolean
   /** Extra fixed authorize-url params beyond client_id/redirect_uri/response_type/scope/state/PKCE. */
@@ -34,6 +36,23 @@ export type NativeOAuthProviderConfig = {
 }
 
 export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> = {
+  slack: {
+    providerId: "slack",
+    displayName: "Slack",
+    authorizeUrl: env.slackOAuthAuthorizeUrl ?? "https://slack.com/oauth/v2/authorize",
+    tokenUrl: env.slackOAuthTokenUrl ?? "https://slack.com/api/oauth.v2.access",
+    websiteUrl: "https://slack.com",
+    defaultScopes: ["search:read.public", "channels:history"],
+    defaultFeatures: ["privateChannels", "directMessages", "groupMessages"],
+    optionalFeatures: {
+      privateChannels: ["search:read.private", "groups:history"],
+      directMessages: ["search:read.im", "im:history"],
+      groupMessages: ["search:read.mpim", "mpim:history"],
+    },
+    allowsPartialConsent: true,
+    // Standard Slack confidential OAuth has its own user_scope/token dialect.
+    usesPkce: false,
+  },
   "google-workspace": {
     providerId: "google-workspace",
     displayName: "Google Workspace",

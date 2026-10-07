@@ -1,6 +1,6 @@
-// Integrations slice: capability sources (Google Workspace, Microsoft 365), connectors,
+// Integrations slice: capability sources (Google Workspace, Microsoft 365, Slack), connectors,
 // MCP connections, OAuth providers, inference/LLM providers, gateway limits, analytics,
-// Slack assistant and Apps. One declaration per live route except the 14 provider routes
+// Slack app Home, Slack assistant and Apps. One declaration per live route except the 14 provider routes
 // generated as domain_provider from coverage.ts providerCoveredRoutes:
 //   POST /v1/inference-providers
 //   PATCH|DELETE /v1/inference-providers/:inferenceProviderId
@@ -125,6 +125,10 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   access("GET", `${MS}/teams-chats`, "capability.teams.chat.list", MSK, res("teams_chat"), `${CAP} Response lists chat names and participants.`),
   access("GET", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.list", MSK, res("teams_chat", "chatId"), CAP_CONTENT),
   external("POST", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.send", MSK, res("teams_chat", "chatId"), GRAPH, `${CAP} Posts a Teams message.`),
+
+  // Native Slack capabilities: the caller's own member account only, never the app Home bot or Slack assistant.
+  access("GET", "/v1/capabilities/slack/search", "capability.slack.message.search", "capability.slack", res("slack_message"), `${CAP_CONTENT} Read-only bounded excerpts; query, cursor, content and token lifecycle changes are not captured.`),
+  access("GET", "/v1/capabilities/slack/threads", "capability.slack.thread.read", "capability.slack", res("slack_thread"), `${CAP_CONTENT} Read-only bounded thread excerpt; channelId, ts and cursor are query parameters, not audit resource ids. No message content or token lifecycle snapshots.`),
 
   // Apps
   read("/v1/apps", "app.list", APP, res("artifact_view")),
@@ -283,15 +287,19 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   handlerRoute("tenant_external", "GET", "/v1/mcp-connections/oauth/callback", "mcp_connection.oauth.shared_callback.complete", MCPO, res("mcp_connection"), { external: "MCP authorization server (token exchange)", notes: "Fixed redirect URI; attributed like the per-connection callback once the signed state, connection and member are verified." }),
   access("POST", "/v1/mcp/token", "mcp_token.mint", "mcp_token.issuance", res("oauth_access_token"), "Mints and returns MCP access tokens (token, appHostToken)."),
 
-  // Native OAuth providers (Google Workspace, Microsoft 365)
+  // Native OAuth providers (Google Workspace, Microsoft 365, Slack)
   read("/v1/oauth-providers/:providerId/client", "oauth_provider.client.read", "oauth_provider.configuration", res("oauth_client", "providerId"), "Client id only."),
   change("POST", "/v1/oauth-providers/:providerId/client", "oauth_provider.client.update", "oauth_provider.configuration", res("oauth_client", "providerId"), "Client secret write-only."),
   read("/v1/oauth-providers/:providerId/status", "oauth_provider.connection.status", OAP, res("oauth_provider_connection", "providerId")),
   change("GET", "/v1/oauth-providers/:providerId/connect/start", "oauth_provider.connect.start", OAP, res("oauth_provider_connection", "providerId"), "Writes OAuth state; returns authorize URL."),
   change("GET", "/v1/mcp-connections/google-workspace/connect/start", "oauth_provider.google_workspace.connect.start", OAP, res("oauth_provider_connection"), "Alias of oauth-providers connect start for Google Workspace."),
   change("GET", "/v1/mcp-connections/microsoft-365/connect/start", "oauth_provider.microsoft_365.connect.start", OAP, res("oauth_provider_connection"), "Alias of oauth-providers connect start for Microsoft 365."),
-  handlerRoute("tenant_external", "GET", "/v1/oauth-providers/:providerId/connect/callback", "oauth_provider.connect.complete", OAP, res("oauth_provider_connection", "providerId"), { external: "native OAuth provider (Google / Microsoft token exchange)", notes: "Attributed after the HMAC-signed state, member credential resolution and pending verifier are verified, before the token exchange: org = state organization, actor = the active initiating member's user." }),
+  change("GET", "/v1/mcp-connections/slack/connect/start", "oauth_provider.slack.connect.start", OAP, res("oauth_provider_connection"), "Alias of oauth-providers connect start for Slack; platform-managed app and per-member native alias only, guarded by the Slack and Connect policies."),
+  handlerRoute("tenant_external", "GET", "/v1/oauth-providers/:providerId/connect/callback", "oauth_provider.connect.complete", OAP, res("oauth_provider_connection", "providerId"), { external: "native OAuth provider (Google / Microsoft / Slack token exchange; Slack identity verification)", notes: "Attributed after the HMAC-signed state, member credential resolution and pending verifier are verified, before the token exchange: org = state organization, actor = the active initiating member's user. Slack also verifies the pending state digest and native policy; optional app Home grant persistence is not separate tenant evidence. Request evidence only, never state, codes, tokens or credential snapshots." }),
   change("POST", "/v1/oauth-providers/:providerId/disconnect", "oauth_provider.connection.disconnect", OAP, res("oauth_provider_connection", "providerId"), "Removes stored credential; no upstream revocation."),
+
+  // App-level Slack signature proves no OpenWork organization or member. Keep this separate from the tenant-bound assistant.
+  route("platform", "POST", "/v1/slack/events", "slack_app_home.event.receive", "slack_app_home.webhook", res("slack_app_home"), "none", { notes: "App-level HMAC verification/challenge and static Home publication only. No tenant attribution from Slack team/user ids or installation storage. Global middleware records HTTP outcome after the handler, including denials; no body, challenge, token or content capture. A successful response may be verification or a duplicate, not proof of views.publish; publication and token-refresh effects are not separately audited." }),
 
   // Slack assistant
   read("/v1/mcp-connections/:connectionId/slack-assistant", "slack_assistant.settings.read", SLACK, res("slack_assistant_installation", "connectionId"), "Credentials never returned."),

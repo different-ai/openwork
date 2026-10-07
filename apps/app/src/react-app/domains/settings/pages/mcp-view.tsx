@@ -36,6 +36,7 @@ import {
   isOrgMcpConnectionReady,
   isOrgMcpConnectionItem,
   orgMcpConnectionActionLabel,
+  orgMcpConnectionDescription,
   resolveExtensionInventoryGroup,
   type ExtensionInventoryGroup,
   type ExtensionItem,
@@ -1505,6 +1506,7 @@ export function McpView(props: McpViewProps) {
         const ready = isOrgMcpConnectionReady(connection);
         const canAuthorize = canMemberAuthorizeConnection(connection);
         const canDisconnect = canDisconnectMemberConnection(connection);
+        const policyReason = connection.policyBlocked ? orgMcpConnectionDescription(connection) : undefined;
         const connectingBusy = props.orgMcpConnectingId === connection.id;
         const disconnectingBusy = props.orgMcpDisconnectingId === connection.id;
         const cloudConnection = libraryCloud.items.find((item) => item.type === "connection" && item.id === connection.id);
@@ -1521,12 +1523,15 @@ export function McpView(props: McpViewProps) {
             presentation={detailPresentation}
             backLabel={t("extensions.title")}
             name={displayName}
-            description={(!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
+            iconSrc={connection.nativeProviderKey === "slack" ? "/ext-slack.svg" : undefined}
+            description={policyReason ?? (!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
             taxonomy="connection"
             connected={ready}
             connectedLabel={orgMcpConnectionActionLabel(connection)}
             savedKeyOnly={connection.authType === "apikey" && connection.credentialMode === "per_member"}
-            disconnectedLabel={connection.authType === "apikey" && connection.credentialMode === "per_member" ? t("extensions.detail_no_key") : undefined}
+            disconnectedLabel={connection.policyBlocked ? "Blocked" : connection.authType === "apikey" && connection.credentialMode === "per_member" ? t("extensions.detail_no_key") : undefined}
+            disabledReason={policyReason}
+            uninstallAvailable={connection.policyBlocked ? canDisconnect : undefined}
             connecting={connectingBusy || disconnectingBusy}
             connectingLabel={disconnectingBusy ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_waiting_browser")}
             beta
@@ -1816,10 +1821,13 @@ export function McpView(props: McpViewProps) {
           description={item.description?.trim() || t("extensions.row_shared_connection")}
           taxonomy="connection"
           url={connection.url}
+          iconSrc={connection.nativeProviderKey === "slack" ? "/ext-slack.svg" : undefined}
           connected={group === "ready"}
+          connectedLabel={orgMcpConnectionActionLabel(connection)}
           meta={orgCaption}
-          statusChip={attention.statusChip}
-          nextActionLabel={attention.actionLabel}
+          disabledReason={connection.policyBlocked ? orgMcpConnectionDescription(connection) : undefined}
+          statusChip={connection.policyBlocked ? { label: "Blocked", tone: "blocked" } : attention.statusChip}
+          nextActionLabel={connection.policyBlocked ? undefined : attention.actionLabel}
           onClick={() => openDetail({ kind: "org-mcp", item })}
         />
       ),

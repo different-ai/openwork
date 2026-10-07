@@ -68,6 +68,16 @@
               ],
               "description": "Dashboards: Organization admins publish dashboards to members in Den and the desktop app. Renders DEN_FEATURE_ORG_MANAGED_DASHBOARDS."
             },
+            "nativeSlack": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Slack search: Members connect their own Slack account to search messages and read threads through the OpenWork-provided app. Renders DEN_FEATURE_NATIVE_SLACK."
+            },
             "slackAssistant": {
               "enum": [
                 "",

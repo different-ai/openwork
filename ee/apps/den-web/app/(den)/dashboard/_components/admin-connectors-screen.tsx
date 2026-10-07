@@ -1,8 +1,9 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import { useState } from "react";
 import { DenPageHeader } from "../../_components/ui/page-header";
+import { DenBadge } from "../../_components/ui/badge";
 import { getAddConnectorRoute, getMcpConnectionRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
@@ -88,8 +89,8 @@ export function AdminConnectorsScreen() {
             <ItemPanel>
               {visible.map((connection) => {
                 const href = getMcpConnectionRoute(orgSlug, connection.id);
-                const unfinished = connectorSetupUnfinished(connection);
-                const status = unfinished
+                const unfinished = !connection.policyBlocked && connectorSetupUnfinished(connection);
+                const status = connection.policyBlocked ? <DenBadge icon={Lock}>Blocked</DenBadge> : unfinished
                   ? "Setup not finished"
                   : !connection.access && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey)
                     ? "Everyone"
@@ -103,7 +104,7 @@ export function AdminConnectorsScreen() {
                       href={href}
                       logo={<ConnectorLogo name={connection.name} url={connection.url} />}
                       title={connection.name}
-                      description={signInNote}
+                      description={connection.policyBlocked ? connection.policyMessage : signInNote}
                       status={status}
                       action={unfinished ? (
                         <LinkButton size="xs" href={finishSetupHref(orgSlug, connection)}>Finish</LinkButton>
@@ -112,7 +113,7 @@ export function AdminConnectorsScreen() {
                           label={`More for ${connection.name}`}
                           entries={[
                             { label: "Open", href },
-                            ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID
+                            ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "slack"
                               ? []
                               : [removeEntry(connection.name, () => remove(connection))]),
                           ]}

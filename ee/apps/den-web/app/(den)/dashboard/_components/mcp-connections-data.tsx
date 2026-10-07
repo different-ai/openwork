@@ -64,6 +64,9 @@ export type ExternalMcpConnection = {
   updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  policyBlocked?: boolean;
+  policyMessage?: string;
+  policyOwner?: "openwork";
   credentialHealth?: "unknown" | "ready" | "reconnect_required";
   credentialHealthReason?: "authorization_rejected" | "credential_expired" | "post_authorization_validation_failed" | null;
   credentialHealthCheckedAt?: string | null;
@@ -260,7 +263,7 @@ export type CreatedMcpConnection = ExternalMcpConnection & {
 };
 
 export function isNativeProviderConnectionId(id: string, nativeProviderKey?: string | null): boolean {
-  return nativeProviderKey != null || id === "google-workspace" || id === "microsoft-365";
+  return nativeProviderKey != null || id === "google-workspace" || id === "microsoft-365" || id === "slack";
 }
 
 export function canDisconnectMyConnectionAccount(connection: Pick<ExternalMcpConnection, "id" | "nativeProviderKey" | "credentialMode" | "connectedForMe">): boolean {
@@ -608,6 +611,9 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     exposeDirectly: connection.exposeDirectly === true,
     ...(typeof connection.createdByName === "string" || connection.createdByName === null ? { createdByName: connection.createdByName } : {}),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
+    ...(typeof connection.policyBlocked === "boolean" ? { policyBlocked: connection.policyBlocked } : {}),
+    ...(typeof connection.policyMessage === "string" ? { policyMessage: connection.policyMessage } : {}),
+    ...(connection.policyOwner === "openwork" ? { policyOwner: connection.policyOwner } : {}),
     ...(connection.credentialHealth === "unknown" || connection.credentialHealth === "ready" || connection.credentialHealth === "reconnect_required"
       ? { credentialHealth: connection.credentialHealth }
       : {}),

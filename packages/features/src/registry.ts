@@ -88,6 +88,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  nativeSlack: {
+    label: "Slack search",
+    description: "Members connect their own Slack account to search messages and read threads through the OpenWork-provided app.",
+    since: "2026-10",
+    deployments: ["cloud"],
+    default: false,
+  },
   slackAssistant: {
     label: "Slack Assistant",
     description: "Answers Slack mentions and DMs for the organization after the Slack connector is set up.",

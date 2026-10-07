@@ -86,6 +86,13 @@ const EnvSchema = z.object({
   DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_MICROSOFT_OAUTH_TOKEN_URL: z.string().optional(),
   DEN_MICROSOFT_GRAPH_BASE_URL: z.string().optional(),
+  // Platform app configuration only; availability is the registered nativeSlack feature.
+  DEN_SLACK_CLIENT_ID: z.string().optional(),
+  DEN_SLACK_CLIENT_SECRET: z.string().optional(),
+  DEN_SLACK_SIGNING_SECRET: z.string().optional(),
+  DEN_SLACK_API_BASE_URL: z.string().optional(),
+  DEN_SLACK_OAUTH_AUTHORIZE_URL: z.string().optional(),
+  DEN_SLACK_OAUTH_TOKEN_URL: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   DEN_CORS_HANDLED_BY_EDGE: z.string().optional(),
@@ -569,6 +576,25 @@ const corsHandledByEdge = parseBooleanFlag(parsed.DEN_CORS_HANDLED_BY_EDGE ?? "f
 const openworkWebEnabled = parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
+
+function slackTestEndpoint(value: string | undefined): string | undefined {
+  const configured = optionalString(value)
+  if (!configured) return undefined
+  if (process.env.NODE_ENV === "production" || (!devMode && process.env.NODE_ENV !== "test")) {
+    throw new Error("Native Slack endpoint overrides are only available in development or tests.")
+  }
+  let url: URL
+  try {
+    url = new URL(configured)
+  } catch {
+    throw new Error("Native Slack test endpoints must be valid HTTP(S) URLs.")
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error("Native Slack test endpoints must be HTTP(S) URLs without credentials, query strings, or fragments.")
+  }
+  return url.toString().replace(/\/+$/, "")
+}
+
 const port = Number(parsed.PORT ?? "8790")
 const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
 const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIGIN, devMode)
@@ -800,6 +826,13 @@ export const env = {
   microsoftOAuthAuthorizeUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_AUTHORIZE_URL),
   microsoftOAuthTokenUrl: optionalString(parsed.DEN_MICROSOFT_OAUTH_TOKEN_URL),
   microsoftGraphBaseUrl: optionalString(parsed.DEN_MICROSOFT_GRAPH_BASE_URL),
+  // Credentials stay platform-owned; /admin controls nativeSlack through the shared registry.
+  slackClientId: optionalString(parsed.DEN_SLACK_CLIENT_ID),
+  slackClientSecret: optionalString(parsed.DEN_SLACK_CLIENT_SECRET),
+  slackSigningSecret: optionalString(parsed.DEN_SLACK_SIGNING_SECRET),
+  slackApiBaseUrl: slackTestEndpoint(parsed.DEN_SLACK_API_BASE_URL) ?? "https://slack.com/api",
+  slackOAuthAuthorizeUrl: slackTestEndpoint(parsed.DEN_SLACK_OAUTH_AUTHORIZE_URL),
+  slackOAuthTokenUrl: slackTestEndpoint(parsed.DEN_SLACK_OAUTH_TOKEN_URL),
   desktopDenBaseUrl: optionalString(parsed.DEN_DESKTOP_DEN_BASE_URL),
   marketingUrl: optionalString(parsed.DEN_MARKETING_URL) ?? configuredDenUrls?.web,
   mcpClaimNamespace: normalizeOrigin(optionalString(parsed.DEN_MCP_CLAIM_NAMESPACE) ?? betterAuthUrl),

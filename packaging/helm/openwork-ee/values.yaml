@@ -31,6 +31,7 @@ config:
     modelsAnalytics: ""        # default off · Organization admins can opt in to task analytics for OpenWork Models.
     auditLogs: ""              # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
     orgManagedDashboards: ""   # default off · Organization admins publish dashboards to members in Den and the desktop app.
+    nativeSlack: ""            # default off (cloud only) · Members connect their own Slack account to search messages and read threads through the OpenWork-provided app.
     slackAssistant: ""         # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
     slackAssistantHeadless: "" # default off · Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.
     headlessAutomations: ""    # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.

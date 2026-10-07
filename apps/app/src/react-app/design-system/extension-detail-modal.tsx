@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, MessageCircle, Share2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, Lock, MessageCircle, Share2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -105,6 +105,8 @@ export type ExtensionDetailModalProps = {
   onShare?: () => void;
   /** Remove/disconnect handler. Shown when connected. */
   onUninstall?: () => void;
+  /** Account removal may remain available when policy prevents use. Defaults to connected. */
+  uninstallAvailable?: boolean;
   uninstallLabel?: string;
   closeOnUninstall?: boolean;
   /** Hide from the normal catalog view. */
@@ -251,6 +253,7 @@ export function ExtensionDetailModal({
   onChat,
   onShare,
   onUninstall,
+  uninstallAvailable = connected,
   uninstallLabel,
   closeOnUninstall = true,
   onHide,
@@ -360,7 +363,7 @@ export function ExtensionDetailModal({
             </Button>
           ) : null}
           {onChat ? (
-            <Button size="sm" onClick={onChat}>
+            <Button size="sm" onClick={onChat} disabled={Boolean(disabledReason)}>
               <MessageCircle data-icon="inline-start" />
               {t("extensions.detail_chat")}
             </Button>
@@ -555,7 +558,8 @@ export function ExtensionDetailModal({
 
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Status</span>
-                <span className={cn("font-medium", connected && !savedKeyOnly ? "text-green-11" : "text-muted-foreground")}>
+                <span className={cn("flex items-center gap-1 font-medium", connected && !savedKeyOnly ? "text-green-11" : "text-muted-foreground")}>
+                  {disabledReason ? <Lock size={16} strokeWidth={1.5} aria-hidden /> : null}
                   {connected
                     ? connectedLabel ?? (taxonomy === "plugin" ? "Installed" : "Connected")
                     : connecting
@@ -583,10 +587,10 @@ export function ExtensionDetailModal({
                 </div>
               ) : null}
 
-              {disabledReason ? (
+              {disabledReason && disabledReason !== description ? (
                 <div className="flex items-center justify-between gap-4 text-sm">
                   <span className="text-muted-foreground">Availability</span>
-                  <span className="text-right font-medium text-amber-11">{disabledReason}</span>
+                  <span className="text-right font-medium text-muted-foreground">{disabledReason}</span>
                 </div>
               ) : null}
             </div>
@@ -702,7 +706,7 @@ export function ExtensionDetailModal({
             )}
           </Button>
         ) : null}
-        {connected && onUninstall ? (
+        {uninstallAvailable && onUninstall ? (
           <Button
             variant="destructive"
             size="sm"

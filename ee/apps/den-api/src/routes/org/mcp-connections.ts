@@ -81,7 +81,7 @@ import { evaluateToolPolicy } from "../../capability-sources/external-mcp-tool-p
 import { memberApiKeyUsable, usesMemberApiKey, validMemberApiKey } from "../../capability-sources/member-api-key.js"
 import { externalMcpAppResourceUri } from "../../mcp/external-capabilities.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, SEARCH_CAPABILITIES_TOOL_NAME } from "../../mcp/search.js"
-import { listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
+import { listBlockedNativeProviderAccountEntries, listNativeProviderUsableEntries } from "../../capability-sources/native-provider-connections.js"
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { getConnectedAccount, getOrgOAuthClient, upsertOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
@@ -461,6 +461,11 @@ const connectionResponseSchema = z.object({
   reconnectActionOwner: z.enum(["member", "organization_admin"]).nullable().optional(),
   /** Native provider feature ids whose scopes are missing from the member's saved grant. */
   missingFeatures: z.array(z.string()).optional(),
+  nativeProviderKey: z.string().nullable().optional(),
+  /** A saved account is shown for management only, not capability execution. */
+  policyBlocked: z.boolean().optional(),
+  policyMessage: z.string().optional(),
+  policyOwner: z.literal("openwork").optional(),
   /** Native provider account label when the provider supplied one. Never a token. */
   externalAccountId: z.string().nullable().optional(),
   /** Delegated scopes the calling member granted to a native provider. */
@@ -2241,7 +2246,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List External MCP Connections",
-      description: "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.",
+      description: "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. A saved native account may be included with policyBlocked=true for account management and disconnection only; it is not a callable capability. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.",
       responses: {
         200: jsonResponse("Connections.", connectionListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -2280,7 +2285,15 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ connections })
       }
 
-      return c.json({ connections: await listMemberUsableConnectionFacts({ context }) })
+      const usable = await listMemberUsableConnectionFacts({ context })
+      // These rows are for account cleanup in the UI only. Workflow readiness
+      // and capability discovery continue to consume the strictly usable facts.
+      const blockedAccounts = await listBlockedNativeProviderAccountEntries({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+      })
+      const blockedIds = new Set(blockedAccounts.map((entry) => entry.id))
+      return c.json({ connections: [...usable.filter((entry) => !blockedIds.has(entry.id)), ...blockedAccounts] })
     },
   )
 
@@ -2707,6 +2720,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const provider = getNativeOAuthProvider(body.nativeProviderKey)
         if (!provider) {
           return c.json({ error: "invalid_request", message: `"${body.nativeProviderKey}" is not a known native OAuth provider.` }, 400)
+        }
+        if (provider.providerId === "slack") {
+          return c.json({
+            error: "forbidden",
+            message: "The native Slack preview is managed by OpenWork. Organization administrators cannot create additional Slack preview accounts or supply its app credentials.",
+          }, 403)
         }
         const unknownFeatures = (body.oauthClient.features ?? []).filter((feature) => !Object.hasOwn(provider.optionalFeatures ?? {}, feature))
         if (unknownFeatures.length > 0) {

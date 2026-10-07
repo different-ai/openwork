@@ -1,15 +1,16 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, MessageSquare, UserPlus } from "lucide-react";
+import { ChevronDown, Lock, MessageSquare, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { DenBadge } from "../../_components/ui/badge";
 import { getLibraryConnectorShareRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
 import { connectorChatDeepLink, connectorChatPrompt } from "./connector-catalog";
-import { connectorAccountReady } from "./connector-detail";
+import { connectorAccountLabel, connectorAccountReady, connectorLimitedAccess } from "./connector-detail";
 import { toolSummary, toolTitle, useMemberSignIn } from "./connector-setup";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -22,6 +23,7 @@ import { personalApiKeyStatus, personalApiKeyStatusLabel } from "./member-api-ke
 import { MemberApiKeyDialog } from "./member-api-key-dialog";
 import {
   type ExternalMcpTool,
+  isNativeProviderConnectionId,
   useDeleteMcpConnection,
   useDisconnectMyProviderAccount,
   useMcpConnections,
@@ -67,7 +69,17 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
   );
 }
 
-export function ChatButton({ name }: { name: string }) {
+export function ConnectionPolicyStatus({ message }: { message?: string }) {
+  return (
+    <span className="flex flex-col items-end gap-1 whitespace-normal">
+      <DenBadge icon={Lock}>Blocked</DenBadge>
+      <span>{message ?? "An administrator controls access to this connection."}</span>
+    </span>
+  );
+}
+
+export function ChatButton({ name, disabled = false }: { name: string; disabled?: boolean }) {
+  if (disabled) return <DenButton icon={MessageSquare} disabled>Chat</DenButton>;
   return (
     <DenButton icon={MessageSquare} href={connectorChatDeepLink({ connector: name, prompt: connectorChatPrompt(name) })}>
       Chat
@@ -89,10 +101,11 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   const connection = usable.data?.find((entry) => entry.id === connectionId) ?? null;
   const item = library.data?.find((entry) => entry.type === "connection" && entry.id === connectionId) ?? null;
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
+  const native = Boolean(connection && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey));
   const apiKeyStatus = connection ? personalApiKeyStatus(connection) : null;
-  const tools = useMcpConnectionTools(connectionId, signedIn);
+  const tools = useMcpConnectionTools(connectionId, signedIn && !native);
   const viewerId = orgContext?.currentMember.id ?? null;
-  const mine = Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set()));
+  const mine = !connection?.policyBlocked && (Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set())));
   const back = { href: getLibraryRoute(orgSlug), label: "My Library" };
 
   if (!connection && (usable.isLoading || library.isLoading)) {
@@ -106,6 +119,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   }
 
   const name = connection.name;
+  const limitedAccess = connectorLimitedAccess(connection);
   const personEdge = item?.edges.find((edge) => edge.kind === "person");
   const added = formatAddedDate(personEdge?.kind === "person" ? personEdge.grantedAt : connection.connectedAt);
   const who = mine && orgContext
@@ -138,7 +152,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
               size="md"
               label={`More for ${name}`}
               entries={[
-                ...(connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: apiKeyStatus ? "Remove key" : "Sign out", onSelect: () => void signOut() }] : []),
+                ...(!connection.policyBlocked && connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: apiKeyStatus ? "Remove key" : "Sign out", onSelect: () => void signOut() }] : []),
                 ...(mine ? [removeEntry(name, remove)] : []),
               ]}
             />
@@ -148,11 +162,17 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
                 Share
               </LinkButton>
             ) : null}
-            <ChatButton name={name} />
+            {limitedAccess ? (
+              <DenButton variant="secondary" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Reconnect</DenButton>
+            ) : null}
+            {connection.policyBlocked && connection.connectedForMe ? (
+              <DenButton variant="secondary" loading={disconnect.isPending} onClick={() => void signOut()}>Disconnect</DenButton>
+            ) : null}
+            <ChatButton name={name} disabled={connection.policyBlocked} />
           </>
         )}
       />
-      <WhatYourAiCanDo tools={tools.data?.tools ?? []} loading={tools.isLoading} signedIn={signedIn} error={Boolean(tools.error)} />
+      {native ? null : <WhatYourAiCanDo tools={tools.data?.tools ?? []} loading={tools.isLoading} signedIn={signedIn} error={Boolean(tools.error)} />}
       <section className="flex flex-col gap-2.5">
         <SectionTitle title="Details" />
         <DetailRows
@@ -160,19 +180,29 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
             { label: "Who can use it", value: who },
             ...(connection.authType === "none" ? [] : [{
               label: connection.authType === "apikey" ? "Key" : "Signed in as",
-              value: apiKeyStatus === "saved_unverified" || apiKeyStatus === "ready"
-                ? personalApiKeyStatusLabel(apiKeyStatus)
-                : apiKeyStatus === "missing" || apiKeyStatus === "reconnect_required"
-                  ? <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{apiKeyStatus === "reconnect_required" ? "Replace key" : "Add key"}</DenButton>
-                  : signedIn
-                    ? connection.authType === "apikey" ? "Organization key ready" : connection.externalAccountId ?? "You"
-                    : connection.authType === "apikey"
-                      ? "Ask an admin to replace the organization key"
-                      : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Sign in</DenButton>,
+              value: connection.policyBlocked
+                ? connectorAccountLabel(connection) ?? "You"
+                : apiKeyStatus === "saved_unverified" || apiKeyStatus === "ready"
+                  ? personalApiKeyStatusLabel(apiKeyStatus)
+                  : apiKeyStatus === "missing" || apiKeyStatus === "reconnect_required"
+                    ? <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{apiKeyStatus === "reconnect_required" ? "Replace key" : "Add key"}</DenButton>
+                    : signedIn
+                      ? connection.authType === "apikey" ? "Organization key ready" : connectorAccountLabel(connection) ?? "You"
+                      : connection.authType === "apikey"
+                        ? "Ask an admin to replace the organization key"
+                        : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{connection.needsReconnect ? "Reconnect" : "Sign in"}</DenButton>,
             }]),
+            ...(connection.policyBlocked ? [{ label: "Access", value: <ConnectionPolicyStatus message={connection.policyMessage} /> }] : []),
+            ...(limitedAccess ? [{ label: "Access", value: (
+              <span className="flex flex-col gap-1 whitespace-normal">
+                <span>Connected with limited access</span>
+                <span>{limitedAccess}</span>
+              </span>
+            ) }] : []),
             ...(added ? [{ label: "Added", value: added }] : []),
           ]}
         />
+        {signIn.failure?.id === connectionId ? <p role="alert">{signIn.failure.message}</p> : null}
       </section>
       <MemberApiKeyDialog target={signIn.apiKeyTarget} onClose={signIn.closeApiKey} />
     </ItemPage>

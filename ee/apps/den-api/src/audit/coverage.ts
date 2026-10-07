@@ -192,6 +192,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "roles.ts": bridged(["organization.role.created", "organization.role.updated", "organization.role.deleted"], ["role", "api_key"], ["api_key.revoked"]),
   "scim.ts": bridged(["organization.scim.token_rotated", "organization.scim.connection_deleted", "organization.scim.reconciliation_run", "organization.scim.group_mapping_updated"], ["scim_connection"]),
   "shared.ts": support("Organization authorization and context utilities, not an audit emitter."),
+  "slack.ts": routes("Member-scoped read-only Slack search and thread excerpts: sensitive-access request evidence only; no search queries, message content, response bodies or token lifecycle snapshots."),
   "sso.ts": bridged(["organization.sso.connection_registered", "organization.sso.connection_enabled", "organization.sso.connection_disabled", "organization.sso.connection_deleted"], ["sso_connection"]),
   "teams.ts": routes("Team and membership management."),
   "web-origins.ts": bridged(["organization.web_origin.approved", "organization.web_origin.removed"], ["web_origin"]),

@@ -13,6 +13,7 @@ export type ComposerConnectionSignIn = {
 };
 
 export function orgMcpConnectionStatus(connection: DenExternalMcpConnection): McpStatus {
+  if (connection.policyBlocked) return { status: "disabled" };
   if (isOrgMcpConnectionReady(connection)) return { status: "connected" };
   if (connectionNeedsReconnect(connection)) return { status: "reconnect_required" };
   if (connection.credentialMode === "shared") {
@@ -43,6 +44,14 @@ export function mergeComposerConnectionInventory(input: {
   const orgServers: McpServerEntry[] = [];
 
   for (const connection of input.orgConnections) {
+    if (connection.policyBlocked) {
+      // Retain the account in settings, not among executable composer sources.
+      // Suppress a stale direct-MCP duplicate of this same connection too.
+      listedConnectionIds.add(connection.id);
+      statuses[connection.id] = { status: "disabled" };
+      statuses[`org-mcp:${connection.id}`] = { status: "disabled" };
+      continue;
+    }
     if (!orgConnectionCanRender(connection)) continue;
     const entry = orgMcpConnectionToComposerEntry(connection);
     orgServers.push(entry);

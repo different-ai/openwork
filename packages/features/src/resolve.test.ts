@@ -43,6 +43,37 @@ test("an organization override can turn a feature off while it is on for everyon
   assert.equal(resolved.enabled, false)
 })
 
+test("Slack search is opt-in per organization and independent of Slack Assistant", () => {
+  assert.equal(resolveFeature("nativeSlack", base).enabled, false)
+  assert.equal(resolveFeature("nativeSlack", { ...base, overrides: { slackAssistant: true } }).enabled, false)
+  const enabled = resolveFeature("nativeSlack", { ...base, overrides: { nativeSlack: true } })
+  assert.equal(enabled.enabled, true)
+  assert.equal(enabled.source, "override")
+  assert.equal(resolveFeature("slackAssistant", { ...base, overrides: { nativeSlack: true } }).enabled, false)
+  const everyone = { nativeSlack: { enabled: true, killed: false } }
+  assert.equal(resolveFeature("nativeSlack", { ...base, rollouts: everyone }).enabled, true)
+  assert.equal(resolveFeature("nativeSlack", { ...base, rollouts: everyone, overrides: { nativeSlack: false } }).enabled, false)
+})
+
+test("Slack search cannot bypass deployment exclusion, kill, or operator lock", () => {
+  const override = { ...base, overrides: { nativeSlack: true } }
+  const unavailable = resolveFeature("nativeSlack", { ...override, deployment: "self_hosted", locks: { nativeSlack: true } })
+  assert.equal(unavailable.enabled, false)
+  assert.equal(unavailable.source, "unavailable")
+  const locked = resolveFeature("nativeSlack", { ...override, locks: { nativeSlack: false } })
+  assert.equal(locked.enabled, false)
+  assert.equal(locked.overrideApplies, false)
+  const killed = resolveFeature("nativeSlack", { ...override, locks: { nativeSlack: true }, rollouts: { nativeSlack: { enabled: true, killed: true } } })
+  assert.equal(killed.enabled, false)
+  assert.equal(killed.source, "killed")
+})
+
+test("the retired Slack deployment switch cannot grant the registered feature", () => {
+  const environment = parseFeatureEnvironment({ DEN_DEPLOYMENT: "cloud", DEN_SLACK_ENABLED: "true" })
+  assert.deepEqual(environment.locks, {})
+  assert.equal(resolveFeature("nativeSlack", { ...environment, overrides: {}, rollouts: {} }).enabled, false)
+})
+
 test("mapFeatures and the key schema cover exactly the registry", () => {
   assert.deepEqual(Object.keys(mapFeatures(() => 0)).sort(), [...FEATURE_KEYS].sort())
   for (const key of FEATURE_KEYS) assert.equal(featureKeySchema.parse(key), key)

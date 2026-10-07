@@ -25,6 +25,7 @@ import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
 import { registerMcpConnectionRoutes } from "./mcp-connections.js"
 import { registerMicrosoft365Routes } from "./microsoft-365.js"
+import { registerSlackRoutes } from "./slack.js"
 import { registerOAuthProviderRoutes } from "./oauth-providers.js"
 import { registerPluginArchRoutes } from "./plugin-system/routes.js"
 import { registerOrgRoleRoutes } from "./roles.js"
@@ -85,6 +86,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOAuthProviderRoutes(app)
   registerGoogleWorkspaceRoutes(app)
   registerMicrosoft365Routes(app)
+  registerSlackRoutes(app)
   registerMcpConnectionRoutes(app)
   registerPluginArchRoutes(app)
   registerOrgRoleRoutes(app)

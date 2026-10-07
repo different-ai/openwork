@@ -4,6 +4,7 @@ import {
   index,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -91,9 +92,9 @@ export const ConnectedAccountTable = mysqlTable(
     tokenType: varchar("token_type", { length: 64 }),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
     /**
-     * Transient PKCE code verifier, present only between connect/start and
-     * connect/callback for a given (org, member, provider). Cleared once
-     * tokens are saved.
+     * Transient PKCE verifier, or a SHA-256 fingerprint of Slack's signed
+     * OAuth state (not a password hash), scoped to (org, member, provider).
+     * Cleared when the matching authorization successfully saves its tokens.
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
@@ -109,6 +110,20 @@ export const ConnectedAccountTable = mysqlTable(
       table.providerId,
     ),
   ],
+)
+
+/** App installation authority is separate from every member's read credential. */
+export const SlackInstallationTable = mysqlTable(
+  "slack_installation",
+  {
+    clientId: varchar("client_id", { length: 512 }).notNull(),
+    workspaceId: varchar("workspace_id", { length: 64 }).notNull(),
+    accessToken: encryptedTextColumn("access_token").notNull(),
+    refreshToken: encryptedTextColumn("refresh_token"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }),
+    updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [primaryKey({ columns: [table.clientId, table.workspaceId] })],
 )
 
 export const externalMcpAuthTypeValues = ["oauth", "apikey", "none"] as const

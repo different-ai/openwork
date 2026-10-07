@@ -14,7 +14,7 @@ import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { getOrganizationFeatures } from "./features.js"
-import { publicRoute } from "./middleware/index.js"
+import { publicRoute, signedWebhookRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerExternalConnectionProxyRoutes } from "./mcp/external-connection-proxy.js"
@@ -47,6 +47,9 @@ import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
+import { registerSlackAppHomeRoutes } from "./routes/slack-app-home.js"
+import { getSlackHomeToken } from "./capability-sources/slack-installations.js"
+import { slackHomePolicyError } from "./capability-sources/slack-policy.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
@@ -287,6 +290,7 @@ registerWorkbotRoutes(app)
 registerVersionRoutes(app)
 registerFeatureRoutes(app)
 registerWebhookRoutes(app)
+registerSlackAppHomeRoutes(app, signedWebhookRoute, getSlackHomeToken, slackHomePolicyError)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)

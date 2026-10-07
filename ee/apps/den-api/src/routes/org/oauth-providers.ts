@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -21,7 +22,12 @@ import {
   OAuthTokenExchangeError,
   resolvePublicOrigin,
   verifyOAuthStateToken,
+  validateSlackTokenIdentity,
+  slackOAuthConfigurationIsCurrent,
 } from "../../capability-sources/generic-oauth.js"
+import { getNativeOAuthClient } from "../../capability-sources/native-oauth-client.js"
+import { parseSlackAccountIdentity } from "../../capability-sources/slack-policy.js"
+import { saveSlackInstallation } from "../../capability-sources/slack-installations.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
 import {
@@ -42,7 +48,7 @@ import {
 } from "../../capability-sources/oauth-credentials.js"
 import { normalizeEntraTenantId, readProviderTenantId } from "../../capability-sources/oauth-tenant.js"
 import { getExternalMcpConnection, listUsableNativeProviderConnections } from "../../capability-sources/external-mcp-connections.js"
-import { resolveDefaultNativeProviderCredentialId, resolveManageableNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
+import { nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, resolveManageableNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
 import { listTeamsForMember } from "../../orgs.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
@@ -178,6 +184,11 @@ export async function beginNativeProviderConnect(input: OrgIds & {
   request: Request
   teamIds: DenTypeId<"team">[]
 }): Promise<{ authorizeUrl: string } | { error: "client_not_configured" | "client_configuration_invalid" | "forbidden"; message?: string }> {
+  if (input.provider.providerId === "slack") {
+    const policyError = await nativeProviderConnectionPolicyError(input.organizationId, "slack")
+    if (policyError) return { error: "forbidden", message: policyError.message }
+    if (input.credentialProviderId !== "slack") return { error: "forbidden" }
+  }
   // The literal registry key is the legacy no-row alias and intentionally
   // remains implicitly org-wide. Connector rows always require a grant.
   if (input.credentialProviderId !== input.provider.providerId) {
@@ -193,9 +204,11 @@ export async function beginNativeProviderConnect(input: OrgIds & {
     if (!canUse) return { error: "forbidden" }
   }
 
-  const client = await getOrgOAuthClient(input.organizationId, input.credentialProviderId)
+  const client = await getNativeOAuthClient(input.organizationId, input.credentialProviderId)
   if (!client) {
-    return { error: "client_not_configured" }
+    return { error: "client_not_configured", ...(input.provider.providerId === "slack"
+      ? { message: "The OpenWork-supplied Slack app is not available. Contact an OpenWork administrator." }
+      : {}) }
   }
 
   const { verifier, challenge } = createPkcePair()
@@ -227,7 +240,11 @@ export async function beginNativeProviderConnect(input: OrgIds & {
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.credentialProviderId,
-    pendingCodeVerifier: verifier,
+    // Slack's confidential flow has no PKCE. This fingerprints server-minted,
+    // HMAC-signed state with a cryptographic UUID nonce, not a human password.
+    // SHA-256 binds the pending attempt; the callback verifies HMAC/expiry and
+    // consumes the matching digest on successful completion, rejecting stale starts.
+    pendingCodeVerifier: input.provider.providerId === "slack" ? createHash("sha256").update(state).digest("hex") : verifier,
   })
   return { authorizeUrl }
 }
@@ -238,6 +255,9 @@ async function resolveNativeProviderCredential(input: {
 }): Promise<{ provider: NativeOAuthProviderConfig; credentialProviderId: string } | null> {
   const registeredProvider = getNativeOAuthProvider(input.providerOrConnectionId)
   if (registeredProvider) {
+    // Slack has exactly one platform-managed member account, including when
+    // the preview is disabled and the member only wants to disconnect it.
+    if (registeredProvider.providerId === "slack") return { provider: registeredProvider, credentialProviderId: "slack" }
     const credentialProviderId = await resolveManageableNativeProviderCredentialId({
       organizationId: input.organizationId,
       nativeProviderKey: registeredProvider.providerId,
@@ -254,6 +274,7 @@ async function resolveNativeProviderCredential(input: {
   const connection = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId })
   if (connection?.kind !== "native_provider" || !connection.nativeProviderKey) return null
   const provider = getNativeOAuthProvider(connection.nativeProviderKey)
+  if (provider?.providerId === "slack") return null
   return provider ? { provider, credentialProviderId: connection.id } : null
 }
 
@@ -265,6 +286,9 @@ async function resolveMemberNativeProviderCredential(input: {
 }): Promise<Awaited<ReturnType<typeof resolveNativeProviderCredential>> | "forbidden"> {
   const registeredProvider = getNativeOAuthProvider(input.providerOrConnectionId)
   if (registeredProvider) {
+    // Slack has exactly one platform-managed member account, including when
+    // the preview is disabled and the member only wants to disconnect it.
+    if (registeredProvider.providerId === "slack") return { provider: registeredProvider, credentialProviderId: "slack" }
     const credentialProviderId = await resolveDefaultNativeProviderCredentialId({
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
@@ -330,6 +354,9 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       }
       const { provider, credentialProviderId } = resolved
 
+      if (provider.providerId === "slack") {
+        return c.json({ error: "forbidden", message: "Slack search uses the OpenWork-provided app. Organization app configuration is not supported." }, 403)
+      }
       const body = c.req.valid("json")
       const existing = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
       if (!existing && !body.clientId) {
@@ -436,7 +463,11 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       }
       const { provider, credentialProviderId } = resolved
 
-      const client = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
+      if (provider.providerId === "slack") {
+        const policyError = await nativeProviderConnectionPolicyError(payload.organization.id, "slack")
+        if (policyError) return c.json({ error: "forbidden", message: policyError.message }, 403)
+      }
+      const client = await getNativeOAuthClient(payload.organization.id, credentialProviderId)
       const features = clientSelectedFeatures(provider, client?.extra ?? null)
       return c.json({
         providerId,
@@ -455,11 +486,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Begin connecting the calling member's account for a provider",
-      description: "Returns an authorize URL to redirect the member's browser to. Requires the org to have already saved an OAuth client for this provider.",
+      description: "Returns an authorize URL to redirect the member's browser to, using the provider's platform-managed app or a saved organization OAuth client.",
       responses: {
         200: jsonResponse("Authorize URL to redirect to.", connectStartResponseSchema),
         400: jsonResponse("Unknown providerId.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The provider is blocked by rollout or organization policy.", forbiddenSchema),
         404: jsonResponse("The org has not configured an OAuth client for this provider yet.", clientNotConfiguredSchema),
       },
     }),
@@ -493,12 +525,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       })
       if ("error" in started) {
         if (started.error === "forbidden") {
-          return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
+          return c.json({ error: "forbidden", message: started.message ?? "You have not been granted access to this connection." }, 403)
         }
         if (started.error === "client_configuration_invalid") {
           return c.json({ error: "invalid_request", message: started.message ?? "OAuth client configuration is incomplete." }, 400)
         }
-        return c.json({ error: "client_not_configured", message: `Connect an OAuth client for "${providerId}" first.` }, 404)
+        return c.json({ error: "client_not_configured", message: started.message ?? `Connect an OAuth client for "${providerId}" first.` }, 404)
       }
       return c.json({ authorizeUrl: started.authorizeUrl })
     },
@@ -522,6 +554,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           200: jsonResponse("Authorize URL, or already connected.", nativeConnectStartResponseSchema),
           400: jsonResponse("The OAuth client configuration is incomplete.", invalidRequestSchema),
           401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+          403: jsonResponse("The provider is blocked by rollout or organization policy.", forbiddenSchema),
           404: jsonResponse("The org has not configured an OAuth client for this provider yet.", clientNotConfiguredSchema),
         },
       }),
@@ -546,12 +579,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         })
         if ("error" in started) {
           if (started.error === "forbidden") {
-            return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
+            return c.json({ error: "forbidden", message: started.message ?? "You have not been granted access to this connection." }, 403)
           }
           if (started.error === "client_configuration_invalid") {
             return c.json({ error: "invalid_request", message: started.message ?? "OAuth client configuration is incomplete." }, 400)
           }
-          return c.json({ error: "client_not_configured", message: `Connect an OAuth client for "${provider.providerId}" first.` }, 404)
+          return c.json({ error: "client_not_configured", message: started.message ?? `Connect an OAuth client for "${provider.providerId}" first.` }, 404)
         }
         return c.json({ status: "needs_auth" as const, authorizeUrl: started.authorizeUrl })
       },
@@ -568,6 +601,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       responses: {
         200: htmlResponse("Connected — a static success page."),
         400: jsonResponse("Missing or invalid code/state.", invalidRequestSchema),
+        403: jsonResponse("The provider is blocked by rollout or organization policy.", forbiddenSchema),
       },
     }),
     publicRoute,
@@ -594,6 +628,10 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "invalid_request", message: "Invalid or expired state." }, 400)
       }
 
+      if (provider.providerId === "slack") {
+        const policyError = await nativeProviderConnectionPolicyError(statePayload.organizationId, "slack")
+        if (policyError) return c.json({ error: "forbidden", message: policyError.message }, 403)
+      }
       const memberTeams = await listTeamsForMember({
         organizationId: statePayload.organizationId,
         memberId: statePayload.orgMembershipId,
@@ -609,13 +647,15 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       }
       const credentialProviderId = resolved.credentialProviderId
 
-      const client = await getOrgOAuthClient(statePayload.organizationId, credentialProviderId)
+      const client = await getNativeOAuthClient(statePayload.organizationId, credentialProviderId)
       const pending = await getConnectedAccount({
         organizationId: statePayload.organizationId,
         orgMembershipId: statePayload.orgMembershipId,
         providerId: credentialProviderId,
       })
-      if (!client || !pending?.pendingCodeVerifier) {
+      if (!client || !pending?.pendingCodeVerifier
+        || (provider.providerId === "slack" && pending.pendingCodeVerifier !== createHash("sha256").update(state).digest("hex"))
+      ) {
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
       }
       // Signed state + resolved member credential + pending verifier prove the
@@ -631,13 +671,23 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           redirectUri: callbackRedirectUri(c.req.raw, providerId),
           codeVerifier: pending.pendingCodeVerifier,
         })
-        const externalAccountId = await resolveExternalAccountId({
-          provider,
-          accessToken: tokens.access_token,
-          idToken: tokens.id_token,
-          requestId: c.get("requestId"),
-        })
+        const externalAccountId = provider.providerId === "slack"
+          ? await validateSlackTokenIdentity(tokens)
+          : await resolveExternalAccountId({
+            provider,
+            accessToken: tokens.access_token,
+            idToken: tokens.id_token,
+            requestId: c.get("requestId"),
+          })
 
+        if (provider.providerId === "slack" && (
+          !await slackOAuthConfigurationIsCurrent({
+            organizationId: statePayload.organizationId, client,
+          })
+          || await nativeProviderConnectionPolicyError(statePayload.organizationId, "slack")
+        )) {
+          throw new OAuthTokenExchangeError("Slack configuration changed. Restart Connect if Slack is still available.", "oauth_reauthentication_required")
+        }
         const saved = await completeConnectedAccountForActiveMember({
           organizationId: statePayload.organizationId,
           orgMembershipId: statePayload.orgMembershipId,
@@ -648,8 +698,10 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           accessToken: tokens.access_token,
           refreshToken: tokens.refresh_token ?? null,
           tokenType: tokens.token_type ?? null,
-          expiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
-          scopes: tokens.scope ? tokens.scope.split(" ") : resolveProviderScopes(provider, clientSelectedFeatures(provider, client.extra)),
+          expiresAt: tokens.expires_in !== undefined ? new Date(Date.now() + tokens.expires_in * 1000) : null,
+          scopes: provider.providerId === "slack"
+            ? [...new Set((tokens.scope ?? "").split(/[\s,]+/).filter(Boolean))]
+            : tokens.scope ? tokens.scope.split(" ") : resolveProviderScopes(provider, clientSelectedFeatures(provider, client.extra)),
           pendingCodeVerifier: null,
         })
         if (!saved) {
@@ -658,6 +710,26 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
             name: provider.displayName,
             message: "This OpenWork connection request is no longer active.",
           }), 400)
+        }
+        if (provider.providerId === "slack" && tokens.slackHomeGrant) {
+          const identity = parseSlackAccountIdentity(externalAccountId)
+          if (identity && await slackOAuthConfigurationIsCurrent({ organizationId: statePayload.organizationId, client })) {
+            try {
+              await saveSlackInstallation(client.clientId, identity.workspaceId, tokens.slackHomeGrant)
+            } catch {
+              // Member authorization succeeded; optional static Home storage
+              // must not turn that into a misleading failed connection.
+              console.warn("slack_home_installation_unavailable", { requestId: c.get("requestId") })
+            }
+          }
+        }
+        if (provider.providerId === "slack" && (
+          !await slackOAuthConfigurationIsCurrent({ organizationId: statePayload.organizationId, client })
+          || await nativeProviderConnectionPolicyError(statePayload.organizationId, "slack")
+        )) {
+          // Recheck after optional Home persistence too. Retain the saved account
+          // for cleanup, but never report it as usable after observing a disable.
+          throw new OAuthTokenExchangeError("Slack became unavailable for this organization. Your saved account cannot be used while access is disabled.", "oauth_reauthentication_required")
         }
       } catch (error) {
         const requestId = c.get("requestId")
@@ -707,6 +779,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       responses: {
         200: jsonResponse("Connection status.", oauthStatusResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The provider is blocked by rollout or organization policy.", forbiddenSchema),
         404: jsonResponse("Unknown providerId.", oauthNotFoundSchema),
       },
     }),
@@ -730,11 +803,21 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "forbidden", message: "You have not been granted access to this connection." }, 403)
       }
 
+      if (resolved.provider.providerId === "slack") {
+        const policyError = await nativeProviderConnectionPolicyError(payload.organization.id, "slack")
+        if (policyError) return c.json({ error: "forbidden", message: policyError.message }, 403)
+      }
       const account = await getConnectedAccount({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
         providerId: resolved.credentialProviderId,
       })
+      if (resolved.provider.providerId === "slack" && account?.accessToken) {
+        const identity = parseSlackAccountIdentity(account.externalAccountId)
+        if (!identity) {
+          return c.json({ providerId, connected: false, externalAccountId: null, scopes: null })
+        }
+      }
       return c.json({
         providerId,
         connected: Boolean(account?.accessToken),

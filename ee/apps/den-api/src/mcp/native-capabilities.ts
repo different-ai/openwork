@@ -209,7 +209,7 @@ export async function executeNativeCapability(input: {
     catalog: input.catalog,
   })
   if (!resolved) {
-    const policyError = await nativeProviderConnectionPolicyError(input.organizationId)
+    const policyError = await nativeProviderConnectionPolicyError(input.organizationId, parsed.connectionId)
     if (policyError) {
       return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: policyError.kind, message: policyError.message }) }] }
     }

@@ -229,6 +229,10 @@ import type {
   GetV1CapabilitiesMicrosoft365TeamsChatsByChatIdMessagesResponses,
   GetV1CapabilitiesMicrosoft365TeamsChatsErrors,
   GetV1CapabilitiesMicrosoft365TeamsChatsResponses,
+  GetV1CapabilitiesSlackSearchErrors,
+  GetV1CapabilitiesSlackSearchResponses,
+  GetV1CapabilitiesSlackThreadsErrors,
+  GetV1CapabilitiesSlackThreadsResponses,
   GetV1CloudGatewayResolveErrors,
   GetV1CloudGatewayResolveResponses,
   GetV1CloudInstanceErrors,
@@ -400,6 +404,8 @@ import type {
   GetV1McpConnectionsPresetsErrors,
   GetV1McpConnectionsPresetsResponses,
   GetV1McpConnectionsResponses,
+  GetV1McpConnectionsSlackConnectStartErrors,
+  GetV1McpConnectionsSlackConnectStartResponses,
   GetV1MeDashboardsErrors,
   GetV1MeDashboardsResponses,
   GetV1MeDesktopConfigErrors,
@@ -7950,7 +7956,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Begin connecting the calling member's account for a provider
    *
-   * Returns an authorize URL to redirect the member's browser to. Requires the org to have already saved an OAuth client for this provider.
+   * Returns an authorize URL to redirect the member's browser to, using the provider's platform-managed app or a saved organization OAuth client.
    */
   public getV1OauthProvidersByProviderIdConnectStart<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7968,6 +7974,21 @@ export class DenClient extends HeyApiClient {
       ...options,
       ...params,
     });
+  }
+
+  /**
+   * Begin connecting the calling member to Slack
+   *
+   * Native-provider twin of the external MCP connect/start route: returns an authorize URL for the browser, using the OAuth client the org saved for this provider.
+   */
+  public getV1McpConnectionsSlackConnectStart<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<
+      GetV1McpConnectionsSlackConnectStartResponses,
+      GetV1McpConnectionsSlackConnectStartErrors,
+      ThrowOnError
+    >({ url: "/v1/mcp-connections/slack/connect/start", ...options });
   }
 
   /**
@@ -9970,6 +9991,82 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Read a Slack thread excerpt with source links as the calling member
+   *
+   * Read one bounded page of a Slack thread using channelId and ts from search. Slack enforces this member's access and the conversation's history permission. Always report this as an excerpt, include source links, and surface hasMore, nextCursor, historyLimited, and truncation. No background paging or history import.
+   */
+  public getV1CapabilitiesSlackThreads<ThrowOnError extends boolean = false>(
+    parameters: {
+      channelId: string;
+      ts: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "channelId" },
+            { in: "query", key: "ts" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1CapabilitiesSlackThreadsResponses,
+      GetV1CapabilitiesSlackThreadsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/slack/threads",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Search Slack messages with source links as the calling member
+   *
+   * Read-only live Slack RTS lookup using only this member's connected Slack account. One bounded page, no file search, legacy fallback, or complete-thread claim. Omitted conversationTypes searches only granted categories; explicit ungranted categories return missing_permission. Surface scope omissions, truncation, and source links in the answer.
+   */
+  public getV1CapabilitiesSlackSearch<ThrowOnError extends boolean = false>(
+    parameters: {
+      query: string;
+      conversationTypes?: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "query" },
+            { in: "query", key: "conversationTypes" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1CapabilitiesSlackSearchResponses,
+      GetV1CapabilitiesSlackSearchErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/slack/search",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
    * Discover external MCP connection requirements
    *
    * Side-effect-free requirements discovery for any organization member, through the same guarded fetch as connection setup. It performs no client registration, credential write, or connection creation.
@@ -10083,7 +10180,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List External MCP Connections
    *
-   * scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.
+   * scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. A saved native account may be included with policyBlocked=true for account management and disconnection only; it is not a callable capability. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.
    */
   public getV1McpConnections<ThrowOnError extends boolean = false>(
     parameters?: {

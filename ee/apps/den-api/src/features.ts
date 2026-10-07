@@ -1,5 +1,5 @@
 import { readFeatureRollouts, readFeatures, readOrganizationFeatureOverridesForMany, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
-import { resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
+import { resolveFeature, resolveFeatures, type FeatureKey, type FeatureMap, type ResolvedFeature } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -31,6 +31,18 @@ export function getOrganizationFeatures(organizationId: string, options: ReadOpt
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
   return (await getOrganizationFeatures(organizationId, options))[key]
+}
+
+/**
+ * Deployment constraints for app-level plumbing that has no organization.
+ * This excludes organization overrides and is never organization authorization.
+ */
+export async function getDeploymentFeatureState(key: FeatureKey, options: ReadOptions = {}): Promise<ResolvedFeature> {
+  return resolveFeature(key, {
+    ...env.features,
+    rollouts: await readFeatureRollouts(options.database ?? db),
+    overrides: {},
+  })
 }
 
 /**

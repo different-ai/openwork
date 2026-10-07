@@ -8,6 +8,7 @@ import {
   type AgentContextOrganizationConnectionsProbe,
 } from "@openwork/types/agent-context-diagnostics";
 
+import { connectionNeedsReconnect } from "../../react-app/domains/connections/native-provider-connections";
 import type { DenExternalMcpConnection } from "./den";
 
 const SAFE_CONNECTION_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
@@ -25,6 +26,13 @@ function summarizeOrganizationConnection(
     || !SAFE_CONNECTION_ID_PATTERN.test(id)
     || !isAgentContextDiagnosticTextSafe(id)
   ) return null;
+  const missingFeatureCount = Math.min(connection.missingFeatures?.length ?? 0, 100);
+  const limitedAccess = connection.nativeProviderKey === "slack"
+    && connection.credentialMode === "per_member"
+    && connection.connectedForMe
+    && !connection.policyBlocked
+    && !connectionNeedsReconnect(connection)
+    && missingFeatureCount > 0;
   return {
     id,
     name,
@@ -32,7 +40,12 @@ function summarizeOrganizationConnection(
     connected: connection.connected,
     connectedForMe: connection.connectedForMe,
     needsReconnect: connection.needsReconnect === true,
-    missingFeatureCount: Math.min(connection.missingFeatures?.length ?? 0, 100),
+    ...(connection.policyBlocked === true ? { policyBlocked: true } : {}),
+    ...(connection.policyBlocked === true && connection.policyOwner === "openwork"
+      ? { policyOwner: connection.policyOwner }
+      : {}),
+    ...(limitedAccess ? { limitedAccess: true } : {}),
+    missingFeatureCount,
   } satisfies AgentContextOrganizationConnectionSummary;
 }
 
