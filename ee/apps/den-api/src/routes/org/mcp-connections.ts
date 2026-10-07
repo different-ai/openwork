@@ -445,6 +445,7 @@ const connectionResponseSchema = z.object({
   connectedAt: z.string().datetime().nullable(),
   /** Safe creator display label for admin/manageable rows. */
   createdByName: z.string().nullable().optional(),
+  createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: z.boolean(),
@@ -1205,6 +1206,7 @@ async function toConnectionResponse(
     connected,
     connectedAt: connectedAt ? connectedAt.toISOString() : null,
     ...(options.includeAccess ? { createdByName: options.createdByName ?? null } : {}),
+    createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     connectedForMe,
     needsReconnect,
@@ -1246,6 +1248,7 @@ export type MemberUsableConnectionFacts = {
   url: string
   nativeProviderKey: string | null
   credentialMode: "shared" | "per_member"
+  createdAt?: string
   connected: boolean
   connectedAt: string | null
   connectedForMe: boolean

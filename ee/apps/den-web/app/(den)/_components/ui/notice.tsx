@@ -27,30 +27,38 @@ export function DenNotice({
   tone,
   className,
   icon,
+  presentation = "panel",
+  action,
 }: {
   message: ReactNode;
+  action?: ReactNode;
+  /** Inline notices share their containing surface instead of adding a tinted panel. */
+  presentation?: "panel" | "inline";
   tone?: DenNoticeTone;
   className?: string;
-  icon?: LucideIcon;
+  icon?: LucideIcon | null;
 }) {
   const resolvedTone =
     tone ?? (typeof message === "string" && ROUTINE_SECURITY_MESSAGES.has(message) ? "info" : "error");
-  const Icon = icon ?? toneIcons[resolvedTone];
+  const Icon = icon === null ? null : icon ?? toneIcons[resolvedTone];
 
   return (
     <div
       role={resolvedTone === "error" ? "alert" : "status"}
       data-notice-tone={resolvedTone}
       className={[
-        "flex items-start gap-3 rounded-[24px] border px-5 py-4 text-[14px]",
-        toneClasses[resolvedTone],
+        presentation === "inline"
+          ? "flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-[13px] leading-4.5 text-gray-600"
+          : `flex items-start gap-3 rounded-[24px] border px-5 py-4 text-[14px] ${toneClasses[resolvedTone]}`,
         className ?? "",
       ]
         .filter(Boolean)
         .join(" ")}
     >
-      <Icon className={`mt-0.5 size-4 shrink-0 ${resolvedTone === "warning" ? "text-[var(--ow-warning)]" : ""}`} aria-hidden="true" />
-      <span>{message}</span>
+      {Icon ? <Icon className={`mt-0.5 size-4 shrink-0 ${resolvedTone === "warning" ? "text-[var(--ow-warning)]" : ""}`} aria-hidden="true" /> : null}
+      <span className={action ? "min-w-0 flex-1" : undefined}>{message}</span>
+      {/* Inline actions keep their hit area without increasing the text row's height. */}
+      {action ? <span className={`flex shrink-0 items-center ${presentation === "inline" ? "-my-2" : ""}`}>{action}</span> : null}
     </div>
   );
 }

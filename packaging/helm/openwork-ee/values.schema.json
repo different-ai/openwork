@@ -38,6 +38,16 @@
               ],
               "description": "OpenWork Connect: Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. Renders DEN_FEATURE_MCP_CONNECTIONS."
             },
+            "dashboardActivity": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Dashboard activity: Organization admins see recent additions and skill updates on their dashboard instead of Quick add. Renders DEN_FEATURE_DASHBOARD_ACTIVITY."
+            },
             "modelsAnalytics": {
               "enum": [
                 "",

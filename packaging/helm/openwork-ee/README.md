@@ -331,6 +331,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | --- | --- | --- | --- |
 | `installLinks` | `DEN_FEATURE_INSTALL_LINKS` | default on | Workspace admins can create desktop install links for their organization. |
 | `mcpConnections` | `DEN_FEATURE_MCP_CONNECTIONS` | default on | Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. |
+| `dashboardActivity` | `DEN_FEATURE_DASHBOARD_ACTIVITY` | default off | Organization admins see recent additions and skill updates on their dashboard instead of Quick add. |
 | `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
 | `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
 | `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |

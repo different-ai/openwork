@@ -145,6 +145,7 @@ export type AdminFeature = {
   key:
     | "installLinks"
     | "mcpConnections"
+    | "dashboardActivity"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -194,6 +195,7 @@ export type AdminOrganizationsPageResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -224,6 +226,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      dashboardActivity: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -378,6 +389,7 @@ export type AdminOverviewResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -408,6 +420,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      dashboardActivity: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1607,6 +1628,7 @@ export type CapabilityDisabledError = {
   capability:
     | "installLinks"
     | "mcpConnections"
+    | "dashboardActivity"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -1830,6 +1852,7 @@ export type GatewayProviderDetails = {
   credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
   authUrl: string | null;
   status: "active" | "disabled";
+  createdAt?: string;
   updatedAt: string;
   providerConfig: {
     [key: string]: unknown;
@@ -1996,6 +2019,7 @@ export type GatewayProviderSummary = {
   credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
   authUrl: string | null;
   status: "active" | "disabled";
+  createdAt?: string;
   updatedAt: string;
   providerConfig: {
     [key: string]: unknown;
@@ -2792,6 +2816,7 @@ export type ExternalMcpConnectionResponse = {
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
+  createdAt?: string;
   updatedAt?: string;
   connectedForMe: boolean;
   needsReconnect?: boolean;
@@ -3057,6 +3082,7 @@ export type ExternalMcpConnectionCreatedResponse = {
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
+  createdAt?: string;
   updatedAt?: string;
   connectedForMe: boolean;
   needsReconnect?: boolean;
@@ -3129,6 +3155,7 @@ export type ExternalMcpConnectionUpdatedResponse = {
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
+  createdAt?: string;
   updatedAt: string;
   connectedForMe: boolean;
   needsReconnect?: boolean;
@@ -5480,6 +5507,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -5510,6 +5538,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      dashboardActivity: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5652,6 +5689,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -5682,6 +5720,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      dashboardActivity: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -16185,6 +16232,7 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
       credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
       authUrl: string | null;
       status: "active" | "disabled";
+      createdAt?: string;
       updatedAt: string;
       providerConfig: {
         [key: string]: unknown;

@@ -51,9 +51,14 @@ export function ItemSection({ title, meta, children, testId, variant = "default"
   );
 }
 
-export function ItemPanel({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function ItemPanel({ children, className = "", variant = "divided" }: {
+  children: ReactNode;
+  className?: string;
+  /** Inset lists use padded, rounded rows instead of edge-to-edge dividers. */
+  variant?: "divided" | "inset";
+}) {
   return (
-    <div className={`flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white py-1 ${className}`}>
+    <div className={`flex flex-col rounded-2xl border border-gray-100 bg-white ${variant === "inset" ? "p-1.5" : "divide-y divide-gray-100 py-1"} ${className}`}>
       {children}
     </div>
   );

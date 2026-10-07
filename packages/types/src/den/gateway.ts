@@ -181,6 +181,8 @@ export interface GatewayProviderSummary {
   credentialStatus: GatewayCredentialStatus;
   authUrl: string | null;
   status: GatewayResourceStatus;
+  /** Stored provider creation time; optional for compatibility with older servers. */
+  createdAt?: string;
   updatedAt: string;
   providerConfig: Record<string, unknown>;
   /** Universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Never grants group membership. */

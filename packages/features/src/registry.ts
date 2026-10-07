@@ -67,6 +67,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  dashboardActivity: {
+    label: "Dashboard activity",
+    description: "Organization admins see recent additions and skill updates on their dashboard instead of Quick add.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   modelsAnalytics: {
     label: "OpenWork Models task analytics",
     description: "Organization admins can opt in to task analytics for OpenWork Models.",

@@ -33,6 +33,8 @@ export type NativeProviderConnectionEntry = {
   credentialMode: "per_member"
   /** Native providers are implemented by Den itself and never have a standard MCP catalog to expose. */
   exposeDirectly: false
+  /** Absent for legacy synthetic entries without a stored connector row. */
+  createdAt?: string
   connected: boolean
   connectedAt: string | null
   connectedForMe: boolean
@@ -78,6 +80,7 @@ export function buildNativeProviderEntry(
     clientConfigured: boolean
     connectedForMe: boolean
     connectedAt?: Date
+    createdAt?: Date
     externalAccountId?: string | null
     grantedScopes?: string[] | null
     reconnect?: NativeProviderReconnectState
@@ -97,6 +100,7 @@ export function buildNativeProviderEntry(
     credentialMode: "per_member",
     exposeDirectly: false,
     nativeProviderKey: provider.providerId,
+    ...(state.createdAt ? { createdAt: state.createdAt.toISOString() } : {}),
     connected: true,
     connectedAt: state.connectedForMe && state.connectedAt ? state.connectedAt.toISOString() : null,
     connectedForMe: state.connectedForMe,
@@ -156,6 +160,7 @@ export async function listNativeProviderUsableEntries(input: {
       connectedForMe: Boolean(account?.accessToken),
       connectedAt: account?.connectedAt,
       credentialProviderId: connection.id,
+      createdAt: connection.createdAt,
       name: connection.name,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
       ...(account?.scopes ? { grantedScopes: account.scopes } : {}),
