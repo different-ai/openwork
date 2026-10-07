@@ -306,9 +306,10 @@ async function main(mode) {
     const needsScreen = !statuses[AI_SCREEN_CONTEXT];
     await setStatus(repo, decision.sha, {
       state: "pending",
+      // No names in the status: the PR comment below records who ran /test.
       description: needsScreen
-        ? `Reviewed by @${actor}; AI screen first. If it flags something, /test again to run tests`
-        : `Reviewed by @${actor}; tests and Warden running`,
+        ? "Reviewed by a maintainer; AI screen first. If it flags something, /test again to run tests"
+        : "Reviewed by a maintainer; tests and Warden running",
       url: runUrl,
     });
     await reply(repo, number, needsScreen
