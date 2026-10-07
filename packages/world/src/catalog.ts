@@ -158,7 +158,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     examples: [
       { intent: "Workbot, Den and the headless runner from this checkout", command: `${UP} preview-workbot --stage <stage>` },
       { intent: "Feel Workbot for real: a real model, its own computer and an MCP App (local; keys from env or Infisical)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --live` },
-      { intent: "The desktop Calendar over Workbot's Acme org: seeded Automations, the calendar mock and a signed-in desktop (local)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --calendar` },
+      { intent: "The Calendar in Workbot and the desktop over Workbot's Acme org: seeded Automations, the calendar mock and a signed-in desktop (local)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --calendar` },
       { intent: "Workbot from latest dev on Daytona", command: `${UP} preview-workbot --place daytona --stage <stage> ${DETACH}` },
       { intent: "Workbot on Freestyle", command: `${UP} preview-workbot --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
     ],

@@ -47,8 +47,15 @@ const execFileAsync = promisify(execFile);
 /** `--live`: a real model, the computer on, and an MCP App seeded. Local placement only. */
 export type WorkbotWorldOptions = {
   live: boolean;
-  /** `--calendar`: seed the owner's Automations and runs for the desktop Calendar (worlds/lib/calendar.ts). */
+  /**
+   * `--calendar`: seed the owner's Automations and runs, turn on the desktop and Workbot Calendars, and read
+   * meetings from the calendar mock (worlds/lib/calendar.ts).
+   */
   calendar?: boolean;
+  /** Extra Den settings (e.g. provider base URLs a spec points at a mock). */
+  denEnv?: Record<string, string>;
+  /** Workbot reads meetings from this calendar mock instead of Den (WORKBOT_CALENDAR_MOCK_URL). */
+  workbotCalendarMockUrl?: string;
   upstream?: { baseUrl: string; key: string; model: string };
   runnerProxy?: (runnerUrl: string) => Promise<string>;
 };
@@ -178,13 +185,13 @@ async function startService(stack: AsyncDisposableStack, input: {
 }
 
 /** Turns Workbot (and headless Automations) on for the seeded organization, as a platform admin does. */
-export async function enableWorkbot(den: Den): Promise<string> {
+export async function enableWorkbot(den: Den, extra: Record<string, boolean> = {}): Promise<string> {
   const headers = { authorization: `Bearer ${den.admin.token}` };
   const orgs = await denFetch(den.admin, "/v1/me/orgs", { headers });
   const org = record(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs.find(record) : undefined;
   if (!orgs.response.ok || !org || typeof org.id !== "string") throw new Error("Acme organization missing.");
   const updated = await denFetch(den.admin, `/v1/admin/organizations/${org.id}/capabilities`, {
-    method: "PUT", headers, body: JSON.stringify({ capabilities: { workbot: true, headlessAutomations: true } }),
+    method: "PUT", headers, body: JSON.stringify({ capabilities: { workbot: true, headlessAutomations: true, ...extra } }),
   });
   if (!updated.response.ok) throw new Error(`Could not turn Workbot on: HTTP ${updated.response.status} ${updated.text.slice(0, 200)}`);
   return org.id;
@@ -220,6 +227,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       DEN_AUTH_COOKIE_PREFIX: `openwork-den-${randomBytes(4).toString("hex")}`,
       // Eval Dens leave Apps built in OpenWork off; --live seeds one, as production has them on.
       ...(options.live ? { DEN_APP_MCP_SERVERS_ENABLED: "true" } : {}),
+      ...options.denEnv,
       ...(preview ? {
         DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
         NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${PREVIEW_EGRESS}`].filter(Boolean).join(" "),
@@ -252,6 +260,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       PORT: String(workbotPort), WORKBOT_PUBLIC_URL: workbotUrl, WORKBOT_DEN_API_URL: den.ref.apiUrl,
       WORKBOT_DEN_WEB_URL: preview?.den ?? den.ref.webUrl, WORKBOT_RUNNER_URL: options.runnerProxy ? await options.runnerProxy(runnerUrl) : runnerUrl, WORKBOT_RUNNER_TOKEN: secrets.runnerToken,
       WORKBOT_SESSION_SECRET: secrets.sessionSecret, WORKBOT_DB_PATH: join(data, "workbot.sqlite"),
+      ...(options.workbotCalendarMockUrl ? { WORKBOT_CALENDAR_MOCK_URL: options.workbotCalendarMockUrl } : {}),
       ...(preview ? {
         // Workbot reaches Den's sign-in at its advertised (template) origin; inside the VM that is loopback.
         NODE_OPTIONS: `--import=${PREVIEW_LOOPBACK}`,
@@ -259,7 +268,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       } : {}),
     },
   });
-  const orgId = await enableWorkbot(den);
+  // --calendar turns on both Calendars (desktop and Workbot), each behind its own feature.
+  const orgId = await enableWorkbot(den, options.calendar ? { automationCalendar: true, workbotCalendar: true } : {});
   // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
   const demo = await bootDemoWorkspace(stack, den);
   await connectDemoWorkspace(den, demo);
