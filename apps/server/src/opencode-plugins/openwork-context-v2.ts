@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
 
 const browserResult = z.object({
@@ -14,7 +15,7 @@ type Tool = {
   options: { codemode: boolean };
   execute(input: unknown, context: { signal: AbortSignal; sessionID: string }): Promise<z.infer<typeof browserResult>>;
 };
-type Context = {
+type Context = CloudSkillContext & {
   options: { url: string; token: string; browser?: { url: string; token: string } };
   tool: { transform(callback: (editor: { add(tool: Tool): void }) => void): Promise<{ dispose(): Promise<void> }> };
 };
@@ -66,6 +67,7 @@ export default {
         });
       }
     });
-    return () => registration.dispose();
+    const stopSkills = await registerCloudSkillDiscovery(context);
+    return async () => { await stopSkills(); await registration.dispose(); };
   },
 };

@@ -67,6 +67,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  implicitCloudSkills: {
+    label: "Implicit Cloud skills",
+    description: "Agents discover organization skills automatically without waiting for Cloud before starting a task.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   dashboardActivity: {
     label: "Dashboard activity",
     description: "Organization admins see recent additions and skill updates on their dashboard instead of Quick add.",
