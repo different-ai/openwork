@@ -1,0 +1,114 @@
+---
+title: "Microsoft Foundry"
+description: "Set up Claude on Microsoft Foundry through OpenWork AI Gateway, with a shared Foundry key or per-member Microsoft Entra ID sign-in."
+keywords: ["Microsoft Foundry", "Azure AI Foundry", "Claude", "Entra ID", "Azure AD", "per-user sign-in", "AI Gateway"]
+---
+
+Connect **Claude on Microsoft Foundry** to OpenWork AI Gateway. Members pick Claude models in OpenWork; Gateway calls your Foundry resource at `https://<resource>.services.ai.azure.com/anthropic` on the server, so no Azure keys or tokens reach their computers.
+
+In OpenWork this is the **Microsoft Foundry (Claude)** provider, `microsoft-foundry`. For GPT and other Azure OpenAI deployments, use the **Azure** provider instead.
+
+<Info>
+  Microsoft Foundry is rolling out. If it is missing from **Add a provider**, ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization in `/admin`. Self-hosted operators can turn it on for the whole install with the Helm value `config.features.gatewayCloudSignIn`.
+</Info>
+
+## Choose how people authenticate
+
+| Scenario | Choose | Per-person identity in Azure | What you set up |
+| --- | --- | --- | --- |
+| Proof of concept, one team | **Shared API key** | No: every request uses the resource key | The Foundry resource's key |
+| Broad rollout | **Each member signs in** with Microsoft Entra ID | Yes: each request carries the person's own Entra ID token, checked by Azure RBAC | An Entra ID app registration |
+
+With **Each member signs in**, each person signs in once with their Microsoft work account in the browser. Gateway keeps their sign-in on the server, renews it, and sends their token to Foundry. Your Conditional Access policies apply at sign-in.
+
+## Set up Azure
+
+### 1. Create a Foundry resource and deploy Claude
+
+1. In the [Foundry portal](https://ai.azure.com/), create a Foundry resource or pick an existing one. Note the **resource name**: the first part of `https://<resource-name>.services.ai.azure.com`.
+2. Deploy the Claude models you want. Keep each **deployment name** the same as the model ID, for example `claude-sonnet-4-5`, which is the portal's default. OpenWork sends the model ID as the deployment name.
+
+See [Claude in Microsoft Foundry](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) for hosting options and the models each one offers.
+
+### 2a. Shared key: copy the resource key
+
+Open the deployment's **Details** tab and copy the **Key**. Skip to [Add the provider](#add-the-provider-in-openwork).
+
+### 2b. Each member signs in: register an app in Entra ID
+
+In the [Microsoft Entra admin center](https://entra.microsoft.com), open **Identity → Applications → App registrations → New registration**:
+
+1. **Name**: something people will recognize, such as **OpenWork model access**.
+2. **Supported account types**: **Accounts in this organizational directory only**.
+3. **Redirect URI**: choose **Web** and leave the value empty for now. You add OpenWork's exact URI after you save the provider.
+4. Select **Register**, then note the **Directory (tenant) ID** and **Application (client) ID** from **Overview**.
+
+Then, on the app registration:
+
+1. **API permissions → Add a permission**: find **Azure Cognitive Services** under **APIs my organization uses**, choose **Delegated permissions → user_impersonation**, and add it. Select **Grant admin consent** for your organization. Without consent, sign-in fails with `AADSTS65001` in tenants that don't let users consent.
+2. **Certificates & secrets → New client secret**: create a secret and copy its **Value** right away. Note when it expires: when it does, nobody can sign in or stay signed in until you enter a new one in OpenWork.
+
+### 3. Give people access to the Foundry resource
+
+In the Azure portal, open the Foundry resource's **Access control (IAM) → Add role assignment** and give the people or groups who should use Claude a role that allows inference, such as **Cognitive Services User** (or **Foundry User**). The app registration itself needs no role: requests run as each person.
+
+## Add the provider in OpenWork
+
+As an organization owner or admin, open **AI Gateway → AI Providers → Add provider** and choose **Microsoft Foundry (Claude)**.
+
+1. Enter the **Foundry resource name**.
+2. In **Key**, choose how people authenticate:
+   - **Shared API key**: paste the resource key.
+   - **Each member signs in**: enter the **Directory (tenant) ID**, **Application (client) ID** and **Client secret**.
+3. In **Models**, pick the Claude models you deployed.
+4. In **Who can use it**, keep **Everyone in the organization** or add people and teams. Include yourself if you will test it.
+5. Select **Add**.
+
+For **Each member signs in**, finish the app registration:
+
+1. Open the saved provider from **AI Providers**. Its **Key** section shows the **Redirect URI**, ending in `/v1/inference-providers/oauth/callback`. Select **Copy callback URL**.
+2. In the app registration, open **Authentication**, and under the **Web** platform add that exact URI. Use the **Web** platform, not **Mobile and desktop applications**: OpenWork's server completes the sign-in with the client secret.
+
+The resource name is fixed on the provider. To use another resource, add another provider.
+
+<Note>
+  The client secret is write-only. Leave it blank to keep the saved one. Changing the tenant, client ID or client secret signs everyone out of that provider: you confirm this before saving, and members sign in again. Plan secret rotation before the old secret expires and tell members to expect it.
+</Note>
+
+## Sign in as a member
+
+Members connect once, from Den or the desktop app:
+
+- In Den, open **My Library → Models** and select **Sign in** on the Foundry provider.
+- In the desktop app, select a Foundry model in the model picker and choose **Login**, or use **Login** on the provider in **Settings → AI Providers**.
+
+1. A browser tab opens OpenWork's connect page. If it asks you to **Sign in to OpenWork**, sign in with the same OpenWork account you use in the app, then return to the tab.
+2. Select **Continue to Microsoft**, choose your work account, and approve.
+3. OpenWork shows that you're connected. Close the tab.
+
+Then pick a Claude model and send a short prompt, for example *Reply with exactly: Connection works.* This is a billable Foundry request.
+
+## How sign-in lasts
+
+- Gateway keeps each person's Microsoft refresh token encrypted on the server and renews their access token, which lasts about an hour, before it expires. Tokens are never sent to a computer.
+- People stay signed in as long as Entra ID keeps renewing their sign-in: refresh tokens last up to 90 days of inactivity and follow your Conditional Access sign-in frequency. When Entra ID asks for sign-in again (for example after a password reset, revoked sessions, or a new MFA requirement), requests return **sign in again**.
+- **Sign out** (on the provider in **My Library → Models**) erases the person's sign-in in OpenWork. To end their Microsoft sessions too, use **Revoke sessions** on the user in Entra ID.
+- Removing someone from your OpenWork organization erases their sign-ins. Removing their role on the Foundry resource stops access immediately.
+
+## Network access
+
+For self-hosted deployments, Den and Gateway must reach `login.microsoftonline.com` (sign-in and renewal) and `<resource>.services.ai.azure.com` (inference) over HTTPS. People's browsers also reach `login.microsoftonline.com`.
+
+## Troubleshooting
+
+| What you see | What to check |
+| --- | --- |
+| Microsoft Foundry isn't in **Add a provider** | Ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization. |
+| `AADSTS50011` in the browser | The redirect URI is missing or different: copy it again from the provider's **Key** section into the app registration's **Web** platform. |
+| `AADSTS65001` | Select **Grant admin consent** on the app registration's **API permissions** page. |
+| `AADSTS650057` | Add the **Azure Cognitive Services → user_impersonation** permission. |
+| **The Microsoft Entra ID app registration requires administrator repair** | The client secret is wrong or expired. Enter a new one in the provider's **Key** section. |
+| Requests say **Microsoft Foundry denied access** | Give the person a role such as **Cognitive Services User** on the Foundry resource. |
+| **Microsoft Foundry rejected your sign-in** or **sign in again** | Entra ID ended the sign-in. Sign in again. |
+| `DeploymentNotFound` | Deploy the model with its model ID as the deployment name. |
+| No **Sign in** button for a member | Check **Who can use it** on the provider: an Azure role alone does not give anyone access in OpenWork. |

@@ -19,8 +19,10 @@ import type { OrganizationVariables } from "./middleware/org-context.js"
 import { bedrockMantleService, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
 import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
 import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
-import { createDbGoogleOauthRefreshStore, createGoogleOauthRefresher } from "./credentials/google-oauth-refresh.js"
-import type { RefreshGoogleOauthToken } from "./credentials/google-oauth-refresh.js"
+import { createAwsSsoRoleCredentialMinter } from "./credentials/aws-sso-role-credentials.js"
+import type { MintAwsRoleCredentials } from "./credentials/aws-sso-role-credentials.js"
+import { createDbOauthRefreshStore, createOauthRefresher } from "./credentials/oauth-refresh.js"
+import type { RefreshMemberToken } from "./credentials/oauth-refresh.js"
 import {
   buildAuthHeader,
   classifyProtocolFamily,
@@ -84,8 +86,9 @@ export type GatewayDependencies = {
   loadMemberGatewayAccess: LoadMemberGatewayAccess
   resolveGatewayModelProvider: ResolveGatewayModelProvider
   loadProviderCredential: LoadProviderCredential
-  refreshGoogleOauthToken: RefreshGoogleOauthToken
+  refreshMemberToken: RefreshMemberToken
   mintGcpAccessToken: MintGcpAccessToken
+  mintAwsRoleCredentials: MintAwsRoleCredentials
   catalog: ProviderCatalog
   now: () => Date
 }
@@ -240,7 +243,8 @@ function isStreamingPath(protocol: GatewayRequestProtocol, pathname: string) {
 function materializeAuth(credential: UsableCredential, provider: GatewayProvider, family: ProtocolFamily, now: Date): UpstreamAuth | { error: string } {
   if (!isAwsFamily(family)) {
     if (credential.kind === "aws_keys") return { error: `AWS credentials are only supported for Amazon Bedrock providers, not ${provider.provider_id}.` }
-    return { kind: "header", header: buildAuthHeader(family, credential.secret) }
+    // A member's Entra ID token goes as a bearer; a Foundry resource key as api-key.
+    return { kind: "header", header: buildAuthHeader(family, credential.secret, credential.credentialKind === "oauth_azure") }
   }
   const settingsRegion = typeof provider.settings.region === "string" && provider.settings.region ? provider.settings.region : null
   const region = (credential.kind === "aws_keys" ? credential.awsKeys.region : undefined) ?? settingsRegion
@@ -286,7 +290,7 @@ function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, pro
     if ((value !== body && Object.hasOwn(value, "model")) || hasAlternateModelSelection(value, providerId)) return "model"
     if (value.type === "item_reference") return "resource"
     for (const [key, child] of Object.entries(value)) {
-      if (value !== body && ((value.type === "tool_use" && key === "input" && ["anthropic", "google_vertex_anthropic", "bedrock"].includes(family)) || (value.type === "function_call" && key === "arguments"))) continue
+      if (value !== body && ((value.type === "tool_use" && key === "input" && ["anthropic", "google_vertex_anthropic", "microsoft_foundry", "bedrock"].includes(family)) || (value.type === "function_call" && key === "arguments"))) continue
       if (resourceFields.has(key.replace(/_/g, "").toLowerCase())) return "resource"
       if (key === "prompt" && isJsonObject(child)) return "resource" // Saved OpenAI prompt templates.
       if (key === "audio" && isJsonObject(child) && Object.hasOwn(child, "id")) return "resource"
@@ -307,6 +311,7 @@ function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, pro
               // Bedrock InvokeModel also accepts Anthropic's native client tools.
             case "anthropic":
             case "google_vertex_anthropic":
+            case "microsoft_foundry":
               if (tool.type !== undefined && tool.type !== "custom") return "resource"
               if (typeof tool.name !== "string" || !isJsonObject(tool.input_schema)) return "resource"
               break
@@ -353,6 +358,7 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
       case "bedrock":
         return /^model\/[^/]+\/(?:converse|converse-stream|invoke|invoke-with-response-stream)$/.test(operation)
       case "anthropic":
+      case "microsoft_foundry":
         return /^messages(?:\/count_tokens)?$/.test(operation)
       case "google_vertex_anthropic":
         return operation === "messages"
@@ -618,10 +624,10 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
 }
 
-function refreshGoogleOauthTokenWithDb(): RefreshGoogleOauthToken {
-  let refresher: Promise<RefreshGoogleOauthToken> | null = null
+function refreshMemberTokenWithDb(): RefreshMemberToken {
+  let refresher: Promise<RefreshMemberToken> | null = null
   return (input) => {
-    refresher ??= import("./db.js").then(({ db }) => createGoogleOauthRefresher({ store: createDbGoogleOauthRefreshStore(db) }))
+    refresher ??= import("./db.js").then(({ db }) => createOauthRefresher({ store: createDbOauthRefreshStore(db) }))
     return refresher.then((refresh) => refresh(input))
   }
 }
@@ -708,8 +714,9 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     loadMemberGatewayAccess: input.loadMemberGatewayAccess ?? loadMemberGatewayAccessFromDb,
     resolveGatewayModelProvider: input.resolveGatewayModelProvider ?? resolveGatewayModelProviderFromDb,
     loadProviderCredential: input.loadProviderCredential ?? loadProviderCredentialFromDb,
-    refreshGoogleOauthToken: input.refreshGoogleOauthToken ?? refreshGoogleOauthTokenWithDb(),
+    refreshMemberToken: input.refreshMemberToken ?? refreshMemberTokenWithDb(),
     mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
+    mintAwsRoleCredentials: input.mintAwsRoleCredentials ?? createAwsSsoRoleCredentialMinter(),
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
   }
@@ -875,8 +882,9 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       selection,
       envNames: catalog?.env ?? [],
       loadProviderCredential: dependencies.loadProviderCredential,
-      refreshGoogleOauthToken: dependencies.refreshGoogleOauthToken,
+      refreshMemberToken: dependencies.refreshMemberToken,
       mintGcpAccessToken: dependencies.mintGcpAccessToken,
+      mintAwsRoleCredentials: dependencies.mintAwsRoleCredentials,
       clock: dependencies.now,
     })
     if (credential.kind !== "secret" && credential.kind !== "aws_keys") {
@@ -903,11 +911,19 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           response.headers.set("x-openwork-auth-required", "1")
           return reject(response, "member_auth_required", "Member credential required")
         }
-        case "configuration_required":
+        case "configuration_required": {
+          const client = resolved.family === "microsoft_foundry" ? "Microsoft Entra ID app registration (check that its client secret has not expired)" : "Google OAuth client"
           return reject(
-            gatewayError(502, "provider_misconfigured", "The Google OAuth client requires administrator repair. Contact your organization administrator.", { provider_id: provider.id }),
+            gatewayError(502, "provider_misconfigured", `The ${client} requires administrator repair. Contact your organization administrator.`, { provider_id: provider.id }),
             "provider_misconfigured",
-            "Google OAuth client configuration requires repair",
+            "Member sign-in client configuration requires repair",
+          )
+        }
+        case "access_denied":
+          return reject(
+            gatewayError(403, "provider_permission_denied", credential.message, { provider_id: provider.id }),
+            "provider_permission_denied",
+            "Member identity denied upstream access",
           )
         case "org_credential_missing":
           return reject(
@@ -1046,15 +1062,38 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         return response
       }
 
+      if (resolved.family === "microsoft_foundry" && (upstream.status === 401 || upstream.status === 403)) {
+        const member = selection.row.credentialSet.credential_mode === "member"
+        const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
+        const message = upstream.status === 401
+          ? member
+            ? "Microsoft Foundry rejected your sign-in. Sign in again; if the problem persists, contact your organization administrator."
+            : "Microsoft Foundry rejected the provider key. Ask your organization administrator to check or replace it."
+          : member
+            ? "Microsoft Foundry denied access. Ask your administrator to give you a role on the Foundry resource that allows inference, such as Cognitive Services User."
+            : "Microsoft Foundry denied access. Ask your administrator to check the Foundry resource and model deployment."
+        const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return response
+      }
+
       if (isAwsFamily(resolved.family) && (upstream.status === 401 || upstream.status === 403)) {
         // AWS signature errors can echo the canonical request, including the
         // session token header. Never relay them; keep a message both Bedrock SDKs read.
         const errorType = upstream.headers.get("x-amzn-errortype")?.split(":")[0]
         const denied = errorType === "AccessDeniedException" || (!errorType && upstream.status === 403)
         const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+        const member = credential.credentialKind === "aws_sso"
         const message = denied
-          ? "AWS denied access to this Bedrock model. Ask your organization administrator to check the IAM policy and Bedrock model access in this region."
-          : "AWS rejected the Bedrock provider credential. Ask your organization administrator to check or replace the access keys."
+          ? member
+            ? "AWS denied access to this Bedrock model. Ask your organization administrator to check the permission set's policy and Bedrock model access in this region."
+            : "AWS denied access to this Bedrock model. Ask your organization administrator to check the IAM policy and Bedrock model access in this region."
+          : member
+            ? "AWS rejected your sign-in. Sign in to AWS again in OpenWork."
+            : "AWS rejected the Bedrock provider credential. Ask your organization administrator to check or replace the access keys."
         const response = Response.json({ message, error: { message, type: "invalid_request_error", code: errorCode, provider_id: provider.id } }, { status: upstream.status })
         response.headers.set("x-openwork-request-id", openworkRequestId)
         void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })

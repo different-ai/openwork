@@ -17,6 +17,7 @@ import {
   GATEWAY_PROVIDER_CREDENTIAL_STATUSES,
   GATEWAY_PROVIDER_STATUSES,
 } from "@openwork/types/den/gateway"
+import type { GatewayAwsSsoSettings } from "@openwork/types/den/inference"
 import {
   compatJsonColumn,
   denTypeIdColumn,
@@ -140,6 +141,10 @@ export const GatewayCredentialSetTable = mysqlTable(
     credential_mode: mysqlEnum("credential_mode", GATEWAY_PROVIDER_CREDENTIAL_MODES).notNull(),
     oauth_client_id: varchar("oauth_client_id", { length: 255 }),
     oauth_client_secret: encryptedTextColumn("oauth_client_secret"),
+    // Non-secret member sign-in settings: Entra ID tenant (Microsoft Foundry) or
+    // IAM Identity Center instance, account and permission set (Amazon Bedrock).
+    oauth_tenant_id: varchar("oauth_tenant_id", { length: 64 }),
+    aws_sso: compatJsonColumn<GatewayAwsSsoSettings>("aws_sso"),
     status: mysqlEnum("status", GATEWAY_PROVIDER_STATUSES).notNull().default("active"),
     ...timestamps,
   },

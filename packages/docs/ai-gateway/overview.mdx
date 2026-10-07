@@ -44,7 +44,7 @@ Self-hosting? [Enable OpenWork Gateway](/self-host/gateway) first.
 
 <CardGroup cols={2}>
   <Card title="Keys stay on the server" icon="key">
-    One org credential per provider, or per-member Google sign-in for [Vertex AI](/ai-gateway/google-agent-platform).
+    One org credential per provider, or each member signs in with their own account: Google for [Vertex AI](/ai-gateway/google-agent-platform), AWS IAM Identity Center for [Amazon Bedrock](/ai-gateway/amazon-bedrock), Microsoft Entra ID for [Microsoft Foundry](/ai-gateway/microsoft-foundry).
   </Card>
   <Card title="Access per team" icon="users">
     Group models, then grant each group to the org, a team, or a person.
@@ -63,7 +63,7 @@ Already run LiteLLM or Bifrost? Keep it. See [AI Gateway vs LiteLLM vs Bifrost](
 
 <AccordionGroup>
   <Accordion title="Which providers are supported?">
-    OpenAI, Anthropic, Google, Google Vertex AI (including Claude on Vertex), Azure, Amazon Bedrock, Mistral, OpenRouter, and catalog providers with an OpenAI-compatible API. Models come from the models.dev catalog.
+    OpenAI, Anthropic, Google, Google Vertex AI (including Claude on Vertex), Azure, Microsoft Foundry (Claude), Amazon Bedrock, Mistral, OpenRouter, and catalog providers with an OpenAI-compatible API. Models come from the models.dev catalog.
   </Accordion>
   <Accordion title="How is this different from OpenWork Models or bring your own keys?">
     **AI Gateway** routes your providers through OpenWork with access rules, limits, and usage tracking. **OpenWork Models** is a managed subscription with no keys, billed separately. **Bring your own keys** syncs an org provider to members and the app calls it directly; see [Managed LLM provider](/cloud/share-with-your-team/managed-llm-provider). The [MCP Gateway](/start-here/connect-openwork-mcp) is separate: it shares skills and connections, not models.

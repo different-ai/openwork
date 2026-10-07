@@ -238,6 +238,26 @@ The client-facing SDKs are the ordinary Google and Anthropic static-key SDKs; Ga
 
 For `redirect_uri_mismatch`, compare the exact displayed callback with Google's registration. For `invalid_client`, ask the credential-set administrator to repair the OAuth client rather than repeatedly asking members for consent. For Vertex permission/model-access failures, review IAM, project, region, and partner access; do not assume every upstream `401`/`403` is an expired refresh token. Transient token-endpoint failures and quota errors need separate diagnosis. Do not replay an ambiguous or partly delivered inference stream automatically.
 
+## Amazon Bedrock and Microsoft Foundry: each member signs in
+
+Members can also sign in with their own account to **Amazon Bedrock** and **Amazon Bedrock (OpenAI)** through AWS IAM Identity Center, and to **Microsoft Foundry (Claude)** through Microsoft Entra ID. Follow [Amazon Bedrock](/ai-gateway/amazon-bedrock) and [Microsoft Foundry](/ai-gateway/microsoft-foundry) for the cloud-side setup.
+
+Both, and the Microsoft Foundry provider itself, are behind the **AI Gateway: AWS and Microsoft sign-in** feature (`gatewayCloudSignIn`). Turn it on for one organization in `/admin`, or lock it on for the whole install with the Helm value `config.features.gatewayCloudSignIn` (`DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN`). Turning it off stops new Foundry providers and new AWS or Microsoft sign-ins; people already signed in keep working until they sign out.
+
+Run the release's database migration first: it adds the `aws_sso` credential kind and the credential-set columns `oauth_tenant_id` and `aws_sso`.
+
+Like Google sign-in, Den completes each sign-in and stores the member's refresh token encrypted; Gateway renews it and, for AWS, exchanges it for short-lived role credentials that sign Bedrock requests. Den API and Gateway need public HTTPS egress to:
+
+| Host | Service | Used by |
+| --- | --- | --- |
+| `oidc.<sso-region>.amazonaws.com` | IAM Identity Center sign-in and renewal | Den API, Gateway |
+| `portal.sso.<sso-region>.amazonaws.com` | Role credentials; sign-out | Den API, Gateway |
+| `sts.<sso-region>.amazonaws.com` | Checking who signed in | Den API |
+| `login.microsoftonline.com` | Entra ID sign-in, renewal and signing keys | Den API, Gateway |
+| `<resource>.services.ai.azure.com` | Microsoft Foundry inference | Gateway |
+
+These are public AWS and Microsoft endpoints and pass the default egress policy; no `GATEWAY_EGRESS_ALLOWED_ORIGINS` exception is needed. Microsoft Foundry sign-in uses the same Den callback as Google, ending in `/v1/inference-providers/oauth/callback`. AWS sign-in uses the OAuth device flow and needs no callback.
+
 ## Verify and troubleshoot
 
 Sign in to Den as an organization admin, select the intended organization, and inspect its authenticated **`GET /v1/org`** response using the browser's Network panel or your approved authenticated API client. Check the Den API response, not a health endpoint, organization metadata field, or Web runtime-config response. The relevant top-level fields are:

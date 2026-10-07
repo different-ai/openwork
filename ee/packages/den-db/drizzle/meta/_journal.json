@@ -918,6 +918,13 @@
       "when": 1791313243548,
       "tag": "0131_platform_audit_event",
       "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "5",
+      "when": 1791407326379,
+      "tag": "0132_gateway_cloud_sign_in",
+      "breakpoints": true
     }
   ]
 }

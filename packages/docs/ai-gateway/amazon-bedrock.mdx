@@ -1,0 +1,146 @@
+---
+title: "Amazon Bedrock"
+description: "Set up Claude and other models on Amazon Bedrock and Bedrock Mantle through OpenWork AI Gateway, with shared AWS keys or per-member sign-in through AWS IAM Identity Center."
+keywords: ["Amazon Bedrock", "Bedrock Mantle", "AWS", "IAM Identity Center", "AWS SSO", "permission set", "per-user sign-in", "AI Gateway"]
+---
+
+Connect **Amazon Bedrock** to OpenWork AI Gateway. Members pick Bedrock models in OpenWork; Gateway signs every request to AWS on the server, so no AWS credentials reach their computers.
+
+OpenWork offers two Bedrock providers. Both work with either way of authenticating below.
+
+| Models you want | OpenWork provider |
+| --- | --- |
+| Claude, Llama, Nova and other models through the Bedrock runtime | **Amazon Bedrock** — `amazon-bedrock` |
+| Models served on Bedrock's OpenAI-compatible endpoint (Bedrock Mantle, `bedrock-mantle.<region>.api.aws`) | **Amazon Bedrock (OpenAI)** — `amazon-bedrock-mantle` |
+
+## Choose how people authenticate
+
+| Scenario | Choose | Per-person identity in AWS CloudTrail | What you set up |
+| --- | --- | --- | --- |
+| Proof of concept, one team | **Shared API key** (organization AWS keys or a Bedrock API key) | No: every request uses the organization's key | One IAM user or role's access keys |
+| Broad rollout | **Each member signs in** with AWS IAM Identity Center | Yes: each request runs as the person's own permission-set session | An IAM Identity Center permission set |
+
+With **Each member signs in**, each person approves OpenWork once in their browser with your organization's IAM Identity Center (and through it, Okta, Microsoft Entra ID, Google Workspace or another identity provider you federated). Gateway keeps their sign-in on the server, renews it, and exchanges it for short-lived AWS credentials of the permission set you choose. Nobody needs the AWS CLI, a named profile, or an `~/.aws` folder.
+
+<Info>
+  **Each member signs in** for Amazon Bedrock is rolling out. If the option shows **AWS sign-in isn't turned on for your organization yet**, ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization in `/admin`. Self-hosted operators can turn it on for the whole install with the Helm value `config.features.gatewayCloudSignIn`.
+</Info>
+
+## Set up AWS
+
+You do these steps once per AWS organization. You need permission to manage Bedrock model access and IAM Identity Center.
+
+### 1. Enable the models in Bedrock
+
+In the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/), open **Model access** and request the models you want. Access is per region: enable them in the region you will enter as the provider's **AWS region** in OpenWork.
+
+### 2. Create a permission set (each member signs in)
+
+Skip this step for a shared key.
+
+In the [IAM Identity Center console](https://console.aws.amazon.com/singlesignon/), open **Permission sets → Create permission set**, choose **Custom permission set**, and add an inline policy that allows inference.
+
+For **Amazon Bedrock**:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream"
+    ],
+    "Resource": "*"
+  }]
+}
+```
+
+For **Amazon Bedrock (OpenAI)** (Bedrock Mantle), also attach the AWS managed policy [`AmazonBedrockMantleInferenceAccess`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonBedrockMantleInferenceAccess.html), or allow `bedrock-mantle:CreateInference` on your Mantle project.
+
+Set the permission set's **Session duration** to 8–12 hours. It sets how long each set of short-lived AWS credentials lasts before Gateway asks IAM Identity Center for new ones; it does not decide how often people sign in.
+
+### 3. Assign people to the permission set
+
+In IAM Identity Center, open **AWS accounts**, select the account where you enabled Bedrock, choose **Assign users or groups**, and assign the people or groups who should use Bedrock to the permission set.
+
+If your organization uses Okta, Microsoft Entra ID or another SAML identity provider, you can make it IAM Identity Center's identity source so people sign in with their usual work account. See [Connect to an external identity provider](https://docs.aws.amazon.com/singlesignon/latest/userguide/manage-your-identity-source-idp.html).
+
+### 4. Record the values for OpenWork
+
+From IAM Identity Center's **Settings** and **Permission sets** pages, note:
+
+| Value | Example |
+| --- | --- |
+| **AWS access portal URL** | `https://d-xxxxxxxxxx.awsapps.com/start` (or your custom subdomain) |
+| **IAM Identity Center region**: where Identity Center is enabled, which can differ from your Bedrock region | `us-east-1` |
+| **AWS account ID**: the 12-digit account where you enabled Bedrock | `123456789012` |
+| **Permission set name** | `BedrockInference` |
+
+### Shared key instead
+
+For a shared key, create an IAM user or role with the same policy and create access keys for it, or generate an [Amazon Bedrock API key](https://console.aws.amazon.com/bedrock/home#/api-keys). The key's IAM principal must also be allowed `bedrock:CallWithBearerToken`.
+
+## Add the provider in OpenWork
+
+As an organization owner or admin, open **AI Gateway → AI Providers → Add provider** and choose **Amazon Bedrock** or **Amazon Bedrock (OpenAI)**.
+
+1. Enter the **AWS region** where you enabled the models, for example `us-west-2`.
+2. In **Key**, choose how people authenticate:
+   - **Shared API key**: enter the access key ID and secret access key (and a session token for temporary keys). When you already saved AWS keys for another Bedrock provider, turn on **Use AWS keys you already saved** instead of pasting them again.
+   - **Each member signs in**: enter the **AWS access portal URL**, **IAM Identity Center region**, **AWS account ID** and **Permission set name** you recorded. OpenWork stores no AWS keys for the organization.
+3. In **Models**, pick the models to offer, or keep all of them.
+4. In **Who can use it**, keep **Everyone in the organization** or add people and teams. Include yourself if you will test it.
+5. Select **Add**.
+
+Everyone who signs in through this provider gets the same account and permission set. To give different groups different Bedrock permissions, add a second provider with another permission set and give each group access to its own.
+
+<Note>
+  Changing the access portal URL, Identity Center region, account ID or permission set signs everyone out of that provider: you confirm this before saving, and members sign in again.
+</Note>
+
+## Sign in as a member
+
+Members connect once, from Den or the desktop app:
+
+- In Den, open **My Library → Models** and select **Sign in** on the Bedrock provider.
+- In the desktop app, select a Bedrock model in the model picker and choose **Login**, or use **Login** on the provider in **Settings → AI Providers**.
+
+1. A browser tab opens OpenWork's connect page. If it asks you to **Sign in to OpenWork**, sign in with the same OpenWork account you use in the app, then return to the tab.
+2. Select **Continue to AWS**. OpenWork opens your AWS access portal in a new tab and shows a short code.
+3. Sign in to AWS if asked, check that AWS shows the same code, and approve **OpenWork AI Gateway**.
+4. The connect page checks that your sign-in gets credentials for the configured account and permission set, then shows **Signed in to AWS as …**. Close the tab.
+
+Then pick a Bedrock model and send a short prompt, for example *Reply with exactly: Connection works.* This is a billable Bedrock request.
+
+## How sign-in lasts
+
+- Gateway keeps each person's IAM Identity Center sign-in encrypted on the server, renews it before it expires, and exchanges it for short-lived AWS credentials of the permission set. Those credentials sign the request to Bedrock; they are never sent to a computer.
+- People stay signed in until the **AWS access portal session duration** you set in IAM Identity Center (**Settings → Authentication**) ends, or for at most 90 days, whichever comes first. Then requests return **sign in again**, and the person repeats the steps above. To sign someone out sooner, delete their session in the IAM Identity Center console.
+- **Sign out** (on the provider in **My Library → Models**) erases the person's sign-in in OpenWork and ends their AWS access portal session.
+- Removing someone from your OpenWork organization erases their sign-ins. Removing their IAM Identity Center assignment stops new AWS credentials immediately.
+
+## Network access
+
+For self-hosted deployments, Den and Gateway must reach these AWS hosts over HTTPS, where `<sso-region>` is the IAM Identity Center region and `<region>` the Bedrock region:
+
+| Host | Used for |
+| --- | --- |
+| `oidc.<sso-region>.amazonaws.com` | Sign-in and renewal |
+| `portal.sso.<sso-region>.amazonaws.com` | Short-lived role credentials, and sign-out on disconnect |
+| `sts.<sso-region>.amazonaws.com` | Checking who signed in |
+| `bedrock-runtime.<region>.amazonaws.com` or `bedrock-mantle.<region>.api.aws` | Inference |
+
+People's browsers also reach your AWS access portal (`*.awsapps.com`) and, if federated, your identity provider. AWS China regions are not supported.
+
+## Troubleshooting
+
+| What you see | What to check |
+| --- | --- |
+| **AWS sign-in isn't turned on for your organization yet** | Ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization. |
+| **IAM Identity Center rejected the sign-in** right after **Continue to AWS** | The access portal URL and Identity Center region. The region is where Identity Center is enabled, not necessarily the Bedrock region. |
+| **Your AWS user is not assigned this permission set in this account** | Assign the person, or a group they belong to, to the permission set on the AWS account you entered. |
+| Sign-in works, but requests say **AWS denied access to this Bedrock model** | The permission set's policy, model access in the provider's region, and for Bedrock (OpenAI) the Mantle permission. |
+| **AWS rejected your sign-in** or **sign in again** | The Identity Center session ended or was deleted. Sign in again. |
+| The AWS code expired | Start again from OpenWork; codes last about 10 minutes. |
+| No **Sign in** button for a member | Check **Who can use it** on the provider: IAM Identity Center assignment alone does not give anyone access in OpenWork. |

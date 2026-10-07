@@ -5,6 +5,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
 
 export type ModelPrice = {
   input: number
@@ -100,7 +101,7 @@ let fileCatalog: PricingCatalog | null = null
 export function loadPricingCatalogFromFile(): PricingCatalog {
   if (!fileCatalog) {
     const parsed: unknown = JSON.parse(readFileSync(baseJsonPath, "utf8"))
-    fileCatalog = createPricingCatalog(isRecord(parsed) ? withBedrockMantleProvider(parsed) : parsed)
+    fileCatalog = createPricingCatalog(isRecord(parsed) ? withMicrosoftFoundryProvider(withBedrockMantleProvider(parsed)) : parsed)
   }
   return fileCatalog
 }
@@ -117,7 +118,7 @@ export function estimateCostMicroUsd(input: CostEstimateInput, catalog: PricingC
   if (input.inputTokens === null || input.outputTokens === null
     || Object.values(input).some((value) => typeof value === "number" && (!Number.isFinite(value) || value < 0))) return null
   const disjointCache = input.protocol === "anthropic_messages" || input.protocol === "bedrock_converse"
-    || (!input.protocol && (input.providerId === "anthropic" || input.providerId === "amazon-bedrock" || input.providerId === "google-vertex-anthropic"))
+    || (!input.protocol && (input.providerId === "anthropic" || input.providerId === "amazon-bedrock" || input.providerId === "google-vertex-anthropic" || input.providerId === "microsoft-foundry"))
   const cache = tokens(input.cacheReadTokens) + tokens(input.cacheWriteTokens)
   const contextTokens = input.inputTokens + (disjointCache ? cache : 0)
   const uncachedInput = input.inputTokens - (disjointCache ? 0 : cache)
