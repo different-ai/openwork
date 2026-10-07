@@ -189,7 +189,7 @@ export function reviewerInstruction(line) {
 export function normalizeForInstructions(line) {
   return line
     .replace(/["'`]\s*\+\s*["'`]/g, "")
-    .replace(/^\s*(\/\/+|\/\*+|\*+\/?|#+|<!--|-->|--|;+|"{3}|'{3}|>)\s?/, "")
+    .replace(/^\s*(\/\/+|\/\*+|\*+\/?|#+|<!--|--!?>|--|;+|"{3}|'{3}|>)\s?/, "")
     .replace(/\s*(\*\/|--!?>)\s*$/, "")
     .replace(/\s+/g, " ")
     .trim();
