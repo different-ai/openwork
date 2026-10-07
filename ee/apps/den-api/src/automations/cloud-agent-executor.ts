@@ -315,7 +315,19 @@ export type CloudConnectDeps = {
   now: () => number
 }
 
-type CloudConnectResult = { ok: true } | { ok: false; code: "connect_access_unavailable" | "model_access_lost"; message: string }
+type CloudConnectResult =
+  | { ok: true }
+  | { ok: false; code: "connect_access_unavailable" | "model_access_lost" | "provider_unavailable"; message: string }
+
+/**
+ * Den leaves a per-member provider off the owner's worker while the owner has
+ * no active key for it, so its model cannot run there. Say that, instead of
+ * letting the health probe report it as an OpenWork Connect problem.
+ */
+function missingMemberCredentialMessage(providerName: string): string {
+  return `${providerName} uses a separate key for each member, and the Automation owner has no active key for it. `
+    + `Ask an organization admin to issue your key for ${providerName}, then resume this Automation.`
+}
 
 function engineWarmingUp(health: Record<string, unknown> | null): boolean {
   const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
@@ -379,13 +391,19 @@ export async function connectHealth(input: {
   // read phase cannot fail on the same warm-up window.
   if (!engineWarmingUp(health)) {
     try {
-      await deps.materializeProviders({
+      const materialized = await deps.materializeProviders({
         organizationId: normalizeDenTypeId("organization", input.organizationId),
         workerId: normalizeDenTypeId("worker", input.workerId),
         instanceUrl: input.baseUrl,
         hostToken: input.access.hostToken,
         clientToken: input.access.clientToken,
       })
+      const missing = materialized.ok
+        ? materialized.missingMemberCredentials.find((provider) => provider.id === input.action.model.providerId)
+        : undefined
+      if (missing) {
+        return { ok: false, code: "provider_unavailable", message: missingMemberCredentialMessage(missing.name) }
+      }
     } catch (error) {
       logger.warn("automation run provider materialization warning", {
         worker_id: input.workerId,
