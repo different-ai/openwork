@@ -264,13 +264,13 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
-  # Packaged specs need a packaged desktop binary. Build the same Linux
-  # artifacts as the packaged smoke gate and run only the changed journey.
+  # Packaged specs need a packaged desktop binary. Build the same artifacts as
+  # the packaged smoke gate for the spec's platform and run only that journey.
   packaged-proof:
     needs: select
     if: needs.select.outputs.packagedSelected == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
+    runs-on: ${{ matrix.os == 'macos' && 'blacksmith-12vcpu-macos-15' || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: ${{ matrix.os == 'macos' && 45 || 30 }}
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -286,6 +286,8 @@ jobs:
           path: |
             ~/.cache/electron
             ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
             apps/desktop/resources/sidecars
           key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
       - uses: ./.github/actions/setup-tests
@@ -294,17 +296,21 @@ jobs:
           rm -rf packages/types/dist
           pnpm --filter openwork-server build
       - name: Run the selected packaged spec against the packaged desktop
-        timeout-minutes: 20
+        timeout-minutes: ${{ matrix.os == 'macos' && 30 || 20 }}
         env:
           PROOF_JOURNEY: ${{ matrix.journey }}
+          PROOF_OS: ${{ matrix.os }}
           OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          # Same Chromium SUID-sandbox constraint as the proof job above.
-          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey "$PROOF_JOURNEY"
+          if [ "$PROOF_OS" = macos ]; then
+            node apps/desktop/scripts/packaged-smoke-macos.mjs --server-built --journey "$PROOF_JOURNEY"
+          else
+            # Same Chromium SUID-sandbox constraint as the proof job above.
+            OPENWORK_EVAL_CONTAINER_ELECTRON=1 node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey "$PROOF_JOURNEY"
+          fi
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
