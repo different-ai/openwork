@@ -15,6 +15,7 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 | Certificate | Your ACM ARN, or created and DNS-validated in a Route 53 zone |
 | Secrets | One Secrets Manager secret, injected as ECS `secrets` |
 | Logs | CloudWatch `/ecs/<name>/den-api` and `/ecs/<name>/den-web` |
+| OpenWork Web (optional) | `den-gateway` Fargate service at `web.<domain_name>`, sandboxes in your Daytona organization (`openwork_web_enabled = true`) |
 
 It sets the same environment the [`openwork-ee` Helm chart](../../../../packaging/helm/openwork-ee)
 sets on Kubernetes, so the chart's README and `ee/apps/den-api/.env.example`
@@ -23,8 +24,10 @@ document every setting you can add through `extra_environment`.
 > **Status: draft.** Applied end to end in an AWS test account with
 > `examples/complete` (release 0.18.54): HTTPS on both hosts, migrations,
 > the one-time `/setup` administrator flow, sign-in, and the optional Redis.
+> OpenWork Web was applied end to end the same way: sign-in through the
+> gateway, a Daytona sandbox per member, and a chat that edits files.
 > Not yet exercised: private subnets behind NAT, multiple den-api replicas,
-> SMTP/SES delivery, upgrades across releases, OpenWork Web sandboxes.
+> SMTP/SES delivery, upgrades across releases.
 
 ## Before you start
 
@@ -134,13 +137,58 @@ After `terraform apply`:
   `email_not_configured` and no invite link) and password reset is
   unavailable. To add a second user during a test, either configure email
   or set `allow_public_signup = true` for a while.
-- **OpenWork Web** (cloud chat sessions) is off by default. The dashboard's
-  OpenWork Web button points at the hosted service unless you set
-  `openwork_web_url`. It needs a sandbox
-  provider; none runs inside this stack. Set `openwork_web_enabled = true`,
-  `provisioner_mode = "daytona"`, and pass `DAYTONA_API_KEY` via `extra_secrets`.
+- **OpenWork Web** (chat in the browser, each member's workspace in a
+  Daytona sandbox) is off by default; see [OpenWork Web](#openwork-web).
 - **Anything else** (SSO, proxies, Gateway, observability): add env vars with
   `extra_environment` and secrets with `extra_secrets`.
+
+## OpenWork Web
+
+OpenWork Web lets members chat with OpenWork in the browser. Each member gets
+their own workspace in a [Daytona](https://www.daytona.io) sandbox (daytona.io
+or a self-hosted Daytona); nothing runs on member machines. With
+`openwork_web_enabled = true` the module adds:
+
+- a `den-gateway` service at `openwork_web_domain_name` (default
+  `web.<domain_name>`), which serves the web app, forwards `/api/den` to
+  den-api, and proxies each signed-in member to their sandbox;
+- that hostname on the HTTPS listener, the certificate (when the module
+  creates it) and Route 53 (when the module manages DNS);
+- the den-api settings Web needs: the gateway origin and a shared gateway key,
+  Daytona, sandbox activity reports to the public API URL, and the dashboard's
+  OpenWork Web button pointing at your gateway.
+
+You provide:
+
+1. **A Daytona API key** (`daytona_api_key`) for the organization the
+   sandboxes run in.
+2. **A sandbox snapshot** in that organization (`daytona.snapshot`), built
+   from this repository at the same release as `openwork_version`:
+
+   ```bash
+   git checkout v<openwork_version>
+   DAYTONA_API_KEY=... ./scripts/create-daytona-openwork-snapshot.sh openwork-<openwork_version>
+   ```
+
+   It needs Docker and the Daytona CLI.
+3. **An internet-facing ALB.** Sandboxes report activity to the public API
+   URL, so `internal_alb = true` is not supported with Web.
+
+```hcl
+  openwork_web_enabled = true
+  daytona_api_key      = var.daytona_api_key
+  daytona = {
+    snapshot = "openwork-0.18.57"
+  }
+```
+
+After `terraform apply`, sign in to `web_url` as the administrator you
+created at `/setup`, open **Admin**, find your organization, and turn on
+**OpenWork Web** access. Then add a model provider for members, and they can
+use the `openwork_web_url` output (also the dashboard's OpenWork Web button).
+
+Sandbox and volume names start with `daytona.name_prefix` (default `name`), so
+several deployments can share one Daytona organization.
 
 ## Rough cost (us-east-1, defaults)
 

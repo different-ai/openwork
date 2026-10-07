@@ -236,7 +236,7 @@ resource "aws_ecs_service" "api" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener_rule.api_host]
+  depends_on = [aws_lb_listener_rule.api_host, aws_secretsmanager_secret_version.app]
 }
 
 resource "aws_ecs_service" "web" {
@@ -268,5 +268,5 @@ resource "aws_ecs_service" "web" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener.https, aws_lb_listener_rule.web_host]
+  depends_on = [aws_lb_listener.https, aws_lb_listener_rule.web_host, aws_secretsmanager_secret_version.app]
 }

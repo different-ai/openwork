@@ -157,5 +157,6 @@ resource "aws_ecs_service" "gateway" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener_rule.gateway_host]
+  # Tasks read DEN_GATEWAY_KEY at start; the secret needs a value first.
+  depends_on = [aws_lb_listener_rule.gateway_host, aws_secretsmanager_secret_version.app]
 }
