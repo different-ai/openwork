@@ -11,7 +11,7 @@ resource "aws_acm_certificate" "this" {
   count = local.create_certificate ? 1 : 0
 
   domain_name               = var.domain_name
-  subject_alternative_names = concat([local.api_host], local.web_enabled ? [local.gateway_host] : [])
+  subject_alternative_names = concat([local.api_host], local.web_enabled ? [local.gateway_host] : [], local.workbot_enabled ? [local.workbot_host] : [])
   validation_method         = "DNS"
   tags                      = var.tags
 

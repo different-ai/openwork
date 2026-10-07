@@ -300,6 +300,71 @@ variable "daytona" {
   default = {}
 }
 
+variable "headless_runner" {
+  description = <<-EOT
+    The headless runner: Den's private agent service for Slack replies, headless
+    Automations and Workbot. It calls the model directly (any Anthropic- or
+    OpenAI-compatible endpoint; key in headless_model_api_key) and reaches tools
+    through Den's /mcp/agent. Runs as one task with its SQLite database on EFS.
+  EOT
+  type = object({
+    enabled        = optional(bool, false)
+    model_protocol = optional(string, "anthropic")
+    model_base_url = optional(string, "https://api.anthropic.com/v1")
+    model          = optional(string, "")
+    cpu            = optional(number, 512)
+    memory         = optional(number, 1024)
+  })
+  default = {}
+
+  validation {
+    condition     = contains(["anthropic", "openai"], var.headless_runner.model_protocol)
+    error_message = "headless_runner.model_protocol must be anthropic or openai."
+  }
+}
+
+variable "headless_model_api_key" {
+  description = "API key for headless_runner's model endpoint. Stored in Secrets Manager; only the runner receives it."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "headless_runner_image" {
+  description = "Full headless runner image reference. Empty uses ghcr.io/different-ai/openwork-headless-runner:<openwork_version>."
+  type        = string
+  default     = ""
+}
+
+variable "workbot" {
+  description = "Workbot: a chat app at domain_name (default chat.<domain_name>) whose turns run on the headless runner. Requires headless_runner.enabled."
+  type = object({
+    enabled     = optional(bool, false)
+    domain_name = optional(string, "")
+    cpu         = optional(number, 256)
+    memory      = optional(number, 512)
+  })
+  default = {}
+}
+
+variable "workbot_image" {
+  description = "Full Workbot image reference. Empty uses ghcr.io/different-ai/openwork-workbot:<openwork_version>."
+  type        = string
+  default     = ""
+}
+
+variable "workbot_listener_rule_priority" {
+  description = "Priority of the Workbot host rule on the HTTPS listener (created with workbot.enabled). Must be unique on that listener."
+  type        = number
+  default     = 40
+}
+
+variable "slack_assistant_enabled" {
+  description = "Turn on the Slack assistant (members mention OpenWork in Slack and get replies in the thread). Replies run on the headless runner when it is enabled, otherwise on OpenWork Web. You still create the Slack app in Den's connector settings."
+  type        = bool
+  default     = false
+}
+
 variable "extra_environment" {
   description = "Additional plain env vars for both den-api and den-web, for example DAYTONA_API_URL or DEN_TRUSTED_PROXIES. See ee/apps/den-api/.env.example."
   type        = map(string)

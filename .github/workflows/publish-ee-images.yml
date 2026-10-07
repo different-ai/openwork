@@ -147,6 +147,26 @@ jobs:
             smoke_env: >-
               -e DEN_API_BASE=http://127.0.0.1:9
               -e DEN_GATEWAY_KEY=ci-den-gateway-key-value-123456
+          # Self-hosted Slack replies, headless Automations and Workbot.
+          - image: openwork-headless-runner
+            dockerfile: packaging/docker/Dockerfile.headless-runner
+            port: 8795
+            health_path: /health
+            smoke_env: >-
+              -e HEADLESS_API_TOKEN=ci-headless-runner-token-value-1234567890
+              -e HEADLESS_MODEL_PROTOCOL=anthropic
+              -e HEADLESS_MODEL_BASE_URL=https://api.anthropic.com/v1
+              -e HEADLESS_MODEL=ci-model
+          - image: openwork-workbot
+            dockerfile: packaging/docker/Dockerfile.workbot
+            port: 3020
+            health_path: /healthz
+            smoke_env: >-
+              -e WORKBOT_PUBLIC_URL=https://chat.example.com
+              -e WORKBOT_DEN_API_URL=https://api.example.com
+              -e WORKBOT_RUNNER_URL=http://headless-runner:8795
+              -e WORKBOT_RUNNER_TOKEN=ci-headless-runner-token-value-1234567890
+              -e WORKBOT_SESSION_SECRET=ci-workbot-session-secret-value-123456789
 
     steps:
       - name: Checkout

@@ -16,6 +16,17 @@ locals {
   provisioner_mode  = var.provisioner_mode != "" ? var.provisioner_mode : (local.web_enabled ? "daytona" : "stub")
   daytona_prefix    = var.daytona.name_prefix != "" ? var.daytona.name_prefix : var.name
 
+  # Headless runner (Slack replies, headless Automations, Workbot) and Workbot.
+  # Den and Workbot reach the runner at a dotless Service Connect alias: both
+  # accept plain http only for loopback or single-label internal hosts.
+  runner_enabled  = var.headless_runner.enabled
+  runner_url      = "http://headless-runner:8795"
+  runner_image    = var.headless_runner_image != "" ? var.headless_runner_image : "ghcr.io/different-ai/openwork-headless-runner:${var.openwork_version}"
+  workbot_enabled = var.workbot.enabled
+  workbot_host    = var.workbot.domain_name != "" ? var.workbot.domain_name : "chat.${var.domain_name}"
+  workbot_url     = "https://${local.workbot_host}"
+  workbot_image   = var.workbot_image != "" ? var.workbot_image : "ghcr.io/different-ai/openwork-workbot:${var.openwork_version}"
+
   # den-web reaches den-api privately through Cloud Map, not the public ALB.
   internal_api_url = "http://den-api.${aws_service_discovery_private_dns_namespace.this.name}:8788"
 
@@ -68,7 +79,7 @@ locals {
     SMTP_PORT                              = tostring(var.smtp.port)
     SMTP_USER                              = var.smtp.username
     SMTP_SECURE                            = local.bool[var.smtp.secure]
-  }, local.web_environment, var.extra_environment)
+  }, local.web_environment, local.agent_environment, var.extra_environment)
 
   # Empty values are dropped below, so these are unset while Web is off.
   web_environment = {
@@ -85,6 +96,18 @@ locals {
     DAYTONA_TARGET              = local.provisioner_mode == "daytona" ? var.daytona.target : ""
     DAYTONA_SANDBOX_NAME_PREFIX = local.provisioner_mode == "daytona" ? "${local.daytona_prefix}-worker" : ""
     DAYTONA_SHARED_VOLUME_NAME  = local.provisioner_mode == "daytona" ? "${local.daytona_prefix}-workers" : ""
+  }
+
+  # Feature locks (DEN_FEATURE_*) turn each capability on for the organization.
+  agent_environment = {
+    DEN_HEADLESS_RUNNER_URL              = local.runner_enabled ? local.runner_url : ""
+    DEN_FEATURE_HEADLESS_AUTOMATIONS     = local.runner_enabled && var.automations_enabled ? "true" : ""
+    DEN_FEATURE_SLACK_ASSISTANT          = var.slack_assistant_enabled ? "true" : ""
+    DEN_FEATURE_SLACK_ASSISTANT_HEADLESS = var.slack_assistant_enabled && local.runner_enabled ? "true" : ""
+    # Work a Slack reply hands to a member's desktop needs the automations runtime.
+    DEN_AUTOMATIONS_RUNTIME_ENABLED = var.slack_assistant_enabled ? "true" : ""
+    DEN_WORKBOT_URL                 = local.workbot_enabled ? local.workbot_url : ""
+    DEN_FEATURE_WORKBOT             = local.workbot_enabled ? "true" : ""
   }
 
   environment_list = [for k, v in local.environment : { name = k, value = v } if v != ""]
@@ -106,6 +129,9 @@ locals {
     [for k in keys(local.secret_values) : { name = k, valueFrom = "${aws_secretsmanager_secret.app.arn}:${k}::" }],
     [for k, arn in var.extra_secrets : { name = k, valueFrom = arn }],
   )
+
+  # den-api also gets the runner's service token.
+  api_secrets_list = concat(local.secrets_list, local.runner_enabled ? [{ name = "DEN_HEADLESS_RUNNER_TOKEN", valueFrom = local.runner_secret_ref }] : [])
 
   # Strip an optional ":json-key:version-stage:version-id" suffix to get the IAM resource ARN.
   extra_secret_resource_arns = distinct([

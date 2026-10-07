@@ -13,6 +13,11 @@ output "openwork_web_url" {
   value       = local.web_enabled ? local.gateway_url : null
 }
 
+output "workbot_url" {
+  description = "Workbot URL. Null unless workbot.enabled."
+  value       = local.workbot_enabled ? local.workbot_url : null
+}
+
 output "setup_url" {
   description = "One-time first-administrator page. Works only while the database has no users."
   value       = "${local.web_url}/setup"
@@ -55,9 +60,11 @@ output "alb_security_group_id" {
 
 output "service_names" {
   value = { for k, v in {
-    den_api     = aws_ecs_service.api.name
-    den_web     = aws_ecs_service.web.name
-    den_gateway = one(aws_ecs_service.gateway[*].name)
+    den_api         = aws_ecs_service.api.name
+    den_web         = aws_ecs_service.web.name
+    den_gateway     = one(aws_ecs_service.gateway[*].name)
+    headless_runner = one(aws_ecs_service.runner[*].name)
+    workbot         = one(aws_ecs_service.workbot[*].name)
   } : k => v if v != null }
 }
 
@@ -77,8 +84,10 @@ output "task_security_group_id" {
 
 output "log_groups" {
   value = { for k, v in {
-    den_api     = aws_cloudwatch_log_group.api.name
-    den_web     = aws_cloudwatch_log_group.web.name
-    den_gateway = one(aws_cloudwatch_log_group.gateway[*].name)
+    den_api         = aws_cloudwatch_log_group.api.name
+    den_web         = aws_cloudwatch_log_group.web.name
+    den_gateway     = one(aws_cloudwatch_log_group.gateway[*].name)
+    headless_runner = one(aws_cloudwatch_log_group.runner[*].name)
+    workbot         = one(aws_cloudwatch_log_group.workbot[*].name)
   } : k => v if v != null }
 }

@@ -261,7 +261,7 @@ resource "aws_lb_listener_certificate" "this" {
 # DNS ------------------------------------------------------------------------
 
 resource "aws_route53_record" "this" {
-  for_each = local.create_alb && var.route53_zone_id != "" ? toset(concat([var.domain_name, local.api_host], local.web_enabled ? [local.gateway_host] : [])) : toset([])
+  for_each = local.create_alb && var.route53_zone_id != "" ? toset(concat([var.domain_name, local.api_host], local.web_enabled ? [local.gateway_host] : [], local.workbot_enabled ? [local.workbot_host] : [])) : toset([])
 
   zone_id = var.route53_zone_id
   name    = each.value
