@@ -668,7 +668,12 @@ export async function browserGeometryWorld(seed: Seed) {
     async [Symbol.asyncDispose]() { await page.stop(); } };
 }
 
-/** Leave the emulation fault behind before the body; recovery is a real user act. */
+/**
+ * Leave the emulation fault behind before the body; recovery is a real user act.
+ * The capture client stays connected until disposal: since Electron 43.5
+ * (electron/electron#52946), a client that disconnects without clearing its
+ * override restores the view size itself, which would undo the fault early.
+ */
 export async function browserViewportWorld(seed: Seed) {
   const base = await builtinBrowserWorld(seed);
   const tab = await seedBrowserTab(seed, base.app, `${base.origin}/?viewport-probe=first`, base.session.sessionId);
@@ -683,6 +688,9 @@ export async function browserViewportWorld(seed: Seed) {
     if (metrics.width <= 0 || metrics.width >= 1280) throw new Error("The tab never acquired its panel viewport.");
     const panelViewport = { width: metrics.width, height: metrics.height };
     await surface.client.send("Emulation.setDeviceMetricsOverride", { ...CAPTURE_VIEWPORT, deviceScaleFactor: 0, mobile: false });
-    return { ...base, tab, panelViewport };
-  } finally { await surface.stop(); }
+    return { ...base, tab, panelViewport, async [Symbol.asyncDispose]() { await surface.stop(); } };
+  } catch (error) {
+    await surface.stop();
+    throw error;
+  }
 }

@@ -11,10 +11,10 @@ const geometryTest = spec.world(browserGeometryWorld, {
 });
 
 // Screenshot and docs-shots clients emulate a capture viewport on the visible
-// built-in browser tab over CDP. Chromium keeps that emulated size after the
-// client disconnects and nothing about the panel changes, so the page keeps
-// laying out for a 1440px desktop inside a narrow side panel and shows up
-// clipped. Returning to the tab must snap it back to the panel's viewport.
+// built-in browser tab over CDP. While such a client stays connected and
+// nothing about the panel changes, the page keeps laying out for a 1440px
+// desktop inside a narrow side panel and shows up clipped. Returning to the
+// tab must snap it back to the panel's viewport.
 const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
 
 test("a visible built-in browser tab left with an automation viewport snaps back to the panel when the user returns to it", async ({ world, user, probe, step, evidence }) => {
