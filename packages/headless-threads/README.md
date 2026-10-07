@@ -71,9 +71,10 @@ thread lands where the app reads it. A server without that route is v1; any
 other failed lookup throws a retryable `HeadlessThreadError` instead of
 guessing. Pass `engine: "v1"` or `"v2"` to skip the lookup.
 
-When a call names no model and there is no `defaultModel`, the client reads the
-workspace default (`GET /workspace/:id/default-model`). v1 without any model
-lets the engine choose; v2 throws `model_required` before creating anything.
+When a call names no model and there is no `defaultModel`, a turn keeps the
+model its thread already runs on. A new thread, or one with no model yet, uses
+the workspace default (`GET /workspace/:id/default-model`). v1 without any model
+lets the engine choose; v2 throws `model_required` before sending anything.
 v2 assigns its own message ids, so a `messageId` cannot make a v2 turn
 idempotent: waits use the pre-turn message count instead.
 
