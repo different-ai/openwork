@@ -28,9 +28,6 @@ mock_provider "aws" {
   mock_resource "aws_service_discovery_service" {
     defaults = { arn = "arn:aws:servicediscovery:us-east-1:123456789012:service/srv-abc" }
   }
-  mock_data "aws_subnet" {
-    defaults = { availability_zone = "us-east-1a" }
-  }
   mock_resource "aws_secretsmanager_secret" {
     defaults = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:openwork" }
   }
@@ -126,8 +123,8 @@ run "runner_workbot_and_slack" {
     error_message = "The runner reaches Den's public MCP endpoint with its model key; Workbot reaches the runner."
   }
   assert {
-    condition     = length(aws_efs_mount_target.agents) == 1 && aws_ecs_service.runner[0].deployment_maximum_percent == 100
-    error_message = "One EFS mount target per AZ, and never two runner tasks on one database."
+    condition     = length(aws_efs_mount_target.agents) == 2 && aws_ecs_service.runner[0].deployment_maximum_percent == 100
+    error_message = "One EFS mount target per service subnet, and never two runner tasks on one database."
   }
   assert {
     condition     = output.workbot_url == "https://chat.openwork.example.com" && contains(keys(aws_route53_record.this), "chat.openwork.example.com")

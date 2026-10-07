@@ -15,6 +15,7 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 | Certificate | Your ACM ARN, or created and DNS-validated in a Route 53 zone |
 | Secrets | One Secrets Manager secret, injected as ECS `secrets` |
 | Logs | CloudWatch `/ecs/<name>/den-api` and `/ecs/<name>/den-web` |
+| Headless runner and Workbot (optional) | `headless-runner` service (Service Connect, SQLite on EFS) and `workbot` at `chat.<domain_name>` (`headless_runner`, `workbot`) |
 | OpenWork Web (optional) | `den-gateway` Fargate service at `web.<domain_name>`, sandboxes in your Daytona organization (`openwork_web_enabled = true`) |
 
 It sets the same environment the [`openwork-ee` Helm chart](../../../../packaging/helm/openwork-ee)
@@ -141,6 +142,42 @@ After `terraform apply`:
   Daytona sandbox) is off by default; see [OpenWork Web](#openwork-web).
 - **Anything else** (SSO, proxies, Gateway, observability): add env vars with
   `extra_environment` and secrets with `extra_secrets`.
+
+## Slack, headless Automations and Workbot
+
+These run agent turns without a member's desktop or a sandbox, on the
+**headless runner**: a private service that calls your model provider directly
+and reaches the organization's tools through Den's `/mcp/agent`, with
+short-lived member-scoped tokens Den mints per turn. Den and Workbot reach it
+at `http://headless-runner:8795` through ECS Service Connect; it runs as one
+task with its SQLite database on EFS (one mount target per service subnet, so
+keep `service_subnet_ids` in different availability zones).
+
+```hcl
+  automations_enabled     = true # headless cloud Automations
+  slack_assistant_enabled = true
+  headless_model_api_key  = var.anthropic_api_key
+  headless_runner = {
+    enabled = true
+    model   = "claude-sonnet-4-5" # any model at model_base_url
+    # model_protocol = "openai"; model_base_url = "https://…/v1" for OpenAI-compatible endpoints
+  }
+  workbot = {
+    enabled = true # https://chat.<domain_name>
+  }
+```
+
+- **Workbot** is a chat app at `workbot.domain_name` (default
+  `chat.<domain_name>`; covered by a module-created certificate and Route 53).
+  Members sign in with their OpenWork account; the dashboard links to it.
+- **Slack**: `slack_assistant_enabled` turns the Slack assistant on. Replies
+  run on the headless runner when it is enabled (and work a reply hands to a
+  member's desktop is posted back to the thread), otherwise on OpenWork Web.
+  Then, in Den, add the Slack connector and follow its Slack assistant setup:
+  it generates the Slack app manifest with this deployment's URLs. See
+  [Set up the Slack app](https://openworklabs.com/docs/slack/set-up-the-slack-app).
+- **Headless Automations**: with `automations_enabled` and the runner,
+  scheduled cloud Automations run on the runner.
 
 ## OpenWork Web
 

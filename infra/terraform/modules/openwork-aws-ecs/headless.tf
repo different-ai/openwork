@@ -57,16 +57,6 @@ resource "aws_secretsmanager_secret_version" "runner" {
 
 # Persistent storage ---------------------------------------------------------
 
-# One mount target per availability zone of service_subnet_ids.
-data "aws_subnet" "service" {
-  for_each = local.runner_enabled ? toset(var.service_subnet_ids) : toset([])
-  id       = each.value
-}
-
-locals {
-  efs_subnet_by_az = { for s in values(data.aws_subnet.service) : s.availability_zone => s.id... }
-}
-
 resource "aws_efs_file_system" "agents" {
   count = local.efs_count
 
@@ -98,11 +88,14 @@ resource "aws_vpc_security_group_ingress_rule" "efs_from_tasks" {
   referenced_security_group_id = aws_security_group.tasks.id
 }
 
+# One mount target per service subnet. EFS allows one per availability zone,
+# so service_subnet_ids must be in different zones (the usual layout). Counted
+# by position because subnet ids may only be known after apply.
 resource "aws_efs_mount_target" "agents" {
-  for_each = local.runner_enabled ? local.efs_subnet_by_az : {}
+  count = local.runner_enabled ? length(var.service_subnet_ids) : 0
 
   file_system_id  = aws_efs_file_system.agents[0].id
-  subnet_id       = each.value[0]
+  subnet_id       = var.service_subnet_ids[count.index]
   security_groups = [aws_security_group.efs[0].id]
 }
 

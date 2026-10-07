@@ -305,7 +305,9 @@ variable "headless_runner" {
     The headless runner: Den's private agent service for Slack replies, headless
     Automations and Workbot. It calls the model directly (any Anthropic- or
     OpenAI-compatible endpoint; key in headless_model_api_key) and reaches tools
-    through Den's /mcp/agent. Runs as one task with its SQLite database on EFS.
+    through Den's /mcp/agent. Runs as one task with its SQLite database on EFS
+    (one mount target per service subnet, so service_subnet_ids must be in
+    different availability zones).
   EOT
   type = object({
     enabled        = optional(bool, false)
