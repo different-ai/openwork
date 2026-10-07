@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
+      statuses: read
       contents: read
       issues: write
       pull-requests: write
@@ -146,6 +147,7 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
+      statuses: read
       checks: read
     steps:
       - name: Checkout trusted gate script from dev
