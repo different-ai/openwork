@@ -23,6 +23,8 @@ const sessionRow = z.object({
   instructions: z.string(),
   /** JSON of the caller's per-session settings; null for sessions created before there were any. */
   options: z.string().nullable().optional(),
+  owner: z.string().nullable().optional(),
+  ref: z.string().nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
 })
@@ -32,6 +34,9 @@ const sessionOptions = z.object({
   computer: z.boolean().optional(),
   reactions: z.boolean().optional(),
   tasks: z.boolean().optional(),
+  timeZone: z.string().optional(),
+  autoTitle: z.boolean().optional(),
+  memoryOf: z.string().optional(),
 })
 type SessionOptions = z.infer<typeof sessionOptions>
 const tableColumns = z.array(z.object({ name: z.string() }).loose())
@@ -49,6 +54,7 @@ const turnRow = z.object({
   kind: z.enum(["task", "report"]).nullable().optional(),
   parent: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
+  error_detail: z.string().nullable().optional(),
 })
 const messageRow = z.object({ seq: z.number(), message_id: z.string(), body: z.string(), created_at: z.number().optional() })
 const fileRow = z.object({ path: z.string(), size: z.number(), updated_at: z.number() })
@@ -72,22 +78,62 @@ export type Session = {
   reactions: boolean
   /** Whether the conversation may hand work to background tasks (start_task) and keep talking meanwhile. */
   tasks: boolean
+  /**
+   * Who the conversation belongs to, in the caller's own terms (for example one person in one organization), and
+   * the caller's id for it. A caller with several conversations per person lists them by owner (GET /v1/sessions).
+   */
+  owner: string | null
+  ref: string | null
+  /** The person's IANA time zone: their messages are shown to the model with the time they sent them, in it. */
+  timeZone: string | null
+  /** Name the conversation after its first answer, while its title is empty. */
+  autoTitle: boolean
+  /** Another conversation of the same person whose memory/ this one reads and writes, so they remember together. */
+  memoryOf: string | null
   createdAt: number
   updatedAt: number
 }
-/** What a caller may set on a session: its text, and its settings (stored together as JSON). */
-export type SessionInput = { title?: string; instructions?: string; repeats?: RepeatLimits; files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
+/** What a caller may set on a session: its text, who it belongs to, and its settings (stored together as JSON). */
+export type SessionInput = {
+  title?: string
+  instructions?: string
+  repeats?: RepeatLimits
+  files?: boolean
+  computer?: boolean
+  reactions?: boolean
+  tasks?: boolean
+  owner?: string
+  ref?: string
+  timeZone?: string
+  autoTitle?: boolean
+  memoryOf?: string
+}
 
 /** The settings part of a session, leaving out what the caller didn't set. */
-function optionsOf(input: { repeats?: RepeatLimits | null; files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }): SessionOptions {
+function optionsOf(input: {
+  repeats?: RepeatLimits | null
+  files?: boolean
+  computer?: boolean
+  reactions?: boolean
+  tasks?: boolean
+  timeZone?: string | null
+  autoTitle?: boolean
+  memoryOf?: string | null
+}): SessionOptions {
   return {
     ...(input.repeats ? { repeats: input.repeats } : {}),
     ...(input.files !== undefined ? { files: input.files } : {}),
     ...(input.computer !== undefined ? { computer: input.computer } : {}),
     ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
     ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
+    ...(input.timeZone ? { timeZone: input.timeZone } : {}),
+    ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
+    ...(input.memoryOf ? { memoryOf: input.memoryOf } : {}),
   }
 }
+
+/** A new conversation's title: the caller's, or none yet when it is to be named after its first answer. */
+const initialTitle = (input: SessionInput) => input.title ?? (input.autoTitle ? "" : "Untitled")
 
 /** Stable JSON for the options column (null when there is nothing to keep), so equal settings compare equal. */
 function serializeOptions(options: SessionOptions) {
@@ -97,6 +143,9 @@ function serializeOptions(options: SessionOptions) {
     ...(options.computer ? { computer: true } : {}),
     ...(options.reactions ? { reactions: true } : {}),
     ...(options.tasks ? { tasks: true } : {}),
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+    ...(options.autoTitle ? { autoTitle: true } : {}),
+    ...(options.memoryOf ? { memoryOf: options.memoryOf } : {}),
   }
   return Object.keys(ordered).length ? JSON.stringify(ordered) : null
 }
@@ -107,6 +156,11 @@ export type Turn = {
   status: TurnStatus
   model: string | null
   error: string | null
+  /**
+   * What the model provider said when the turn failed (its error message and request id), for logs and support.
+   * Never shown to the person as is.
+   */
+  errorDetail?: string
   usage: Usage
   createdAt: number
   updatedAt: number
@@ -182,6 +236,7 @@ function toTurn(row: unknown): Turn {
     status: value.status,
     model: value.model,
     error: value.error,
+    ...(value.error_detail ? { errorDetail: value.error_detail } : {}),
     usage: { inputTokens: value.input_tokens, cachedInputTokens: value.cached_input_tokens, outputTokens: value.output_tokens },
     createdAt: value.created_at,
     updatedAt: value.updated_at,
@@ -268,11 +323,19 @@ export class Store {
     if (!columnsOf("turns").includes("attachments")) this.db.exec("ALTER TABLE turns ADD COLUMN attachments TEXT")
     // A saved file the agent revises keeps its id; this is when its bytes last changed.
     if (!columnsOf("saved_files").includes("updated_at")) this.db.exec("ALTER TABLE saved_files ADD COLUMN updated_at INTEGER")
-    // Background tasks and their reports (see Turn.kind).
+    // Background tasks and their reports (see Turn.kind), and what the provider said when a turn failed.
     const turnColumns = columnsOf("turns")
-    for (const column of ["kind", "parent", "title"]) {
+    for (const column of ["kind", "parent", "title", "error_detail"]) {
       if (!turnColumns.includes(column)) this.db.exec(`ALTER TABLE turns ADD COLUMN ${column} TEXT`)
     }
+    // Several conversations per person (Session.owner, .ref), and where a long conversation's context starts now
+    // (see contextMessages).
+    const sessionColumns = columnsOf("sessions")
+    for (const column of ["owner", "ref"]) {
+      if (!sessionColumns.includes(column)) this.db.exec(`ALTER TABLE sessions ADD COLUMN ${column} TEXT`)
+    }
+    if (!sessionColumns.includes("context_from")) this.db.exec("ALTER TABLE sessions ADD COLUMN context_from INTEGER")
+    this.db.exec("CREATE INDEX IF NOT EXISTS sessions_by_owner ON sessions (owner, updated_at)")
   }
 
   close() {
@@ -293,22 +356,12 @@ export class Store {
 
   createSession(input: SessionInput): Session {
     const at = this.now()
-    const options = optionsOf(input)
-    const session: Session = {
-      id: `hs_${randomUUID().replaceAll("-", "")}`,
-      title: input.title ?? "Untitled",
-      instructions: input.instructions ?? "",
-      repeats: options.repeats ?? null,
-      files: options.files ?? false,
-      computer: options.computer ?? false,
-      reactions: options.reactions ?? false,
-      tasks: options.tasks ?? false,
-      createdAt: at,
-      updatedAt: at,
-    }
+    const id = `hs_${randomUUID().replaceAll("-", "")}`
     this.db
-      .prepare("INSERT INTO sessions (id, title, instructions, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(session.id, session.title, session.instructions, serializeOptions(options), at, at)
+      .prepare("INSERT INTO sessions (id, title, instructions, options, owner, ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, initialTitle(input), input.instructions ?? "", serializeOptions(optionsOf(input)), input.owner ?? null, input.ref ?? null, at, at)
+    const session = this.getSession(id)
+    if (!session) throw new Error("session_missing_after_create")
     return session
   }
 
@@ -322,19 +375,29 @@ export class Store {
     const at = this.now()
     if (!existing) {
       this.db
-        .prepare("INSERT INTO sessions (id, title, instructions, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(id, input.title ?? "Untitled", input.instructions ?? "", serializeOptions(optionsOf(input)), at, at)
+        .prepare("INSERT INTO sessions (id, title, instructions, options, owner, ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, initialTitle(input), input.instructions ?? "", serializeOptions(optionsOf(input)), input.owner ?? null, input.ref ?? null, at, at)
     } else {
       // Settings the caller leaves out keep their current value.
       const options = { ...optionsOf(existing), ...optionsOf(input) }
       const changed =
         (input.title !== undefined && input.title !== existing.title) ||
         (input.instructions !== undefined && input.instructions !== existing.instructions) ||
+        (input.owner !== undefined && input.owner !== existing.owner) ||
+        (input.ref !== undefined && input.ref !== existing.ref) ||
         serializeOptions(options) !== serializeOptions(optionsOf(existing))
       if (changed) {
         this.db
-          .prepare("UPDATE sessions SET title = ?, instructions = ?, options = ?, updated_at = ? WHERE id = ?")
-          .run(input.title ?? existing.title, input.instructions ?? existing.instructions, serializeOptions(options), at, id)
+          .prepare("UPDATE sessions SET title = ?, instructions = ?, options = ?, owner = ?, ref = ?, updated_at = ? WHERE id = ?")
+          .run(
+            input.title ?? existing.title,
+            input.instructions ?? existing.instructions,
+            serializeOptions(options),
+            input.owner ?? existing.owner,
+            input.ref ?? existing.ref,
+            at,
+            id,
+          )
       }
     }
     const session = this.getSession(id)
@@ -346,19 +409,62 @@ export class Store {
     const row = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id)
     if (!row) return null
     const value = sessionRow.parse(row)
-    const options = value.options ? sessionOptions.safeParse(JSON.parse(value.options)) : null
+    const parsed = value.options ? sessionOptions.safeParse(JSON.parse(value.options)) : null
+    const options: SessionOptions = parsed?.success ? parsed.data : {}
     return {
       id: value.id,
       title: value.title,
       instructions: value.instructions,
-      repeats: options?.success ? (options.data.repeats ?? null) : null,
-      files: options?.success ? (options.data.files ?? false) : false,
-      computer: options?.success ? (options.data.computer ?? false) : false,
-      reactions: options?.success ? (options.data.reactions ?? false) : false,
-      tasks: options?.success ? (options.data.tasks ?? false) : false,
+      repeats: options.repeats ?? null,
+      files: options.files ?? false,
+      computer: options.computer ?? false,
+      reactions: options.reactions ?? false,
+      tasks: options.tasks ?? false,
+      owner: value.owner ?? null,
+      ref: value.ref ?? null,
+      timeZone: options.timeZone ?? null,
+      autoTitle: options.autoTitle ?? false,
+      memoryOf: options.memoryOf ?? null,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
     }
+  }
+
+  /**
+   * One owner's conversations that have at least one message, most recently active first. `updatedAt` moves when a
+   * turn changes, so it is when the conversation was last used.
+   */
+  listSessions(owner: string, limit: number): Array<{ id: string; ref: string | null; title: string; createdAt: number; updatedAt: number }> {
+    return this.db
+      .prepare(
+        `SELECT id, ref, title, created_at, updated_at FROM sessions
+         WHERE owner = ? AND EXISTS (SELECT 1 FROM turns WHERE turns.session_id = sessions.id)
+         ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(owner, limit)
+      .map((row) => {
+        const value = z.object({ id: z.string(), ref: z.string().nullable(), title: z.string(), created_at: z.number(), updated_at: z.number() }).parse(row)
+        return { id: value.id, ref: value.ref, title: value.title, createdAt: value.created_at, updatedAt: value.updated_at }
+      })
+  }
+
+  /** Names a conversation without counting as activity: the list order stays when it was last used. */
+  setTitle(id: string, title: string) {
+    this.db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title, id)
+  }
+
+  /**
+   * Where the model's view of a long conversation starts (a message seq at the start of a turn), or null while it
+   * still sees the whole conversation. It only moves forward, in big steps (see buildContext), so the start of the
+   * context stays the same for many turns and the model provider's prompt cache keeps hitting.
+   */
+  contextFrom(id: string): number | null {
+    const row = this.db.prepare("SELECT context_from FROM sessions WHERE id = ?").get(id)
+    return row ? z.object({ context_from: z.number().nullable() }).parse(row).context_from : null
+  }
+
+  setContextFrom(id: string, seq: number) {
+    this.db.prepare("UPDATE sessions SET context_from = ? WHERE id = ?").run(seq, id)
   }
 
   deleteSession(id: string) {
@@ -492,11 +598,11 @@ export class Store {
     })
   }
 
-  setTurnStatus(sessionId: string, messageId: string, status: TurnStatus, error: string | null = null) {
+  setTurnStatus(sessionId: string, messageId: string, status: TurnStatus, error: string | null = null, errorDetail: string | null = null) {
     const at = this.now()
     this.db
-      .prepare("UPDATE turns SET status = ?, error = ?, updated_at = ? WHERE session_id = ? AND message_id = ?")
-      .run(status, error, at, sessionId, messageId)
+      .prepare("UPDATE turns SET status = ?, error = ?, error_detail = ?, updated_at = ? WHERE session_id = ? AND message_id = ?")
+      .run(status, error, errorDetail, at, sessionId, messageId)
     this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(at, sessionId)
     this.onChange?.(sessionId, messageId, status)
   }
@@ -562,28 +668,42 @@ export class Store {
   }
 
   /**
-   * The newest part of the transcript that can matter for the model's context: rows are read newest first and
-   * reading stops once the current turn is in and the older turns' estimated size passes the budget. However
-   * long the conversation gets, a step reads about one context's worth of rows.
+   * The part of the transcript the model's context is built from, in whole turns: a turn is never split, since its
+   * tool results would lose the calls they answer. Once the conversation has outgrown the context it starts at
+   * `contextFrom`; until then rows are read newest first and reading stops, after finishing the turn being read,
+   * once the older turns' estimated size passes the budget. Either way a step reads about one context's worth of
+   * rows, however long the conversation gets. `partial` says the conversation goes back further than the rows.
    */
-  contextMessages(sessionId: string, currentMessageId: string, budget: number): StoredMessage[] {
+  contextMessages(sessionId: string, currentMessageId: string, budget: number): { rows: StoredMessage[]; partial: boolean } {
+    const from = this.contextFrom(sessionId)
+    if (from !== null) {
+      const rows = this.db
+        .prepare(`SELECT seq, message_id, body, created_at FROM messages WHERE session_id = ? AND seq >= ? AND ${CONVERSATION_ROWS} ORDER BY seq`)
+        .all(sessionId, from, sessionId)
+        .map(parseMessageRow)
+      return { rows, partial: true }
+    }
     const rows: StoredMessage[] = []
     let used = 0
     let seenCurrent = false
+    let partial = false
     for (const row of this.db
-      .prepare(`SELECT seq, message_id, body FROM messages WHERE session_id = ? AND ${CONVERSATION_ROWS} ORDER BY seq DESC`)
+      .prepare(`SELECT seq, message_id, body, created_at FROM messages WHERE session_id = ? AND ${CONVERSATION_ROWS} ORDER BY seq DESC`)
       .iterate(sessionId, sessionId)) {
       const entry = parseMessageRow(row)
+      if (seenCurrent && used > budget && entry.messageId !== rows.at(-1)?.messageId) {
+        partial = true
+        break
+      }
       rows.push(entry)
       if (entry.messageId === currentMessageId) {
         seenCurrent = true
         continue
       }
-      // Earlier turns are compacted for the model; estimate generously so the cut never lands short.
+      // Earlier turns are compacted for the model (see buildContext); this estimate errs on the large side.
       used += entry.message.role === "tool" ? Math.min(entry.message.output.length, 1_000) + 200 : JSON.stringify(entry.message).length
-      if (seenCurrent && used > budget) break
     }
-    return rows.reverse()
+    return { rows: rows.reverse(), partial }
   }
 
   /** The newest `limit` turns, optionally only those before `beforeMessageId`, oldest first. */

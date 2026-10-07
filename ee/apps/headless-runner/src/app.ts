@@ -24,11 +24,31 @@ const createSessionBody = z
     reactions: z.boolean().optional(),
     /** Let the conversation hand longer work to background tasks (start_task) and keep talking. Off unless asked for. */
     tasks: z.boolean().optional(),
+    /** Who the conversation belongs to, in the caller's terms, so the caller can list one person's conversations. */
+    owner: z.string().min(1).max(200).optional(),
+    /** The caller's own id for the conversation, returned when listing. */
+    ref: z.string().min(1).max(200).optional(),
+    /** The person's IANA time zone; the model sees when each message was sent, in it. */
+    timeZone: z.string().min(1).max(64).refine(isTimeZone, "unknown time zone").optional(),
+    /** Name the conversation after its first answer, while its title is empty. */
+    autoTitle: z.boolean().optional(),
+    /** Another conversation of the same person whose memory/ this one shares. It must exist. */
+    memoryOf: z.string().regex(/^hs_[A-Za-z0-9_-]{8,96}$/).optional(),
   })
   .strict()
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
 /** Caller-chosen session ids share the runner's `hs_` prefix so they can never collide with other ids. */
 const sessionIdSchema = z.string().regex(/^hs_[A-Za-z0-9_-]{8,96}$/)
+const listQuery = z.object({ owner: z.string().min(1).max(200), limit: z.coerce.number().int().min(1).max(200).default(50) })
+
+function isTimeZone(zone: string) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone })
+    return true
+  } catch {
+    return false
+  }
+}
 const sendBody = z
   .object({
     messageId: messageIdSchema,
@@ -96,7 +116,15 @@ export function createApp(input: {
   app.post("/v1/sessions", async (c) => {
     const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
+    if (body.data.memoryOf && !store.getSession(body.data.memoryOf)) return c.json({ error: "unknown_memory_session" }, 400)
     return c.json(store.createSession(body.data), 201)
+  })
+
+  // One owner's conversations that have messages, most recently used first.
+  app.get("/v1/sessions", (c) => {
+    const query = listQuery.safeParse(c.req.query())
+    if (!query.success) return c.json({ error: "invalid_request", issues: query.error.issues }, 400)
+    return c.json({ sessions: store.listSessions(query.data.owner, query.data.limit) })
   })
 
   app.put("/v1/sessions/:id", async (c) => {
@@ -104,6 +132,7 @@ export function createApp(input: {
     if (!id.success) return c.json({ error: "invalid_session_id" }, 400)
     const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
+    if (body.data.memoryOf && (body.data.memoryOf === id.data || !store.getSession(body.data.memoryOf))) return c.json({ error: "unknown_memory_session" }, 400)
     const { session, created } = store.putSession(id.data, body.data)
     return c.json(session, created ? 201 : 200)
   })
