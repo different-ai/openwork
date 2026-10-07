@@ -514,9 +514,15 @@ function Conversation(props: {
     ...props.pending.filter((entry) => !known.has(entry.id)).map((entry) => ({ key: entry.id, at: entry.sentAt, turn: null, pending: entry })),
   ];
   const lastTurnId = props.turns.at(-1)?.id;
-  // One indicator survives text, tool and background-task updates, including work in an older turn.
-  const processing = props.starting || props.pending.some((entry) => !entry.failed) || props.turns.some((turn) =>
-    turn.status === "working" || turn.status === "queued" || turn.tasks.some(isOpen));
+  // One indicator, at the end of the thread, says a reply is on its way and none of it shows yet. Background tasks
+  // show their progress on their own cards, and streamed text or a running step already shows Workbot at work, so
+  // neither keeps the dots. Uploading files say so instead.
+  const typing = useSettled(
+    props.starting
+      || props.pending.some((entry) => !known.has(entry.id) && !entry.failed && !entry.uploads.some((upload) => upload.status === "uploading"))
+      || props.turns.some((turn) => awaitingReply(turn, props.live[turn.id] ?? null)),
+    350,
+  );
   // Local previews keep a just-sent image on screen while its kept copy loads.
   const localUrls = useMemo(() => {
     const urls: Record<string, string | null> = {};
@@ -600,7 +606,7 @@ function Conversation(props: {
               );
             })}
           </ol>
-          {processing ? <div className="pt-3"><TypingBubble /></div> : null}
+          {typing ? <div className="pt-3"><TypingBubble /></div> : null}
         </div>
       </div>
     </div>
@@ -801,8 +807,8 @@ function AssistantBubble({ children }: { children: ReactNode }) {
 }
 
 /**
- * Workbot processing: one small reply bubble with three dots that darken in turn at the end of the thread,
- * like a messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
+ * Workbot writing a reply that doesn't show yet: one small reply bubble with three dots that darken in turn at the
+ * end of the thread, like a messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
  */
 function TypingBubble() {
   return (
@@ -1083,6 +1089,41 @@ function withoutNextLine(text: string) {
   return text;
 }
 
+/** What of a turn's reply shows right now: its streamed text, its computer starting, or a step still running. */
+function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
+  const working = turn.status === "working" || turn.status === "queued";
+  // The model call in progress (not stored yet): its text so far, and whether it has started a step.
+  const current = working && live && live.step >= turn.modelSteps ? live : null;
+  // Workbot's hello streams only its message, never its notes between lookups.
+  const liveText = turn.greeting ? helloSoFar(current?.text ?? "", current?.working ?? null) : withoutNextLine(current?.text ?? "");
+  const last = turn.parts.at(-1);
+  // Its computer starting before the step is stored: the card shows right away, after what it just said.
+  const startingCard = working && !turn.greeting && current?.working?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
+  const lastIsLive = working && last?.kind === "steps" && !liveText && !startingCard;
+  return { working, liveText, startingCard, lastIsLive };
+}
+
+/** Workbot owes this reply and none of it shows yet (a hello's lookups stay hidden, so they don't count as showing). */
+function awaitingReply(turn: WorkbotTurn, live: LiveText | null) {
+  if (turn.status !== "working") return false;
+  const { liveText, startingCard, lastIsLive } = replyProgress(turn, live);
+  return !liveText && !startingCard && (Boolean(turn.greeting) || !lastIsLive);
+}
+
+/** True only once `flag` has held for `ms`: the typing bubble doesn't flash for a beat between two steps. */
+function useSettled(flag: boolean, ms: number) {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!flag) {
+      setSettled(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSettled(true), ms);
+    return () => window.clearTimeout(timer);
+  }, [flag, ms]);
+  return flag && settled;
+}
+
 function TurnView(props: {
   canChange: boolean;
   onEdit: (turn: WorkbotTurn, text: string, onError: (message: string) => void) => void;
@@ -1094,12 +1135,7 @@ function TurnView(props: {
   onSuggestion: (text: string) => void;
 }) {
   const { turn } = props;
-  const working = turn.status === "working" || turn.status === "queued";
-  // The model call in progress (not stored yet): its text so far, and whether it has started a step.
-  const current = working && props.live && props.live.step >= turn.modelSteps ? props.live : null;
-  // Workbot's hello streams only its message, never its notes between lookups.
-  const liveText = turn.greeting ? helloSoFar(current?.text ?? "", current?.working ?? null) : withoutNextLine(current?.text ?? "");
-  const starting = current?.working ?? null;
+  const { working, liveText, startingCard, lastIsLive } = replyProgress(turn, props.live);
   // An answer watched while it was written keeps revealing at the same pace once it's stored, instead of the whole
   // text snapping in when the turn ends. Answers already done when the page opened show at once.
   const watched = useRef(working);
@@ -1111,9 +1147,6 @@ function TurnView(props: {
   const tailIsStored = !working && watched.current && lastText !== -1 && lastText === parts.length - 1;
   const storedTail = tailIsStored && last?.kind === "text" ? last.text : null;
   const tail: string | null = working ? liveText || null : storedTail;
-  // Its computer starting before the step is stored: the card shows right away, after what it just said.
-  const startingCard = working && !turn.greeting && starting?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
-  const lastIsLive = working && last?.kind === "steps" && !liveText && !startingCard;
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />

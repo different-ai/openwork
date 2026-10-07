@@ -75,11 +75,16 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
         item.finishedAt = ["done", "failed", "stopped"].includes(status) ? Date.now() : null;
         change();
       },
-      streamReply() {
+      /** The latest turn starts another model step, with nothing of it written yet. */
+      startReply() {
         const turn = turns.at(-1);
         if (!turn) throw new Error("Missing reply turn");
         turn.status = "working";
         change();
+      },
+      streamReply() {
+        const turn = turns.at(-1);
+        if (!turn || turn.status !== "working") throw new Error("Start the reply before streaming it");
         for (const stream of streams) stream.write(`data: ${JSON.stringify({ type: "text", messageId: turn.id, step: turn.modelSteps, delta: "I'm still checking.", reset: true })}\n\n`);
       },
       finishReply() {

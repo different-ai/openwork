@@ -177,55 +177,58 @@ threadUI("a member keeps task cards in their original turn until all work finish
     await user.see({ text: "Launch brief" });
     await user.see({ text: "Meeting notes" });
     expect((await probe.dom('ol > li:first-child [data-workbot-task]')).elements).toHaveLength(2);
-    expect((await probe.dom(dots)).elements).toHaveLength(3);
     briefNode = await world.cardNode("brief");
     expect(briefNode).toBeGreaterThan(0);
     await user.notSee({ text: "Working on it in the background" });
     await user.notSee({ text: "Working on 2 things in the background" });
+    expect((await probe.dom(dots)).elements).toHaveLength(0);
     await user.screenshot();
-    evidence.recordAssertionEvidence("Running and queued cards stay with their request", "Both cards are in the first conversation turn, with one three-dot indicator and no duplicate background message. API responses are synthetic; this proves the real UI, not runner execution.", true);
+    evidence.recordAssertionEvidence("Running and queued cards stay with their request and carry their own progress", "Both cards are in the first conversation turn and show their own status. Workbot isn't writing anything, so there are no typing dots and no duplicate background message. API responses are synthetic; this proves the real UI, not runner execution.", true);
   });
   await step("the member keeps chatting while the first task remains in place", async () => {
     await user.type(composer, "What is two plus two?");
     await user.click({ role: "button", label: "Send" });
     await user.see({ text: "Four." });
     expect((await probe.dom('ol > li:first-child [data-workbot-task]')).elements).toHaveLength(2);
-    expect((await probe.dom(dots)).elements).toHaveLength(3);
     expect(await world.cardNode("brief")).toBe(briefNode);
+    expect((await probe.dom(dots)).elements).toHaveLength(0);
     await user.screenshot();
-    evidence.recordAssertionEvidence("A later reply does not move running cards", "The newer reply is below the original turn, both task cards remain there, the first DOM node is unchanged, and three dots remain after the foreground answer.", true);
+    evidence.recordAssertionEvidence("A later reply does not move running cards", "The newer reply is below the original turn, both task cards remain there, the first DOM node is unchanged, and no typing dots linger once the answer is in.", true);
   });
-  await step("after: finishing one task keeps its card and the remaining work indicator", async () => {
+  await step("after: finishing one task keeps its card while the other resumes", async () => {
     world.respond("brief", "done");
     world.respond("notes", "paused");
     await user.see({ text: "Picking it back up" });
     await user.see({ text: "Done" });
     expect(await world.cardNode("brief")).toBe(briefNode);
     expect((await probe.dom('ol > li:first-child [data-workbot-task]')).elements).toHaveLength(2);
-    expect((await probe.dom(dots)).elements).toHaveLength(3);
+    expect((await probe.dom(dots)).elements).toHaveLength(0);
     await user.screenshot();
-    evidence.recordAssertionEvidence("Completed cards remain anchored while another task resumes", "The completed brief uses the same DOM node in the first turn; the paused task and all three dots remain visible.", true);
+    evidence.recordAssertionEvidence("Completed cards remain anchored while another task resumes", "The completed brief uses the same DOM node in the first turn, and the paused task's own card says it is picking back up; background work adds no typing dots.", true);
   });
-  await step("after: failed or stopped work clears the dots without removing its card", async () => {
+  await step("after: failed or stopped work keeps its card", async () => {
     world.respond("notes", "failed");
     await user.see({ text: "Couldn't finish" });
-    expect((await probe.dom(dots)).elements).toHaveLength(0);
     world.respond("notes", "stopped");
     await user.see({ text: "Stopped" });
     expect((await probe.dom('[data-workbot-task]')).elements).toHaveLength(2);
     expect((await probe.dom(dots)).elements).toHaveLength(0);
     await user.screenshot();
-    evidence.recordAssertionEvidence("Terminal outcomes stop processing without moving the history", "Failure and Stop both leave two cards in the conversation and no processing dots.", true);
+    evidence.recordAssertionEvidence("Terminal outcomes keep the history in place", "Failure and Stop both leave two cards in the conversation, with no typing dots.", true);
   });
-  await step("after: a foreground reply keeps the dots while its text streams", async () => {
+  await step("after: a foreground reply shows the dots only until its text arrives", async () => {
+    world.startReply();
+    const dotCount = async () => (await probe.dom(dots)).elements.length;
+    await probe.eventually(dotCount, { within: 3_000, label: "Typing dots while the reply has nothing written", until: (count) => count === 3 });
+    await user.screenshot();
     world.streamReply();
     await user.see({ text: "I'm still checking." });
-    expect((await probe.dom(dots)).elements).toHaveLength(3);
+    await probe.eventually(dotCount, { within: 3_000, label: "Streamed text replaces the typing dots", until: (count) => count === 0 });
     await user.screenshot();
     world.finishReply();
     await user.see({ text: "Four. Checked." });
-    expect((await probe.dom(dots)).elements).toHaveLength(0);
-    evidence.recordAssertionEvidence("Streaming text does not hide processing", "With both tasks terminal, a working foreground turn shows three dots alongside streamed text, and completion removes them.", true);
+    expect(await dotCount()).toBe(0);
+    evidence.recordAssertionEvidence("The dots mean a reply is coming, not that something is running", "With a reply started and nothing written, three typing dots show; once its text streams the dots go, and completion leaves none.", true);
   });
   await step("the member sees Edit only when hovering their message and no Delete action", async () => {
     await user.hover(composer);
