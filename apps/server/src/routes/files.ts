@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import { FileSessionStore } from "../file-sessions.js";
 import type { ApprovalRequest, ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
+import { workspaceWriteError } from "../workspace-init.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 /**
@@ -660,11 +661,15 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     // timeout and then failed the send, because client tokens cannot approve
     // their own writes. All other write routes remain approval-gated.
 
-    await ensureDir(dirname(dest));
     const bytes = Buffer.from(await file.arrayBuffer());
-    const tmp = join(dirname(dest), `.upload-${shortId()}.tmp`);
-    await writeFile(tmp, bytes);
-    await rename(tmp, dest);
+    try {
+      await ensureDir(dirname(dest));
+      const tmp = join(dirname(dest), `.upload-${shortId()}.tmp`);
+      await writeFile(tmp, bytes);
+      await rename(tmp, dest);
+    } catch (error) {
+      throw workspaceWriteError(error, workspace.path);
+    }
 
     await recordAudit(workspace.path, {
       id: shortId(),

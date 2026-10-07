@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { readFile } from "node:fs/promises";
 
 import { ensureDir, exists } from "./utils.js";
@@ -64,6 +64,32 @@ async function ensureOpencodeConfig(workspaceRoot: string): Promise<boolean> {
     await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true });
   }
   return false;
+}
+
+const NOT_WRITABLE_CODES = new Set(["EPERM", "EACCES", "EROFS"]);
+
+/**
+ * Turn a permission failure while writing inside a workspace (for example a
+ * workspace at `C:\Program Files`) into a clear, expected API error instead
+ * of an unhandled 500. Other errors pass through unchanged.
+ */
+export function workspaceWriteError(error: unknown, workspaceRoot: string): unknown {
+  const fsCode = errorStringField(error, "code");
+  if (!fsCode || !NOT_WRITABLE_CODES.has(fsCode)) return error;
+  return new ApiError(403, "workspace_not_writable", "OpenWork can't write to this folder. Choose a folder you own, such as one in your user folder.", {
+    path: workspaceRoot,
+    fsCode,
+    fsPath: errorStringField(error, "path"),
+  });
+}
+
+/** Create the workspace's `.opencode` folder, failing clearly when the folder is read-only for this user. */
+export async function ensureWorkspaceWritable(workspaceRoot: string): Promise<void> {
+  try {
+    await ensureDir(join(workspaceRoot, ".opencode"));
+  } catch (error) {
+    throw workspaceWriteError(error, workspaceRoot);
+  }
 }
 
 export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: string): Promise<EnsureWorkspaceFilesResult> {

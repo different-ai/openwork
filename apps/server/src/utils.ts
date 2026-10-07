@@ -11,7 +11,15 @@ export async function exists(path: string): Promise<boolean> {
 }
 
 export async function ensureDir(path: string): Promise<void> {
-  await mkdir(path, { recursive: true });
+  try {
+    await mkdir(path, { recursive: true });
+  } catch (error) {
+    // On Windows, a recursive mkdir of an existing drive root such as `C:\`
+    // fails with EPERM even though there is nothing to create.
+    const info = await stat(path).catch(() => null);
+    if (info?.isDirectory()) return;
+    throw error;
+  }
 }
 
 export async function readJsonFile<T>(path: string): Promise<T | null> {

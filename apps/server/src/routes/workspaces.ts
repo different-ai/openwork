@@ -1,11 +1,11 @@
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "../opencode-connection.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
-import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles } from "../workspace-init.js";
+import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, ensureWorkspaceWritable } from "../workspace-init.js";
 import { seedOpenworkWorkspaceConfigIfEmpty } from "../openwork-workspace-config-store.js";
 import { workspaceIdForPath } from "../workspaces.js";
 import { addRoute, type Route } from "./registry.js";
@@ -125,10 +125,16 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     if (!folderPath) {
       throw new ApiError(400, "invalid_payload", "folderPath is required");
     }
+    // A relative path would resolve against the app's working directory, which
+    // on Windows is the install folder.
+    if (!isAbsolute(folderPath)) {
+      throw new ApiError(400, "invalid_payload", "folderPath must be an absolute path");
+    }
 
     const workspacePath = resolve(folderPath);
     await ensureDir(workspacePath);
     await ensureWorkspaceFiles(workspacePath, preset);
+    await ensureWorkspaceWritable(workspacePath);
 
     const workspaceId = workspaceIdForPath(workspacePath);
     // Seed the per-workspace openwork config in the runtime DB (replaces the
