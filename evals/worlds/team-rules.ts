@@ -1,7 +1,7 @@
 import { allocateFreePorts } from "@openwork/cdp";
 import { engineSessionProbe } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configureProvider } from "./chat.ts";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
@@ -35,9 +35,10 @@ export async function teamRulesEditor(seed: Seed) {
 }
 
 /**
- * Riley's Contractors rules allow only `echo` commands. Riley and Morgan each
- * chat in OpenWork Web on the v2 engine, signed in to Den, with a model that
- * asks to save a note with `printf`.
+ * Riley's Contractors rules allow only `echo` commands and no local skills or
+ * MCP servers. Riley and Morgan each chat in OpenWork Web on the v2 engine,
+ * signed in to Den, in a folder with a local skill and a local MCP server, with
+ * a model that asks to save a note with `printf` or to load the skill.
  */
 export async function teamRulesChat(seed: Seed) {
   const webPorts = await allocateFreePorts(2);
@@ -46,6 +47,8 @@ export async function teamRulesChat(seed: Seed) {
   await world.saveTeamRules([
     { action: "shell", resource: "*", effect: "deny" },
     { action: "shell", resource: "echo *", effect: "allow" },
+    { action: "skill", resource: "*", effect: "deny" },
+    { action: "mcp", resource: "*", effect: "deny" },
   ]);
   const riley = await memberEngineChat(seed, world, "riley", webPorts[0]);
   const morgan = await memberEngineChat(seed, world, "morgan", webPorts[1]);
@@ -61,8 +64,13 @@ async function memberEngineChat(seed: Seed, world: TeamRulesOrganization, member
   const signedIn = world.den.members[member];
   if (!signedIn || !webPort) throw new Error(`Missing ${member}'s session or web port`);
   const marker = `TEAM_RULES_NOTE_${member.toUpperCase()}`;
+  const skillMarker = `TEAM_RULES_SKILL_${member.toUpperCase()}`;
   const workspacePath = seed.tmpPath(`team-rules-${member}`);
-  await mkdir(workspacePath, { recursive: true });
+  await mkdir(join(workspacePath, ".opencode", "skills", "team-notes"), { recursive: true });
+  await writeFile(join(workspacePath, ".opencode", "skills", "team-notes", "SKILL.md"),
+    "---\nname: team-notes\ndescription: How this team writes meeting notes.\n---\nWrite decisions first, then owners.\n");
+  // A local MCP server from the folder's own config file, outside OpenWork's settings.
+  await writeFile(join(workspacePath, "opencode.json"), JSON.stringify({ mcp: { "notes-server": { type: "remote", url: "http://127.0.0.1:9/mcp" } } }));
   const note = "team-rule-note.txt";
   const command = `printf '%s' 'saved by the agent' > '${note}'`;
   const app = await seed.appWeb({
@@ -70,6 +78,9 @@ async function memberEngineChat(seed: Seed, world: TeamRulesOrganization, member
     mocks: { witness: seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
       promptMarker: marker, finalReply: "I tried to save the note.",
       steps: [{ tool: "shell", arguments: { command, description: "Save a note" } }],
+    }, {
+      promptMarker: skillMarker, finalReply: "I tried the team notes skill.",
+      steps: [{ tool: "skill", arguments: { id: "team-notes" } }],
     }] }) },
   });
   await seed.signIn(app, signedIn, member);
@@ -88,10 +99,16 @@ async function memberEngineChat(seed: Seed, world: TeamRulesOrganization, member
   const token = await seed.evalIn(app, () => localStorage.getItem("openwork.server.token"));
   if (typeof token !== "string" || !token) throw new Error("Missing isolated app-web token");
   const native = engineSessionProbe({ engine: "v2", serverUrl: app.openworkUrl, token, workspaceId: workspace.workspaceId });
+  const server = (path: string, init: RequestInit = {}) => fetch(`${app.openworkUrl}/workspace/${encodeURIComponent(workspace.workspaceId)}${path}`, {
+    ...init, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, signal: AbortSignal.timeout(30_000),
+  });
+  const settled = async (tool: string) => {
+    const snapshot = await native.snapshot(chat.sessionId);
+    if (!snapshot.ok || !snapshot.data) return null;
+    return snapshot.data.messages.flatMap((message) => message.parts).find((part) => part.tool === tool && ["completed", "error"].includes(part.status)) ?? null;
+  };
   const pluginState = async () => {
-    const response = await fetch(`${app.openworkUrl}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode2/api/plugin`, {
-      headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
-    });
+    const response = await server("/opencode2/api/plugin");
     if (!response.ok) throw new Error(`Listing engine plugins failed: HTTP ${response.status}`);
     const plugin = records(await response.json()).find((entry) => entry.id === "openwork.policies");
     const state = isRecord(plugin?.state) && typeof plugin.state.status === "string" ? plugin.state.status : "unknown";
@@ -100,11 +117,24 @@ async function memberEngineChat(seed: Seed, world: TeamRulesOrganization, member
   return {
     app, command,
     prompt: `Save a short note in this folder with a shell command. ${marker}`,
+    skillPrompt: `Use the team notes skill for this meeting. ${skillMarker}`,
     /** The engine's own record of the shell call, once it has settled. */
-    async shellCall() {
-      const snapshot = await native.snapshot(chat.sessionId);
-      if (!snapshot.ok || !snapshot.data) return null;
-      return snapshot.data.messages.flatMap((message) => message.parts).find((part) => part.tool === "shell" && ["completed", "error"].includes(part.status)) ?? null;
+    shellCall: () => settled("shell"),
+    skillCall: () => settled("skill"),
+    /** The folder's local MCP server as the engine reports it: its status, or null when absent. */
+    async notesServerStatus() {
+      const response = await server("/opencode2/api/mcp");
+      if (!response.ok) throw new Error(`Listing engine MCP servers failed: HTTP ${response.status}`);
+      const body: unknown = await response.json();
+      const entries = isRecord(body) && Array.isArray(body.data) ? records(body.data) : records(body);
+      const entry = entries.find((candidate) => candidate.name === "notes-server");
+      return entry ? (isRecord(entry.status) && typeof entry.status.status === "string" ? entry.status.status : "unknown") : null;
+    },
+    /** Adding a local MCP server through OpenWork, as the Library's Add MCP form does. */
+    async addLocalMcp(name: string) {
+      const response = await server("/mcp", { method: "POST", body: JSON.stringify({ name, config: { type: "remote", url: "http://127.0.0.1:9/mcp" } }) });
+      const body: unknown = await response.json().catch(() => null);
+      return { status: response.status, message: isRecord(body) && typeof body.message === "string" ? body.message : "" };
     },
     wroteNote: () => access(join(workspacePath, note)).then(() => true, () => false),
     /** The OpenWork policies plugin as the engine reports it, waiting up to a minute for `until`. */

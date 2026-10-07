@@ -1,7 +1,7 @@
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import { ApiError } from "./errors.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
-import { executionRules, teamEngineRules } from "./managed-policy-rules.js";
+import { executionRules, teamEngineRules, teamRuleNameDenial } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -464,8 +464,12 @@ export function createEngineV2Preview(options: {
   async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<void> {
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
-    const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId));
+    const effective = await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId);
+    const runtime = runtimeMcpMap(effective);
+    // Local servers the member's team rules block are not registered, and an
+    // earlier registration is removed below like any other unwanted entry.
     const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
+      if (teamRuleNameDenial(effective.managedPolicy?.rules, "mcp", name)) return [];
       const mapped = mapRuntimeMcpToV2(value);
       return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
     }));
