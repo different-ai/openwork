@@ -5,6 +5,8 @@
 //
 // Rules (ENG-401):
 // - A catalog that has not settled is pending, never unavailable.
+// - A catalog that failed to load cannot prove a model is gone, so a model it
+//   does not list stays pending (retryable) instead of "unavailable".
 // - Auto that is syncing or not ready is "not ready", not blocked.
 // - A provider the workspace knows but has no sign-in for is "disconnected",
 //   the one case with a direct fix (reconnect) that finishes the switch.
@@ -65,6 +67,9 @@ export function resolveShortcutTarget(input: ShortcutTargetInput): ShortcutTarge
     const known = input.knownOptions.find((entry) => modelRefKey(entry) === key && !entry.disabled);
     return known && input.catalogState !== "loading" ? { kind: "available", option: known } : { kind: "pending" };
   }
+  // A failed provider-list load is not evidence the model is gone; policy,
+  // sign-out and a disabled provider are still known without it.
+  if (retained.reason === "unavailable" && input.catalogState === "error") return { kind: "pending" };
   if (retained.reason === "unavailable" && input.disconnectedProviderIds.has(input.model.providerID)) {
     return { kind: "disconnected" };
   }
