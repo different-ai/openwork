@@ -149,7 +149,8 @@ async function workbotCalendarEnabled(organizationId: string) {
 const ID = "[A-Za-z0-9_-]{1,160}"
 /**
  * The Den routes Workbot's Calendar may reach, as the signed-in member: their own Automations and runs, the
- * Pause / Resume / Run now / schedule-only edit actions, and their native Google and Outlook calendar reads.
+ * Pause / Resume / Run now / schedule-only edit actions, creating a Cloud Automation, and their native Google and
+ * Outlook calendar reads.
  * Nothing else is forwarded.
  */
 const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH"; path: RegExp; write: boolean }> = [
@@ -159,6 +160,8 @@ const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH";
   { method: "GET", path: new RegExp(`^/v1/automation-runs/${ID}$`), write: false },
   { method: "GET", path: /^\/v1\/capabilities\/(google-workspace|microsoft-365)\/calendar-events$/, write: false },
   { method: "POST", path: new RegExp(`^/v1/automations/${ID}/(activate|deactivate|run)$`), write: true },
+  // Creating from the Calendar: always a Cloud Automation (Workbot has no desktop), validated by the route itself.
+  { method: "POST", path: /^\/v1\/cloud-automations$/, write: true },
   { method: "PATCH", path: new RegExp(`^/v1/automations/${ID}$`), write: true },
 ]
 export const WORKBOT_CALENDAR_PREFIX = "/v1/workbot/calendar"
@@ -249,7 +252,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "Workbot's Calendar: the member's Automations, runs and calendar meetings",
       description:
-        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, POST /v1/automations/{id}/{activate|deactivate|run} and a schedule-only PATCH /v1/automations/{id}. Refused while Workbot or its Calendar is off.",
+        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, POST /v1/automations/{id}/{activate|deactivate|run}, POST /v1/cloud-automations and a schedule-only PATCH /v1/automations/{id}. Refused while Workbot or its Calendar is off.",
       responses: {
         200: jsonResponse("The forwarded route's answer.", z.unknown()),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -277,6 +280,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (method === "PATCH") {
         const parsed = scheduleOnlySchema.safeParse(await c.req.json().catch(() => null))
         if (!parsed.success) return c.json({ error: "invalid_request", message: "Only the schedule can change here." }, 400)
+        body = JSON.stringify(parsed.data)
+      } else if (method === "POST" && inner === "/v1/cloud-automations") {
+        const parsed = z.record(z.string(), z.unknown()).safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: "invalid_request", message: "Send the new Automation as JSON." }, 400)
         body = JSON.stringify(parsed.data)
       } else if (method === "POST") {
         body = "{}"

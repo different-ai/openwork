@@ -75,6 +75,20 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.screenshot();
   });
 
+  await step("Alex clicks an empty Wednesday slot next week and creates an Automation that repeats there", async () => {
+    await alex.click({ role: "button", label: /^New automation on Wed, .* at 12:30 PM$/ });
+    await alex.see({ text: /^At 12:30 PM .*\. Runs on this computer/ });
+    await alex.type({ role: "textbox", label: /^What should it do\?$/ }, "Check the launch checklist for anything still open");
+    await alex.click({ role: "button", text: "Create automation" });
+    await alex.see({ text: "Automation created" });
+    await alex.see({ text: /^Every Wednesday at 12:30 PM/ });
+    await alex.see({ role: "button", label: /^Check the launch checklist for anything still open, / });
+    const created = await blocks('[data-calendar-automation][aria-label^="Check the launch checklist"]');
+    evidence.recordAssertionEvidence("created from the slot", `${created} new slot(s) on next week's grid; the panel shows "Every Wednesday at 12:30 PM"`, created >= 1);
+    expect(created).toBeGreaterThanOrEqual(1);
+    await alex.screenshot();
+  });
+
   await step("after: when Google sign-in expires, Google meetings show a reconnect lock and Outlook meetings stay", async () => {
     await world.expireGoogleSignIn();
     await alex.reload();

@@ -21,6 +21,8 @@ export type WorkbotHost = {
   homeHref: string
   /** Workbot's Calendar tab is on for this person (Den's workbotCalendar feature). */
   calendar?: boolean
+  /** The organization runs Automations in the cloud, so the Calendar can create them. Off when unset. */
+  canSchedule?: boolean
   /** Where the person connects their own Google or Microsoft account, for the Calendar's connect links. */
   connectionsHref?: string | null
   /** The person can start side chats next to their main chat (the workbotSideChats feature). Off when unset. */

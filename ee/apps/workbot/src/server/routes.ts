@@ -119,6 +119,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       organizationName: who.organization.name,
       enabled: who.enabled,
       calendar: who.enabled && who.calendar === true,
+      canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
@@ -139,7 +140,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       const response = await fetch(`${config.calendarMockUrl}${path}${url.search}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(20_000) })
       return new Response(JSON.stringify(await response.json().catch(() => null)), { status: response.status, headers: { "content-type": "application/json" } })
     }
-    const body = method === "PATCH" ? await c.req.json().catch(() => null) : method === "POST" ? {} : undefined
+    // Schedule edits and new Automations carry a body; Pause / Resume / Run now do not. Den checks both.
+    const body = method === "PATCH" || (method === "POST" && path === "/v1/cloud-automations") ? await c.req.json().catch(() => null) : method === "POST" ? {} : undefined
     const { status, payload } = await den.calendar(member.accessToken, { method, path: `${path}${url.search}`, body })
     return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } })
   }

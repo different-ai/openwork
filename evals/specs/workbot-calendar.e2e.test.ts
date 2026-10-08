@@ -64,6 +64,21 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     await user.screenshot();
   });
 
+  await step("Alex clicks an empty Wednesday slot next week and creates a cloud Automation that repeats there", async () => {
+    await user.click({ role: "button", label: /^New automation on Wed, .* at 12:30 PM$/ });
+    await user.see({ text: /Runs on .*'s cloud computer\./ });
+    await user.type({ role: "textbox", label: /^What should .* do\?$/ }, "Check the launch checklist for anything still open");
+    await user.click({ role: "radio", label: "Wednesdays" });
+    await user.click({ role: "button", text: "Create automation" });
+    await user.see({ text: "Automation created" });
+    await user.see({ text: /^Every Wednesday at 12:30 PM/ });
+    await user.see({ role: "button", label: /^Check the launch checklist for anything still open, Scheduled/ });
+    const created = await count('[data-calendar-automation][aria-label^="Check the launch checklist"]');
+    evidence.recordAssertionEvidence("created through Workbot and Den", `${created} new slot(s) on next week's grid; the panel shows "Every Wednesday at 12:30 PM"`, created >= 1);
+    expect(created).toBeGreaterThanOrEqual(1);
+    await user.screenshot();
+  });
+
   await step("Workbot's Calendar has its own switch: turning it off stops Workbot's Calendar and leaves the desktop's on", async () => {
     await world.turnOffWorkbotCalendar();
     const features = await world.features();
@@ -71,6 +86,6 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     evidence.recordAssertionEvidence("separate switches", `workbotCalendar ${features.workbotCalendar}, automationCalendar ${features.automationCalendar}; Workbot's Calendar API answers ${status}`, !features.workbotCalendar && features.automationCalendar && status === 403);
     expect(features).toEqual({ workbotCalendar: false, automationCalendar: true });
     expect(status).toBe(403);
-    await user.see({ text: "Paused" });
+    await user.see({ text: /^Every Wednesday at 12:30 PM/ });
   });
 });

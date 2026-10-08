@@ -16,8 +16,10 @@ import {
   layoutOverlappingBlocks,
   localDateOf,
   minutesIntoDay,
+  nextOpenSlot,
   runPlacement,
   shiftAnchor,
+  slotAt,
   startOfDay,
   weekdayOf,
   zonedParts,
@@ -31,8 +33,10 @@ import {
 } from "@openwork/calendar";
 import { useMeetingsQuery, useRunsInRangeQuery } from "@openwork/calendar/react";
 import type { AutomationList, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
-import { ChevronLeft, ChevronRight, Lock, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Lock, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { CreateAutomationCard, type CreateAnchor } from "./calendar-create";
+import { workbotHost } from "./host";
 import { calendarKey, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations } from "./calendar-data";
 
 /**
@@ -172,6 +176,8 @@ function TimeGrid(props: {
   range: CalendarRange; days: LocalDate[]; zone: string; now: number;
   automations: AutomationCalendarItem[]; meetings: CalendarEvent[]; list: readonly ListItem[];
   selection: Selection; onSelect: (selection: Selection) => void;
+  /** Opens "New automation" at an empty slot; the card is placed near the click. */
+  onCreateAt: (anchor: CreateAnchor) => void;
 }) {
   const today = localDateOf(props.now, props.zone);
   const perDay = props.days.map((day) => {
@@ -238,6 +244,29 @@ function TimeGrid(props: {
             {perDay.map(({ day, blocks, placements }) => (
               <div key={`col-${dateKey(day)}`} className="relative flex flex-1 basis-0 flex-col border-l border-[#0116270F]">
                 {hours.map((hour) => <div key={hour} className="h-14.5 shrink-0 border-t border-[#0116270F]" />)}
+                {/* Empty half hours: hover shows where a new automation would go, a click opens the card there. */}
+                {hours.flatMap((hour) => [0, 30].map((minute) => {
+                  const slot = slotAt(day, hour * 60 + minute, props.zone);
+                  const time = formatTime(slot.at, props.zone);
+                  return (
+                    <button
+                      key={`slot-${hour}-${minute}`}
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={`New automation on ${formatDate(day, "en-US")} at ${time}`}
+                      data-calendar-slot={`${dateKey(day)}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`}
+                      onClick={(event) => props.onCreateAt({ slot, x: event.clientX + 12, y: event.clientY - 28 })}
+                      className="group absolute inset-x-0 z-0 pl-1 pr-1.5 focus-visible:outline-none"
+                      style={{ top: (hour - firstHour) * HOUR_PX + (minute ? HOUR_PX / 2 : 0) + 1, height: HOUR_PX / 2 - 1 }}
+                    >
+                      <span className="hidden h-full items-center gap-1.5 rounded-md border-[1.5px] border-dashed border-[#01162759] bg-[#0116270A] px-2 group-hover:flex">
+                        <Plus size={11} strokeWidth={2.25} className="shrink-0 text-[#011627]" aria-hidden />
+                        <span className="truncate text-[11px] font-semibold leading-3.5 text-[#011627]">New automation</span>
+                        <span className="shrink-0 text-[11px] leading-3.5 text-[#687076]">{time}</span>
+                      </span>
+                    </button>
+                  );
+                }))}
                 {blocks.map((block) => {
                   const placement = placements.get(block.key) ?? { column: 0, columns: 1 };
                   const y = Math.max(0, top(block.start, day));
@@ -518,7 +547,7 @@ function weekdaysOnly(days: LocalDate[], automations: AutomationCalendarItem[], 
   return busy ? days : days.filter((day) => weekdayOf(day) !== 0 && weekdayOf(day) !== 6);
 }
 
-export function WorkbotCalendar({ connectionsHref }: { connectionsHref: string | null }) {
+export function WorkbotCalendar({ connectionsHref, assistantName }: { connectionsHref: string | null; assistantName: string }) {
   const zone = timeZone();
   const sources = useCalendarSources();
   const [now, setNow] = useState(() => Date.now());
@@ -527,6 +556,7 @@ export function WorkbotCalendar({ connectionsHref }: { connectionsHref: string |
   const [layers, setLayers] = useState({ automations: true, meetings: true });
   const [selection, setSelection] = useState<Selection>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [creating, setCreating] = useState<CreateAnchor | null>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -576,6 +606,17 @@ export function WorkbotCalendar({ connectionsHref }: { connectionsHref: string |
               <button type="button" aria-label="Previous" onClick={() => setAnchor((current) => shiftAnchor(view, current, -1))} className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><ChevronLeft size={15} strokeWidth={1.75} /></button>
               <button type="button" aria-label="Next" onClick={() => setAnchor((current) => shiftAnchor(view, current, 1))} className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><ChevronRight size={15} strokeWidth={1.75} /></button>
             </div>
+            <button
+              type="button"
+              data-calendar-new
+              onClick={(event) => {
+                const box = event.currentTarget.getBoundingClientRect();
+                setCreating({ slot: nextOpenSlot(Date.now(), zone), x: box.left, y: box.bottom + 8 });
+              }}
+              className="flex h-7 items-center gap-1.25 rounded-[7px] px-2.5 text-[12px] font-medium text-black shadow-[0_0_0_1px_#0116271A] hover:bg-[#F4F6F7] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+            >
+              <Plus size={12} strokeWidth={2} aria-hidden />New automation
+            </button>
             {compareDates(anchor, { year: nowParts.year, month: nowParts.month, day: nowParts.day }) !== 0 ? (
               <button type="button" onClick={() => setAnchor(localDateOf(Date.now(), zone))} className="h-7 rounded-[7px] px-2.5 text-[12px] font-medium text-black shadow-[0_0_0_1px_#0116271A]">Today</button>
             ) : null}
@@ -616,7 +657,7 @@ export function WorkbotCalendar({ connectionsHref }: { connectionsHref: string |
         ) : view === "month" ? (
           <MonthGrid range={range} zone={zone} now={now} anchorMonth={anchor.month} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} onOpenDay={(target) => { setAnchor(target); setView("day"); }} />
         ) : (
-          <TimeGrid range={range} days={days} zone={zone} now={now} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} />
+          <TimeGrid range={range} days={days} zone={zone} now={now} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} onCreateAt={setCreating} />
         )}
         {list.data && list.data.items.every((entry) => entry.automation.state === "archived") && layers.automations ? (
           <p className="py-4 pl-16 text-[13px] text-[#687076]" data-calendar-empty>No automations yet. Ask in Home to set up something that repeats.</p>
@@ -625,6 +666,20 @@ export function WorkbotCalendar({ connectionsHref }: { connectionsHref: string |
       {selectedItem ? <AutomationPanel key={selectedItem.automation.id} item={selectedItem} block={selectedBlock} zone={zone} onToast={setToast} />
         : selectedMeeting ? <MeetingPanel event={selectedMeeting} zone={zone} />
         : <aside className="hidden w-95 shrink-0 border-l border-[#01162712] bg-white p-6 text-[13px] text-[#687076] lg:block">Pick something on the calendar to see it here.</aside>}
+      {creating ? (
+        <CreateAutomationCard
+          key={creating.slot.at}
+          anchor={creating}
+          assistantName={assistantName}
+          canSchedule={workbotHost().canSchedule === true}
+          onClose={() => setCreating(null)}
+          onCreated={(automationId) => {
+            setCreating(null);
+            setSelection({ kind: "automation", automationId, itemKey: null });
+            setToast("Automation created");
+          }}
+        />
+      ) : null}
       {toast ? (
         <div role="status" className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-[#011627] px-4 py-2 text-[13px] font-medium text-[#E6EDF3] shadow-[var(--wb-panel-shadow)]">{toast}</div>
       ) : null}

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef } from "react"
-import { CheckCircle2, Cloud, Loader2, Lock, MinusCircle, Monitor, XCircle } from "lucide-react"
+import { CheckCircle2, Cloud, Loader2, Lock, MinusCircle, Monitor, Plus, XCircle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import {
@@ -19,6 +19,10 @@ import {
   localDateOf,
   minutesIntoDay,
   startOfDay,
+  dateKey,
+  formatDate,
+  slotAt,
+  type CalendarSlot,
 } from "@openwork/calendar"
 
 export const HOUR_HEIGHT_PX = 48
@@ -38,6 +42,8 @@ type GridProps = {
   meetings: readonly CalendarEvent[]
   selection: CalendarSelection
   onSelect: (selection: CalendarSelection) => void
+  /** Opens "New automation" at an empty half hour; the card is placed near the click. */
+  onCreateAt?: (anchor: { slot: CalendarSlot; x: number; y: number }) => void
 }
 
 const STATUS_LABEL: Record<AutomationCalendarItem["status"], string> = {
@@ -238,6 +244,29 @@ export function CalendarTimeGrid(props: GridProps) {
                 className="relative border-l border-border"
                 style={{ backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent ${HOUR_HEIGHT_PX - 1}px, var(--border) ${HOUR_HEIGHT_PX - 1}px, var(--border) ${HOUR_HEIGHT_PX}px)` }}
               >
+                {props.onCreateAt ? Array.from({ length: 48 }, (_, index) => {
+                  // Empty half hours: hover shows where a new automation would go; a click opens the card there.
+                  const slot = slotAt(day, index * 30, props.timeZone)
+                  const time = formatTime(slot.at, props.timeZone)
+                  return (
+                    <button
+                      key={`slot-${index}`}
+                      type="button"
+                      tabIndex={-1}
+                      aria-label={`New automation on ${formatDate(day)} at ${time}`}
+                      data-calendar-slot={`${dateKey(day)}T${String(slot.hour).padStart(2, "0")}:${String(slot.minute).padStart(2, "0")}`}
+                      className="group absolute inset-x-0 z-0 px-0.5 focus-visible:outline-none"
+                      style={{ top: index * (HOUR_HEIGHT_PX / 2) + 1, height: HOUR_HEIGHT_PX / 2 - 2 }}
+                      onClick={(event) => props.onCreateAt?.({ slot, x: event.clientX + 12, y: event.clientY - 28 })}
+                    >
+                      <span className="hidden h-full items-center gap-1 rounded-md border border-dashed border-foreground/35 bg-foreground/[0.04] px-1.5 text-xs group-hover:flex">
+                        <Plus className="size-3 shrink-0" aria-hidden="true" />
+                        <span className="truncate font-medium">New automation</span>
+                        <span className="shrink-0 text-muted-foreground">{time}</span>
+                      </span>
+                    </button>
+                  )
+                }) : null}
                 {blocks.map((block) => {
                   const placement = placements.get(block.key) ?? { column: 0, columns: 1 }
                   const top = Math.min(minutesIntoDay(block.start, day, props.timeZone), DAY_MINUTES) / 60 * HOUR_HEIGHT_PX

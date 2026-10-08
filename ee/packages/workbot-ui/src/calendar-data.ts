@@ -12,6 +12,8 @@ import {
   type CalendarTransport,
 } from "@openwork/calendar";
 import {
+  AUTOMATION_CLOUD_DEFAULT_MODEL,
+  automationDetailSchema,
   automationListSchema,
   automationRunRangeSchema,
   automationRunReceiptSchema,
@@ -119,6 +121,25 @@ export function useCalendarAction() {
       const verb = action.kind === "pause" ? "deactivate" : action.kind === "resume" ? "activate" : "run";
       await calendarJson(anyJson, `${base}/${verb}`, { method: "POST", body: "{}" });
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: calendarKey }),
+  });
+}
+
+/**
+ * Creates a Cloud Automation from the Calendar: Workbot has no desktop, so it always runs in the cloud on the
+ * organization's cloud default model, the way Workbot's own scheduling does.
+ */
+export function useCreateAutomation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; instructions: string; schedule: AutomationSchedule }) => calendarJson(automationDetailSchema, "/v1/cloud-automations", {
+      method: "POST",
+      body: JSON.stringify({
+        name: input.name,
+        schedule: input.schedule,
+        action: { kind: "agent", instructions: input.instructions, model: { providerId: AUTOMATION_CLOUD_DEFAULT_MODEL.providerId, modelId: AUTOMATION_CLOUD_DEFAULT_MODEL.modelId, variant: null } },
+      }),
+    }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: calendarKey }),
   });
 }

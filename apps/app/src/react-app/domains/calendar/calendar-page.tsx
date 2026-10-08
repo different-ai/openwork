@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react"
-import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Lock, RefreshCw } from "lucide-react"
+import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Lock, Plus, RefreshCw } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router"
 import type { AutomationRun } from "@openwork/types/automations"
 
@@ -38,10 +38,13 @@ import {
   formatTime,
   type LocalDate,
   localDateOf,
+  nextOpenSlot,
   parseDateKey,
   shiftAnchor,
 } from "@openwork/calendar"
 import { AutomationDetailPanel, MeetingDetailPanel } from "./calendar-detail-panel"
+import { CreateAutomationCard, type CreateAnchor } from "./calendar-create"
+import { toast } from "@/components/ui/sonner"
 import { CalendarMonthGrid, CalendarTimeGrid, type CalendarSelection } from "./calendar-grid"
 import {
   calendarProviderPresence,
@@ -111,7 +114,7 @@ function CalendarSkeleton() {
  * from their connected Google or Outlook calendar. Automations come from Den;
  * meetings are read-only overlays (nothing is written to the member's calendar).
  */
-export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?: () => void }) {
+export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?: () => void; workspaceId?: string | null }) {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
   const platform = usePlatform()
@@ -148,6 +151,7 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
     }
   })
   const [layers, setLayers] = useState<Layers>(readLayers)
+  const [creating, setCreating] = useState<CreateAnchor | null>(null)
   const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<CalendarProviderId>>(new Set())
 
   useEffect(() => {
@@ -259,6 +263,17 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
           <Button variant="ghost" size="icon-sm" aria-label="Next" onClick={() => setAnchor((current) => shiftAnchor(view, current, 1))}><ChevronRight /></Button>
         </div>
         <h2 className="text-[15px] font-semibold tracking-[-0.2px]" data-calendar-range-label>{formatRangeLabel(range, anchor)}</h2>
+        <Button
+          variant="outline"
+          size="sm"
+          data-calendar-new
+          onClick={(event) => {
+            const box = event.currentTarget.getBoundingClientRect()
+            setCreating({ slot: nextOpenSlot(Date.now(), timeZone), x: box.left, y: box.bottom + 8 })
+          }}
+        >
+          <Plus />New automation
+        </Button>
         <ToggleGroup
           className="ml-auto"
           aria-label="Calendar view"
@@ -378,6 +393,7 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
               meetings={meetings}
               selection={selection}
               onSelect={setSelection}
+              onCreateAt={setCreating}
             />
           )}
           {noAutomations && layers.automations ? (
@@ -389,6 +405,20 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
             </div>
           ) : null}
         </div>
+        {creating ? (
+          <CreateAutomationCard
+            key={creating.slot.at}
+            anchor={creating}
+            context={denContext}
+            workspaceId={props.workspaceId ?? null}
+            onClose={() => setCreating(null)}
+            onCreated={(detail) => {
+              setCreating(null)
+              setSelection({ kind: "automation", automationId: detail.automation.id, itemKey: null })
+              toast.success("Automation created")
+            }}
+          />
+        ) : null}
         {selectedAutomation ? (
           <AutomationDetailPanel
             key={selectedAutomation.automation.id}

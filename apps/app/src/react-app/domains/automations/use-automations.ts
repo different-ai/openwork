@@ -5,7 +5,10 @@ import type { AutomationRun } from "@openwork/types/automations"
 import { createDenClient, DenApiError, readDenSettings, type DenClient } from "@/app/lib/den"
 import { toast } from "@/components/ui/sonner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
+import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 import { dispatchAutomationsStateChanged } from "./automation-events"
+import { automationModelOptions, type AutomationProviderCatalog } from "./automation-model-options"
 
 /**
  * Den access, queries and actions shared by the Automations page and the
@@ -101,4 +104,26 @@ export function useAutomationActions(context: AutomationsDenContext) {
     }
   }, [refresh])
   return { busyAction, setBusyAction, refresh, act }
+}
+
+/**
+ * The models an Automation can use, per placement, the same way the editor offers them: the organization's
+ * providers, plus the free Zen starter on desktops where policy and the local runtime allow it.
+ */
+export function useAutomationModelChoices(context: AutomationsDenContext, providerCatalog?: AutomationProviderCatalog) {
+  const zenModelRestricted = useDesktopRestriction("allowZenModel")
+  const freeStarterInRuntime = providerCatalog === undefined || Boolean(
+    providerCatalog[AUTOMATION_FREE_MODEL.providerId]?.[AUTOMATION_FREE_MODEL.modelId],
+  )
+  const providersQuery = useQuery({
+    queryKey: [...context.queryRoot, "models"],
+    queryFn: () => context.client!.listOrgLlmProviders(context.organizationId!),
+    enabled: context.ready,
+  })
+  const desktop = useMemo(
+    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted && freeStarterInRuntime }),
+    [freeStarterInRuntime, providersQuery.data, zenModelRestricted],
+  )
+  const cloud = useMemo(() => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: false }), [providersQuery.data])
+  return { desktop, cloud, providersQuery }
 }

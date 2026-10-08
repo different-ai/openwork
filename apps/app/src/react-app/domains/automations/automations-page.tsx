@@ -30,7 +30,7 @@ import type {
   AutomationState,
   CreateAutomation,
 } from "@openwork/types/automations"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, automationScheduleSchema } from "@openwork/types/automations"
 
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -51,7 +51,6 @@ import { toast } from "@/components/ui/sonner"
 import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { t } from "../../../i18n"
-import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
 import { automationCloudOptions, automationCloudRunAvailable, automationPlacementChoices, resolveAutomationPlacement } from "./automation-placement"
@@ -68,12 +67,13 @@ import {
   useAutomationDetailQuery,
   useAutomationListQuery,
   useAutomationRunsQuery,
+  useAutomationModelChoices,
   useAutomationsDenContext,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
 import { automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
-import { automationModelOptions, describeAutomationModel } from "./automation-model-options"
+import { describeAutomationModel } from "./automation-model-options"
 
 const AUTOMATIONS_PAGE_FAST_POLL_MS = AUTOMATIONS_FAST_POLL_MS
 
@@ -111,6 +111,28 @@ function inputDefaults(models: readonly AutomationModelOption[]): CreateAutomati
     instructions: "",
     schedule: { kind: "daily", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour: 9, minute: 0 },
     model: { providerId: first.providerId, modelId: first.modelId, variant: null },
+  }
+}
+
+/** Name, instructions and schedule handed over from the Calendar (`?create=1&name&instructions&schedule`). */
+function calendarPrefill(params: URLSearchParams): Pick<CreateAutomation, "name" | "instructions" | "schedule"> | null {
+  const schedule = automationScheduleSchema.safeParse(safeJson(params.get("schedule")))
+  const name = params.get("name")?.trim() ?? ""
+  const instructions = params.get("instructions")?.trim() ?? ""
+  if (!schedule.success && !name && !instructions) return null
+  return {
+    name,
+    instructions,
+    schedule: schedule.success ? schedule.data : inputDefaults([]).schedule,
+  }
+}
+
+function safeJson(value: string | null): unknown {
+  if (!value) return null
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
   }
 }
 
@@ -177,18 +199,12 @@ export function AutomationsPage(props: {
   // A Den "Automate this Workflow" link lands here with the exact version to pin.
   const workflowId = searchParams.get("workflow")?.trim() || null
   const workflowVersionId = searchParams.get("version")?.trim() || null
+  // The Calendar's "More options" lands here with what the person already typed and picked.
+  const prefill = calendarPrefill(searchParams)
   const placement = automationCreationPlacement()
-  const zenModelRestricted = useDesktopRestriction("allowZenModel")
-  const freeStarterInRuntime = props.providerCatalog === undefined || Boolean(
-    props.providerCatalog[AUTOMATION_FREE_MODEL.providerId]?.[AUTOMATION_FREE_MODEL.modelId],
-  )
 
   const listQuery = useAutomationListQuery(denContext)
-  const providersQuery = useQuery({
-    queryKey: [...queryRoot, "models"],
-    queryFn: () => client!.listOrgLlmProviders(organizationId!),
-    enabled: ready,
-  })
+  const { desktop: desktopModels, cloud: cloudModels } = useAutomationModelChoices(denContext, props.providerCatalog)
   const runnerPresenceQuery = useQuery({
     queryKey: [...queryRoot, "runner-presence"],
     queryFn: () => client!.getAutomationDesktopRunnerPresence(organizationId!),
@@ -236,18 +252,6 @@ export function AutomationsPage(props: {
     },
   })
 
-  // The free Zen starter is a published-Desktop exception; Cloud runs revalidate
-  // against the organization's own providers.
-  const desktopModels = useMemo(
-    () => automationModelOptions(providersQuery.data ?? [], {
-      includeFreeStarter: !zenModelRestricted && freeStarterInRuntime,
-    }),
-    [freeStarterInRuntime, providersQuery.data, zenModelRestricted],
-  )
-  const cloudModels = useMemo(
-    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: false }),
-    [providersQuery.data],
-  )
   const modelsFor = (target: AutomationExecutionTarget) => target === "cloud" ? cloudModels : desktopModels
   const modelsByPlacement = { desktop: desktopModels, cloud: cloudModels }
   const filteredItems = useMemo(() => {
@@ -353,8 +357,10 @@ export function AutomationsPage(props: {
           cloudOptions={cloudOptions}
           onThisComputer={isDesktopRuntime()}
           connectedAccounts={connectedAccounts}
-          initial={workflow && workflowVersion ? { ...inputDefaults(modelsFor(createPlacement)), name: `${workflow.title} refresh` } : undefined}
-          initialKey={workflowVersion?.id}
+          initial={workflow && workflowVersion
+            ? { ...inputDefaults(modelsFor(createPlacement)), name: `${workflow.title} refresh` }
+            : prefill ? { ...inputDefaults(modelsFor(createPlacement)), ...prefill } : undefined}
+          initialKey={workflowVersion?.id ?? (prefill ? "calendar" : undefined)}
           pinnedWorkflow={workflow && workflowVersion ? { title: workflow.title, configObjectVersionId: workflowVersion.id } : undefined}
           busy={busyAction === "create"}
           modelOptions={modelsFor(createPlacement)}

@@ -229,7 +229,7 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
           nav={<WorkbotNav tab={tab} onTab={setTab} />}
         />
         <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
-          <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} />
+          <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />
         </div>
       </div>
     );
