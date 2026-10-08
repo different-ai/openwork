@@ -27,7 +27,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Linking, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { WorkbotHeader } from "../chat/header"
-import { QuietButton } from "../ui/controls"
+import { QuietButton, Toast } from "../ui/controls"
 import { color } from "../theme"
 import { AutomationSheet, CreateSheet, MeetingSheet } from "./sheets"
 
@@ -173,7 +173,7 @@ export function WorkbotCalendarScreen({ me }: { me: WorkbotMe }) {
             if (!error || (error.kind === "not_connected" && connected.length > 0) || error.kind === "unsupported") return null
             return (
               <View key={provider} style={styles.provider}>
-                <Lock size={11} strokeWidth={2} color={color.muted} />
+                <View style={styles.providerMark}><Lock size={11} strokeWidth={2} color={color.muted} /></View>
                 {text && me.denUrl ? (
                   <Text accessibilityRole="link" style={styles.providerLink} onPress={() => void Linking.openURL(`${me.denUrl}/dashboard/your-connections`)}>{text}</Text>
                 ) : text ? (
@@ -207,7 +207,7 @@ export function WorkbotCalendarScreen({ me }: { me: WorkbotMe }) {
             const { item } = entry
             return (
               <Pressable accessibilityRole="button" accessibilityLabel={`${item.name}, ${formatTime(item.at, zone)}, ${STATUS[item.status]}`} onPress={() => setSelected({ kind: "automation", automationId: item.automationId, itemKey: item.key })} style={({ pressed }) => [styles.entry, styles.automation, item.status === "blocked" ? styles.blockedEntry : null, pressed ? styles.pressed : null]}>
-                <Text style={styles.time}>{formatTime(item.at, zone)}</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.time}>{formatTime(item.at, zone)}</Text>
                 <View style={styles.entryBody}>
                   <Text numberOfLines={1} style={styles.entryTitle}>{item.name}</Text>
                   <View style={styles.statusRow}>
@@ -221,7 +221,7 @@ export function WorkbotCalendarScreen({ me }: { me: WorkbotMe }) {
           const { event } = entry
           return (
             <Pressable accessibilityRole="button" onPress={() => setSelected({ kind: "meeting", key: event.key })} style={({ pressed }) => [styles.entry, styles.meeting, pressed ? styles.pressed : null]}>
-              <Text style={styles.time}>{entry.kind === "all-day" ? "All day" : formatTime(entry.start, zone)}</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.time}>{entry.kind === "all-day" ? "All day" : formatTime(entry.start, zone)}</Text>
               <View style={styles.entryBody}>
                 <Text numberOfLines={1} style={styles.entryTitle}>{event.title}</Text>
                 <Text numberOfLines={1} style={styles.entryMeta}>{event.timing.kind === "timed" ? `Until ${formatTime(event.timing.end, zone)}` : "All day"}{event.location ? ` · ${event.location}` : ""}</Text>
@@ -231,7 +231,7 @@ export function WorkbotCalendarScreen({ me }: { me: WorkbotMe }) {
         }}
         ListFooterComponent={list.data && list.data.items.every((entry) => entry.automation.state === "archived") && layers.automations ? <Text style={styles.empty}>No automations yet. Ask in Home to set up something that repeats.</Text> : null}
       />
-      <AutomationSheet item={selectedItem} block={selectedBlock} zone={zone} canSchedule={me.canSchedule} onClose={() => setSelected(null)} onToast={setToast} />
+      <AutomationSheet item={selectedItem} block={selectedBlock} zone={zone} canSchedule={me.canSchedule} toast={toast} onClose={() => setSelected(null)} onToast={setToast} />
       <MeetingSheet event={selectedMeeting} zone={zone} onClose={() => setSelected(null)} />
       {creating ? (
         <CreateSheet
@@ -246,14 +246,15 @@ export function WorkbotCalendarScreen({ me }: { me: WorkbotMe }) {
           }}
         />
       ) : null}
-      {toast ? <View pointerEvents="none" style={[styles.toast, { bottom: insets.bottom + 24 }]}><Text style={styles.toastText}>{toast}</Text></View> : null}
+      {/* An open sheet shows the toast itself: it covers this page. */}
+      {selectedItem ? null : <Toast text={toast} bottom={insets.bottom + 24} />}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: color.bg },
-  toolbar: { paddingHorizontal: 16, paddingTop: 8, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.hairline, paddingBottom: 10 },
+  toolbar: { paddingHorizontal: 16, paddingTop: 8, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.hairline, paddingBottom: 4 },
   titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { fontSize: 20, fontWeight: "600", letterSpacing: -0.3, color: "#000" },
   arrows: { flexDirection: "row", gap: 2 },
@@ -267,31 +268,32 @@ const styles = StyleSheet.create({
   spacer: { flex: 1 },
   newButton: { height: 32, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, borderRadius: 8, boxShadow: "0 0 0 1px #0116271A" },
   newText: { fontSize: 12.5, fontWeight: "500", color: "#000" },
-  layers: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 },
-  chip: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 28, maxWidth: "100%" },
-  check: { width: 14, height: 14, borderRadius: 4, alignItems: "center", justifyContent: "center", backgroundColor: color.surface, boxShadow: "inset 0 0 0 1.25px #9BA1A6" },
+  layers: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", columnGap: 16 },
+  // A label that wraps keeps its box on the first line.
+  chip: { flexDirection: "row", alignItems: "flex-start", gap: 6, paddingVertical: 6, maxWidth: "100%" },
+  check: { width: 14, height: 14, marginTop: 1, borderRadius: 4, alignItems: "center", justifyContent: "center", backgroundColor: color.surface, boxShadow: "inset 0 0 0 1.25px #9BA1A6" },
   checkOn: { backgroundColor: color.ink, boxShadow: "none" },
-  chipText: { flexShrink: 1, fontSize: 12, fontWeight: "500", color: "#000" },
+  chipText: { flexShrink: 1, fontSize: 12, lineHeight: 16, fontWeight: "500", color: "#000" },
   chipOff: { color: color.muted },
-  provider: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: "100%" },
-  providerText: { flexShrink: 1, fontSize: 12, color: color.muted },
-  providerLink: { flexShrink: 1, fontSize: 12, fontWeight: "500", color: "#000", textDecorationLine: "underline" },
+  provider: { flexDirection: "row", alignItems: "flex-start", gap: 4, paddingVertical: 6, maxWidth: "100%" },
+  providerMark: { height: 16, justifyContent: "center" },
+  providerText: { flexShrink: 1, fontSize: 12, lineHeight: 16, color: color.muted },
+  providerLink: { flexShrink: 1, fontSize: 12, lineHeight: 16, fontWeight: "500", color: "#000", textDecorationLine: "underline" },
   notice: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 16, paddingTop: 10 },
   noticeText: { fontSize: 13, color: color.muted },
   list: { paddingHorizontal: 16, paddingTop: 8 },
   dayHeader: { paddingTop: 16, paddingBottom: 6, fontSize: 13, fontWeight: "600", color: color.text, backgroundColor: color.bg },
   dayToday: { color: color.computerLineLive },
-  empty: { paddingVertical: 10, paddingLeft: 64, fontSize: 13, color: color.muted },
+  empty: { paddingVertical: 10, paddingLeft: 12, fontSize: 13, color: color.muted },
   entry: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 58, marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10 },
   automation: { backgroundColor: color.surface, boxShadow: "0 0 0 1px #0116270f, 0 1px 2px #0116270a" },
   blockedEntry: { backgroundColor: color.tray },
   meeting: { backgroundColor: "#EDF6FF" },
   pressed: { opacity: 0.8 },
-  time: { width: 52, fontSize: 12, fontWeight: "500", color: color.muted, fontVariant: ["tabular-nums"] },
+  // Wide enough for "12:30 PM" on one line; a larger text size shrinks it rather than wrapping it.
+  time: { width: 64, fontSize: 12, fontWeight: "500", color: color.muted, fontVariant: ["tabular-nums"] },
   entryBody: { flex: 1, minWidth: 0, gap: 3 },
   entryTitle: { fontSize: 14, fontWeight: "500", color: color.text },
   statusRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   entryMeta: { fontSize: 12, color: color.muted },
-  toast: { position: "absolute", alignSelf: "center", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, backgroundColor: color.ink },
-  toastText: { fontSize: 13, fontWeight: "500", color: "#E6EDF3" },
 })

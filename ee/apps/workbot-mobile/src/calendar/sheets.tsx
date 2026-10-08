@@ -8,7 +8,6 @@ import {
   formatTime,
   runPlacement,
   slotAt,
-  slotLabel,
   slotScheduleOptions,
   addDays,
   type AutomationCalendarItem,
@@ -22,24 +21,26 @@ import { Check, ChevronLeft, ChevronRight, Cloud, Lock, Minus, Monitor, X } from
 import { useState, type ReactNode } from "react"
 import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
-import { IconButton, QuietButton } from "../ui/controls"
+import { IconButton, QuietButton, Toast } from "../ui/controls"
+import { Pulse } from "../ui/motion"
 import { color } from "../theme"
 import { modelLabel, ModelPicker } from "./model-picker"
 
 export type ListItem = AutomationList["items"][number]
 
 /** A sheet over the Calendar: a title, a close button, and its content. */
-export function Sheet({ visible, title, onClose, children, footer }: { visible: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+export function Sheet({ visible, title, onClose, children, footer, toast = null }: { visible: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; toast?: string | null }) {
   const insets = useSafeAreaInsets()
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
         <View style={styles.head}>
           <Text accessibilityRole="header" numberOfLines={2} style={styles.headTitle}>{title}</Text>
-          <IconButton label="Close" onPress={onClose}><X size={16} strokeWidth={2} color={color.muted} /></IconButton>
+          <IconButton label="Close" onPress={onClose} style={styles.close}><X size={16} strokeWidth={2} color={color.muted} /></IconButton>
         </View>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">{children}</ScrollView>
         {footer ? <View style={styles.footer}>{footer}</View> : null}
+        <Toast text={toast} bottom={insets.bottom + (footer ? 78 : 24)} />
       </View>
     </Modal>
   )
@@ -62,6 +63,7 @@ function Action({ label, onPress, disabled, primary }: { label: string; onPress:
   )
 }
 
+const RUNNING: ReadonlySet<AutomationRun["status"]> = new Set(["queued", "claimed", "running"])
 const shortDate = (instant: number, zone: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: zone }).format(new Date(instant))
 
 function PastRun({ run, zone }: { run: AutomationRun; zone: string }) {
@@ -71,7 +73,7 @@ function PastRun({ run, zone }: { run: AutomationRun; zone: string }) {
   return (
     <View>
       <View style={styles.runRow}>
-        {run.status === "succeeded" ? <Check size={13} color="#30A46C" /> : run.status === "failed" ? <X size={13} color={color.danger} /> : <Minus size={13} color={color.muted} />}
+        {run.status === "succeeded" ? <Check size={13} color="#30A46C" /> : run.status === "failed" ? <X size={13} color={color.danger} /> : <Pulse active={RUNNING.has(run.status)}><Minus size={13} color={color.muted} /></Pulse>}
         <Text style={styles.runDate}>{shortDate(runPlacement(run), zone)}</Text>
         <Text numberOfLines={1} style={styles.runOutcome}>{describeRunOutcome(run)}</Text>
         <QuietButton label={open ? "Close" : "Open"} onPress={() => setOpen((value) => !value)} />
@@ -108,6 +110,17 @@ function Segmented<T extends string>({ value, options, onChange, label }: { valu
   )
 }
 
+/** A value with a step back and a step forward on either side ("Fri, Oct 9", "4:00 PM"). */
+function Stepper({ label, earlier, later, onEarlier, onLater }: { label: string; earlier: string; later: string; onEarlier: () => void; onLater: () => void }) {
+  return (
+    <View style={styles.stepper}>
+      <IconButton label={earlier} onPress={onEarlier}><ChevronLeft size={16} color={color.muted} /></IconButton>
+      <Text accessibilityLiveRegion="polite" numberOfLines={1} style={styles.stepperText}>{label}</Text>
+      <IconButton label={later} onPress={onLater}><ChevronRight size={16} color={color.muted} /></IconButton>
+    </View>
+  )
+}
+
 /** Hour and minute, half an hour at a time. */
 function TimeStepper({ hour, minute, onChange }: { hour: number; minute: number; onChange: (hour: number, minute: number) => void }) {
   const total = hour * 60 + minute
@@ -116,13 +129,7 @@ function TimeStepper({ hour, minute, onChange }: { hour: number; minute: number;
     onChange(Math.floor(next / 60), next % 60)
   }
   const label = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(new Date(Date.UTC(2024, 0, 1, hour, minute)))
-  return (
-    <View style={styles.stepper}>
-      <IconButton label="Earlier" onPress={() => set(total - 30)}><ChevronLeft size={16} color={color.muted} /></IconButton>
-      <Text style={styles.stepperText}>{label}</Text>
-      <IconButton label="Later" onPress={() => set(total + 30)}><ChevronRight size={16} color={color.muted} /></IconButton>
-    </View>
-  )
+  return <Stepper label={label} earlier="Half an hour earlier" later="Half an hour later" onEarlier={() => set(total - 30)} onLater={() => set(total + 30)} />
 }
 
 function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDraft: (schedule: AutomationSchedule) => void }) {
@@ -136,7 +143,7 @@ function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDra
       {draft.kind === "once" ? <Text style={styles.note}>This runs once, {formatInstant(draft.at, draft.timezone)}. Change it to repeat:</Text> : null}
       <Segmented label="Repeats" value={draft.kind === "weekly" ? "weekly" : draft.kind === "daily" ? "daily" : ("" as "daily")} options={[{ id: "daily", label: "Every day" }, { id: "weekly", label: "Some days" }]} onChange={setKind} />
       {draft.kind === "weekly" ? (
-        <View style={styles.days}>
+        <View style={styles.weekdays}>
           {WEEKDAYS.map(([label, value]) => {
             const on = draft.daysOfWeek.includes(value)
             return (
@@ -148,9 +155,9 @@ function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDra
                   const days = on ? draft.daysOfWeek.filter((day) => day !== value) : [...draft.daysOfWeek, value].sort((left, right) => left - right)
                   if (days.length > 0) setDraft({ ...draft, daysOfWeek: days })
                 }}
-                style={[styles.day, on ? styles.dayOn : null]}
+                style={[styles.day, styles.weekday, on ? styles.dayOn : null]}
               >
-                <Text style={[styles.dayText, on ? styles.dayTextOn : null]}>{label}</Text>
+                <Text numberOfLines={1} style={[styles.dayText, on ? styles.dayTextOn : null]}>{label}</Text>
               </Pressable>
             )
           })}
@@ -165,7 +172,7 @@ function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDra
 }
 
 /** Edit an Automation: what it does, when it repeats, and its model. Only what changed is sent. */
-function EditSheet({ item, canSchedule, visible, busy, onClose, onSave }: { item: ListItem; canSchedule: boolean; visible: boolean; busy: boolean; onClose: () => void; onSave: (changes: AutomationChanges) => void }) {
+function EditSheet({ item, canSchedule, visible, busy, toast, onClose, onSave }: { item: ListItem; canSchedule: boolean; visible: boolean; busy: boolean; toast: string | null; onClose: () => void; onSave: (changes: AutomationChanges) => void }) {
   const { revision } = item
   const target = revision.executionTarget ?? "desktop"
   const agent = revision.action?.kind !== "saved_script"
@@ -183,6 +190,7 @@ function EditSheet({ item, canSchedule, visible, busy, onClose, onSave }: { item
     <Sheet
       visible={visible}
       title="Edit automation"
+      toast={toast}
       onClose={onClose}
       footer={
         <View style={styles.actions}>
@@ -216,7 +224,7 @@ function EditSheet({ item, canSchedule, visible, busy, onClose, onSave }: { item
 }
 
 /** One Automation: when it runs next, how it repeats, where, its model and instructions, past runs, and its actions. */
-export function AutomationSheet({ item, block, zone, canSchedule, onClose, onToast }: { item: ListItem | null; block: AutomationCalendarItem | null; zone: string; canSchedule: boolean; onClose: () => void; onToast: (text: string) => void }) {
+export function AutomationSheet({ item, block, zone, canSchedule, toast, onClose, onToast }: { item: ListItem | null; block: AutomationCalendarItem | null; zone: string; canSchedule: boolean; toast: string | null; onClose: () => void; onToast: (text: string) => void }) {
   const runs = useAutomationRuns(item?.automation.id ?? null)
   const action = useCalendarAction()
   const [editing, setEditing] = useState(false)
@@ -230,6 +238,7 @@ export function AutomationSheet({ item, block, zone, canSchedule, onClose, onToa
     <Sheet
       visible
       title={automation.name}
+      toast={editing ? null : toast}
       onClose={onClose}
       footer={
         <View style={styles.actions}>
@@ -265,6 +274,7 @@ export function AutomationSheet({ item, block, zone, canSchedule, onClose, onToa
           canSchedule={canSchedule}
           visible={editing}
           busy={action.isPending}
+          toast={toast}
           onClose={() => setEditing(false)}
           onSave={(changes) => action.mutate({ kind: "edit", automationId: automation.id, changes }, {
             onSuccess: () => {
@@ -350,11 +360,7 @@ export function CreateSheet({ slot: initial, canSchedule, assistantName, onClose
       </View>
       <View style={styles.fieldGroup}>
         <Text style={styles.fieldLabel}>Starts</Text>
-        <View style={styles.slotRow}>
-          <IconButton label="A day earlier" onPress={() => move(-1, 0)}><ChevronLeft size={16} color={color.muted} /></IconButton>
-          <Text style={styles.slotText}>{slotLabel(slot)}</Text>
-          <IconButton label="A day later" onPress={() => move(1, 0)}><ChevronRight size={16} color={color.muted} /></IconButton>
-        </View>
+        <Stepper label={formatDate(slot.date, "en-US", { weekday: "short", month: "short", day: "numeric" })} earlier="A day earlier" later="A day later" onEarlier={() => move(-1, 0)} onLater={() => move(1, 0)} />
         <TimeStepper hour={slot.hour} minute={slot.minute} onChange={(hour, minute) => setSlot(slotAt(slot.date, hour * 60 + minute, slot.timeZone))} />
       </View>
       <View style={styles.fieldGroup}>
@@ -381,6 +387,8 @@ const styles = StyleSheet.create({
   sheet: { flex: 1, backgroundColor: color.surface },
   head: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8, paddingTop: 20, paddingHorizontal: 20, paddingBottom: 8 },
   headTitle: { flex: 1, fontSize: 18, fontWeight: "600", lineHeight: 23, letterSpacing: -0.3, color: color.text },
+  // The 36pt button centred on the title's first 23pt line, its X on the content edge.
+  close: { marginTop: -6.5, marginRight: -10 },
   content: { paddingHorizontal: 20, paddingBottom: 20, gap: 12 },
   footer: { paddingHorizontal: 20, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.hairline },
   when: { fontSize: 13, color: color.muted },
@@ -406,7 +414,7 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.8 },
   fields: { gap: 10 },
-  fieldGroup: { gap: 6 },
+  fieldGroup: { gap: 8 },
   fieldLabel: { fontSize: 12, fontWeight: "500", color: color.text },
   textArea: { minHeight: 96, padding: 12, borderRadius: 10, backgroundColor: color.surface, fontSize: 14, lineHeight: 20, color: color.text, textAlignVertical: "top", boxShadow: "inset 0 0 0 1px #0116271F" },
   segmented: { flexDirection: "row", padding: 2, borderRadius: 10, backgroundColor: color.chip },
@@ -415,14 +423,15 @@ const styles = StyleSheet.create({
   segmentText: { fontSize: 13, fontWeight: "500", color: color.muted },
   segmentTextOn: { fontWeight: "600", color: color.text },
   days: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  // The seven days share one row on any phone.
+  weekdays: { flexDirection: "row", gap: 4 },
+  weekday: { flex: 1, paddingHorizontal: 0, alignItems: "center" },
   day: { height: 34, paddingHorizontal: 12, borderRadius: 8, justifyContent: "center", boxShadow: "0 0 0 1px #0116271F" },
   dayOn: { backgroundColor: color.ink, boxShadow: "none" },
   dayText: { fontSize: 13, fontWeight: "500", color: color.text },
   dayTextOn: { color: color.onInk },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", height: 44, paddingHorizontal: 4, borderRadius: 10, boxShadow: "inset 0 0 0 1px #0116271F" },
   stepperText: { fontSize: 15, fontWeight: "500", color: color.text, fontVariant: ["tabular-nums"] },
-  slotRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  slotText: { fontSize: 14, fontWeight: "500", color: color.text },
   runsOn: { flexDirection: "row", alignItems: "flex-start", gap: 10, padding: 12, borderRadius: 10, boxShadow: "inset 0 0 0 1px #0116271A" },
   runsOnText: { flex: 1, gap: 2 },
   runsOnTitle: { fontSize: 13, fontWeight: "500", color: color.text },

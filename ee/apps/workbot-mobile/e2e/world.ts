@@ -14,7 +14,7 @@ const NAME = "workbot-phone";
 
 /** What Workbot says, scripted by what it was asked: enough to see every kind of answer on the phone. */
 const HELLO = [
-  "Hi again, Alex.",
+  "Hi Alex.",
   "",
   "You have **Launch review** at 2:00 PM, and two emails are waiting on you: Jordan asked about the pricing page, and Sam needs the Q4 numbers.",
   "",

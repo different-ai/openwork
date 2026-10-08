@@ -74,6 +74,16 @@ export function QuietLine({ label }: { label: string }) {
   )
 }
 
+/** A short confirmation ("Paused", "Automation created") floating near the bottom; it never takes a tap. */
+export function Toast({ text, bottom }: { text: string | null; bottom: number }) {
+  if (!text) return null
+  return (
+    <View pointerEvents="none" style={[styles.toast, { bottom }]}>
+      <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.toastText}>{text}</Text>
+    </View>
+  )
+}
+
 /** A card surface: white with Workbot's hairline shadow. */
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   return <View style={[styles.card, style]}>{children}</View>
@@ -99,4 +109,6 @@ const styles = StyleSheet.create({
   errorAction: { marginTop: -7, marginLeft: -2 },
   quietLine: { height: 24, paddingLeft: 4, fontSize: 13, lineHeight: 24, color: color.faint },
   card: { backgroundColor: color.surface, borderRadius: 14, boxShadow: shadow.card },
+  toast: { position: "absolute", alignSelf: "center", maxWidth: "88%", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, backgroundColor: color.ink, boxShadow: shadow.card },
+  toastText: { fontSize: 13, fontWeight: "500", color: color.onInk, textAlign: "center" },
 })

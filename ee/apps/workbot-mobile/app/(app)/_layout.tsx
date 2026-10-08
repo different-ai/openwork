@@ -40,6 +40,7 @@ export default function SignedInLayout() {
         <View style={styles.action}>
           <PrimaryButton label="Try again" onPress={() => void me.refetch()} />
         </View>
+        <QuietButton label="Sign out" tone="muted" onPress={() => void session.signOut()} />
       </View>
     )
   }
