@@ -248,12 +248,12 @@ describe.sequential("setup SSO full API and Web matrix", () => {
           await shot("Verify the exact original page works", route === "/install" ? "The page shows Set up OpenWork Enterprise and desktop download options." : "The page says Setup is complete.");
         } else {
           await person.see({ role: "heading", label: route === "/install" ? "This install link can't be opened." : "Setup is complete" }, { timeoutMs: 90_000 });
-          await shot(`Open the original ${route} link while signed out`, route === "/install" ? "The install page asks the person to sign in to the Den portal but has no Continue with SSO button." : "The completed setup page offers only generic Sign in, not Continue with SSO.");
+          await shot(`Open the original ${route} link while signed out`, route === "/install" ? "The install page asks the person to sign in to the Den portal but has no Continue with SSO button." : "The page says Setup is complete.");
           if (route === "/install") await person.see({ text: "Sign in to your Den portal to install OpenWork." });
           else await person.see({ role: "button", label: "Sign in" });
           await person.notSee({ role: "button", label: "Continue with SSO" });
           expect(await readSetupSsoBrowserUrl(browser)).toBe(original.toString());
-          await shot("Observe the missing direct SSO handoff", route === "/install" ? "The install page asks the person to sign in to the Den portal but has no Continue with SSO button." : "The completed setup page offers only generic Sign in, not Continue with SSO.");
+          await shot("Observe the missing direct SSO handoff", route === "/install" ? "The install page asks the person to sign in to the Den portal but has no Continue with SSO button." : "The page says Setup is complete.");
           await person.navigate(`${column.webUrl}/`);
           await person.see({ role: "button", label: "Continue with SSO" }, { timeoutMs: 90_000 });
           await shot("Manually navigate to home", "The sign-in page offers Continue with SSO.");
@@ -282,7 +282,7 @@ describe.sequential("setup SSO full API and Web matrix", () => {
           true,
         );
       } catch (error) {
-        await shot("Failure: preserve the observed state", "The browser page is visible for diagnosis.");
+        // A failed step closes the step channel; preserve its original error.
         evidence.recordAssertionEvidence(`${columnId} ${route}: observed failed route`, JSON.stringify({ documentStatus: response.status, finalUrl: sanitizedSetupSsoUrl(await readSetupSsoBrowserUrl(browser)), navigation: navigation.entries, mockOidc: true }), false);
         throw error;
       }
