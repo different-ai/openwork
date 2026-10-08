@@ -144,7 +144,12 @@ async function parseSkillEntry(
 
 async function listSkillsInDir(dir: string, scope: "project" | "global"): Promise<SkillItem[]> {
   if (!(await exists(dir))) return [];
-  const entries = await readdir(dir, { withFileTypes: true });
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
   const groups = await Promise.all(
     entries.map(async (entry) => {
       if (!entry.isDirectory()) return [];
