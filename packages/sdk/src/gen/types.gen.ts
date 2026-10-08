@@ -38,6 +38,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     activePeople: number;
     activeOrganizations: number;
@@ -50,6 +54,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     activePeople: number;
   };
@@ -61,6 +69,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
   };
   week: {
@@ -83,6 +95,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     id: string;
     name: string;
@@ -110,6 +126,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     organizations: number;
   } | null;

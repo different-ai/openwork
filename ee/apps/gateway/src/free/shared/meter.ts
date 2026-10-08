@@ -4,7 +4,7 @@ import { freeUsageAmount } from "@openwork/free-auto/accounting"
 import type { FreeProtocol } from "./request.js"
 import type { AutoConfig } from "./config.js"
 
-export type FreeMeterConfig = Pick<AutoConfig, "upstreamModel" | "inputPrice" | "outputPrice">
+export type FreeMeterConfig = Pick<AutoConfig, "upstreamModel" | "inputPrice" | "cachedInputPrice" | "outputPrice">
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
 function nonnegative(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 }
 /** OpenAI reports a dated snapshot (for example `gpt-6-luna-2026-09-22`) of the requested model. */
@@ -17,12 +17,16 @@ export function readFreeUsage(value: unknown, eventId: string, config: FreeMeter
   const inputTokens = protocol === "responses" ? usage.input_tokens : usage.prompt_tokens
   const outputTokens = protocol === "responses" ? usage.output_tokens : usage.completion_tokens
   const details = protocol === "responses" ? usage.output_tokens_details : usage.completion_tokens_details
+  const inputDetails = protocol === "responses" ? usage.input_tokens_details : usage.prompt_tokens_details
   if (!nonnegative(inputTokens) || !nonnegative(outputTokens)) return null
   if (record(details) && details.reasoning_tokens !== undefined
     && (!nonnegative(details.reasoning_tokens) || details.reasoning_tokens > outputTokens)) return null
-  const amount = freeUsageAmount(config, inputTokens, outputTokens)
+  // Input tokens include cache hits, which OpenAI bills at the cached input price.
+  const cachedInputTokens = record(inputDetails) && inputDetails.cached_tokens != null ? inputDetails.cached_tokens : 0
+  if (!nonnegative(cachedInputTokens) || cachedInputTokens > inputTokens) return null
+  const amount = freeUsageAmount(config, inputTokens, outputTokens, cachedInputTokens)
   if (!nonnegative(amount)) return null
-  return { amount, eventId, model: INFERENCE_FREE_MODEL_ID, inputTokens, outputTokens }
+  return { amount, eventId, model: INFERENCE_FREE_MODEL_ID, inputTokens, cachedInputTokens, outputTokens }
 }
 function publicResponse(value: Record<string, unknown>) {
   const result: Record<string, unknown> = { ...value, model: INFERENCE_FREE_MODEL_ID }

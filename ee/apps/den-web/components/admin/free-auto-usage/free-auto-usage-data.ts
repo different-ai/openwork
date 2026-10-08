@@ -9,6 +9,8 @@ export type FreeAutoUsage = {
   requests: number;
   estimatedRequests: number;
   inputTokens: number;
+  /** The part of inputTokens served from OpenAI's prompt cache. */
+  cachedInputTokens: number;
   outputTokens: number;
 };
 
@@ -46,7 +48,7 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 function isUsage(value: unknown): value is FreeAutoUsage {
-  return isRecord(value) && ["costMicroUsd", "requests", "estimatedRequests", "inputTokens", "outputTokens"].every((key) => isCount(value[key]));
+  return isRecord(value) && ["costMicroUsd", "requests", "estimatedRequests", "inputTokens", "cachedInputTokens", "outputTokens"].every((key) => isCount(value[key]));
 }
 function isOrganization(value: unknown): value is FreeAutoOrganizationUsage {
   if (!isRecord(value) || !isUsage(value)) return false;
@@ -120,8 +122,8 @@ function csvCell(value: string | number | boolean | null) {
 /** One row per listed organization, amounts in USD, for spreadsheets. */
 export function organizationsCsv(report: FreeAutoUsageReport): string {
   const header = ["organization_id", "name", "subscribed", "members", "active_people", "requests", "estimated_requests",
-    "input_tokens", "output_tokens", "spend_usd", "people_at_weekly_limit", "last_used_at"];
+    "input_tokens", "cached_input_tokens", "output_tokens", "spend_usd", "people_at_weekly_limit", "last_used_at"];
   const rows = report.organizations.map((row) => [row.id, row.name, row.subscribed, row.memberCount, row.activePeople, row.requests,
-    row.estimatedRequests, row.inputTokens, row.outputTokens, (row.costMicroUsd / 1_000_000).toFixed(6), row.peopleAtWeeklyLimit, row.lastUsedAt]);
+    row.estimatedRequests, row.inputTokens, row.cachedInputTokens, row.outputTokens, (row.costMicroUsd / 1_000_000).toFixed(6), row.peopleAtWeeklyLimit, row.lastUsedAt]);
   return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
 }

@@ -88,7 +88,14 @@ function organizationColumns(now: number): DenTableColumn<FreeAutoOrganizationUs
         </span>
       ),
     },
-    { key: "tokens", header: "Tokens in / out", align: "right", render: (row) => <span className="tabular-nums">{formatTokens(row.inputTokens)} / {formatTokens(row.outputTokens)}</span> },
+    {
+      key: "tokens", header: "Tokens in / out", align: "right", render: (row) => (
+        <span className="tabular-nums">
+          {formatTokens(row.inputTokens)} / {formatTokens(row.outputTokens)}
+          {row.cachedInputTokens ? <span className="block text-[12px] text-gray-400">{formatShare(row.cachedInputTokens, row.inputTokens)} of input cached</span> : null}
+        </span>
+      ),
+    },
     {
       key: "spend", header: "Spend", align: "right", render: (row) => (
         <span className="tabular-nums font-medium text-gray-900">
@@ -163,12 +170,13 @@ function Report({ report }: { report: FreeAutoUsageReport }) {
       </Section>
 
       <Section title="Signed-out desktops" description="Guests have no account or organization, so they are only shown as totals.">
-        <dl className="grid gap-4 sm:grid-cols-4">
+        <dl className="grid gap-4 sm:grid-cols-5">
           {[
             ["Spend", formatUsd(guests.costMicroUsd)],
             ["Requests", formatCount(guests.requests)],
             ["Charged the estimate", formatShare(guests.estimatedRequests, guests.requests)],
             ["Tokens in / out", `${formatTokens(guests.inputTokens)} / ${formatTokens(guests.outputTokens)}`],
+            ["Input cached", formatShare(guests.cachedInputTokens, guests.inputTokens)],
           ].map(([label, value]) => (
             <div key={label}>
               <dt className="text-[12px] text-gray-500">{label}</dt>

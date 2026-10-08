@@ -14,7 +14,7 @@ import { createFreeCapacity, type FreeCapacity } from "./capacity.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type FreeAllowanceFamily = "anonymous" | "member"
-export type FreeUsageReceipt = { eventId: string; model: string; amount: number; inputTokens: number; outputTokens: number }
+export type FreeUsageReceipt = { eventId: string; model: string; amount: number; inputTokens: number; cachedInputTokens: number; outputTokens: number }
 /** A usage window, like one paid Models limit policy window. */
 export type FreeWindow = { id: string; scope: "member" | "installation" | "global"; identity: string;
   window: "weekly" | "daily" | "monthly"; start: Date; end: Date; limit: number }
@@ -27,7 +27,8 @@ function stableId(parts: string[]) { return freeIdentityHash("free", parts.join(
 /** A receipt counts only if it is for the free model and its numbers are sane; otherwise the estimate is charged. */
 export function validFreeReceipt(receipt: FreeUsageReceipt | null): receipt is FreeUsageReceipt {
   return Boolean(receipt && receipt.eventId && receipt.eventId.length <= 255 && receipt.model === INFERENCE_FREE_MODEL_ID
-    && [receipt.amount, receipt.inputTokens, receipt.outputTokens].every((value) => Number.isSafeInteger(value) && value >= 0))
+    && [receipt.amount, receipt.inputTokens, receipt.cachedInputTokens, receipt.outputTokens].every((value) => Number.isSafeInteger(value) && value >= 0)
+    && receipt.cachedInputTokens <= receipt.inputTokens)
 }
 function isDuplicate(error: unknown): boolean {
   for (let current = error; current; current = (current as { cause?: unknown }).cause) {
@@ -184,7 +185,8 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
           receipt ? eq(usage.completion_id, receipt.eventId) : undefined)).limit(1)
         if (existing) return false
         const row = { request_id: input.requestId, completion_id: receipt?.eventId ?? null, principal_hash: freePrincipalHash(principal),
-          model_id: INFERENCE_FREE_MODEL_ID, amount, input_tokens: receipt?.inputTokens ?? null, output_tokens: receipt?.outputTokens ?? null, estimated: !receipt }
+          model_id: INFERENCE_FREE_MODEL_ID, amount, input_tokens: receipt?.inputTokens ?? null,
+          cached_input_tokens: receipt?.cachedInputTokens ?? null, output_tokens: receipt?.outputTokens ?? null, estimated: !receipt }
         try {
           if (principal.kind === "member") await tx.insert(MemberUsage).values({ ...row, organization_id: principal.organizationId,
             org_membership_id: principal.memberId, inference_key_id: principal.inferenceKeyId })
