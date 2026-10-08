@@ -2058,6 +2058,18 @@ async function boundedExternalMcpResponse(input: {
   background: boolean
   sniffProviderDeclaredError: boolean
 }): Promise<Response> {
+  if (input.response.status === 202) {
+    // 202 Accepted carries no JSON-RPC message. Some providers keep its body
+    // open, so reading it (to sniff or relay) would stall the MCP lifecycle.
+    void input.response.body?.cancel().catch(() => undefined)
+    const accepted = new Response(null, {
+      status: 202,
+      statusText: input.response.statusText,
+      headers: input.response.headers,
+    })
+    preserveResponseMetadata(accepted, input.response)
+    return accepted
+  }
   if (input.sniffProviderDeclaredError) {
     // Clone before any original .body getter access. Bun breaks the tee if the
     // original body getter is touched before clone(), which would empty the SDK body.
