@@ -158,6 +158,16 @@
               ],
               "description": "Workbot: side chats: Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. Renders DEN_FEATURE_WORKBOT_SIDE_CHATS."
             },
+            "workbotApps": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: Apps: Apps open inside Workbot's replies, so members use them right in the chat: Apps built in OpenWork and Apps from connected MCP servers. Needs Workbot. Renders DEN_FEATURE_WORKBOT_APPS."
+            },
             "litellm": {
               "enum": [
                 "",

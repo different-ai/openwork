@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import type { HeadlessRunnerClient, RunnerSavedFile } from "@openwork-ee/headless-protocol"
 import { AUTOMATION_CLOUD_DEFAULT_MODEL } from "@openwork/types/automations"
+import { callWorkbotAppTool, openWorkbotApp, setWorkbotAppContext, type WorkbotAppConnections } from "./apps.js"
 import { buildWorkbotTurns, GREETING_RUNNER_ID, interruptedTurnIds, threadBusy, WORKBOT_MESSAGE_PREFIX, type WorkbotTurn } from "./thread.js"
 
 /**
@@ -48,6 +49,11 @@ export type WorkbotDeps = {
   client: HeadlessRunnerClient | null
   /** Whether Workbot may set up recurring work (Automations on the headless runner) for this organization. */
   canSchedule: (organizationId: string) => Promise<boolean>
+  /**
+   * The person's App connections, where Apps open inside Workbot's replies (the workbotApps feature); null or unset
+   * where they don't, and replies show without them.
+   */
+  apps?: WorkbotAppConnections | null
 }
 
 const personKey = (organizationId: string, memberId: string) => createHash("sha256").update(`workbot:${organizationId}:${memberId}`).digest("hex").slice(0, 40)
@@ -143,7 +149,7 @@ function validTimeZone(value: string | undefined) {
 }
 
 export class WorkbotUnavailableError extends Error {
-  constructor(readonly code: "workbot_not_enabled" | "workbot_runner_unavailable") {
+  constructor(readonly code: "workbot_not_enabled" | "workbot_runner_unavailable" | "workbot_apps_not_enabled") {
     super(code)
     this.name = "WorkbotUnavailableError"
   }
@@ -170,6 +176,8 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     computer: true,
     reactions: true,
     tasks: true,
+    // Apps tool results open show inside the reply, and what they report reaches the model; off with the feature.
+    apps: Boolean(deps.apps),
     owner: workbotOwner(actor.organizationId, actor.memberId),
     timeZone,
   }
@@ -277,7 +285,7 @@ export async function readWorkbotThread(
     name,
     organizationName: actor.organizationName,
     status: threadBusy(read.value) ? "busy" : "idle",
-    turns: buildWorkbotTurns(read.value, names),
+    turns: buildWorkbotTurns(read.value, names, { apps: Boolean(deps.apps) }),
     hasEarlier: read.value.hasEarlier ?? false,
     filesEnabled,
   }
@@ -455,6 +463,50 @@ export async function deleteWorkbotFile(actor: WorkbotActor, fileId: string, dep
   return clientOf(deps).deleteFile(sessionOf(actor, chat), fileId)
 }
 
+/** One App in the conversation: the tool call `callId` in the turn `turnId` (a WorkbotTurn id) opened it. */
+export type WorkbotAppRef = { turnId: string; callId: string; chat?: WorkbotChat }
+
+const APP_TURN_ID = /^[A-Za-z0-9_.-]{1,100}$/
+const APP_CALL_ID = /^[A-Za-z0-9_.:-]{1,200}$/
+
+/** Where an App lives in the runner, for a person's own conversation only; null for ids no App can have. */
+function appTarget(actor: WorkbotActor, ref: WorkbotAppRef) {
+  if (!APP_TURN_ID.test(ref.turnId) || !APP_CALL_ID.test(ref.callId)) return null
+  return { sessionId: sessionOf(actor, ref.chat ?? null), messageId: `${WORKBOT_MESSAGE_PREFIX}${ref.turnId}`, callId: ref.callId }
+}
+
+function appsOf(deps: WorkbotDeps) {
+  if (!deps.apps) throw new WorkbotUnavailableError("workbot_apps_not_enabled")
+  return deps.apps
+}
+
+export async function openWorkbotAppView(actor: WorkbotActor, ref: WorkbotAppRef, deps: WorkbotDeps) {
+  const target = appTarget(actor, ref)
+  if (!target) return { ok: false as const, code: "unknown_app" as const }
+  return openWorkbotApp(appsOf(deps), clientOf(deps), target)
+}
+
+export async function callWorkbotAppViewTool(
+  actor: WorkbotActor,
+  ref: WorkbotAppRef & { name: string; arguments: Record<string, unknown>; clicked: boolean },
+  deps: WorkbotDeps,
+) {
+  const target = appTarget(actor, ref)
+  if (!target) return { ok: false as const, code: "unknown_app" as const }
+  return callWorkbotAppTool(appsOf(deps), clientOf(deps), target, ref)
+}
+
+export async function setWorkbotAppViewContext(
+  actor: WorkbotActor,
+  ref: WorkbotAppRef & { title: string; content?: unknown[]; structuredContent?: Record<string, unknown> },
+  deps: WorkbotDeps,
+) {
+  const target = appTarget(actor, ref)
+  if (!target) return { ok: false as const, code: "unknown_app" as const }
+  appsOf(deps)
+  return setWorkbotAppContext(clientOf(deps), target, ref)
+}
+
 /** Workbot for one host: every operation, bound to its runner and scheduling check. `chat` null is the main chat. */
 export function createWorkbot(deps: WorkbotDeps) {
   return {
@@ -479,6 +531,11 @@ export function createWorkbot(deps: WorkbotDeps) {
     downloadPreviewPage: (actor: WorkbotActor, fileId: string, page: number, chat: WorkbotChat = null) =>
       downloadWorkbotPreviewPage(actor, fileId, page, deps, chat),
     deleteFile: (actor: WorkbotActor, fileId: string, chat: WorkbotChat = null) => deleteWorkbotFile(actor, fileId, deps, chat),
+    openApp: (actor: WorkbotActor, ref: WorkbotAppRef) => openWorkbotAppView(actor, ref, deps),
+    callAppTool: (actor: WorkbotActor, ref: WorkbotAppRef & { name: string; arguments: Record<string, unknown>; clicked: boolean }) =>
+      callWorkbotAppViewTool(actor, ref, deps),
+    setAppContext: (actor: WorkbotActor, ref: WorkbotAppRef & { title: string; content?: unknown[]; structuredContent?: Record<string, unknown> }) =>
+      setWorkbotAppViewContext(actor, ref, deps),
   }
 }
 export type Workbot = ReturnType<typeof createWorkbot>

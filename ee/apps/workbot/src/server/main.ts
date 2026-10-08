@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { getRequestListener } from "@hono/node-server"
 import { serveStatic } from "@hono/node-server/serve-static"
 import { Hono } from "hono"
+import { buildMcpAppSandboxCsp, MCP_APP_SANDBOX_PROXY_HTML, parseMcpAppSandboxCsp } from "../../../../../apps/server/src/mcp-app-sandbox.js"
 import { createAuth, type AppEnv } from "./auth.js"
 import { loadConfig } from "./config.js"
 import { createDen } from "./den.js"
@@ -13,25 +14,37 @@ const config = loadConfig()
 const den = createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl })
 const auth = createAuth({ config, den })
 
+/** Where an App's page runs: the MCP Apps sandbox proxy the desktop app and Den's gateway serve too. */
+const APP_SANDBOX_PATH = "/mcp-apps/sandbox.html"
+
 const app = new Hono<AppEnv>()
 app.use("*", async (c, next) => {
   await next()
   c.header("X-Content-Type-Options", "nosniff")
   c.header("Referrer-Policy", "strict-origin-when-cross-origin")
-  c.header("X-Frame-Options", "DENY")
+  // Only the App sandbox may be framed, and only by Workbot's own page.
+  c.header("X-Frame-Options", c.req.path === APP_SANDBOX_PATH ? "SAMEORIGIN" : "DENY")
 })
 app.onError((error, c) => {
   console.error("[workbot] request failed", { path: c.req.path, error: error.message })
   return c.json({ error: "internal_error" }, 500)
 })
 app.get("/healthz", (c) => c.json({ ok: true }))
+// The page frames it without same-origin access, so the App runs in an origin of its own, under the policy it declared.
+app.get(APP_SANDBOX_PATH, (c) => new Response(MCP_APP_SANDBOX_PROXY_HTML, {
+  headers: {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Security-Policy": `${buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(c.req.query("csp") ?? null))}; frame-ancestors 'self'`,
+    "Cache-Control": "no-store",
+  },
+}))
 auth.register(app)
 registerWorkbotRoutes(app, { config, den, member: auth.member, sameOrigin: auth.sameOrigin })
 app.all("/v1/*", (c) => c.json({ error: "not_found" }, 404))
 app.all("/auth/*", (c) => c.json({ error: "not_found" }, 404))
 
 const clientDir = join(dirname(fileURLToPath(import.meta.url)), config.dev ? "../client" : "client")
-const isApi = (path: string) => path === "/healthz" || path.startsWith("/v1/") || path === "/v1" || path.startsWith("/auth/")
+const isApi = (path: string) => path === "/healthz" || path === APP_SANDBOX_PATH || path.startsWith("/v1/") || path === "/v1" || path.startsWith("/auth/")
 
 let server: ReturnType<typeof createServer>
 if (config.dev) {

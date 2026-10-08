@@ -43,6 +43,8 @@ export type WorkbotStep = z.infer<typeof stepSchema>;
 const partSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text"), text: z.string() }),
   z.object({ kind: z.literal("steps"), steps: z.array(stepSchema) }),
+  /** An App a tool result opened, shown where it opened (see useWorkbotApp). `app`: the connected app it came from. */
+  z.object({ kind: z.literal("app"), callId: z.string(), app: z.string().nullable() }),
 ]);
 export type WorkbotPart = z.infer<typeof partSchema>;
 const taskSchema = z.object({
@@ -616,4 +618,80 @@ export async function downloadWorkbotFile(file: { id: string; name: string }, ch
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+const appCspSchema = z.object({
+  connectDomains: z.array(z.string()),
+  resourceDomains: z.array(z.string()),
+  frameDomains: z.array(z.string()),
+  baseUriDomains: z.array(z.string()),
+});
+const appViewSchema = z.object({
+  title: z.string(),
+  /** The App's page, its policy already in place. */
+  html: z.string(),
+  csp: appCspSchema,
+  prefersBorder: z.boolean(),
+  input: z.record(z.string(), z.unknown()),
+  result: z
+    .object({
+      content: z.array(z.record(z.string(), z.unknown())),
+      structuredContent: z.record(z.string(), z.unknown()).optional(),
+      _meta: z.record(z.string(), z.unknown()).optional(),
+      isError: z.boolean().optional(),
+    })
+    .nullable(),
+});
+export type WorkbotAppView = z.infer<typeof appViewSchema>;
+
+const appPath = (turnId: string, callId: string) => `/v1/workbot/apps/${encodeURIComponent(turnId)}/${encodeURIComponent(callId)}`;
+
+/** Why an App can't open, in the person's words. */
+function appRefusal(status: number, payload: unknown) {
+  if (status === 404) return "This App isn't here anymore.";
+  if (status === 409) return getErrorMessage(payload, "This App isn't available right now.");
+  return "This App didn't open.";
+}
+
+/**
+ * One App in the chat, by the turn and tool call that opened it: its page and what it opened with. It opens with
+ * the same input and result every time; the App fetches anything newer itself.
+ */
+export function useWorkbotApp(turnId: string, callId: string) {
+  const chat = useWorkbotChat();
+  return useQuery({
+    queryKey: ["workbot", "app", chat ?? "main", turnId, callId],
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: 1,
+    queryFn: async () => {
+      const { response, payload } = await requestJson(inChat(appPath(turnId, callId), chat), { method: "GET" }, 60_000);
+      if (!response.ok) throw new Error(appRefusal(response.status, payload));
+      return appViewSchema.parse(payload);
+    },
+  });
+}
+
+/**
+ * Runs one of the App's own tools for the person. `clicked`: they clicked in the App just before, which anything
+ * that changes something needs. Resolves with the tool's result; rejects with a reason the App sees.
+ */
+export async function callWorkbotAppTool(chat: string | null, turnId: string, callId: string, input: { name: string; arguments: Record<string, unknown>; clicked: boolean }) {
+  const { response, payload } = await requestJson(inChat(`${appPath(turnId, callId)}/tools`, chat), { method: "POST", body: JSON.stringify(input) }, 130_000);
+  const parsed = z.object({ result: z.unknown() }).safeParse(payload);
+  if (response.ok && parsed.success) return parsed.data.result;
+  const code = z.object({ error: z.string() }).safeParse(payload);
+  if (code.success && code.data.error === "needs_click") throw new Error("This App tool runs only right after a click in the App.");
+  if (code.success && code.data.error === "tool_not_available") throw new Error(`${input.name} isn't available to this App.`);
+  throw new Error(getErrorMessage(payload, "The App's request didn't go through."));
+}
+
+/** What an open App tells the model about itself; the model sees it from its next step. */
+export async function setWorkbotAppContext(
+  chat: string | null,
+  turnId: string,
+  callId: string,
+  input: { title: string; content?: unknown[]; structuredContent?: Record<string, unknown> },
+) {
+  const { response } = await requestJson(inChat(`${appPath(turnId, callId)}/context`, chat), { method: "PUT", body: JSON.stringify(input) }, 30_000);
+  return response.ok;
 }

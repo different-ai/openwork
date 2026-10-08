@@ -29,6 +29,8 @@ import type {
   CreateMicrosoft365ReplyDraftErrors,
   CreateMicrosoft365ReplyDraftResponses,
   CreateOrganizationApiKeyRequest,
+  CreateWorkbotAppTokenErrors,
+  CreateWorkbotAppTokenResponses,
   CreateWorkbotRunTokenErrors,
   CreateWorkbotRunTokenResponses,
   DashboardElement,
@@ -14568,6 +14570,34 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/workbot/run-token",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * A short-lived token for the Apps open in Workbot
+   *
+   * For the Workbot app only. Mints the member-scoped MCP token Workbot's server uses to show the Apps in a person's chat: it reads an App's page from the connection that opened it and runs that App's tools as the person, for at most an hour. It stays on Workbot's server. Refused when Workbot's Apps are off for the workspace.
+   */
+  public createWorkbotAppToken<ThrowOnError extends boolean = false>(
+    parameters?: {
+      ttlMs?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "ttlMs" }] }]);
+    return (options?.client ?? this.client).post<
+      CreateWorkbotAppTokenResponses,
+      CreateWorkbotAppTokenErrors,
+      ThrowOnError
+    >({
+      url: "/v1/workbot/app-token",
       ...options,
       ...params,
       headers: {

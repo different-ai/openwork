@@ -19,6 +19,7 @@ import { checkRateLimit } from "../utils/rate-limit.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { createInternalMcpPrincipalHeader } from "../session.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
+import { WORKBOT_OAUTH_CLIENT_ID } from "./config.js"
 import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
 
 /**
@@ -42,6 +43,8 @@ const sessionSchema = z.object({
   calendar: z.boolean().optional(),
   /** The person can start side chats next to their main chat (the workbotSideChats feature). */
   sideChats: z.boolean(),
+  /** Apps open inside Workbot's replies (the workbotApps feature). Older Dens omit it. */
+  apps: z.boolean().optional(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
@@ -50,6 +53,8 @@ const signedOutSchema = z.object({ error: z.string(), message: z.string().option
 /** Plenty for one person's turns (each send and resume needs one); stops a runaway client minting in a loop. */
 const RUN_TOKENS_PER_WINDOW = 120
 const RUN_TOKEN_WINDOW_MS = 10 * 60_000
+/** Workbot keeps an App token until shortly before it expires, so a person needs a few an hour. */
+const APP_TOKENS_PER_WINDOW = 30
 
 type Principal = { userId: string; organizationId: string }
 type Resolved = {
@@ -60,6 +65,13 @@ type Resolved = {
   memberId: string
   /** MCP grant/client id of the Workbot token (never token material). */
   credentialId: string | null
+  /** The OAuth client the token was issued to (JWT `client_id`/`azp`). */
+  clientId: string | null
+}
+
+function tokenClientId(payload: Record<string, unknown>): string | null {
+  const value = payload.client_id ?? payload.azp
+  return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
 function readBrandAppName(metadata: unknown): string | null {
@@ -128,6 +140,7 @@ async function resolve(headers: Headers): Promise<Resolved | Response> {
     organization,
     memberId: member.id,
     credentialId: mcpPrincipalCredentialId(verified),
+    clientId: tokenClientId(verified.payload),
   }
 }
 
@@ -222,6 +235,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         canSchedule,
         calendar: features.workbot && features.workbotCalendar,
         sideChats: features.workbot && features.workbotSideChats,
+        apps: features.workbot && features.workbotApps,
       })
     },
   )
@@ -365,6 +379,46 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const ttlMs = c.req.valid("json").ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
       const { token } = await mintHeadlessRunMcpToken({ ...principal, ttlMs, readOnly })
       return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString() })
+    },
+  )
+
+  app.post(
+    "/v1/workbot/app-token",
+    describeWorkbotRoute({
+      tags: ["Workbot"],
+      operationId: "createWorkbotAppToken",
+      "x-mcp": false,
+      summary: "A short-lived token for the Apps open in Workbot",
+      description:
+        "For the Workbot app only. Mints the member-scoped MCP token Workbot's server uses to show the Apps in a person's chat: it reads an App's page from the connection that opened it and runs that App's tools as the person, for at most an hour. It stays on Workbot's server. Refused when Workbot's Apps are off for the workspace.",
+      responses: {
+        200: jsonResponse("The token.", runTokenSchema),
+        401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
+        403: jsonResponse("Workbot's Apps are off or the sign-in grant cannot use Apps.", signedOutSchema),
+        429: jsonResponse("Too many tokens requested.", z.object({ error: z.literal("rate_limited"), retryAfter: z.number() })),
+      },
+    }),
+    tokenRoute,
+    jsonValidator(z.object({ ttlMs: z.number().int().min(60_000).max(DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS).optional() })),
+    async (c) => {
+      const resolved = await resolve(c.req.raw.headers)
+      if (resolved instanceof Response) return resolved
+      const auditBlocked = await attributeWorkbot(c, resolved)
+      if (auditBlocked) return auditBlocked
+      const { principal, organization } = resolved
+      // Only Workbot's own sign-in may hold the App-host scope; any other client's grant is refused.
+      if (resolved.clientId !== WORKBOT_OAUTH_CLIENT_ID || !resolved.scopes.has(DEN_MCP_READ_SCOPE) || !resolved.scopes.has(DEN_MCP_WRITE_SCOPE)) {
+        return c.json({ error: "insufficient_scope", message: "The sign-in grant does not allow Apps in Workbot." }, 403)
+      }
+      const features = await getOrganizationFeatures(organization.id)
+      if (!features.workbot || !features.workbotApps) {
+        return c.json({ error: "workbot_apps_not_enabled", message: "Apps in Workbot are off for this workspace." }, 403)
+      }
+      const retryAfter = await checkRateLimit(`workbot-app-token:${principal.organizationId}:${principal.userId}`, APP_TOKENS_PER_WINDOW, RUN_TOKEN_WINDOW_MS, Date.now())
+      if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
+      const ttlMs = c.req.valid("json").ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
+      const { token, expiresAt } = await mintHeadlessRunMcpToken({ ...principal, ttlMs, appHost: true })
+      return c.json({ token, expiresAt: expiresAt.toISOString() })
     },
   )
 }

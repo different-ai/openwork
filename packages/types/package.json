@@ -68,6 +68,11 @@
       "development": "./src/mcp-app.ts",
       "default": "./src/mcp-app.ts"
     },
+    "./mcp-app-host": {
+      "types": "./src/mcp-app-host.ts",
+      "development": "./src/mcp-app-host.ts",
+      "default": "./src/mcp-app-host.ts"
+    },
     "./skill-created-app": {
       "types": "./src/skill-created-app.ts",
       "development": "./src/skill-created-app.ts",

@@ -73,7 +73,7 @@ export function reportPrompt(task: Turn, report: string) {
   return `${head}\n\n${report.trim() || "(It wrote no report.)"}`
 }
 
-function ago(at: number, now: number) {
+export function ago(at: number, now: number) {
   const minutes = Math.round((now - at) / 60_000)
   return minutes < 1 ? "just now" : minutes < 60 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`
 }

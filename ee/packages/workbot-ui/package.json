@@ -19,6 +19,8 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@openwork/calendar": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
