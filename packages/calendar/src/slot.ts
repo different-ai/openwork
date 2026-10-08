@@ -66,7 +66,7 @@ const NAME_LIMIT = 60
 
 /** A short name from the request: its first sentence or line, capped at 60 characters on a word. */
 export function automationNameFrom(instructions: string): string {
-  const first = trimEnd(firstSentence(instructions.trim()), (char) => char === "." || char === "!" || char === "?")
+  const first = trimEnd(firstSentence(instructions.trim()), (char) => char === "." || char === "!" || char === "?").trimEnd()
   if (!first) return "New automation"
   const capped = first.length <= NAME_LIMIT ? first : `${cutOnWord(first.slice(0, NAME_LIMIT))}…`
   return capped.charAt(0).toUpperCase() + capped.slice(1)
