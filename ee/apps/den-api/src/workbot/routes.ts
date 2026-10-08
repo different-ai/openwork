@@ -19,6 +19,7 @@ import { checkRateLimit } from "../utils/rate-limit.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { createInternalMcpPrincipalHeader } from "../session.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
+import { WORKBOT_OAUTH_CLIENT_ID } from "./config.js"
 import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
 
 /**
@@ -64,6 +65,13 @@ type Resolved = {
   memberId: string
   /** MCP grant/client id of the Workbot token (never token material). */
   credentialId: string | null
+  /** The OAuth client the token was issued to (JWT `client_id`/`azp`). */
+  clientId: string | null
+}
+
+function tokenClientId(payload: Record<string, unknown>): string | null {
+  const value = payload.client_id ?? payload.azp
+  return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
 function readBrandAppName(metadata: unknown): string | null {
@@ -132,6 +140,7 @@ async function resolve(headers: Headers): Promise<Resolved | Response> {
     organization,
     memberId: member.id,
     credentialId: mcpPrincipalCredentialId(verified),
+    clientId: tokenClientId(verified.payload),
   }
 }
 
@@ -397,7 +406,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const auditBlocked = await attributeWorkbot(c, resolved)
       if (auditBlocked) return auditBlocked
       const { principal, organization } = resolved
-      if (!resolved.scopes.has(DEN_MCP_READ_SCOPE) || !resolved.scopes.has(DEN_MCP_WRITE_SCOPE)) {
+      // Only Workbot's own sign-in may hold the App-host scope; any other client's grant is refused.
+      if (resolved.clientId !== WORKBOT_OAUTH_CLIENT_ID || !resolved.scopes.has(DEN_MCP_READ_SCOPE) || !resolved.scopes.has(DEN_MCP_WRITE_SCOPE)) {
         return c.json({ error: "insufficient_scope", message: "The sign-in grant does not allow Apps in Workbot." }, 403)
       }
       const features = await getOrganizationFeatures(organization.id)

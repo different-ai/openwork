@@ -1,5 +1,5 @@
 import type { HeadlessRunnerClient, RunnerToolApp } from "@openwork-ee/headless-protocol"
-import { MCP_APP_MAX_HTML_BYTES, mcpAppResourceIdentity } from "@openwork/types/mcp-app"
+import { MCP_APP_MAX_HTML_BYTES, mcpAppIdSchema, mcpAppResourceIdentity } from "@openwork/types/mcp-app"
 import {
   McpAppResourceError,
   parseMcpAppResourceMeta,
@@ -42,7 +42,7 @@ export type WorkbotAppRefusal =
   | "app_unavailable"
   /** A tool the App may not call: another connection's, or one only the model may use. */
   | "tool_not_available"
-  /** The tool changes something; it runs only right after the person clicks in the App. */
+  /** The tool runs only right after the person clicks in the App. */
   | "needs_click"
 
 type AppTarget = { sessionId: string; messageId: string; callId: string }
@@ -169,8 +169,17 @@ export async function openWorkbotApp(
 }
 
 /**
+ * Whether a tool may run without the person's click. A provider's own `readOnlyHint` is not enough on its own: only
+ * an App built in OpenWork (its connection is the App's own server on Den, which checks each read-only binding against
+ * the connected tool on every call) runs read-only tools as it opens. Every tool of another server's App needs a click.
+ */
+function runsWithoutClick(tool: AppTool, connectionId: string) {
+  return mcpAppIdSchema.safeParse(connectionId).success && !toolRequiresApproval(tool)
+}
+
+/**
  * Runs one of the App's own tools for the person: only on the connection that opened the App, only a tool Apps may
- * call, and anything that isn't read-only only right after their click in the App.
+ * call, and, unless it is a read-only tool of an App built in OpenWork, only right after their click in the App.
  */
 export async function callWorkbotAppTool(
   connections: WorkbotAppConnections,
@@ -182,7 +191,7 @@ export async function callWorkbotAppTool(
   if (!launch) return { ok: false, code: "unknown_app" }
   const tool = (await toolsOf(connections, launch.connectionId)).find((entry) => entry.name === input.name)
   if (!tool || !toolVisibleToApp(tool)) return { ok: false, code: "tool_not_available" }
-  if (toolRequiresApproval(tool) && !input.clicked) return { ok: false, code: "needs_click" }
+  if (!input.clicked && !runsWithoutClick(tool, launch.connectionId)) return { ok: false, code: "needs_click" }
   const result = await connections.request(launch.connectionId, "tools/call", { name: input.name, arguments: input.arguments })
   if (!callResultSchema.safeParse(result).success) return { ok: false, code: "app_unavailable" }
   if (JSON.stringify(result).length > MAX_APP_TOOL_RESULT_CHARS) {

@@ -139,11 +139,16 @@ function AppFrame(props: { view: WorkbotAppView; turnId: string; callId: string;
     bridge.onsizechange = ({ height: wanted }) => {
       if (wanted !== undefined && Number.isFinite(wanted) && wanted > 0) setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, Math.ceil(wanted))));
     };
+    // A click counts only when both the sandbox proxy (host code that overwrites this field, whatever the App sent)
+    // saw it in the App, and this page's browser confirms a real gesture with focus in this App's frame.
     bridge.oncalltool = async ({ name, arguments: args, _meta }) => {
-      const result = await callWorkbotAppTool(chat, turnId, callId, { name, arguments: args ?? {}, clicked: _meta?.["openwork/userInteraction"] === true });
+      const clicked = _meta?.["openwork/userInteraction"] === true && actedIn(frame);
+      const result = await callWorkbotAppTool(chat, turnId, callId, { name, arguments: args ?? {}, clicked });
       return CallToolResultSchema.parse(result);
     };
+    // What an App tells the model reaches it only after the person acted in that App, never from the App on its own.
     bridge.onupdatemodelcontext = async ({ content, structuredContent }) => {
+      if (!actedIn(frame)) throw new Error("An App's context reaches Workbot only right after the person acts in it.");
       await setWorkbotAppContext(chat, turnId, callId, { title: view.title, ...(content ? { content } : {}), ...(structuredContent ? { structuredContent } : {}) });
       return {};
     };

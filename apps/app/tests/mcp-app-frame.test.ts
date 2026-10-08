@@ -1965,6 +1965,15 @@ describe("MCP App iframe policy", () => {
     }))).toThrow("markup before its policy-bearing head")
   })
 
+  test("refuses App policies that reach the person's own machine or network", async () => {
+    const { parseMcpAppResourceMeta } = await import("@openwork/types/mcp-app-host")
+    const declare = (origin: string) => () => parseMcpAppResourceMeta({ ui: { csp: { connectDomains: [origin] } } })
+    for (const origin of ["http://127.0.0.1:8080", "https://localhost", "https://api.localhost", "https://127.1", "https://10.0.0.5", "https://192.168.1.1", "https://[::1]", "https://169.254.169.254"]) {
+      expect(declare(origin)).toThrow("public HTTPS origins")
+    }
+    expect(declare("https://api.example.com")().csp.connectDomains).toEqual(["https://api.example.com"])
+  })
+
   test("places the policy in time for unclosed repeated tags", () => {
     for (const tag of ["html", "head", "body"]) {
       const started = performance.now()

@@ -93,13 +93,29 @@ export class McpAppResourceError extends Error {
 
 const MAX_CSP_DOMAINS = 16
 
+/**
+ * A host on the person's own machine or local network: loopback, link-local and private addresses, and `localhost`.
+ * The App's page runs in the person's browser, so allowing one would let a remote App reach their local services.
+ */
+function localHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "")
+  if (host === "localhost" || host.endsWith(".localhost")) return true
+  if (host.startsWith("[")) {
+    const v6 = host.slice(1, -1)
+    return v6 === "::" || v6 === "::1" || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith("::ffff:")
+  }
+  const octets = host.split(".")
+  if (octets.length !== 4 || !octets.every((octet) => /^\d{1,3}$/.test(octet))) return false
+  const [a = 0, b = 0] = octets.map(Number)
+  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)
+}
+
 function cspOrigin(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 2048) return null
   try {
     const url = new URL(value)
     if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) return null
-    if (url.protocol === "https:") return url.origin
-    if (url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return url.origin
+    if (url.protocol === "https:" && !localHost(url.hostname)) return url.origin
   } catch {
     return null
   }
@@ -113,7 +129,7 @@ function cspDomains(value: unknown): string[] {
   }
   const origins = value.map(cspOrigin)
   if (origins.some((origin) => origin === null)) {
-    throw new McpAppResourceError("invalid_resource_csp", "An App's CSP origins must be HTTPS (or loopback HTTP) origins.")
+    throw new McpAppResourceError("invalid_resource_csp", "An App's CSP origins must be public HTTPS origins.")
   }
   return [...new Set(origins.filter((origin) => origin !== null))]
 }
