@@ -331,7 +331,7 @@ describe.sequential("setup SSO full API and Web matrix", () => {
         expect(signInUrl.searchParams.get("webAuthReturn")).toBe("https://web.openworklabs.com/auth/callback");
         expect(signInUrl.searchParams.has("token")).toBe(false);
         expect(signInUrl.searchParams.has("arbitrary")).toBe(false);
-        await shot("Open member link with SSO disabled; retain allowlisted context", "The page presents the generic sign-in form.");
+        await shot("Open member link with SSO disabled; retain allowlisted context", "The page says Start using OpenWork and shows an Email field and a Next button.");
         evidence.recordAssertionEvidence("Generic member sign-in preserves only allowlisted handoff context", "Retained mode, /install, webAuth and webAuthReturn; dropped token and arbitrary query parameter.", true);
       } finally { await setSsoEnabled(column, true); }
     });
@@ -417,13 +417,13 @@ describe.sequential("setup SSO full API and Web matrix", () => {
     expect(await readSetupSsoBrowserUrl(browser)).toBe(setupUrl);
     await person.notSee({ role: "button", label: "Continue with SSO" });
     await shot("Open /setup on a fresh deployment without an administrator", "The public form says Set up your administrator account.");
-    await person.type({ role: "textbox", label: "Administrator email" }, column.control.ownerEmail);
-    await person.type({ role: "textbox", label: "One-time setup code" }, column.control.bootstrapCode, { sensitive: true });
+    await person.type({ role: "textbox", label: /^Administrator email$/i }, column.control.ownerEmail);
+    await person.type({ role: "textbox", label: /^One-time setup code$/i }, column.control.bootstrapCode, { sensitive: true });
     await person.click({ role: "button", label: "Continue" });
     await person.see({ role: "button", label: "Create administrator" }, { timeoutMs: 90_000 });
     await shot("Verify the one-time setup code", "The form asks for the administrator name and password.");
-    await person.type({ role: "textbox", label: "Name" }, "Synthetic Administrator");
-    await person.type({ role: "textbox", label: "Password" }, column.control.ownerPassword, { sensitive: true });
+    await person.type({ role: "textbox", label: /^Name$/i }, "Synthetic Administrator");
+    await person.type({ role: "textbox", label: /^Password$/i }, column.control.ownerPassword, { sensitive: true });
     await person.click({ role: "button", label: "Create administrator" });
     await person.see({ role: "heading", label: "Set up OpenWork Enterprise" }, { timeoutMs: 90_000 });
     expect(new URL(await readSetupSsoBrowserUrl(browser)).pathname).toBe("/install");
