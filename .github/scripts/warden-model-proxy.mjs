@@ -45,7 +45,7 @@ function main() {
   if (!key) throw new Error("OPENAI_API_KEY is required");
   const allowedModels = (process.env.ALLOWED_MODELS ?? "").split(",").map((model) => model.trim()).filter(Boolean);
   if (!allowedModels.length) throw new Error("ALLOWED_MODELS is required");
-  const maxRequests = Number(process.env.MAX_REQUESTS ?? 600);
+  const maxRequests = Number(process.env.MAX_REQUESTS ?? 3000);
   const upstream = new URL(process.env.UPSTREAM ?? "https://api.openai.com");
   let count = 0;
 

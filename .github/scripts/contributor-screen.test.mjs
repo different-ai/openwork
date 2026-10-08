@@ -152,6 +152,15 @@ test('AI screen: clear only when complete with no high or medium findings', () =
   assert.equal(aiScreenDecision({ complete: false, reason: 'x', findings: [] }).verdict, 'flagged');
 });
 
+test('a stopped or oversized Warden run keeps its findings but is never complete', () => {
+  const failed = parseWardenJsonl([chunk('diff-security-review', [finding('high', 'Bypass')], { status: 'error' }), summary(1, { failedSkills: ['diff-security-review'] })].join('\n'), ['diff-security-review']);
+  assert.equal(failed.complete, false);
+  assert.equal(failed.findings[0].title, 'Bypass');
+  const big = parseWardenJsonl([chunk('diff-security-review', [], { skippedFiles: [{ filename: 'a.ts', reason: 'limit:changed_lines' }, { filename: 'b.lock', reason: 'ignored:user' }] }), summary(0)].join('\n'), ['diff-security-review']);
+  assert.deepEqual({ complete: big.complete, reason: big.reason, skipped: big.skipped }, { complete: false, reason: 'files-over-size-limits', skipped: 1 });
+  assert.equal(reviewDecision(big).verdict, 'too-big');
+});
+
 test('review: confidentiality or high/medium security findings are not clear', () => {
   const sec = (severity) => ({ ...finding(severity), skill: 'diff-security-review' });
   assert.equal(reviewDecision({ complete: true, findings: [sec('low')] }).state, 'success');

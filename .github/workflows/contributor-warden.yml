@@ -45,7 +45,8 @@ permissions: {}
 jobs:
   warden:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Up to 400 files / 60,000 changed lines (warden.toml).
+    timeout-minutes: 60
     permissions:
       contents: read
       issues: write

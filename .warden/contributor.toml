@@ -9,6 +9,11 @@ ignorePaths = ["**/node_modules/**", "**/dist/**"]
 
 [defaults.scan]
 maxFileLines = 5000
+# Warden's defaults (150 files, 10,000 changed lines) left big PRs half
+# reviewed, and a partial review never clears. PRs beyond these still come
+# back incomplete: split them.
+maxFiles = 400
+maxChangedLines = 60000
 
 [defaults.agent]
 model = "openai/gpt-6-luna"

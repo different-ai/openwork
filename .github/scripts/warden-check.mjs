@@ -18,6 +18,7 @@ const REASONS = {
   "major-security-findings": "The security review found high or medium findings. See the Warden comment on the PR.",
   "review-incomplete": "The review didn't finish. Re-run Warden or push again.",
   flagged: "The Warden review flagged something. See the Warden comment on the PR.",
+  "files-over-size-limits": "This PR is too big for Warden to review in full (over 400 files or 60,000 changed lines). Split it into smaller PRs.",
   "missing-or-invalid-receipt": "The review didn't finish. Re-run Warden or push again.",
   "receipt-identity-mismatch": "The review result didn't match this run. Re-run Warden.",
 };
