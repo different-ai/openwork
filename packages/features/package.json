@@ -6,22 +6,32 @@
   "description": "OpenWork feature registry: declare a feature once, resolve it per deployment and organization.",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./src/index.ts"
     },
     "./registry": {
-      "types": "./src/registry.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/registry.d.ts",
+        "default": "./src/registry.ts"
+      },
       "development": "./src/registry.ts",
       "default": "./src/registry.ts"
     },
     "./resolve": {
-      "types": "./src/resolve.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/resolve.d.ts",
+        "default": "./src/resolve.ts"
+      },
       "development": "./src/resolve.ts",
       "default": "./src/resolve.ts"
     }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test": "node --test src/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

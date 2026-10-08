@@ -5,28 +5,40 @@
   "description": "Provider-neutral contract, bootstrap, and conformance suite for OpenWork Cloud sandbox hosts.",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./bootstrap": {
-      "types": "./src/bootstrap/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/bootstrap/index.d.ts",
+        "default": "./src/bootstrap/index.ts"
+      },
       "development": "./src/bootstrap/index.ts",
       "default": "./dist/bootstrap/index.js"
     },
     "./orchestrator": {
-      "types": "./src/orchestrator/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/orchestrator/index.d.ts",
+        "default": "./src/orchestrator/index.ts"
+      },
       "development": "./src/orchestrator/index.ts",
       "default": "./dist/orchestrator/index.js"
     },
     "./testing": {
-      "types": "./src/testing/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/testing/index.d.ts",
+        "default": "./src/testing/index.ts"
+      },
       "development": "./src/testing/index.ts",
       "default": "./dist/testing/index.js"
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {

@@ -6,18 +6,24 @@
   "description": "One sandbox contract for OpenWork: create, run commands in, move files to and from, pause and delete a Linux sandbox on any provider.",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./testing": {
-      "types": "./src/testing/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/testing/index.d.ts",
+        "default": "./src/testing/index.ts"
+      },
       "development": "./src/testing/index.ts",
       "default": "./dist/testing/index.js"
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "test": "tsx --test src/*.test.ts"
   },

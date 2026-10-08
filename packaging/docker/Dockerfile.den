@@ -13,8 +13,9 @@ ARG DEN_API_VERSION=dev
 ENV DEN_API_VERSION=${DEN_API_VERSION}
 ENV PORT=8788
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /app/
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.declarations.json /app/
 COPY patches /app/patches
+COPY scripts/build-workspace-dependencies.mjs /app/scripts/build-workspace-dependencies.mjs
 COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/features/package.json /app/packages/features/package.json
 COPY packages/free-auto/package.json /app/packages/free-auto/package.json
