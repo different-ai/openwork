@@ -8,7 +8,7 @@ import { filterCloudManagedModelOptions, markDisabledModelOptions, mergeModelOpt
 import { isCloudManagedProviderKey } from "../connections/provider-auth/cloud-provider-config";
 import { filterEntitledModelOptions, hideBuiltInZenFallback, isProviderAllowedByDesktopPolicy } from "../connections/provider-auth/provider-policy";
 import { modelRefKey } from "../session/models/model-collections-store";
-import { isAutoModel, withAutoDefaultPin, withImportedModelMetadata, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
+import { freeAutoCoveredByOpenWorkModels, isAutoModel, isFreeAutoModel, withAutoDefaultPin, withImportedModelMetadata, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
 
 // Every model picker (composer popover, "All models" dialog, command palette,
 // shortcuts) reads its options from this pipeline, so they list the same
@@ -78,7 +78,9 @@ export function buildModelCatalog(input: ModelCatalogInput): ModelCatalog {
   // Free Auto that is switched off, or not yet confirmed on, is not offered anywhere. It is not "unavailable":
   // that state is for Auto that is on but failing. The model stays known so a saved choice can still be named.
   const autoHidden = input.autoPending === true || freeAutoSwitchedOff(input.autoStatus);
-  const offered = autoHidden ? entitled.filter((option) => !isAutoModel(option)) : entitled;
+  // Members whose organization has OpenWork Models choose its models directly, so free Auto is not listed for them.
+  const freeAutoCovered = freeAutoCoveredByOpenWorkModels(entitled);
+  const offered = entitled.filter((option) => autoHidden ? !isAutoModel(option) : !(freeAutoCovered && isFreeAutoModel(option)));
   // Under "only managed providers" the list stays exactly as the desktop policy allows it, Zen included.
   const listed = input.restrictToCloud ? offered : hideBuiltInZenFallback(offered);
   return { known, options: withAutoDefaultPin(listed, input.autoStatus) };
@@ -119,7 +121,9 @@ export function resolveRetainedSelection(input: RetainedSelectionInput): Retaine
   const implicitStarter = !input.sessionScoped && !known && !saved && current.providerID === "opencode" && current.modelID === "big-pickle";
   // The free Zen starter is only hidden from the list once better models exist; it still works, so it is not "unavailable".
   const hiddenZenFallback = Boolean(known && !known.disabled && known.zenFallback === true);
-  if (implicitStarter || (hiddenZenFallback && !policyBlocked && !blockedBySaved)
+  // Free Auto hidden behind OpenWork Models still works for a conversation already on it.
+  const hiddenFreeAuto = Boolean(known && !known.disabled && isFreeAutoModel(known) && freeAutoCoveredByOpenWorkModels(input.catalog.options));
+  if (implicitStarter || ((hiddenZenFallback || hiddenFreeAuto) && !policyBlocked && !blockedBySaved)
     || (input.catalogState === "loading" && !policyBlocked && !signedOut)) return undefined;
   return {
     model: current,

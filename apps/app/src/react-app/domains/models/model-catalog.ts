@@ -30,7 +30,7 @@ export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
 export function shouldSelectInitialAuto(input: { available: readonly ModelRef[]; current: ModelRef | null; empty: boolean; explicit: boolean }) {
-  return input.empty && !input.explicit && input.available.some(isAutoModel)
+  return input.empty && !input.explicit && input.available.some(isAutoModel) && !freeAutoCoveredByOpenWorkModels(input.available)
     && (!input.current || (input.current.providerID === "opencode" && input.current.modelID === "big-pickle"));
 }
 export function markExplicitModelChoice() {
@@ -40,6 +40,16 @@ export type ModelSource = "gateway" | "local" | "organization";
 export const MODEL_SOURCE_LABELS: Record<ModelSource, string> = {
   gateway: "OpenWork Gateway", local: "Local", organization: "Organization",
 };
+
+/** Free Auto, as opposed to the same model served by an organization's OpenWork Models. */
+export function isFreeAutoModel(model: ModelRef | null | undefined) {
+  return model?.providerID === AUTO_PROVIDER_ID && model.modelID === AUTO_MODEL_ID;
+}
+
+/** The organization has OpenWork Models, so its members pick those models instead of free Auto. */
+export function freeAutoCoveredByOpenWorkModels(options: readonly (ModelRef & { disabled?: boolean })[]) {
+  return options.some((option) => option.providerID === "openwork" && !option.disabled);
+}
 
 export function isAutoModel(model: ModelRef | null | undefined) {
   return model?.modelID === AUTO_MODEL_ID && (model.providerID === AUTO_PROVIDER_ID || model.providerID === "openwork");
