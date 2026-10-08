@@ -92,6 +92,7 @@ export async function reviewWorld(
             reasoning: "Synthetic assertion used to verify report rendering.",
           },
         ],
+        step: name,
       },
       ...(index === 0
         ? [
@@ -107,6 +108,20 @@ export async function reviewWorld(
               ok: null,
               results: [],
               judgments: [],
+              // What the harness records about a screenshot, placed on this image's dialog and button.
+              step: name,
+              change: {
+                since: "00-skill.png",
+                actions: ["click(text=Share)"],
+                ratio: 0.27,
+                boxes: [{ x: 0.2416, y: 0.251, width: 0.5593, height: 0.479 }],
+                added: ["Share link", "Publish a public link. Anyone with the URL can install this skill."],
+                addedCount: 4,
+                removed: [],
+                removedCount: 0,
+              },
+              focus: [{ label: "Create link", box: { x: 0.6367, y: 0.6103, width: 0.133, height: 0.0722 } }],
+              settle: { ms: 210, settled: true },
             },
           ]
         : []),
@@ -164,6 +179,14 @@ export async function reviewWorld(
   const pending = incompleteReport.evidence.find(
     (item) => item.kind === "image",
   );
+  // A record from a harness that measured nothing beyond the caption.
+  if (pending?.kind === "image") {
+    delete pending.step;
+    delete pending.size;
+    delete pending.change;
+    delete pending.focus;
+    delete pending.settled;
+  }
   pending?.judgments.push({
     expectation: "Dialog is readable",
     state: "pending",
@@ -178,6 +201,8 @@ export async function reviewWorld(
   );
   if (!assertion?.judgments[0]) throw new Error("Missing fixture assertion.");
   assertion.judgments[0].state = "failed";
+  const failureFrame = failedReport.evidence.find((item) => item.kind === "image");
+  if (failureFrame?.kind === "image") failureFrame.failure = true;
   const failed = await uploadReview(failedReport, bundle.assets, {
     localDir: storage,
   });

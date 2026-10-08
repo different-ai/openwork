@@ -6,8 +6,10 @@ import { EvidenceViewer } from "./evidence-viewer";
 import { summarizeReview } from "@openwork/review";
 import type { ReviewEvidence, ReviewReport } from "@openwork/review";
 import { LaunchPreview } from "./launch-preview";
+import { MarkedShot } from "./marked-shot";
 import { CheckpointProvider } from "./open-checkpoint";
 import { StatusIcon } from "./status-icon";
+import { closesStep, describeChange, isRepeat, stepChecks, stepFound } from "../lib/change";
 
 type Verdict = ReturnType<typeof summarizeReview>["verdict"];
 
@@ -170,34 +172,54 @@ export function Report({ report, id, connected }: { report: ReviewReport; id: st
                   </p>
                 )}
                 {images.length > 0 && <ol className="gallery" aria-label="Screenshots">
-                  {images.map((item, index) => (
-                    <li key={item.id}>
-                      <figure>
-                        <a className="image-link" href={`#evidence-${item.id}`} aria-label={`Inspect ${item.caption}`}>
-                          <img src={assetUrl(item.asset)} alt={item.caption} loading="lazy" />
-                          {item.checkpoint && <span className="saved-browser" title="Open the screenshot to enter a private copy of this browser.">Saved browser</span>}
-                        </a>
-                        <figcaption>
-                          <span className="step-number">{index + 1}</span>
-                          <div>
-                            <strong>{item.caption}</strong>
-                            {item.description && <p>{item.description}</p>}
-                            {item.judgments.length > 0 && (
-                              <p className={item.judgments.some((judgment) => judgment.state === "failed") ? "result failed" : item.judgments.some((judgment) => judgment.state === "pending") ? "result pending" : "visual-passed"}>
-                                Visual checks {item.judgments.filter((judgment) => judgment.state === "passed").length}/{item.judgments.length} passed
-                              </p>
-                            )}
-                            {item.designNotes && item.designNotes.length > 0 && (
-                              <p className="design-notes-count">
-                                {item.designNotes.length} design {item.designNotes.length === 1 ? "note" : "notes"}
-                                {item.designNotes.some((note) => note.severity === "medium") ? `, ${item.designNotes.filter((note) => note.severity === "medium").length} worth fixing` : ""}
-                              </p>
-                            )}
-                          </div>
-                        </figcaption>
-                      </figure>
-                    </li>
-                  ))}
+                  {images.map((item, index) => {
+                    const repeat = isRepeat(item);
+                    const change = describeChange(item, index);
+                    const closing = closesStep(images, index);
+                    const checks = closing ? stepChecks(report, item).flatMap((entry) => entry.judgments) : [];
+                    const found = closing ? stepFound(images, item) : [];
+                    return (
+                      <li key={item.id} className={repeat ? "repeat" : undefined}>
+                        <figure>
+                          {!repeat && <a className="image-link" href={`#evidence-${item.id}`} aria-label={`Inspect ${item.caption}`}>
+                            <MarkedShot image={item} src={assetUrl(item.asset)} alt={item.caption} loading="lazy" maxChanges={2} />
+                            {item.checkpoint && <span className="saved-browser" title="Open the screenshot to enter a private copy of this browser.">Saved browser</span>}
+                            {item.failure && <span className="failed-here">Failed here</span>}
+                          </a>}
+                          <figcaption>
+                            <span className="step-number">{index + 1}</span>
+                            <div>
+                              <strong>{item.caption}</strong>
+                              {change && <p className="change">{change}{repeat && <> <a href={`#evidence-${item.id}`}>View</a></>}</p>}
+                              {item.settled === false && <p>Still changing when captured.</p>}
+                              {item.description && <p>{item.description}</p>}
+                              {item.judgments.length > 0 && (
+                                <p className={item.judgments.some((judgment) => judgment.state === "failed") ? "result failed" : item.judgments.some((judgment) => judgment.state === "pending") ? "result pending" : "visual-passed"}>
+                                  Visual checks {item.judgments.filter((judgment) => judgment.state === "passed").length}/{item.judgments.length} passed
+                                </p>
+                              )}
+                              {item.designNotes && item.designNotes.length > 0 && (
+                                <p className="design-notes-count">
+                                  {item.designNotes.length} design {item.designNotes.length === 1 ? "note" : "notes"}
+                                  {item.designNotes.some((note) => note.severity === "medium") ? `, ${item.designNotes.filter((note) => note.severity === "medium").length} worth fixing` : ""}
+                                </p>
+                              )}
+                              {checks.length > 0 && <ul className="proof" aria-label="Checked in this step">
+                                {checks.map((judgment, checkIndex) => (
+                                  <li key={checkIndex} className={judgment.state}>
+                                    <StatusIcon state={judgment.state} />
+                                    <span>{judgment.expectation}{judgment.reasoning && <span className="observed">{judgment.reasoning}</span>}</span>
+                                  </li>
+                                ))}
+                              </ul>}
+                              {found.length > 0 && <p className="found">Found on screen: {found.slice(0, 3).map((label) => `“${label}”`).join(", ")}{found.length > 3 ? ` and ${found.length - 3} more` : ""}.</p>}
+                              {closing && item.step !== undefined && checks.length === 0 && found.length === 0 && item.judgments.length === 0 && <p className="unchecked">Nothing was checked in this step.</p>}
+                            </div>
+                          </figcaption>
+                        </figure>
+                      </li>
+                    );
+                  })}
                 </ol>}
                 <details className="provenance">
                   <summary>Source and diagnostics</summary>
