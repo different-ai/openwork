@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { allocateFreePort } from "../../evals/packages/cdp/src/index.ts";
+import { denFetch, type DenSession } from "../../evals/packages/behaviors/src/den.ts";
 import { app } from "../../evals/packages/env/src/desktop-app.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 import type { Place } from "../../evals/packages/env/src/place.ts";
@@ -72,3 +73,31 @@ export function calendarOutputs(mock: CalendarMock, desktop: { handle: { cdpUrl:
     } : {}),
   };
 }
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Publishes an Anthropic provider (two Claude models from Den's catalog, a fixture key) to every member, so the
+ * Calendar's model pickers list real providers with their logos next to the free starter and the cloud default.
+ * No run reaches Anthropic: the specs only pick and save the model.
+ */
+export async function publishCalendarModels(admin: DenSession, organizationId: string): Promise<void> {
+  const headers = { authorization: `Bearer ${admin.token}`, "x-openwork-org-id": organizationId };
+  const catalog = await denFetch(admin, "/v1/llm-provider-catalog/anthropic", { headers });
+  if (!catalog.response.ok) throw new Error(`Could not read the Anthropic catalog: HTTP ${catalog.response.status}`);
+  const provider = isObject(catalog.body) && isObject(catalog.body.provider) ? catalog.body.provider : null;
+  const ids = (Array.isArray(provider?.models) ? provider.models : [])
+    .flatMap((model) => isObject(model) && typeof model.id === "string" && !/preview|exp|latest/i.test(model.id) ? [model.id] : []);
+  // One Sonnet and one Opus, so the picker shows two clearly different models.
+  const modelIds = [ids.find((id) => /^claude-sonnet-4/.test(id)), ids.find((id) => /^claude-opus-4/.test(id))].filter((id): id is string => Boolean(id));
+  if (modelIds.length === 0) throw new Error("The Anthropic catalog has no Claude 4 models to publish");
+  const created = await denFetch(admin, "/v1/llm-providers", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Anthropic", source: "models_dev", providerId: "anthropic", modelIds, apiKey: "calendar-fixture-not-a-real-key", allMembers: true, memberIds: [], teamIds: [] }),
+  });
+  if (!created.response.ok) throw new Error(`Could not publish the Anthropic provider: HTTP ${created.response.status} ${created.text.slice(0, 300)}`);
+}
+

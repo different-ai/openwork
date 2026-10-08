@@ -1360,6 +1360,9 @@ importers:
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types
+      '@openwork/ui':
+        specifier: workspace:*
+        version: link:../../../packages/ui
       '@openwork/workbook':
         specifier: workspace:*
         version: link:../../../packages/workbook

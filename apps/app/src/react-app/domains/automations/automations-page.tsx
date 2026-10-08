@@ -23,10 +23,8 @@ import { useNavigate, useSearchParams } from "react-router"
 import { globalSettingsRoute, workspaceSettingsRoute } from "@/react-app/shell/workspace-routes"
 import type {
   AutomationDetail,
-  AutomationExecutionTarget,
   AutomationRun,
   AutomationRunEvent,
-  AutomationSchedule,
   AutomationState,
   CreateAutomation,
 } from "@openwork/types/automations"
@@ -53,12 +51,9 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { t } from "../../../i18n"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
-import { automationCloudOptions, automationCloudRunAvailable, automationPlacementChoices, resolveAutomationPlacement } from "./automation-placement"
-import { useOrgMcpConnections } from "../connections/use-org-mcp-connections"
-import { buildConnectorToolIdentities } from "../connections/connector-tool-identity"
-import { isOrgMcpConnectionReady } from "../settings/extension-items"
-import type { AutomationConnectedAccount } from "./automation-editor"
+import { resolveAutomationPlacement } from "./automation-placement"
 import { AutomationEditor } from "./automation-editor"
+import { automationEditChoices, useAutomationEditorSetup } from "./use-automation-editor-setup"
 import {
   ACTIVE_RUN_STATUSES,
   AUTOMATIONS_FAST_POLL_MS,
@@ -67,7 +62,6 @@ import {
   useAutomationDetailQuery,
   useAutomationListQuery,
   useAutomationRunsQuery,
-  useAutomationModelChoices,
   useAutomationsDenContext,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
@@ -204,7 +198,7 @@ export function AutomationsPage(props: {
   const placement = automationCreationPlacement()
 
   const listQuery = useAutomationListQuery(denContext)
-  const { desktop: desktopModels, cloud: cloudModels } = useAutomationModelChoices(denContext, props.providerCatalog)
+  const { placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsFor } = useAutomationEditorSetup(denContext, props.providerCatalog)
   const runnerPresenceQuery = useQuery({
     queryKey: [...queryRoot, "runner-presence"],
     queryFn: () => client!.getAutomationDesktopRunnerPresence(organizationId!),
@@ -218,23 +212,6 @@ export function AutomationsPage(props: {
   // old to answer, or one that has not answered yet, leaves presence unknown,
   // and claiming there is no desktop on that basis would be worse than silence.
   const noDesktopConnected = runnerPresenceQuery.data?.connected === false
-  const targetsQuery = useQuery({
-    queryKey: [...queryRoot, "execution-targets"],
-    queryFn: () => client!.listAutomationRunners(organizationId!),
-    enabled: ready,
-    // Same contract as presence: an older Den answers null once and keeps today's fixed placement.
-    retry: false,
-    refetchInterval: (queryState) => (queryState.state.data === null ? false : 60_000),
-  })
-  const placementChoices = automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime() })
-  const cloudRunAvailable = automationCloudRunAvailable(targetsQuery.data)
-  const cloudOptions = automationCloudOptions(targetsQuery.data)
-  // The accounts a cloud run can use, shown on the choice that uses only them.
-  const orgConnections = useOrgMcpConnections()
-  const connectedAccounts = useMemo((): AutomationConnectedAccount[] => buildConnectorToolIdentities({
-    mcpServers: [],
-    orgConnections: orgConnections.connections.filter(isOrgMcpConnectionReady),
-  }).flatMap((identity) => identity.connectionId ? [{ id: identity.connectionId, name: identity.name, iconUrl: identity.iconUrl }] : []), [orgConnections.connections])
   const detailQuery = useAutomationDetailQuery(denContext, selectedId)
   const runsQuery = useAutomationRunsQuery(denContext, selectedId)
   const workflowQuery = useQuery({
@@ -252,8 +229,6 @@ export function AutomationsPage(props: {
     },
   })
 
-  const modelsFor = (target: AutomationExecutionTarget) => target === "cloud" ? cloudModels : desktopModels
-  const modelsByPlacement = { desktop: desktopModels, cloud: cloudModels }
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? []
@@ -435,7 +410,7 @@ export function AutomationsPage(props: {
     if (editing && editable) {
       // Where it runs now is always a choice, so an Automation whose target
       // went away can still be moved to the one that exists.
-      const editChoices = placementChoices.length > 0 ? [...new Set([detailPlacement, ...placementChoices])] : []
+      const editChoices = automationEditChoices(detailPlacement, placementChoices)
       return (
         <div className="mx-auto max-w-3xl space-y-5 p-6">
           <div>

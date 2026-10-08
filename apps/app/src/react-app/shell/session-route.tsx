@@ -3711,6 +3711,7 @@ export function SessionRoute() {
         />
       ) : calendarRouteActive ? (
         <CalendarPage
+          providerCatalog={providerCatalog}
           workspaceId={selectedWorkspaceId}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}
           onOpenConnections={() => handleOpenExtensions()}

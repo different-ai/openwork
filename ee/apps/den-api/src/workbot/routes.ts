@@ -149,8 +149,8 @@ async function workbotCalendarEnabled(organizationId: string) {
 const ID = "[A-Za-z0-9_-]{1,160}"
 /**
  * The Den routes Workbot's Calendar may reach, as the signed-in member: their own Automations and runs, the
- * Pause / Resume / Run now / schedule-only edit actions, creating a Cloud Automation, and their native Google and
- * Outlook calendar reads.
+ * Pause / Resume / Run now actions, editing an Automation's schedule, instructions or model, creating a Cloud
+ * Automation, the models they may pick (names only), and their native Google and Outlook calendar reads.
  * Nothing else is forwarded.
  */
 const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH"; path: RegExp; write: boolean }> = [
@@ -159,6 +159,8 @@ const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH";
   { method: "GET", path: new RegExp(`^/v1/automations/${ID}/runs$`), write: false },
   { method: "GET", path: new RegExp(`^/v1/automation-runs/${ID}$`), write: false },
   { method: "GET", path: /^\/v1\/capabilities\/(google-workspace|microsoft-365)\/calendar-events$/, write: false },
+  // The models the member may pick, trimmed below to names and IDs.
+  { method: "GET", path: /^\/v1\/llm-providers$/, write: false },
   { method: "POST", path: new RegExp(`^/v1/automations/${ID}/(activate|deactivate|run)$`), write: true },
   // Creating from the Calendar: always a Cloud Automation (Workbot has no desktop), validated by the route itself.
   { method: "POST", path: /^\/v1\/cloud-automations$/, write: true },
@@ -166,8 +168,27 @@ const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH";
 ]
 export const WORKBOT_CALENDAR_PREFIX = "/v1/workbot/calendar"
 
-/** Only the schedule may change through Workbot's Calendar. */
-const scheduleOnlySchema = z.object({ schedule: z.unknown() }).strict()
+/**
+ * What Workbot's Calendar may change: the schedule, name, instructions and model. Never where it runs (Workbot
+ * has no desktop) or its action; the destination route validates each value.
+ */
+const calendarEditSchema = z.object({
+  name: z.unknown().optional(),
+  schedule: z.unknown().optional(),
+  instructions: z.unknown().optional(),
+  model: z.unknown().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0)
+
+/** A usable provider as Workbot's model picker needs it: no configuration, keys or access lists. */
+const providerNamesSchema = z.object({
+  llmProviders: z.array(z.object({
+    id: z.string(),
+    source: z.string(),
+    providerId: z.string(),
+    name: z.string(),
+    models: z.array(z.object({ id: z.string(), name: z.string() })),
+  })),
+})
 
 export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono<T>) {
   app.get(
@@ -252,7 +273,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "Workbot's Calendar: the member's Automations, runs and calendar meetings",
       description:
-        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, POST /v1/automations/{id}/{activate|deactivate|run}, POST /v1/cloud-automations and a schedule-only PATCH /v1/automations/{id}. Refused while Workbot or its Calendar is off.",
+        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, GET /v1/llm-providers (names and model IDs only), POST /v1/automations/{id}/{activate|deactivate|run}, POST /v1/cloud-automations and a PATCH /v1/automations/{id} limited to name, schedule, instructions and model. Refused while Workbot or its Calendar is off.",
       responses: {
         200: jsonResponse("The forwarded route's answer.", z.unknown()),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -278,8 +299,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (!resolved.scopes.has(scope)) return c.json({ error: "insufficient_scope", message: "The sign-in grant does not allow this." }, 403)
       let body: string | undefined
       if (method === "PATCH") {
-        const parsed = scheduleOnlySchema.safeParse(await c.req.json().catch(() => null))
-        if (!parsed.success) return c.json({ error: "invalid_request", message: "Only the schedule can change here." }, 400)
+        const parsed = calendarEditSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: "invalid_request", message: "Only the schedule, name, instructions and model can change here." }, 400)
         body = JSON.stringify(parsed.data)
       } else if (method === "POST" && inner === "/v1/cloud-automations") {
         const parsed = z.record(z.string(), z.unknown()).safeParse(await c.req.json().catch(() => null))
@@ -299,6 +320,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (body !== undefined) headers.set("content-type", "application/json")
       const response = await app.fetch(new Request(new URL(`${inner}${url.search}`, "http://den-api.local"), { method, headers, body }))
       const payload: unknown = await response.json().catch(() => null)
+      if (inner === "/v1/llm-providers" && response.ok) {
+        const names = providerNamesSchema.safeParse(payload)
+        return c.json(names.success ? { llmProviders: names.data.llmProviders } : { llmProviders: [] }, 200)
+      }
       return new Response(JSON.stringify(payload), { status: response.status, headers: { "content-type": "application/json" } })
     },
   )

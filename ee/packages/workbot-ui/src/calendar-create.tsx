@@ -11,7 +11,9 @@ import {
   type SlotRepeat,
 } from "@openwork/calendar";
 import { useEffect, useRef, useState } from "react";
-import { useCreateAutomation } from "./calendar-data";
+import type { AutomationModel } from "@openwork/types/automations";
+import { CLOUD_DEFAULT_MODEL, useAutomationModels, useCreateAutomation } from "./calendar-data";
+import { ModelPicker } from "./model-picker";
 
 /**
  * "New automation" from an empty slot or the toolbar (Paper: "4c · Calendar — add an automation from an empty
@@ -19,7 +21,7 @@ import { useCreateAutomation } from "./calendar-data";
  */
 
 const CARD_WIDTH = 352;
-const CARD_HEIGHT = 360;
+const CARD_HEIGHT = 440;
 
 export type CreateAnchor = { slot: CalendarSlot; x: number; y: number };
 
@@ -33,6 +35,9 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
   const [instructions, setInstructions] = useState("");
   const [repeat, setRepeat] = useState<SlotRepeat>(DEFAULT_SLOT_REPEAT);
   const create = useCreateAutomation();
+  // The cloud default first, as Workbot's own scheduling uses; any model this member may use can replace it.
+  const { models, isLoading: modelsLoading } = useAutomationModels({ includeCloudDefault: true });
+  const [model, setModel] = useState<AutomationModel>(CLOUD_DEFAULT_MODEL);
   const field = useRef<HTMLTextAreaElement | null>(null);
   const options = slotScheduleOptions(anchor.slot);
   const chosen = options.find((option) => option.id === repeat) ?? options[0];
@@ -47,7 +52,7 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
   const ready = canSchedule && instructions.trim().length > 0 && !create.isPending;
   const submit = () => {
     if (!ready || !chosen) return;
-    create.mutate({ name: automationNameFrom(instructions), instructions: instructions.trim(), schedule: chosen.schedule }, {
+    create.mutate({ name: automationNameFrom(instructions), instructions: instructions.trim(), schedule: chosen.schedule, model }, {
       onSuccess: (detail) => onCreated(detail.automation.id),
     });
   };
@@ -100,6 +105,10 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
               ? `At ${formatTime(anchor.slot.at, anchor.slot.timeZone)} ${timeZoneLabel(anchor.slot.timeZone, anchor.slot.at)}. Runs on ${assistantName}'s cloud computer.`
               : "Your organization's cloud doesn't run automations yet. An admin can turn it on."}
           </span>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[12px] font-medium leading-4 text-[#11181C]">Model</span>
+          <ModelPicker value={model} options={models} loading={modelsLoading} onChange={setModel} />
         </div>
         {create.isError ? <p role="alert" className="text-[12px] leading-4 text-[var(--wb-danger)]">{create.error.message}</p> : null}
         <div className="flex gap-2 pt-0.5">

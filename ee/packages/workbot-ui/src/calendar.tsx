@@ -32,12 +32,13 @@ import {
   type LocalDate,
 } from "@openwork/calendar";
 import { useMeetingsQuery, useRunsInRangeQuery } from "@openwork/calendar/react";
-import type { AutomationList, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
-import { ChevronLeft, ChevronRight, Lock, Plus, X } from "lucide-react";
+import type { AutomationList, AutomationModel, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
+import { Check as CheckMark, ChevronLeft, ChevronRight, Cloud, Lock, Monitor, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CreateAutomationCard, type CreateAnchor } from "./calendar-create";
+import { ModelPicker, ModelSummary } from "./model-picker";
 import { workbotHost } from "./host";
-import { calendarKey, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations } from "./calendar-data";
+import { calendarKey, useAutomationModels, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations, type AutomationChanges } from "./calendar-data";
 
 /**
  * Workbot's Calendar: the person's Automations next to their meetings, with the selected one's details and
@@ -376,8 +377,7 @@ function PastRun({ run, zone }: { run: AutomationRun; zone: string }) {
 
 const WEEKDAYS = [["Mon", 1], ["Tue", 2], ["Wed", 3], ["Thu", 4], ["Fri", 5], ["Sat", 6], ["Sun", 0]] as const;
 
-function ScheduleDialog({ schedule, busy, onClose, onSave }: { schedule: AutomationSchedule; busy: boolean; onClose: () => void; onSave: (schedule: AutomationSchedule) => void }) {
-  const [draft, setDraft] = useState<AutomationSchedule>(schedule);
+function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDraft: (schedule: AutomationSchedule) => void }) {
   const time = draft.kind === "once" ? null : `${String(draft.hour).padStart(2, "0")}:${String(draft.minute).padStart(2, "0")}`;
   const setKind = (kind: "daily" | "weekly") => {
     const hour = draft.kind === "once" ? 9 : draft.hour;
@@ -385,49 +385,118 @@ function ScheduleDialog({ schedule, busy, onClose, onSave }: { schedule: Automat
     setDraft(kind === "daily" ? { kind, timezone: draft.timezone, hour, minute } : { kind, timezone: draft.timezone, hour, minute, daysOfWeek: draft.kind === "weekly" ? draft.daysOfWeek : [1, 2, 3, 4, 5] });
   };
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#01162733] p-4" role="dialog" aria-modal="true" aria-label="Edit schedule" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
-      <form className="w-full max-w-sm rounded-xl bg-white p-5 shadow-[var(--wb-panel-shadow)]" onSubmit={(event) => { event.preventDefault(); onSave(draft); }}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-black">Edit schedule</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><X size={15} strokeWidth={1.75} /></button>
+    <>
+      {draft.kind === "once" ? (
+        <p className="text-[13px] text-[#687076]">This runs once, {formatInstant(draft.at, draft.timezone)}. Change it to repeat:</p>
+      ) : null}
+      <div className="flex rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Repeats">
+        {(["daily", "weekly"] as const).map((kind) => (
+          <button key={kind} type="button" role="radio" aria-checked={draft.kind === kind} onClick={() => setKind(kind)} className={`h-6.5 flex-1 rounded-md text-[12px] leading-4 ${draft.kind === kind ? "bg-white font-semibold text-black shadow-[0_1px_2px_#0116271A]" : "font-medium text-[#687076]"}`}>
+            {kind === "daily" ? "Every day" : "Some days"}
+          </button>
+        ))}
+      </div>
+      {draft.kind === "weekly" ? (
+        <div className="flex flex-wrap gap-1.5" aria-label="Days">
+          {WEEKDAYS.map(([label, value]) => {
+            const on = draft.daysOfWeek.includes(value);
+            return (
+              <button key={label} type="button" aria-pressed={on} onClick={() => {
+                const days = on ? draft.daysOfWeek.filter((day) => day !== value) : [...draft.daysOfWeek, value].sort((left, right) => left - right);
+                if (days.length > 0) setDraft({ ...draft, daysOfWeek: days });
+              }} className={`h-7 rounded-md px-2.5 text-[12px] font-medium ${on ? "bg-[#011627] text-[#E6EDF3]" : "text-black shadow-[0_0_0_1px_#0116271F]"}`}>{label}</button>
+            );
+          })}
         </div>
-        {draft.kind === "once" ? (
-          <p className="mt-3 text-[13px] text-[#687076]">This runs once, {formatInstant(draft.at, draft.timezone)}. Change it to repeat:</p>
-        ) : null}
-        <div className="mt-4 flex rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Repeats">
-          {(["daily", "weekly"] as const).map((kind) => (
-            <button key={kind} type="button" role="radio" aria-checked={draft.kind === kind} onClick={() => setKind(kind)} className={`h-6.5 flex-1 rounded-md text-[12px] leading-4 ${draft.kind === kind ? "bg-white font-semibold text-black shadow-[0_1px_2px_#0116271A]" : "font-medium text-[#687076]"}`}>
-              {kind === "daily" ? "Every day" : "Some days"}
-            </button>
-          ))}
-        </div>
-        {draft.kind === "weekly" ? (
-          <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Days">
-            {WEEKDAYS.map(([label, value]) => {
-              const on = draft.daysOfWeek.includes(value);
-              return (
-                <button key={label} type="button" aria-pressed={on} onClick={() => {
-                  const days = on ? draft.daysOfWeek.filter((day) => day !== value) : [...draft.daysOfWeek, value].sort((left, right) => left - right);
-                  if (days.length > 0) setDraft({ ...draft, daysOfWeek: days });
-                }} className={`h-7 rounded-md px-2.5 text-[12px] font-medium ${on ? "bg-[#011627] text-[#E6EDF3]" : "text-black shadow-[0_0_0_1px_#0116271F]"}`}>{label}</button>
-              );
-            })}
-          </div>
-        ) : null}
-        <label className="mt-3 flex items-center gap-3 text-[13px] text-black">
-          <span className="w-16 text-[12px] text-[#687076]">Time</span>
+      ) : null}
+      <div className="flex gap-2">
+        <label className="flex flex-1 flex-col gap-1">
+          <span className="text-[12px] text-[#687076]">Time</span>
           <input type="time" value={time ?? "09:00"} onChange={(event) => {
             const [hour, minute] = event.currentTarget.value.split(":").map(Number);
             if (Number.isInteger(hour) && Number.isInteger(minute)) setDraft(draft.kind === "once" ? { kind: "daily", timezone: draft.timezone, hour, minute } : { ...draft, hour, minute });
-          }} className="h-8 flex-1 rounded-md px-2 shadow-[0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
+          }} className="h-8 rounded-md px-2 text-[13px] shadow-[0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
         </label>
-        <label className="mt-2 flex items-center gap-3 text-[13px] text-black">
-          <span className="w-16 text-[12px] text-[#687076]">Time zone</span>
-          <input value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} className="h-8 flex-1 rounded-md px-2 shadow-[0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
+        <label className="flex flex-[1.4] flex-col gap-1">
+          <span className="text-[12px] text-[#687076]">Time zone</span>
+          <input value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} className="h-8 rounded-md px-2 text-[13px] shadow-[0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
         </label>
-        <div className="mt-5 flex gap-2">
+      </div>
+    </>
+  );
+}
+
+function FieldLabel({ children }: { children: ReactNode }) {
+  return <span className="text-[12px] font-medium leading-4 text-[#11181C]">{children}</span>;
+}
+
+/** Where it runs, read-only: Workbot creates and keeps Automations in the cloud; desktop ones move from the app. */
+function RunsOnCard({ target }: { target: "desktop" | "cloud" }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 shadow-[inset_0_0_0_1px_#0116271A]" data-calendar-runs-on={target}>
+      <span className="mt-0.5 text-[#011627]">{target === "cloud" ? <Cloud size={15} strokeWidth={1.75} aria-hidden /> : <Monitor size={15} strokeWidth={1.75} aria-hidden />}</span>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-[13px] font-medium leading-4.5 text-black">{target === "cloud" ? "Cloud: Only connected accounts" : "Desktop: Connected accounts and files on your computer"}</span>
+        <span className="text-[12px] leading-4 text-[#687076]">{target === "cloud" ? "Runs in the cloud, even when your computer is off." : "Needs OpenWork open on one of your computers. Move it to the cloud from the OpenWork app."}</span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Edit an Automation: what it does, when it repeats, where it runs and its model. Only what changed is sent;
+ * Den's Workbot allowlist accepts the name, schedule, instructions and model.
+ */
+function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boolean; onClose: () => void; onSave: (changes: AutomationChanges) => void }) {
+  const { revision } = item;
+  const target = revision.executionTarget ?? "desktop";
+  const agent = revision.action?.kind !== "saved_script";
+  const { models, isLoading } = useAutomationModels({ includeCloudDefault: target === "cloud" && workbotHost().canSchedule === true });
+  const [schedule, setSchedule] = useState<AutomationSchedule>(revision.schedule);
+  const [instructions, setInstructions] = useState(revision.instructions);
+  const [model, setModel] = useState<AutomationModel>(revision.model);
+  const changes: AutomationChanges = {
+    ...(JSON.stringify(schedule) !== JSON.stringify(revision.schedule) ? { schedule } : {}),
+    ...(agent && instructions.trim() !== revision.instructions ? { instructions: instructions.trim() } : {}),
+    ...(agent && (model.providerId !== revision.model.providerId || model.modelId !== revision.model.modelId) ? { model } : {}),
+  };
+  const changed = Object.keys(changes).length > 0;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[#01162733] p-4" role="dialog" aria-modal="true" aria-label="Edit automation" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
+      <form className="flex w-full max-w-md flex-col gap-4 rounded-xl bg-white p-5 shadow-[var(--wb-panel-shadow)]" onSubmit={(event) => { event.preventDefault(); if (changed) onSave(changes); else onClose(); }}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-black">Edit automation</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><X size={15} strokeWidth={1.75} /></button>
+        </div>
+        {agent ? (
+          <label className="flex flex-col gap-1.5">
+            <FieldLabel>Instructions</FieldLabel>
+            <textarea
+              value={instructions}
+              rows={4}
+              maxLength={100_000}
+              onChange={(event) => setInstructions(event.currentTarget.value)}
+              className="min-h-24 resize-y rounded-lg bg-white px-2.5 py-2 text-[13px] leading-[19px] text-[#11181C] shadow-[inset_0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+            />
+          </label>
+        ) : null}
+        <div className="flex flex-col gap-2">
+          <FieldLabel>Repeats</FieldLabel>
+          <ScheduleFields draft={schedule} setDraft={setSchedule} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <FieldLabel>Where it runs</FieldLabel>
+          <RunsOnCard target={target} />
+        </div>
+        {agent ? (
+          <div className="flex flex-col gap-1.5">
+            <FieldLabel>Model</FieldLabel>
+            <ModelPicker value={model} options={models} loading={isLoading} onChange={setModel} />
+          </div>
+        ) : null}
+        <div className="flex gap-2 pt-1">
           <button type="button" onClick={onClose} className="h-8.5 flex-1 rounded-lg text-[13px] font-medium text-black shadow-[0_0_0_1px_#0116271F]">Cancel</button>
-          <button type="submit" disabled={busy} className="h-8.5 flex-1 rounded-lg bg-[#011627] text-[13px] font-medium text-[#E6EDF3] disabled:opacity-60">{busy ? "Saving…" : "Save schedule"}</button>
+          <button type="submit" disabled={busy || !changed || (agent && !instructions.trim())} className="h-8.5 flex-1 rounded-lg bg-[#011627] text-[13px] font-medium text-[#E6EDF3] disabled:opacity-50">{busy ? "Saving…" : "Save changes"}</button>
         </div>
       </form>
     </div>
@@ -439,6 +508,7 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
   const runs = useAutomationRuns(automation.id);
   const action = useCalendarAction();
   const [editing, setEditing] = useState(false);
+  const { models: panelModels } = useAutomationModels({ includeCloudDefault: (revision.executionTarget ?? "desktop") === "cloud" });
   const blocked = automation.state === "needs_attention";
   const when = block?.run ? formatInstant(runPlacement(block.run), zone) : block ? formatInstant(block.at, zone) : automation.nextDueAt ? formatInstant(automation.nextDueAt, zone) : null;
   const run = (kind: "pause" | "resume" | "run", done: string) => action.mutate({ kind, automationId: automation.id }, {
@@ -462,6 +532,12 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
       <div className="flex flex-col border-t border-[#0116270F]">
         <Row label="Repeats">{describeSchedule(revision.schedule, "", "en-US")}</Row>
         <Row label="Runs on">{(revision.executionTarget ?? "desktop") === "cloud" ? "The cloud. Your laptop can be closed." : "Your desktop. Keep OpenWork open at that time."}</Row>
+        {revision.action?.kind === "saved_script" ? null : (
+          <>
+            <Row label="Model"><ModelSummary model={revision.model} options={panelModels} /></Row>
+            <Row label="Instructions"><span className="line-clamp-4 whitespace-pre-line" data-calendar-instructions>{revision.instructions}</span></Row>
+          </>
+        )}
       </div>
       <div className="flex min-h-0 flex-col">
         <h3 className="mb-1 text-[12px] font-semibold leading-4 text-black">Past runs</h3>
@@ -478,16 +554,16 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
         ) : (
           <button type="button" disabled={action.isPending || automation.state !== "active"} onClick={() => run("pause", "Paused")} className="h-8.5 flex-1 rounded-lg text-[13px] font-medium text-black shadow-[0_0_0_1px_#0116271F] hover:bg-[#F4F6F7] disabled:opacity-50">Pause</button>
         )}
-        <button type="button" disabled={action.isPending} onClick={() => setEditing(true)} className="h-8.5 flex-1 rounded-lg text-[13px] font-medium text-black shadow-[0_0_0_1px_#0116271F] hover:bg-[#F4F6F7] disabled:opacity-60">Edit schedule</button>
+        <button type="button" disabled={action.isPending} onClick={() => setEditing(true)} className="h-8.5 flex-1 rounded-lg text-[13px] font-medium text-black shadow-[0_0_0_1px_#0116271F] hover:bg-[#F4F6F7] disabled:opacity-60">Edit</button>
         <button type="button" disabled={action.isPending || blocked} title={blocked ? "Fix what it needs first" : undefined} onClick={() => run("run", "Running now")} className="h-8.5 flex-1 rounded-lg bg-[#011627] text-[13px] font-medium text-[#E6EDF3] hover:opacity-90 disabled:opacity-50">Run now</button>
       </div>
       {editing ? (
-        <ScheduleDialog
-          schedule={revision.schedule}
+        <EditDialog
+          item={item}
           busy={action.isPending}
           onClose={() => setEditing(false)}
-          onSave={(schedule) => action.mutate({ kind: "schedule", automationId: automation.id, schedule }, {
-            onSuccess: () => { setEditing(false); onToast("Schedule saved"); },
+          onSave={(changes) => action.mutate({ kind: "edit", automationId: automation.id, changes }, {
+            onSuccess: () => { setEditing(false); onToast("Automation updated"); },
             onError: (error) => onToast(error.message),
           })}
         />
@@ -526,7 +602,10 @@ function MeetingPanel({ event, zone }: { event: CalendarEvent; zone: string }) {
 function Legend({ checked, onToggle, children, testId }: { checked: boolean; onToggle: () => void; children: ReactNode; testId: string }) {
   return (
     <button type="button" role="checkbox" aria-checked={checked} onClick={onToggle} data-calendar-layer={testId} className="flex items-center gap-1.5 rounded focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
-      <span className={`size-2.5 shrink-0 rounded-[3px] ${checked ? "bg-[#DCE6EF] shadow-[inset_0_0_0_1px_#0116271F]" : "shadow-[inset_0_0_0_1.2px_#9BA1A6]"}`} />
+      {/* A real checkbox: the colour swatch alone read as broken, with on and off nearly the same. */}
+      <span aria-hidden className={`grid size-3.5 shrink-0 place-items-center rounded-[4px] transition-colors ${checked ? "bg-[#011627] text-white" : "bg-white shadow-[inset_0_0_0_1.25px_#9BA1A6]"}`}>
+        {checked ? <CheckMark size={10} strokeWidth={3} /> : null}
+      </span>
       <span className={`text-[12px] font-medium leading-4 ${checked ? "text-black" : "text-[#687076]"}`}>{children}</span>
     </button>
   );

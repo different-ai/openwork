@@ -14,12 +14,13 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
 import { IconImage } from "@/react-app/design-system/icon-image"
-import { ChevronDown, Cloud, Laptop } from "lucide-react"
+import { Cloud, Laptop } from "lucide-react"
 
 import { AutomationScheduleFields, AutomationTimezoneField } from "./automation-schedule-fields"
+import { AutomationModelButton } from "./automation-model-button"
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
-import { automationPickerOptions, describeAutomationModel } from "./automation-model-options"
+import { automationPickerOptions } from "./automation-model-options"
 
 function localTimezone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
@@ -124,7 +125,7 @@ export function automationCanUseNote(choice: AutomationCanUse) {
 }
 
 /** Where an Automation starts: its placement, then the cloud it uses (the cloud default model means only accounts). */
-function initialCanUse(
+export function initialCanUse(
   placement: AutomationExecutionTarget,
   model: CreateAutomation["model"] | undefined,
   choices: readonly AutomationCanUse[],
@@ -213,7 +214,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const [modelQuery, setModelQuery] = useState("")
   const selectedModel = modelKey(input.model)
   const currentModelAvailable = usesCloudDefault || modelOptions.some((option) => modelKey(option) === selectedModel)
-  const modelLabel = describeAutomationModel(input.model, modelOptions)
   const pickerOptions = useMemo(
     () => automationPickerOptions({
       options: modelOptions,
@@ -304,18 +304,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
         />
         {pinnedWorkflow || usesCloudDefault ? null : <div className="space-y-2">
           <Label htmlFor="automation-model">Model</Label>
-          <Button
-            id="automation-model"
-            type="button"
-            variant="outline"
-            className="h-9 w-full justify-between gap-2 font-normal"
-            onClick={() => setPickerOpen(true)}
-          >
-            <span className="min-w-0 truncate">
-              {currentModelAvailable ? modelLabel : "Current model is no longer available"}
-            </span>
-            <ChevronDown className="size-4 shrink-0 opacity-60" />
-          </Button>
+          <AutomationModelButton id="automation-model" model={input.model} options={modelOptions} onClick={() => setPickerOpen(true)} />
           <ModelPickerModal
             open={pickerOpen}
             options={pickerOptions}

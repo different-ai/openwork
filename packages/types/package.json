@@ -41,6 +41,11 @@
       "development": "./src/automations.ts",
       "default": "./src/automations.ts"
     },
+    "./automation-models": {
+      "types": "./src/automation-models.ts",
+      "development": "./src/automation-models.ts",
+      "default": "./src/automation-models.ts"
+    },
     "./automation-schedule": {
       "types": "./src/automation-schedule.ts",
       "development": "./src/automation-schedule.ts",

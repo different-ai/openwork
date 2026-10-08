@@ -21,6 +21,8 @@ import {
   formatTime,
   runPlacement,
 } from "@openwork/calendar"
+import { AutomationModelSummary } from "@/react-app/domains/automations/automation-model-button"
+import type { AutomationModelOption } from "@/react-app/domains/automations/automation-model-options"
 import { AutomationStatusIcon } from "./calendar-grid"
 
 type AutomationListItem = AutomationList["items"][number]
@@ -55,6 +57,8 @@ export type AutomationPanelActions = {
   onResume: () => void
   onRunNow: () => void
   onSaveSchedule: (schedule: AutomationSchedule) => Promise<boolean>
+  /** Opens the full editor (instructions, model, where it runs). Workflow Automations only change their schedule. */
+  onEdit?: () => void
   onOpenRun: (run: AutomationRun) => void
 }
 
@@ -65,6 +69,8 @@ export function AutomationDetailPanel(props: {
   runs: readonly AutomationRun[] | undefined
   runsLoading: boolean
   timeZone: string
+  /** The models this Automation's place can use, for its model row. */
+  modelOptions: readonly AutomationModelOption[]
   actions: AutomationPanelActions
   onClose: () => void
 }) {
@@ -107,6 +113,12 @@ export function AutomationDetailPanel(props: {
         <dl className="divide-y divide-border">
           <Row label="Repeats">{describeSchedule(revision.schedule, props.timeZone)}</Row>
           <Row label="Runs on">{runsOnLine(props.item)}</Row>
+          {revision.action?.kind === "saved_script" ? null : (
+            <>
+              <Row label="Model"><AutomationModelSummary model={revision.model} options={props.modelOptions} size="sm" /></Row>
+              <Row label="Instructions"><p className="line-clamp-4 whitespace-pre-line" data-calendar-instructions>{revision.instructions}</p></Row>
+            </>
+          )}
         </dl>
 
         <div className="mt-3">
@@ -138,7 +150,11 @@ export function AutomationDetailPanel(props: {
         ) : automation.state === "inactive" ? (
           <Button variant="outline" size="sm" disabled={busy} onClick={props.actions.onResume}><Play />Resume</Button>
         ) : null}
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => { setDraft(revision.schedule); setEditing(true) }}><Pencil />Edit schedule</Button>
+        {props.actions.onEdit && revision.action?.kind !== "saved_script" ? (
+          <Button variant="outline" size="sm" disabled={busy} onClick={props.actions.onEdit}><Pencil />Edit</Button>
+        ) : (
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => { setDraft(revision.schedule); setEditing(true) }}><Pencil />Edit schedule</Button>
+        )}
         <Button size="sm" disabled={busy || blocked || automation.state === "archived"} onClick={props.actions.onRunNow}><Play />Run now</Button>
       </div>
 

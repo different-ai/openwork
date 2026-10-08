@@ -79,6 +79,27 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     await user.screenshot();
   });
 
+  await step("Alex edits it: new instructions and another model, picked from a list with provider logos; it stays in the cloud", async () => {
+    await user.click({ role: "button", text: "Edit" });
+    await user.see({ text: "Cloud: Only connected accounts" });
+    await user.type({ role: "textbox", label: "Instructions" }, "Check the launch checklist and list owners of anything still open", { replace: true });
+    await user.click({ role: "button", label: "Model" });
+    const options = (await probe.dom('[role="listbox"] [role="option"]')).elements.map((element) => element.text);
+    // Provider logos: inline marks (svg role=img) or remote images, one per vendor model.
+    const logos = await count('[role="listbox"] [role="option"] img, [role="listbox"] [role="option"] svg[role="img"]');
+    const next = options.find((text) => !/Cloud default/.test(text)) ?? options[0] ?? "";
+    await user.click({ role: "option", label: new RegExp(`^${next.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+    await user.click({ role: "button", text: "Save changes" });
+    await user.see({ text: "Automation updated" });
+    await user.see({ text: "Check the launch checklist and list owners of anything still open" });
+    const model = (await probe.dom("[data-calendar-detail] [data-automation-model]")).elements[0]?.text ?? "";
+    evidence.recordAssertionEvidence("edited through Workbot and Den", `${options.length} models offered with ${logos} logos; picked "${next}", the panel now shows "${model}"`, options.length >= 1 && logos >= 1 && model.startsWith(next));
+    expect(options.length).toBeGreaterThanOrEqual(1);
+    expect(logos).toBeGreaterThanOrEqual(1);
+    expect(model.startsWith(next)).toBe(true);
+    await user.screenshot();
+  });
+
   await step("Workbot's Calendar has its own switch: turning it off stops Workbot's Calendar and leaves the desktop's on", async () => {
     await world.turnOffWorkbotCalendar();
     const features = await world.features();
