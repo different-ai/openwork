@@ -19,6 +19,12 @@ browser ── chat.openworklabs.com (this app: page + API) ──┬── Den 
 - **Each turn** gets a fresh member-scoped token from `POST /v1/workbot/run-token` (at most an hour). Den refuses it
   when Workbot is off for the workspace or the membership ended.
 
+## Apps
+
+Where Workbot's Apps are on (the `workbotApps` feature), an App a tool result opens shows inside the reply: Apps built in OpenWork and Apps from connected MCP servers. Den stays the authority. Workbot's server reads the App's page from the connection that opened it and runs only that connection's tools, as the person, with a short-lived token Den mints only for this (`POST /v1/workbot/app-token`); the token never reaches the browser or the runner. A tool that isn't read-only runs only right after the person's click in the App. The page runs each App in the MCP Apps sandbox this app serves at `/mcp-apps/sandbox.html` (the proxy the desktop app and Den's gateway serve), framed without same-origin access, under the policy the App declared.
+
+The runner keeps each App's launch and result with the conversation (its `apps` setting), so an App opens the same way after a reload, and what an App tells the model (`ui/update-model-context`) reaches the model from its next step. A message an App sends as the person (`ui/message`), or a link it opens, needs their gesture in that App, once per gesture.
+
 ## Sessions
 
 Workbot keeps nothing on disk, so it runs as any number of instances. The person's Den tokens live in an HttpOnly,

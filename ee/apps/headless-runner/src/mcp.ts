@@ -1,7 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
 import { z } from "zod"
 import { fileName, readToolFile } from "./tool-files.js"
-import type { ToolDocument, ToolImage, ToolResult, ToolSpec } from "./types.js"
+import { toolAppSchema, type ToolApp, type ToolDocument, type ToolImage, type ToolResult, type ToolSpec } from "./types.js"
 
 /** Tools from one remote MCP server, connected for the duration of one turn. */
 export type ToolSession = {
@@ -55,8 +55,34 @@ const callResult = z
     content: z.array(contentBlock).optional(),
     structuredContent: z.unknown().optional(),
     isError: z.boolean().optional(),
+    _meta: z.unknown().optional(),
   })
   .loose()
+
+/** What an App may be handed back on every load; a bigger result is kept without its content, or not at all. */
+export const MAX_APP_RESULT_CHARS = 256_000
+const launchSchema = toolAppSchema.omit({ result: true })
+const recordSchema = z.record(z.string(), z.unknown())
+
+/**
+ * The App a result opens (OpenWork Connect's `_meta["openwork/mcpApp"]`), with the result as the App receives it:
+ * its text content, structured content and `_meta`. Files stay with the model's copy.
+ */
+function appOf(result: z.infer<typeof callResult>): ToolApp | undefined {
+  const meta = recordSchema.safeParse(result._meta)
+  const launch = launchSchema.safeParse(meta.success ? meta.data["openwork/mcpApp"] : undefined)
+  if (!meta.success || !launch.success || JSON.stringify(launch.data.arguments).length > MAX_APP_RESULT_CHARS) return undefined
+  const structured = recordSchema.safeParse(result.structuredContent)
+  const full = {
+    content: (result.content ?? []).flatMap((block) => (block.type === "text" && block.text !== undefined ? [{ type: "text", text: block.text }] : [])),
+    ...(structured.success ? { structuredContent: structured.data } : {}),
+    _meta: meta.data,
+    ...(result.isError === undefined ? {} : { isError: result.isError }),
+  }
+  const fits = (value: unknown) => JSON.stringify(value).length <= MAX_APP_RESULT_CHARS
+  const kept = fits(full) ? full : fits({ ...full, content: [] }) ? { ...full, content: [] } : null
+  return { ...launch.data, result: kept }
+}
 
 export async function formatToolResult(value: unknown): Promise<ToolResult> {
   const parsed = callResult.safeParse(value)
@@ -100,11 +126,13 @@ export async function formatToolResult(value: unknown): Promise<ToolResult> {
   if (parts.length === 0 && parsed.data.structuredContent !== undefined) {
     parts.push(JSON.stringify(parsed.data.structuredContent))
   }
+  const app = appOf(parsed.data)
   return {
     output: truncate(parts.join("\n") || "(no output)"),
     isError: parsed.data.isError === true,
     ...(images.length ? { images } : {}),
     ...(documents.length ? { documents } : {}),
+    ...(app ? { app } : {}),
   }
 }
 
@@ -120,6 +148,14 @@ const toolList = z.object({
   ),
   nextCursor: z.string().optional(),
 })
+
+const uiVisibility = z.object({ _meta: z.object({ ui: z.object({ visibility: z.array(z.unknown()) }) }) })
+
+/** Tools only an App's view may call (`_meta.ui.visibility` without "model") are never offered to the model. */
+export function visibleToModel(tool: unknown) {
+  const declared = uiVisibility.safeParse(tool)
+  return !declared.success || declared.data._meta.ui.visibility.includes("model")
+}
 
 /**
  * Connects to the operator-configured MCP URL with the caller's bearer token.
@@ -148,6 +184,7 @@ export function remoteMcpConnector(options: {
       )
       for (const tool of page.tools) {
         if (options.allowlist.length && !options.allowlist.includes(tool.name)) continue
+        if (!visibleToModel(tool)) continue
         const name = modelToolName(tool.name, taken)
         taken.add(name)
         byModelName.set(name, tool.name)

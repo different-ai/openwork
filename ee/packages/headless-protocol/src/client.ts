@@ -90,6 +90,30 @@ export const runnerSessionSummarySchema = z.object({
 export type RunnerSessionSummary = z.infer<typeof runnerSessionSummarySchema>
 
 const runnerToolCallSchema = z.object({ id: z.string(), name: z.string(), input: z.record(z.string(), z.unknown()) })
+
+/**
+ * The App a tool result opened, kept by the runner in conversations that show Apps: `toolName` on the connection
+ * `connectionId` declared the page `resourceUri`, which receives `arguments` and `result`. Session reads leave
+ * `result` out (null); read one App for it.
+ */
+export const runnerToolAppSchema = z.object({
+  connectionId: z.string().optional(),
+  toolName: z.string(),
+  resourceUri: z.string(),
+  arguments: z.record(z.string(), z.unknown()),
+  result: z
+    .object({
+      content: z.array(z.record(z.string(), z.unknown())),
+      structuredContent: z.record(z.string(), z.unknown()).optional(),
+      _meta: z.record(z.string(), z.unknown()).optional(),
+      isError: z.boolean().optional(),
+    })
+    .nullable(),
+})
+export type RunnerToolApp = z.infer<typeof runnerToolAppSchema>
+
+/** What an open App last told the model about itself: its name, what it shows, and its data. */
+export type RunnerAppContext = { title: string; text: string; data?: Record<string, unknown> }
 export const runnerMessageSchema = z.discriminatedUnion("role", [
   z.object({
     seq: z.number().optional(),
@@ -117,6 +141,8 @@ export const runnerMessageSchema = z.discriminatedUnion("role", [
     output: z.string().optional(),
     isError: z.boolean(),
     imageCount: z.number().optional(),
+    /** The App this result opened, without its result (see runnerToolAppSchema). */
+    app: runnerToolAppSchema.optional().catch(undefined),
   }),
 ])
 export type RunnerMessage = z.infer<typeof runnerMessageSchema>
@@ -196,7 +222,14 @@ export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?:
  * the computer must be configured on the runner too), so a caller that never asks (Slack, Automations) never gets
  * any of them.
  */
-export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
+export type RunnerCapabilities = {
+  files?: boolean
+  computer?: boolean
+  reactions?: boolean
+  tasks?: boolean
+  /** The caller shows the Apps tool results open, and tells the runner what each one reports to the model. */
+  apps?: boolean
+}
 
 /**
  * Who a conversation belongs to and how it is shown to the model: `owner` (the caller's key for one person) and `ref`
@@ -210,6 +243,7 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.computer !== undefined ? { computer: input.computer } : {}),
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
+  ...(input.apps !== undefined ? { apps: input.apps } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
   ...(input.timeZone ? { timeZone: input.timeZone } : {}),
@@ -340,6 +374,23 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
           }),
         },
       }
+    },
+
+    /** The App a tool call in one turn opened, with the result it opens with. `unknown_app` (404) when it opened none. */
+    async readApp(sessionId: string, input: { messageId: string; callId: string }): Promise<RunnerResult<RunnerToolApp>> {
+      const query = new URLSearchParams({ messageId: input.messageId })
+      const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}/apps/${encodeURIComponent(input.callId)}?${query.toString()}`)
+      const parsed = z.object({ app: runnerToolAppSchema }).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false, status, error: errorCode(payload, `headless_app_${status}`) }
+      return { ok: true, value: parsed.data.app }
+    },
+
+    /** What an open App tells the model about itself, replacing what it said before. */
+    async setAppContext(sessionId: string, input: { messageId: string; callId: string } & RunnerAppContext): Promise<RunnerResult<{ saved: true }>> {
+      const { callId, ...body } = input
+      const { status, payload } = await request(deps, "PUT", `${sessionPath(sessionId)}/apps/${encodeURIComponent(callId)}/context`, body)
+      if (status !== 204) return { ok: false, status, error: errorCode(payload, `headless_app_context_${status}`) }
+      return { ok: true, value: { saved: true } }
     },
 
     /** Whether the runner keeps files (a blob store is configured). */

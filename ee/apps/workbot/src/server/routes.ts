@@ -7,6 +7,8 @@ import {
   WorkbotFilesUnavailableError,
   WorkbotUnavailableError,
   type WorkbotActor,
+  type WorkbotAppConnections,
+  type WorkbotAppRefusal,
   type WorkbotChat,
 } from "@openwork-ee/workbot-server"
 import type { Context, Hono, MiddlewareHandler } from "hono"
@@ -15,7 +17,7 @@ import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 import type { AppEnv, Member } from "./auth.js"
 import type { Config } from "./config.js"
-import type { Den } from "./den.js"
+import { DenAppRequestError, type Den } from "./den.js"
 
 /**
  * The Workbot API the page talks to (`/v1/workbot/...`). Every route needs a signed-in member, and Den's answer
@@ -56,6 +58,26 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 const MESSAGES_PER_WINDOW = 30
 const MESSAGE_WINDOW_MS = 10 * 60_000
 const RUN_TOKEN_TTL_MS = 60 * 60_000
+/** Each person's App token lasts this long and is replaced a little before it ends. */
+const APP_TOKEN_TTL_MS = 15 * 60_000
+const APP_TOKEN_RENEW_MS = 2 * 60_000
+/** An App tool's arguments, and what an App tells the model, are small; anything bigger is refused before it is read. */
+const MAX_APP_TOOL_BODY_BYTES = 256 * 1024
+const MAX_APP_CONTEXT_BODY_BYTES = 32 * 1024
+const appToolSchema = z.object({ name: z.string().min(1).max(200), arguments: z.record(z.string(), z.unknown()).default({}), clicked: z.boolean().default(false) }).strict()
+const appContextSchema = z
+  .object({
+    title: z.string().max(200),
+    content: z.array(z.unknown()).max(50).optional(),
+    structuredContent: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+const APP_REFUSAL_STATUS: Record<WorkbotAppRefusal, 403 | 404 | 409> = {
+  unknown_app: 404,
+  app_unavailable: 409,
+  tool_not_available: 403,
+  needs_click: 403,
+}
 
 function actorOf(member: Member): WorkbotActor {
   const { den } = member
@@ -73,6 +95,25 @@ function actorOf(member: Member): WorkbotActor {
 export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config; den: Den; member: MiddlewareHandler<AppEnv>; sameOrigin: MiddlewareHandler }) {
   const { config, den } = input
   const sent = new Map<string, number[]>()
+  const appTokens = new Map<string, { token: string; expiresAt: number }>()
+
+  /**
+   * The connections a person's Apps came from, reached as their App host with a token Den mints only while Workbot's
+   * Apps are on for their workspace. The token stays on this server, kept until shortly before it expires.
+   */
+  const appConnectionsFor = (member: Member): WorkbotAppConnections => ({
+    async request(connectionId, method, params) {
+      const key = `${member.den.organization.id}:${member.den.memberId}`
+      const now = Date.now()
+      let held = appTokens.get(key)
+      if (!held || held.expiresAt - now < APP_TOKEN_RENEW_MS) {
+        for (const [other, token] of appTokens) if (token.expiresAt - now < APP_TOKEN_RENEW_MS) appTokens.delete(other)
+        held = await den.appToken(member.accessToken, { ttlMs: APP_TOKEN_TTL_MS })
+        appTokens.set(key, held)
+      }
+      return den.appRequest(held.token, connectionId, method, params)
+    },
+  })
 
   /**
    * The runner, told whose conversations these are: on celld that is the person's own cell (all their chats and
@@ -90,6 +131,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         maxTokenTtlMs: RUN_TOKEN_TTL_MS,
       }),
       canSchedule: async () => member.den.canSchedule,
+      apps: member.den.apps ? appConnectionsFor(member) : null,
     })
 
   const enabled = (c: Context<AppEnv>) => c.get("member").den.enabled
@@ -334,6 +376,55 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       throw error
     }
   })
+
+  /**
+   * The Apps in the person's chat, each by the turn and tool call that opened it: its page (ready for the sandbox) and
+   * what it opened with; its own tools; and what it tells the model about itself.
+   */
+  const appRoute = (handler: (c: Context<AppEnv>, ref: { turnId: string; callId: string; chat: WorkbotChat }) => Promise<Response>) => async (c: Context<AppEnv>) => {
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!c.get("member").den.apps) return c.json({ error: "feature_disabled" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    try {
+      return await handler(c, { turnId: c.req.param("turnId") ?? "", callId: c.req.param("callId") ?? "", chat: scope.chat })
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 409)
+      if (error instanceof DenAppRequestError) return c.json({ error: error.code, message: error.message }, 502)
+      throw error
+    }
+  }
+  const refused = (c: Context<AppEnv>, code: WorkbotAppRefusal) => c.json({ error: code }, APP_REFUSAL_STATUS[code])
+
+  app.get("/v1/workbot/apps/:turnId/:callId", appRoute(async (c, ref) => {
+    const member = c.get("member")
+    const opened = await workbotFor(member).openApp(actorOf(member), ref)
+    return opened.ok ? c.json(opened.value) : refused(c, opened.code)
+  }))
+
+  app.post(
+    "/v1/workbot/apps/:turnId/:callId/tools",
+    bodyLimit({ maxSize: MAX_APP_TOOL_BODY_BYTES, onError: (c) => c.json({ error: "too_large" }, 413) }),
+    appRoute(async (c, ref) => {
+      const body = appToolSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) return c.json({ error: "invalid_request" }, 400)
+      const member = c.get("member")
+      const called = await workbotFor(member).callAppTool(actorOf(member), { ...ref, ...body.data })
+      return called.ok ? c.json({ result: called.value }) : refused(c, called.code)
+    }),
+  )
+
+  app.put(
+    "/v1/workbot/apps/:turnId/:callId/context",
+    bodyLimit({ maxSize: MAX_APP_CONTEXT_BODY_BYTES, onError: (c) => c.json({ error: "too_large" }, 413) }),
+    appRoute(async (c, ref) => {
+      const body = appContextSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success) return c.json({ error: "invalid_request" }, 400)
+      const member = c.get("member")
+      const saved = await workbotFor(member).setAppContext(actorOf(member), { ...ref, ...body.data })
+      return saved.ok ? c.body(null, 204) : refused(c, saved.code)
+    }),
+  )
 
   app.get("/v1/workbot/events", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)

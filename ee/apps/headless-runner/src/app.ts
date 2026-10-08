@@ -8,7 +8,7 @@ import { formatBytes } from "./tool-files.js"
 import { z } from "zod"
 import { normalizePath } from "./files.js"
 import type { Runner } from "./runner.js"
-import type { Store } from "./store.js"
+import { appContextSchema, type Store } from "./store.js"
 import { ACTIVE, repeatLimitsSchema, turnCredentialsSchema, type SessionComputer } from "./types.js"
 
 const createSessionBody = z
@@ -24,6 +24,11 @@ const createSessionBody = z
     reactions: z.boolean().optional(),
     /** Let the conversation hand longer work to background tasks (start_task) and keep talking. Off unless asked for. */
     tasks: z.boolean().optional(),
+    /**
+     * The caller shows the Apps tool results open: keep each launch with its result (GET …/apps/:callId) and show the
+     * model what open Apps report (PUT …/apps/:callId/context). Off unless asked for.
+     */
+    apps: z.boolean().optional(),
     /** Who the conversation belongs to, in the caller's terms, so the caller can list one person's conversations. */
     owner: z.string().min(1).max(200).optional(),
     /** The caller's own id for the conversation, returned when listing. */
@@ -61,6 +66,14 @@ const sendBody = z
   .strict()
   .refine((body) => body.prompt.trim().length > 0 || (body.attachments?.length ?? 0) > 0, "prompt or attachments is required")
 const abortBody = z.object({ messageId: messageIdSchema.optional() }).strict()
+const callIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,200}$/)
+const appQuery = z.object({ messageId: messageIdSchema })
+/** Room for an App's own words and a little data; anything bigger crowds out the conversation. */
+const MAX_APP_CONTEXT_DATA_CHARS = 4_000
+const appContextBody = appContextSchema
+  .extend({ messageId: messageIdSchema })
+  .strict()
+  .refine((body) => body.data === undefined || JSON.stringify(body.data).length <= MAX_APP_CONTEXT_DATA_CHARS, "data is too big")
 const readQuery = z.object({
   messageId: messageIdSchema.optional(),
   limit: z.coerce.number().int().min(1).max(5_000).default(100),
@@ -168,12 +181,14 @@ export function createApp(input: {
       messages: scoped.slice(-query.data.limit).map((entry) => {
         const { seq, messageId, message, createdAt } = entry
         if (message.role !== "tool") return { seq, messageId, ...(createdAt === undefined ? {} : { createdAt }), ...message }
-        const { images, documents, output, ...rest } = message
+        const { images, documents, output, app, ...rest } = message
         return {
           seq,
           messageId,
           ...(createdAt === undefined ? {} : { createdAt }),
           ...rest,
+          // Which App opened, without the result it opens with: that is read per App (GET …/apps/:callId).
+          ...(app ? { app: query.data.outputs === "full" ? app : { ...app, result: null } } : {}),
           ...(query.data.outputs === "full" ? { output } : { outputLength: output.length }),
           ...(images ? { imageCount: images.length } : {}),
           ...(documents ? { documentCount: documents.length } : {}),
@@ -339,6 +354,29 @@ export function createApp(input: {
     const removed = store.deleteTurns(sessionId, messageId.data, { andAfter: c.req.query("after") === "1" })
     if (removed === null) return c.json({ error: "turn_busy" }, 409)
     return c.json({ removed })
+  })
+
+  // The App a tool call opened: its launch and the result it opens with, every time it is shown again.
+  app.get("/v1/sessions/:id/apps/:callId", (c) => {
+    const sessionId = c.req.param("id")
+    if (!store.getSession(sessionId)) return c.json({ error: "unknown_session" }, 404)
+    const callId = callIdSchema.safeParse(c.req.param("callId"))
+    const query = appQuery.safeParse(c.req.query())
+    if (!callId.success || !query.success) return c.json({ error: "invalid_request" }, 400)
+    const toolApp = store.toolApp(sessionId, query.data.messageId, callId.data)
+    return toolApp ? c.json({ app: toolApp }) : c.json({ error: "unknown_app" }, 404)
+  })
+
+  // What an open App tells the model about itself, replacing what it said before; the model sees it from its next step.
+  app.put("/v1/sessions/:id/apps/:callId/context", bodyLimit({ maxSize: 32 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) }), async (c) => {
+    const session = store.getSession(c.req.param("id"))
+    if (!session) return c.json({ error: "unknown_session" }, 404)
+    if (!session.apps) return c.json({ error: "apps_not_enabled" }, 409)
+    const callId = callIdSchema.safeParse(c.req.param("callId"))
+    const body = appContextBody.safeParse(await c.req.json().catch(() => null))
+    if (!callId.success || !body.success) return c.json({ error: "invalid_request" }, 400)
+    const { messageId, ...context } = body.data
+    return store.setAppContext(session.id, messageId, callId.data, context) ? c.body(null, 204) : c.json({ error: "unknown_app" }, 404)
   })
 
   app.post("/v1/sessions/:id/abort", async (c) => {

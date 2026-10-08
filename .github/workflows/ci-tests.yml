@@ -91,6 +91,8 @@ jobs:
           pnpm --filter @openwork-ee/headless-computer build
           pnpm --filter @openwork-ee/headless-computer test
           pnpm --filter @openwork-ee/headless-runner test:computer-config
+      - name: Test the headless runner's Apps
+        run: pnpm --filter @openwork-ee/headless-runner test:apps
       - name: Boot the app provider tree
         run: pnpm test:boot
       - name: Test the shared Calendar logic

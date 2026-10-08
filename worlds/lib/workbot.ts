@@ -274,8 +274,13 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       } : {}),
     },
   });
-  // --calendar turns on both Calendars (desktop and Workbot), each behind its own feature.
-  const orgId = await enableWorkbot(den, { ...options.features, ...(options.calendar ? { automationCalendar: true, workbotCalendar: true } : {}) });
+  // --calendar turns on both Calendars (desktop and Workbot), each behind its own feature; --live seeds an App, which
+  // opens inside Workbot's replies.
+  const orgId = await enableWorkbot(den, {
+    ...options.features,
+    ...(options.calendar ? { automationCalendar: true, workbotCalendar: true } : {}),
+    ...(options.live ? { workbotApps: true } : {}),
+  });
   // --calendar: a real provider (Anthropic, fixture key) so the Calendar's model pickers show logos and choices.
   if (options.calendar) await publishCalendarModels(den.admin, orgId);
   // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.

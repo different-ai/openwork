@@ -157,6 +157,7 @@ export type AdminFeature = {
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotApps"
     | "litellm"
     | "gatewayCloudSignIn"
     | "platformAuditReads";
@@ -212,6 +213,7 @@ export type AdminOrganizationsPageResponse = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotApps: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
@@ -344,6 +346,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotApps: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -456,6 +467,7 @@ export type AdminOverviewResponse = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotApps: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
@@ -588,6 +600,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotApps: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1750,6 +1771,7 @@ export type CapabilityDisabledError = {
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotApps"
     | "litellm"
     | "gatewayCloudSignIn"
     | "platformAuditReads";
@@ -4930,6 +4952,7 @@ export type WorkbotSession = {
   canSchedule: boolean;
   calendar?: boolean;
   sideChats: boolean;
+  apps?: boolean;
 };
 
 export type WorkbotRunToken = {
@@ -5643,6 +5666,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotApps: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
@@ -5775,6 +5799,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotApps: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5875,6 +5908,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotApps: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       platformAuditReads: boolean;
@@ -6007,6 +6041,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotApps: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -28506,6 +28549,47 @@ export type CreateWorkbotRunTokenResponses = {
 };
 
 export type CreateWorkbotRunTokenResponse = CreateWorkbotRunTokenResponses[keyof CreateWorkbotRunTokenResponses];
+
+export type CreateWorkbotAppTokenData = {
+  body: {
+    ttlMs?: number;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/app-token";
+};
+
+export type CreateWorkbotAppTokenErrors = {
+  /**
+   * The token is missing, expired or revoked, or the membership ended.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workbot's Apps are off or the sign-in grant cannot use Apps.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Too many tokens requested.
+   */
+  429: {
+    error: "rate_limited";
+    retryAfter: number;
+  };
+};
+
+export type CreateWorkbotAppTokenError = CreateWorkbotAppTokenErrors[keyof CreateWorkbotAppTokenErrors];
+
+export type CreateWorkbotAppTokenResponses = {
+  /**
+   * The token.
+   */
+  200: WorkbotRunToken;
+};
+
+export type CreateWorkbotAppTokenResponse = CreateWorkbotAppTokenResponses[keyof CreateWorkbotAppTokenResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

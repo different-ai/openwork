@@ -27,6 +27,11 @@ export type WorkbotHost = {
   connectionsHref?: string | null
   /** The person can start side chats next to their main chat (the workbotSideChats feature). Off when unset. */
   sideChats?: boolean
+  /**
+   * Where the host serves the MCP Apps sandbox proxy, for the Apps in Workbot's replies. Apps can't open without it.
+   * The page frames it without same-origin access, so an App never reaches the host's page or cookies.
+   */
+  appSandboxUrl?: string
 }
 
 let current: WorkbotHost | null = null

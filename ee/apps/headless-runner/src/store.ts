@@ -12,6 +12,7 @@ import {
   type Attachment,
   type Message,
   type RepeatLimits,
+  type ToolApp,
   type TurnStatus,
 } from "./types.js"
 
@@ -32,6 +33,7 @@ const sessionOptions = z.object({
   computer: z.boolean().optional(),
   reactions: z.boolean().optional(),
   tasks: z.boolean().optional(),
+  apps: z.boolean().optional(),
   timeZone: z.string().optional(),
   autoTitle: z.boolean().optional(),
   memoryOf: z.string().optional(),
@@ -57,6 +59,17 @@ const turnRow = z.object({
 const messageRow = z.object({ seq: z.number(), message_id: z.string(), body: z.string(), created_at: z.number().optional() })
 const fileRow = z.object({ path: z.string(), size: z.number(), updated_at: z.number() })
 const countRow = z.object({ n: z.number() })
+const appContextRow = z.object({ body: z.string(), updated_at: z.number() })
+
+/** What an open App last told the model about itself: its name, what it shows (text) and its data, if any. */
+export const appContextSchema = z
+  .object({
+    title: z.string().min(1).max(120),
+    text: z.string().max(4_000),
+    data: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+export type AppContext = z.infer<typeof appContextSchema>
 
 export type Session = {
   id: string
@@ -76,6 +89,11 @@ export type Session = {
   reactions: boolean
   /** Whether the conversation may hand work to background tasks (start_task) and keep talking meanwhile. */
   tasks: boolean
+  /**
+   * Whether the caller shows the Apps tool results open (see ToolApp): their launches are kept with the results, and
+   * what each App tells the model (setAppContext) is shown to it.
+   */
+  apps: boolean
   /**
    * Who the conversation belongs to, in the caller's own terms (for example one person in one organization), and
    * the caller's id for it. A caller with several conversations per person lists them by owner (GET /v1/sessions).
@@ -100,6 +118,7 @@ export type SessionInput = {
   computer?: boolean
   reactions?: boolean
   tasks?: boolean
+  apps?: boolean
   owner?: string
   ref?: string
   timeZone?: string
@@ -114,6 +133,7 @@ function optionsOf(input: {
   computer?: boolean
   reactions?: boolean
   tasks?: boolean
+  apps?: boolean
   timeZone?: string | null
   autoTitle?: boolean
   memoryOf?: string | null
@@ -124,6 +144,7 @@ function optionsOf(input: {
     ...(input.computer !== undefined ? { computer: input.computer } : {}),
     ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
     ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
+    ...(input.apps !== undefined ? { apps: input.apps } : {}),
     ...(input.timeZone ? { timeZone: input.timeZone } : {}),
     ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
     ...(input.memoryOf ? { memoryOf: input.memoryOf } : {}),
@@ -141,6 +162,7 @@ function serializeOptions(options: SessionOptions) {
     ...(options.computer ? { computer: true } : {}),
     ...(options.reactions ? { reactions: true } : {}),
     ...(options.tasks ? { tasks: true } : {}),
+    ...(options.apps ? { apps: true } : {}),
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
     ...(options.autoTitle ? { autoTitle: true } : {}),
     ...(options.memoryOf ? { memoryOf: options.memoryOf } : {}),
@@ -311,6 +333,14 @@ export class Store {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS saved_files_by_session ON saved_files (session_id, created_at);
+      CREATE TABLE IF NOT EXISTS app_contexts (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        call_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, call_id)
+      );
     `)
     // Columns added after the first release; existing rows keep their defaults.
     const columnsOf = (table: string) => tableColumns.parse(this.db.prepare(`PRAGMA table_info(${table})`).all()).map((column) => column.name)
@@ -409,6 +439,7 @@ export class Store {
       computer: options.computer ?? false,
       reactions: options.reactions ?? false,
       tasks: options.tasks ?? false,
+      apps: options.apps ?? false,
       owner: value.owner ?? null,
       ref: value.ref ?? null,
       timeZone: options.timeZone ?? null,
@@ -481,9 +512,11 @@ export class Store {
     this.transaction(() => {
       const deleteMessages = this.db.prepare("DELETE FROM messages WHERE session_id = ? AND message_id = ?")
       const deleteTurn = this.db.prepare("DELETE FROM turns WHERE session_id = ? AND message_id = ?")
+      const deleteAppContexts = this.db.prepare("DELETE FROM app_contexts WHERE session_id = ? AND message_id = ?")
       for (const id of ids) {
         deleteMessages.run(sessionId, id)
         deleteTurn.run(sessionId, id)
+        deleteAppContexts.run(sessionId, id)
       }
     })
     for (const id of ids) this.onChange?.(sessionId, id)
@@ -718,6 +751,41 @@ export class Store {
       )
       .all(sessionId, ...messageIds)
       .map(parseMessageRow)
+  }
+
+  /** The App a tool call in this turn opened, as kept with its result; null when it opened none. */
+  toolApp(sessionId: string, messageId: string, callId: string): ToolApp | null {
+    for (const { message } of this.turnMessages(sessionId, messageId)) {
+      if (message.role === "tool" && message.callId === callId) return message.app ?? null
+    }
+    return null
+  }
+
+  /**
+   * What an open App tells the model (`ui/update-model-context`), replacing what it said before. Only for an App a
+   * tool call in this turn opened; false otherwise.
+   */
+  setAppContext(sessionId: string, messageId: string, callId: string, context: AppContext): boolean {
+    if (!this.toolApp(sessionId, messageId, callId)) return false
+    this.db
+      .prepare(
+        `INSERT INTO app_contexts (session_id, call_id, message_id, body, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (session_id, call_id) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at`,
+      )
+      .run(sessionId, callId, messageId, JSON.stringify(context), this.now())
+    return true
+  }
+
+  /** The newest things open Apps told the model, newest first. */
+  appContexts(sessionId: string, limit: number): Array<AppContext & { updatedAt: number }> {
+    return this.db
+      .prepare("SELECT body, updated_at FROM app_contexts WHERE session_id = ? ORDER BY updated_at DESC LIMIT ?")
+      .all(sessionId, limit)
+      .flatMap((row) => {
+        const value = appContextRow.parse(row)
+        const context = appContextSchema.safeParse(JSON.parse(value.body))
+        return context.success ? [{ ...context.data, updatedAt: value.updated_at }] : []
+      })
   }
 
   /** The files under memory/, which the model sees at the start of every turn. */

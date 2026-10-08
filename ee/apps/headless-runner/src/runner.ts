@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { APP_CONTEXTS_SHOWN, appsSection } from "./apps.js"
 import type { SessionEvents } from "./events.js"
 import { FILE_TOOLS, FILE_TOOL_NAMES, runFileTool } from "./files.js"
 import type { McpConnector, ToolSession } from "./mcp.js"
@@ -175,6 +176,13 @@ export function attachmentNote(attachments: Attachment[]) {
     .join("\n")
 }
 
+/** The App a result opened is for the caller that shows it, never for the model. */
+function withoutApp(message: Message): Message {
+  if (message.role !== "tool" || !message.app) return message
+  const { app: _app, ...rest } = message
+  return rest
+}
+
 const messageSize = (message: Message) => (message.role === "tool" ? message.output.length + 200 : JSON.stringify(message).length)
 
 /** A turn bigger than the budget on its own keeps every call and its newest outputs; the oldest large outputs go first. */
@@ -267,7 +275,7 @@ export function buildContext(rows: StoredMessage[], currentMessageId: string, bu
           turn.map(({ message }) => compactPastTurn(message))
     ).map((message, index): Message => {
       const at = turn[index]?.createdAt
-      return message.role === "user" && at !== undefined ? { ...message, text: `[Sent ${sentAt(at, options.timeZone ?? null)}]\n${message.text}` } : message
+      return message.role === "user" && at !== undefined ? { ...message, text: `[Sent ${sentAt(at, options.timeZone ?? null)}]\n${message.text}` } : withoutApp(message)
     })
     return { isCurrent, messages, size: messages.reduce((sum, message) => sum + messageSize(message), 0), from: turn[0].seq }
   })
@@ -670,8 +678,10 @@ export class Runner {
         }
         const history = await withFiles(context.messages)
         const recentTasks = kind !== "task" && session?.tasks ? store.recentTasks(sessionId, 8) : []
-        // Task state changes while the conversation goes on, so it comes last: everything before it stays cached.
-        const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now()) }] : []
+        const appContexts = kind !== "task" && session?.apps ? store.appContexts(sessionId, APP_CONTEXTS_SHOWN) : []
+        // Task and App state change while the conversation goes on, so they come last: everything before stays cached.
+        const stateText = [tasksSection(recentTasks, Date.now()), appsSection(appContexts, Date.now())].filter(Boolean).join("\n\n")
+        const state: Message[] = stateText ? [{ role: "user", text: stateText }] : []
         const { messages, repairs } = normalizeTranscript([...history, ...state])
         if (repairs) console.warn(`[headless-runner] context repaired ${JSON.stringify({ sessionId, messageId, repairs })}`)
         const result = await this.options.model.complete({
@@ -739,6 +749,7 @@ export class Runner {
             isError: outcome.isError,
             ...(outcome.images?.length ? { images: outcome.images } : {}),
             ...(outcome.documents?.length ? { documents: outcome.documents } : {}),
+            ...(session?.apps && outcome.app ? { app: outcome.app } : {}),
           })
           outcomes.push(outcome)
         }

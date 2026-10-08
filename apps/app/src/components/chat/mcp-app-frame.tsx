@@ -8,6 +8,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
 import { connectionActionAppResourceUri, legacyConnectionActionAppResourceUri } from "@openwork/types/connection-action-app"
 import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
+import { buildMcpAppCsp, parseMcpAppLaunch, secureMcpAppHtml } from "@openwork/types/mcp-app-host"
 import { isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { createConnectionActionController, hasHostConnectionActions, standardMcpToolResult } from "./mcp-connection-action"
@@ -150,68 +151,10 @@ export function builtMcpAppId(part: DynamicToolUIPart): string | null {
 }
 
 export function gatewayMcpAppLaunch(meta: unknown): OpenworkMcpAppLaunchReference | null {
-  if (!isRecord(meta) || !isRecord(meta["openwork/mcpApp"])) return null
-  const launch = meta["openwork/mcpApp"]
-  if ((launch.connectionId !== undefined && typeof launch.connectionId !== "string")
-    || typeof launch.toolName !== "string"
-    || typeof launch.resourceUri !== "string"
-    || !isRecord(launch.arguments)) return null
-  return {
-    ...(typeof launch.connectionId === "string" ? { connectionId: launch.connectionId } : {}),
-    toolName: launch.toolName,
-    resourceUri: launch.resourceUri,
-    arguments: launch.arguments,
-  }
+  return parseMcpAppLaunch(meta)
 }
 
-export function buildMcpAppCsp(app: OpenworkMcpAppResource): string {
-  const resources = app.csp.resourceDomains.join(" ")
-  const withResources = (source: string) => resources ? `${source} ${resources}` : source
-  const sourceList = (values: string[]) => values.length ? values.join(" ") : "'none'"
-  return [
-    "default-src 'none'",
-    `script-src ${withResources("'unsafe-inline'")}`,
-    `style-src ${withResources("'unsafe-inline'")}`,
-    `img-src ${withResources("data: blob:")}`,
-    `font-src ${withResources("data:")}`,
-    `media-src ${withResources("blob:")}`,
-    `connect-src ${sourceList(app.csp.connectDomains)}`,
-    `frame-src ${sourceList(app.csp.frameDomains)}`,
-    `base-uri ${sourceList(app.csp.baseUriDomains)}`,
-    "object-src 'none'",
-    "form-action 'none'",
-  ].join("; ")
-}
-
-function escapeAttribute(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;")
-}
-
-export function secureMcpAppHtml(app: OpenworkMcpAppResource): string {
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(buildMcpAppCsp(app))}">`
-  const html = /<html(?:\s[^>]*)?>/i.exec(app.html)
-  if (html?.index !== undefined) {
-    const prefix = app.html.slice(0, html.index).replace(/^\uFEFF/, "")
-    if (!/^\s*(?:<!doctype\s+html\s*>)?\s*$/i.test(prefix)) {
-      throw new Error("The MCP App document contains executable markup before its HTML root.")
-    }
-    const htmlEnd = html.index + html[0].length
-    const head = /<head(?:\s[^>]*)?>/i.exec(app.html)
-    if (head?.index !== undefined) {
-      if (head.index < htmlEnd || app.html.slice(htmlEnd, head.index).trim()) {
-        throw new Error("The MCP App document contains markup before its policy-bearing head.")
-      }
-      const headEnd = head.index + head[0].length
-      return `${app.html.slice(0, headEnd)}${meta}${app.html.slice(headEnd)}`
-    }
-    const body = /<body(?:\s[^>]*)?>/i.exec(app.html)
-    if (body?.index !== undefined && (body.index < htmlEnd || app.html.slice(htmlEnd, body.index).trim())) {
-      throw new Error("The MCP App document contains markup before its policy-bearing head.")
-    }
-    return `${app.html.slice(0, htmlEnd)}<head>${meta}</head>${app.html.slice(htmlEnd)}`
-  }
-  return `<!doctype html><html><head>${meta}</head><body>${app.html}</body></html>`
-}
+export { buildMcpAppCsp, secureMcpAppHtml }
 
 /**
  * Maps the app's live design tokens onto the standard MCP Apps style

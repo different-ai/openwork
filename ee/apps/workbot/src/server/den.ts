@@ -11,6 +11,8 @@ import type { Tokens } from "./sealed.js"
 export const WORKBOT_CLIENT_ID = "openwork-workbot"
 const SCOPES = "openid profile email offline_access mcp:read mcp:write"
 const TIMEOUT_MS = 20_000
+/** An App's own tool may run a Workflow or reach a slow provider; the page waits as long as the desktop does. */
+const APP_REQUEST_TIMEOUT_MS = 120_000
 
 const protectedResourceSchema = z.object({ resource: z.string(), authorization_servers: z.array(z.string()).min(1) })
 const metadataSchema = z.object({
@@ -30,10 +32,35 @@ export const denSessionSchema = z.object({
   calendar: z.boolean().optional(),
   /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
   sideChats: z.boolean().default(false),
+  /** Apps open inside Workbot's replies (Workbot and workbotApps). Older Dens omit it: off. */
+  apps: z.boolean().default(false),
 })
 export type DenSession = z.infer<typeof denSessionSchema>
 
 type Discovery = { resource: string; issuer: string; authorizationEndpoint: string; tokenEndpoint: string; revocationEndpoint: string | null }
+
+/** An App's connection answered a request with a JSON-RPC error, or not at all. */
+export class DenAppRequestError extends Error {
+  constructor(readonly code: "app_request_failed" | "app_token_refused", message: string) {
+    super(message)
+    this.name = "DenAppRequestError"
+  }
+}
+
+const rpcResponseSchema = z.object({
+  result: z.unknown().optional(),
+  error: z.object({ code: z.number().optional(), message: z.string().optional() }).loose().optional(),
+})
+
+/** Den's MCP endpoints answer with JSON, or with one server-sent event carrying it. */
+function rpcPayload(raw: string): unknown {
+  const data = raw.split("\n").find((line) => line.startsWith("data:"))
+  try {
+    return JSON.parse(data ? data.slice(5) : raw)
+  } catch {
+    return null
+  }
+}
 
 /** Den said the token or grant is no longer good: the person signs in again. */
 export class DenSignedOutError extends Error {
@@ -161,6 +188,32 @@ export function createDen(options: { apiUrl: string; publicUrl: string }) {
       const parsed = z.object({ token: z.string() }).safeParse(payload)
       if (status !== 200 || !parsed.success) throw new Error(`den_run_token_${status}`)
       return parsed.data.token
+    },
+    /**
+     * The token Workbot's server shows the person's Apps with (an MCP Apps host token, at most an hour). Den mints it
+     * only while Workbot's Apps are on for their workspace. It never leaves this server.
+     */
+    async appToken(accessToken: string, input: { ttlMs: number }): Promise<{ token: string; expiresAt: number }> {
+      const { status, payload } = await authorized("POST", "/v1/workbot/app-token", accessToken, input)
+      const parsed = z.object({ token: z.string(), expiresAt: z.string() }).safeParse(payload)
+      if (status !== 200 || !parsed.success) throw new DenAppRequestError("app_token_refused", `den_app_token_${status}`)
+      return { token: parsed.data.token, expiresAt: Date.parse(parsed.data.expiresAt) }
+    },
+    /**
+     * One request to the connection an App came from (an App built in OpenWork is its own connection), on OpenWork
+     * Connect as the person's App host. Connect's MCP endpoints keep no session, so each request stands alone.
+     */
+    async appRequest(appToken: string, connectionId: string, method: "tools/list" | "tools/call" | "resources/read", params: Record<string, unknown>): Promise<unknown> {
+      const response = await fetch(`${options.apiUrl}/mcp/agent/connections/${encodeURIComponent(connectionId)}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${appToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(APP_REQUEST_TIMEOUT_MS),
+      })
+      const message = rpcResponseSchema.safeParse(rpcPayload(await response.text().catch(() => "")))
+      if (!response.ok || !message.success) throw new DenAppRequestError("app_request_failed", `den_app_${method}_${response.status}`)
+      if (message.data.error) throw new DenAppRequestError("app_request_failed", message.data.error.message ?? `den_app_${method}_error`)
+      return message.data.result
     },
     /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
     async connections(accessToken: string) {

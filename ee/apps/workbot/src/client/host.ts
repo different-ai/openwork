@@ -63,5 +63,6 @@ export function createHost(me: Me): WorkbotHost {
     canSchedule: me.canSchedule,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
     sideChats: me.sideChats,
+    appSandboxUrl: "/mcp-apps/sandbox.html",
   }
 }
