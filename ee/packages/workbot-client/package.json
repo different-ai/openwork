@@ -1,0 +1,40 @@
+{
+  "name": "@openwork-ee/workbot-client",
+  "private": true,
+  "type": "module",
+  "description": "What every Workbot client shares: the Workbot API's shapes, its live stream, the conversation's rules for showing it, and the data hooks behind a transport each platform provides. No DOM, no Node.",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./hooks": {
+      "types": "./src/hooks.ts",
+      "default": "./src/hooks.ts"
+    },
+    "./calendar": {
+      "types": "./src/calendar.ts",
+      "default": "./src/calendar.ts"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openwork/calendar": "workspace:*",
+    "@openwork/types": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.96.2",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.96.2",
+    "@types/react": "19.2.14",
+    "react": "catalog:",
+    "typescript": "^5.5.4"
+  }
+}
