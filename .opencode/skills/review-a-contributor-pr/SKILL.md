@@ -15,8 +15,11 @@ and no label to enforce.
 
 The contributor flow is fork-only, including fork bots. Same-repository
 PRs use normal CI and review, with no contributor merge status or `/test`.
-The required `openwork-tests-required` check and trusted maintainer review
-are the merge safeguards; the fork screen and Warden statuses are advisory.
+The merge safeguards are the required `openwork-tests-required` and
+`warden-clear` checks plus trusted maintainer review. `warden-clear` is
+Warden's verdict on the head, posted by the diff-warden App; for forks it
+appears after `/test` runs the sandboxed review. The fork screen and AI
+screen statuses are advisory.
 Everything below runs from dev and never executes PR code:
 
 - `contributor-pr.yml` (`pull_request_target`, every fork push): runs the
@@ -53,7 +56,7 @@ Repository Actions settings must require approval for **all outside
 collaborators**, not only first-time contributors. Never approve fork runs
 manually as a shortcut around `/test`. Required CI, CODEOWNERS and approval
 of the latest push remain enabled. This checklist is the human merge gate;
-failed or missing Warden results are not automatically blocked by the ruleset.
+the ruleset separately blocks any PR without a passing `warden-clear`.
 See [deployment and security caveats](../../../docs/fork-contributor-ci.md).
 Fork diffs with 300 or more changed files need a maintainer carry (GitHub's
 immutable comparison file list is capped).
