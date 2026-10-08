@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "awsManagedDeployments": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "AWS deployments: Organization admins launch and manage OpenWork in their own AWS account. Renders DEN_FEATURE_AWS_MANAGED_DEPLOYMENTS."
+            },
             "installLinks": {
               "enum": [
                 "",

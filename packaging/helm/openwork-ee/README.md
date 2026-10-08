@@ -329,6 +329,7 @@ OpenWork Cloud. Don't change it on a customer install.
 <!-- BEGIN GENERATED features (pnpm features:sync) -->
 | `config.features.*` | Environment variable | Default | What it does |
 | --- | --- | --- | --- |
+| `awsManagedDeployments` | `DEN_FEATURE_AWS_MANAGED_DEPLOYMENTS` | default off (cloud only) | Organization admins launch and manage OpenWork in their own AWS account. |
 | `installLinks` | `DEN_FEATURE_INSTALL_LINKS` | default on | Workspace admins can create desktop install links for their organization. |
 | `mcpConnections` | `DEN_FEATURE_MCP_CONNECTIONS` | default on | Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. |
 | `driveResumableUploads` | `DEN_FEATURE_DRIVE_RESUMABLE_UPLOADS` | default off | Members upload larger workspace files to Google Drive and prepare upload sessions for external clients. |

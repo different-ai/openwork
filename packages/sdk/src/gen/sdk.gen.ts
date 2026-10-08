@@ -201,6 +201,10 @@ import type {
   GetV1AuthBootstrapStatusResponses,
   GetV1AuthLoginOptionsErrors,
   GetV1AuthLoginOptionsResponses,
+  GetV1AwsDeploymentsConfigurationErrors,
+  GetV1AwsDeploymentsConfigurationResponses,
+  GetV1AwsDeploymentsErrors,
+  GetV1AwsDeploymentsResponses,
   GetV1BootstrapWorkspaceByBootstrapIdClaimErrors,
   GetV1BootstrapWorkspaceByBootstrapIdClaimResponses,
   GetV1BrandAssetsByOrganizationIdByKindByVersionErrors,
@@ -602,6 +606,14 @@ import type {
   PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
   PostV1AuthBootstrapVerifyErrors,
   PostV1AuthBootstrapVerifyResponses,
+  PostV1AwsDeploymentsByDeploymentIdLaunchErrors,
+  PostV1AwsDeploymentsByDeploymentIdLaunchResponses,
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
+  PostV1AwsDeploymentsErrors,
+  PostV1AwsDeploymentsResponses,
   PostV1BootstrapClaimsAcceptErrors,
   PostV1BootstrapClaimsAcceptResponses,
   PostV1BootstrapWorkspaceByBootstrapIdClaimErrors,
@@ -3048,6 +3060,202 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/orgs/invitations/accept",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read AWS deployment availability
+   */
+  public getV1AwsDeploymentsConfiguration<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<
+      GetV1AwsDeploymentsConfigurationResponses,
+      GetV1AwsDeploymentsConfigurationErrors,
+      ThrowOnError
+    >({ url: "/v1/aws-deployments/configuration", ...options });
+  }
+
+  /**
+   * List organization AWS deployments
+   */
+  public getV1AwsDeployments<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1AwsDeploymentsResponses, GetV1AwsDeploymentsErrors, ThrowOnError>({
+      url: "/v1/aws-deployments",
+      ...options,
+    });
+  }
+
+  /**
+   * Create an AWS deployment
+   */
+  public postV1AwsDeployments<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      accountId: string;
+      region:
+        | "us-east-1"
+        | "us-east-2"
+        | "us-west-2"
+        | "eu-west-1"
+        | "eu-central-1"
+        | "ap-southeast-1"
+        | "ap-southeast-2";
+      domainName: string;
+      route53ZoneId: string;
+      ownerEmail: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "accountId" },
+            { in: "body", key: "region" },
+            { in: "body", key: "domainName" },
+            { in: "body", key: "route53ZoneId" },
+            { in: "body", key: "ownerEmail" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1AwsDeploymentsResponses,
+      PostV1AwsDeploymentsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/aws-deployments",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Prepare an approved AWS deployment launch
+   */
+  public postV1AwsDeploymentsByDeploymentIdLaunch<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "deploymentId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1AwsDeploymentsByDeploymentIdLaunchResponses,
+      PostV1AwsDeploymentsByDeploymentIdLaunchErrors,
+      ThrowOnError
+    >({
+      url: "/v1/aws-deployments/{deploymentId}/launch",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Enroll an AWS provisioning runner
+   */
+  public postV1AwsDeploymentsByDeploymentIdRunsByRunIdEnroll<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+      runId: string;
+      headers: {
+        authorization: string;
+        "x-amz-date": string;
+        "x-amz-security-token": string;
+        "x-openwork-run": string;
+      };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "deploymentId" },
+            { in: "path", key: "runId" },
+            { in: "body", key: "headers" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
+      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
+      ThrowOnError
+    >({
+      url: "/v1/aws-deployments/{deploymentId}/runs/{runId}/enroll",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Report sanitized AWS provisioning progress
+   */
+  public postV1AwsDeploymentsByDeploymentIdRunsByRunIdEvents<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+      runId: string;
+      sequence: number;
+      step:
+        | "runner_connected"
+        | "release_verified"
+        | "account_verified"
+        | "infrastructure_applied"
+        | "services_ready"
+        | "health_verified";
+      outcome: "succeeded" | "failed";
+      errorCode?:
+        | "release_verification_failed"
+        | "infrastructure_failed"
+        | "service_unhealthy"
+        | "health_check_failed"
+        | "runner_failed";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "deploymentId" },
+            { in: "path", key: "runId" },
+            { in: "body", key: "sequence" },
+            { in: "body", key: "step" },
+            { in: "body", key: "outcome" },
+            { in: "body", key: "errorCode" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
+      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/aws-deployments/{deploymentId}/runs/{runId}/events",
       ...options,
       ...params,
       headers: {

@@ -163,6 +163,7 @@ export type NotFoundError = {
 
 export type AdminFeature = {
   key:
+    | "awsManagedDeployments"
     | "installLinks"
     | "mcpConnections"
     | "driveResumableUploads"
@@ -220,6 +221,7 @@ export type AdminUsersPageResponse = {
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
     capabilities: {
+      awsManagedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -250,6 +252,15 @@ export type AdminOrganizationsPageResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      awsManagedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -484,6 +495,7 @@ export type AdminOverviewResponse = {
   }>;
   organizations: Array<{
     capabilities: {
+      awsManagedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -514,6 +526,15 @@ export type AdminOverviewResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      awsManagedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -1798,6 +1819,7 @@ export type CreateInstallLinkResponse = {
 export type CapabilityDisabledError = {
   error: "capability_disabled";
   capability:
+    | "awsManagedDeployments"
     | "installLinks"
     | "mcpConnections"
     | "driveResumableUploads"
@@ -5705,6 +5727,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
+      awsManagedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -5735,6 +5758,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      awsManagedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -5957,6 +5989,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
+      awsManagedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -5987,6 +6020,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      awsManagedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -8655,6 +8697,547 @@ export type PostV1OrgsInvitationsAcceptResponses = {
 
 export type PostV1OrgsInvitationsAcceptResponse =
   PostV1OrgsInvitationsAcceptResponses[keyof PostV1OrgsInvitationsAcceptResponses];
+
+export type GetV1AwsDeploymentsConfigurationData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/aws-deployments/configuration";
+};
+
+export type GetV1AwsDeploymentsConfigurationErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Administrator approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * Run cannot accept this operation.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Release is not configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1AwsDeploymentsConfigurationError =
+  GetV1AwsDeploymentsConfigurationErrors[keyof GetV1AwsDeploymentsConfigurationErrors];
+
+export type GetV1AwsDeploymentsConfigurationResponses = {
+  /**
+   * Read AWS deployment availability
+   */
+  200: {
+    available: boolean;
+    updateMode: "manual";
+  };
+};
+
+export type GetV1AwsDeploymentsConfigurationResponse =
+  GetV1AwsDeploymentsConfigurationResponses[keyof GetV1AwsDeploymentsConfigurationResponses];
+
+export type GetV1AwsDeploymentsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/aws-deployments";
+};
+
+export type GetV1AwsDeploymentsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Administrator approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * Run cannot accept this operation.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Release is not configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1AwsDeploymentsError = GetV1AwsDeploymentsErrors[keyof GetV1AwsDeploymentsErrors];
+
+export type GetV1AwsDeploymentsResponses = {
+  /**
+   * List organization AWS deployments
+   */
+  200: {
+    deployments: Array<{
+      name: string;
+      accountId: string;
+      region:
+        | "us-east-1"
+        | "us-east-2"
+        | "us-west-2"
+        | "eu-west-1"
+        | "eu-central-1"
+        | "ap-southeast-1"
+        | "ap-southeast-2";
+      domainName: string;
+      route53ZoneId: string;
+      ownerEmail: string;
+      id: string;
+      updateMode: "manual";
+      createdAt: string;
+      webUrl: string;
+      stackUrl: string;
+      run: {
+        id: string;
+        version: string;
+        state: "awaiting_aws" | "provisioning" | "ready" | "failed";
+        createdAt: string;
+        lastSeenAt: string | null;
+        events: Array<{
+          sequence: number;
+          step:
+            | "runner_connected"
+            | "release_verified"
+            | "account_verified"
+            | "infrastructure_applied"
+            | "services_ready"
+            | "health_verified";
+          outcome: "succeeded" | "failed";
+          errorCode?:
+            | "release_verification_failed"
+            | "infrastructure_failed"
+            | "service_unhealthy"
+            | "health_check_failed"
+            | "runner_failed";
+          receivedAt: string;
+        }>;
+      } | null;
+    }>;
+  };
+};
+
+export type GetV1AwsDeploymentsResponse = GetV1AwsDeploymentsResponses[keyof GetV1AwsDeploymentsResponses];
+
+export type PostV1AwsDeploymentsData = {
+  body: {
+    name: string;
+    accountId: string;
+    region:
+      | "us-east-1"
+      | "us-east-2"
+      | "us-west-2"
+      | "eu-west-1"
+      | "eu-central-1"
+      | "ap-southeast-1"
+      | "ap-southeast-2";
+    domainName: string;
+    route53ZoneId: string;
+    ownerEmail: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/aws-deployments";
+};
+
+export type PostV1AwsDeploymentsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Administrator approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * Run cannot accept this operation.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Release is not configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1AwsDeploymentsError = PostV1AwsDeploymentsErrors[keyof PostV1AwsDeploymentsErrors];
+
+export type PostV1AwsDeploymentsResponses = {
+  /**
+   * Create an AWS deployment
+   */
+  200: {
+    name: string;
+    accountId: string;
+    region:
+      | "us-east-1"
+      | "us-east-2"
+      | "us-west-2"
+      | "eu-west-1"
+      | "eu-central-1"
+      | "ap-southeast-1"
+      | "ap-southeast-2";
+    domainName: string;
+    route53ZoneId: string;
+    ownerEmail: string;
+    id: string;
+    updateMode: "manual";
+    createdAt: string;
+    webUrl: string;
+    stackUrl: string;
+    run: {
+      id: string;
+      version: string;
+      state: "awaiting_aws" | "provisioning" | "ready" | "failed";
+      createdAt: string;
+      lastSeenAt: string | null;
+      events: Array<{
+        sequence: number;
+        step:
+          | "runner_connected"
+          | "release_verified"
+          | "account_verified"
+          | "infrastructure_applied"
+          | "services_ready"
+          | "health_verified";
+        outcome: "succeeded" | "failed";
+        errorCode?:
+          | "release_verification_failed"
+          | "infrastructure_failed"
+          | "service_unhealthy"
+          | "health_check_failed"
+          | "runner_failed";
+        receivedAt: string;
+      }>;
+    } | null;
+  };
+};
+
+export type PostV1AwsDeploymentsResponse = PostV1AwsDeploymentsResponses[keyof PostV1AwsDeploymentsResponses];
+
+export type PostV1AwsDeploymentsByDeploymentIdLaunchData = {
+  body?: never;
+  path: {
+    deploymentId: string;
+  };
+  query?: never;
+  url: "/v1/aws-deployments/{deploymentId}/launch";
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdLaunchErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Administrator approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * Run cannot accept this operation.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Release is not configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdLaunchError =
+  PostV1AwsDeploymentsByDeploymentIdLaunchErrors[keyof PostV1AwsDeploymentsByDeploymentIdLaunchErrors];
+
+export type PostV1AwsDeploymentsByDeploymentIdLaunchResponses = {
+  /**
+   * Prepare an approved AWS deployment launch
+   */
+  200: {
+    deployment: {
+      name: string;
+      accountId: string;
+      region:
+        | "us-east-1"
+        | "us-east-2"
+        | "us-west-2"
+        | "eu-west-1"
+        | "eu-central-1"
+        | "ap-southeast-1"
+        | "ap-southeast-2";
+      domainName: string;
+      route53ZoneId: string;
+      ownerEmail: string;
+      id: string;
+      updateMode: "manual";
+      createdAt: string;
+      webUrl: string;
+      stackUrl: string;
+      run: {
+        id: string;
+        version: string;
+        state: "awaiting_aws" | "provisioning" | "ready" | "failed";
+        createdAt: string;
+        lastSeenAt: string | null;
+        events: Array<{
+          sequence: number;
+          step:
+            | "runner_connected"
+            | "release_verified"
+            | "account_verified"
+            | "infrastructure_applied"
+            | "services_ready"
+            | "health_verified";
+          outcome: "succeeded" | "failed";
+          errorCode?:
+            | "release_verification_failed"
+            | "infrastructure_failed"
+            | "service_unhealthy"
+            | "health_check_failed"
+            | "runner_failed";
+          receivedAt: string;
+        }>;
+      } | null;
+    };
+    launchUrl: string;
+    expiresAt: string;
+  };
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdLaunchResponse =
+  PostV1AwsDeploymentsByDeploymentIdLaunchResponses[keyof PostV1AwsDeploymentsByDeploymentIdLaunchResponses];
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollData = {
+  body: {
+    headers: {
+      authorization: string;
+      "x-amz-date": string;
+      "x-amz-security-token": string;
+      "x-openwork-run": string;
+    };
+  };
+  path: {
+    deploymentId: string;
+    runId: string;
+  };
+  query?: never;
+  url: "/v1/aws-deployments/{deploymentId}/runs/{runId}/enroll";
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Administrator approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * Run cannot accept this operation.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Release is not configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollError =
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollErrors[keyof PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollErrors];
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponses = {
+  /**
+   * Enroll an AWS provisioning runner
+   */
+  200: {
+    token: string;
+    expiresAt: string;
+  };
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponse =
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponses[keyof PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponses];
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsData = {
+  body: {
+    sequence: number;
+    step:
+      | "runner_connected"
+      | "release_verified"
+      | "account_verified"
+      | "infrastructure_applied"
+      | "services_ready"
+      | "health_verified";
+    outcome: "succeeded" | "failed";
+    errorCode?:
+      | "release_verification_failed"
+      | "infrastructure_failed"
+      | "service_unhealthy"
+      | "health_check_failed"
+      | "runner_failed";
+  };
+  path: {
+    deploymentId: string;
+    runId: string;
+  };
+  query?: never;
+  url: "/v1/aws-deployments/{deploymentId}/runs/{runId}/events";
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Administrator approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * Run cannot accept this operation.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Release is not configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsError =
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsErrors[keyof PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsErrors];
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponses = {
+  /**
+   * Report sanitized AWS provisioning progress
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponse =
+  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponses[keyof PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponses];
 
 export type GetV1ApiKeysData = {
   body?: never;

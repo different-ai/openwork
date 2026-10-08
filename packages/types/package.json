@@ -10,6 +10,11 @@
       "bun": "./src/google-drive-upload.ts",
       "default": "./dist/google-drive-upload.js"
     },
+    "./den/aws-deployments": {
+      "types": "./src/den/aws-deployments.ts",
+      "development": "./src/den/aws-deployments.ts",
+      "default": "./src/den/aws-deployments.ts"
+    },
     "./cloud-model-fast": {
       "types": "./src/cloud-model-fast.ts",
       "development": "./src/cloud-model-fast.ts",

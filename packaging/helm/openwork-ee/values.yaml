@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    awsManagedDeployments: ""  # default off (cloud only) · Organization admins launch and manage OpenWork in their own AWS account.
     installLinks: ""           # default on · Workspace admins can create desktop install links for their organization.
     mcpConnections: ""         # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
     driveResumableUploads: ""  # default off · Members upload larger workspace files to Google Drive and prepare upload sessions for external clients.
