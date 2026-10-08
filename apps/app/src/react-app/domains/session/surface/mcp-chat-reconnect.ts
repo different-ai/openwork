@@ -1,8 +1,8 @@
 import type { DenExternalMcpConnection, DenMcpConnectionConnectStart } from "@/app/lib/den"
 import type { UIMessage } from "ai"
 import { z } from "zod"
-import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
-import type { ConnectionActionPayload } from "@openwork/types/connection-action-app"
+import { connectionFromChatToolPart, reconnectActionFromConnection } from "@/components/tools/error-attribution"
+import { hostConnectionDecisionSchema, type ConnectionActionPayload } from "@openwork/types/connection-action-app"
 
 export type ChatConnectionDecisionRequest = {
   requestId: string
@@ -12,6 +12,8 @@ export type ChatConnectionDecisionRequest = {
   toolCallId: string
   connectionId: string
   questionToolCallId?: string
+  /** Host-owned form bound directly to its still-running source call. */
+  connection?: ConnectionActionPayload
 }
 
 export type ChatConnectionDecisionResponse =
@@ -51,16 +53,16 @@ export function isReservedConnectionQuestion(question: unknown): boolean {
 }
 
 /**
- * The question the standard composer panel answers. A reserved connection
- * question leaves the panel only while a native card is bound to it; an
- * unbound one falls back to the ordinary Authenticate/Skip panel so the turn
- * never dead-ends.
+ * Host-owned forms never enter the ordinary question panel: answering there
+ * would bypass OAuth, including while the source call is still hydrating.
+ * Legacy model questions keep their unbound Authenticate/Skip fallback.
  */
 export function composerQuestionForConnectionDecision<T>(
   question: T | null | undefined,
   decision: ChatConnectionDecisionRequest | null,
 ): T | null {
   if (!question) return null
+  if (typeof question === "object" && "openworkConnectionDecision" in question) return null
   return decision && isReservedConnectionQuestion(question) ? null : question
 }
 
@@ -69,6 +71,7 @@ const nativeConnectionQuestionSchema = z.object({
   id: z.string().min(1),
   sessionID: z.string().optional(),
   tool: z.object({ callID: z.string().min(1), messageID: z.string().optional() }).optional(),
+  openworkConnectionDecision: z.unknown().optional(),
 })
 
 export function nativeChatConnectionDecision(input: {
@@ -86,6 +89,26 @@ export function nativeChatConnectionDecision(input: {
   if (turnIndex < 0) return null
   const currentMessages = input.messages.slice(turnIndex + 1).filter(message => message.role === "assistant")
   const questionTool = question.tool
+  if ("openworkConnectionDecision" in question) {
+    const decision = hostConnectionDecisionSchema.safeParse(question.openworkConnectionDecision)
+    if (!decision.success || decision.data.outcome !== undefined
+      || question.sessionID !== input.sessionId || !questionTool?.messageID) return null
+    const { connection } = decision.data
+    if (!reconnectActionFromConnection(connection)
+      || question.questions[0].question !== `Connect ${connection.connectionName} to continue?`) return null
+    const sources = currentMessages.flatMap(message => message.parts.flatMap(part => {
+      if (message.id !== questionTool.messageID || part.type !== "dynamic-tool" || part.toolName === "question"
+        || (part.state !== "input-available" && part.state !== "input-streaming")) return []
+      const sourcePartId = part.callProviderMetadata?.openwork?.sourcePartId
+      return part.toolCallId === questionTool.callID || sourcePartId === questionTool.callID ? [part] : []
+    }))
+    if (sources.length !== 1) return null
+    return {
+      requestId: question.id, owner: input.owner, sessionId: input.sessionId,
+      turnId: input.messages[turnIndex].id, toolCallId: sources[0].toolCallId,
+      connectionId: connection.connectionId, connection,
+    }
+  }
   const questionParts = currentMessages.flatMap(message => message.parts.flatMap(part => {
     if (!questionTool || part.type !== "dynamic-tool" || part.toolName !== "question"
       || (part.state !== "input-available" && part.state !== "input-streaming")

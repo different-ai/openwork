@@ -193,7 +193,7 @@ export function buildOpenworkContext(
     schemaVersion: 1,
     revision: input.revision,
     capturedAt: input.capturedAt,
-    features: { connectionQuestions: true },
+    features: { connectionQuestions: true, connectionDecisions: true },
     screen,
     conversations: {
       tabs: input.workbench.tabs,

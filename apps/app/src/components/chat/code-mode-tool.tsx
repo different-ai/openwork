@@ -120,7 +120,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
 
   // One call is one step: no nested rail, no "1 step", no repeated sentence.
   // The row's details icon opens the script (its source and its error).
-  const only = calls.length === 1 && !waiting && !statusUnknown ? calls[0] : undefined;
+  const only = calls.length === 1 && !waiting && !statusUnknown && !failed ? calls[0] : undefined;
   if (only) {
     // The call's own input is the readable one (a Den script's source); the
     // script's result lives on the outer step.
@@ -176,7 +176,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
               key={call.toolCallId}
               part={call}
               connector={resolveConnectorToolIdentity(call, connectors)}
-              statusUnknown={isToolPartInFlight(call) && (!running || !inFlight)}
+              statusUnknown={isToolPartInFlight(call) && ((!running && !waiting) || !inFlight)}
               quietFailure
               hideDuration
               groupService={groupService}

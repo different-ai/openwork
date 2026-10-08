@@ -1,23 +1,27 @@
+import { type HostConnectionDecision } from "@openwork/types/connection-action-app";
+import { waitForConnectionDecision, type ConnectionGateEndpoint } from "./openwork-connection-gate-v2.js";
 import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
 
 type Registration = { dispose(): Promise<void> };
-type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
+type CallEvent = { readonly tool: string; readonly sessionID?: string; readonly messageID: string; readonly id: string };
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
   | { readonly status: "completed"; result: { output?: unknown; metadata?: Record<string, unknown> } }
   | { readonly status: "error"; readonly error: unknown }
 );
 type Context = {
+  options?: { connectionGate?: ConnectionGateEndpoint };
   tool: {
     transform(callback: (editor: { get(id: string): unknown }) => void): Promise<Registration>;
     hook(name: "execute.before", callback: (event: CallEvent & { input: unknown }) => void): Promise<Registration>;
-    hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration>;
+    hook(name: "execute.after", callback: (event: ExecuteAfter) => void | Promise<void>): Promise<Registration>;
   };
 };
 
 /** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection or an App build. */
-export type PreservedMcpResult =
+export type PreservedMcpResult = (
   | { tool: string; input: unknown; status: "completed"; output: unknown }
-  | { tool: string; input: unknown; status: "error"; error: string };
+  | { tool: string; input: unknown; status: "error"; error: string }
+) & { decision?: HostConnectionDecision };
 
 const OPENWORK_CLOUD_TOOL = /^(?:openwork|openwork-cloud)_/;
 const MAX_ENTRY_BYTES = 64 * 1_024;
@@ -67,7 +71,7 @@ function normalizedTool(tool: string): string {
   return tool.replace(/^(openwork(?:-cloud)?)\./, "$1_");
 }
 
-export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | null {
+export function preservedEntry(rawEvent: ExecuteAfter, decision?: HostConnectionDecision | null): PreservedMcpResult | null {
   const event = { ...rawEvent, tool: normalizedTool(rawEvent.tool) };
   if (!OPENWORK_CLOUD_TOOL.test(event.tool)) return null;
   const appBuilder = /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(event.tool);
@@ -77,6 +81,7 @@ export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | nul
     ? (appBuilder || appLaunch || reportsConnection(event.result.output)) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
     : (appBuilder || reportsConnection(parseRecord(errorText(event.error)))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
   if (!entry) return null;
+  if (decision) entry.decision = decision;
   return new TextEncoder().encode(JSON.stringify(entry)).byteLength <= MAX_ENTRY_BYTES ? entry : null;
 }
 
@@ -89,7 +94,7 @@ export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | nul
  * the engine persists with the tool part.
  */
 export function createMcpResultsCollector() {
-  const open = new Map<string, PreservedMcpResult[]>();
+  const open = new Map<string, { entries: PreservedMcpResult[]; decision?: HostConnectionDecision }>();
   const key = (event: CallEvent) => `${event.messageID}\u0000${event.id}`;
   return {
     before(event: CallEvent): void {
@@ -98,20 +103,26 @@ export function createMcpResultsCollector() {
         const oldest = open.keys().next().value;
         if (oldest !== undefined) open.delete(oldest);
       }
-      open.set(key(event), []);
+      open.set(key(event), { entries: [] });
     },
-    after(event: ExecuteAfter): void {
-      const list = open.get(key(event));
+    after(event: ExecuteAfter, decision?: HostConnectionDecision | null): void {
+      const pending = open.get(key(event));
       if (event.tool === "execute") {
         open.delete(key(event));
-        if (event.status === "completed" && list && list.length > 0) {
-          event.result.metadata = { ...(event.result.metadata ?? {}), openworkMcpResults: list };
+        if (event.status === "completed" && pending && (pending.entries.length > 0 || pending.decision)) {
+          event.result.metadata = {
+            ...(event.result.metadata ?? {}),
+            ...(pending.entries.length ? { openworkMcpResults: pending.entries } : {}),
+            ...(pending.decision ? { openworkConnectionDecision: pending.decision } : {}),
+          };
         }
         return;
       }
-      if (!list || list.length >= MAX_ENTRIES) return;
-      const entry = preservedEntry(event);
-      if (entry) list.push(entry);
+      if (!pending) return;
+      if (decision) pending.decision = decision;
+      if (pending.entries.length >= MAX_ENTRIES) return;
+      const entry = preservedEntry(event, decision);
+      if (entry) pending.entries.push(entry);
     },
   };
 }
@@ -120,6 +131,7 @@ export default {
   id: "openwork.mcp-results",
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
+    const lifetime = new AbortController();
     let rootSearch = false;
     const catalog = await context.tool.transform(editor => { rootSearch = editor.get("search") !== undefined; });
     const before = await context.tool.hook("execute.before", event => {
@@ -128,8 +140,15 @@ export default {
       }
       collector.before(event);
     });
-    const after = await context.tool.hook("execute.after", event => collector.after(event));
+    const after = await context.tool.hook("execute.after", async rawEvent => {
+      // Normalize before gating too: current Code Mode calls use dotted names.
+      // Keep the result/error references so the engine receives the decision.
+      const event = { ...rawEvent, tool: normalizedTool(rawEvent.tool) };
+      const decision = await waitForConnectionDecision(event, context.options?.connectionGate, lifetime.signal);
+      collector.after(event, decision);
+    });
     return async () => {
+      lifetime.abort();
       await before.dispose();
       await after.dispose();
       await catalog.dispose();

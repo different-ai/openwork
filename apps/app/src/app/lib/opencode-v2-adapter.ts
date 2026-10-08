@@ -17,6 +17,7 @@ import type {
   UnknownError,
 } from "@opencode-ai/sdk/v2/client";
 
+import { connectionTargetFromResult, hostConnectionDecisionSchema, isMemberConnectionDecision } from "@openwork/types/connection-action-app";
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
@@ -193,7 +194,14 @@ function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2Qu
   const source = readRecord(value.metadata, "tool");
   const messageID = readString(source, "messageID");
   const callID = readString(source, "id");
-  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+  const decision = hostConnectionDecisionSchema.safeParse(readRecord(value.metadata, "openworkConnectionDecision"));
+  if (isRecord(value.metadata) && "openworkConnectionDecision" in value.metadata && !decision.success) return null;
+  const request = {
+    id, sessionID, questions,
+    ...(messageID && callID ? { tool: { messageID, callID } } : {}),
+    ...(decision.success ? { openworkConnectionDecision: decision.data } : {}),
+  };
+  return { request, fields };
 }
 
 type V2MessageRole = "user" | "assistant" | "system";
@@ -611,6 +619,9 @@ export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
       if (!tool || !appTool(tool)) return [];
       const index = occurrences.get(tool) ?? 0;
       occurrences.set(tool, index + 1);
+      // A connect-intent search waits on the outer call's native card, not an
+      // App discovery step. Do not emit a running projection we later suppress.
+      if (tool.endsWith("_search_capabilities") && readRecord(call, "input")?.intent === "connect") return [];
       const callID = appCallId(tool, index);
       const base = { id: callID, callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, tool };
       if (outerError && (call.status === "error" || call.status === "running")) return [{ ...base, state: { status: "error", input: readRecord(call, "input") ?? {}, error: readString(call, "error") ?? outerError ?? "The MCP call failed. See the Code Mode result.", metadata: {}, time: { start: startedAt, end: part.state.status === "error" ? part.state.time.end : startedAt } } }];
@@ -631,23 +642,43 @@ export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
     : appEntriesFromScript(metadata?.toolCalls, part.state.output);
   if (entries.length === 0) return [];
   const occurrences = new Map<string, number>();
+  const decision = hostConnectionDecisionSchema.safeParse(metadata?.openworkConnectionDecision);
   return entries.flatMap((entry, index): ToolPart[] => {
     if (!isRecord(entry)) return [];
     const tool = readString(entry, "tool");
     if (!tool) return [];
     const occurrence = occurrences.get(tool) ?? 0;
     occurrences.set(tool, occurrence + 1);
+    const target = connectionTargetFromResult(entry.status === "error" ? entry.error : entry.output);
+    const input = readRecord(entry, "input") ?? {};
+    // This connection already has a durable card on the real outer call.
+    // Count even suppressed entries so later App projection IDs stay stable.
+    // Ordinary App discovery still needs its terminal result, even if a later
+    // call in this script asks to connect the same service.
+    if (decision.success && decision.data.outcome !== undefined
+      && target?.connection.connectionId === decision.data.connection.connectionId
+      && (!appTool(tool) || (tool.endsWith("_search_capabilities") && input.intent === "connect"))) return [];
     const callID = appTool(tool) ? appCallId(tool, occurrence) : `${part.callID}:mcp:${index}`;
     const base = { id: callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, callID, tool };
-    const input = readRecord(entry, "input") ?? {};
     const status = readString(entry, "status");
+    // The collector's entry metadata, never provider output, owns earlier
+    // choices when a later connection takes over the outer call's card.
+    const entryDecision = hostConnectionDecisionSchema.safeParse(entry.decision);
+    const decisionMetadata = entryDecision.success && entryDecision.data.outcome !== undefined
+      && /^(?:openwork|openwork-cloud)_(?:search_capabilities|execute_capability|connection_action)$/.test(tool)
+      && (!tool.endsWith("_search_capabilities") || input.intent === "connect")
+      && target?.memberOAuth && isMemberConnectionDecision(entryDecision.data.connection)
+      && connectionTargetFromResult({ connectionStatus: target.connection, connectionAction: entryDecision.data.connection })
+      && target.connection.action?.label === entryDecision.data.connection.action?.label
+      && target.connection.action?.url === entryDecision.data.connection.action?.url
+      ? { openworkConnectionDecision: entryDecision.data } : {};
     if (status === "completed") {
       const output = toolOutput(undefined, entry.output);
       return [{ ...base, state: { status, input, output, title: tool, time,
-        metadata: { openworkMcpResult: isRecord(entry.output) && Array.isArray(entry.output.content) ? entry.output : { content: [{ type: "text", text: output }], structuredContent: entry.output, ...(isRecord(entry.output) && isRecord(entry.output.launch) ? { _meta: { "openwork/mcpApp": entry.output.launch } } : {}) } } } }];
+        metadata: { ...decisionMetadata, openworkMcpResult: isRecord(entry.output) && Array.isArray(entry.output.content) ? entry.output : { content: [{ type: "text", text: output }], structuredContent: entry.output, ...(isRecord(entry.output) && isRecord(entry.output.launch) ? { _meta: { "openwork/mcpApp": entry.output.launch } } : {}) } } } }];
     }
     const error = readString(entry, "error");
-    return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: {}, time } }] : [];
+    return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: decisionMetadata, time } }] : [];
   });
 }
 

@@ -31,6 +31,8 @@ export interface MockToolCall {
 export interface MockAgentToolStep {
   /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
   allowUnadvertisedTool?: boolean;
+  /** Connection-action model witness: stream completed prose before this tool call. */
+  textBeforeTool?: string;
   /** Derive the handoff from the actual model input instead of fixture arguments. */
   argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search" | "skill-list";
   tool: string;
@@ -48,8 +50,8 @@ export interface MockAgentWorkload {
   /** A dedicated mock may answer every main turn without changing user prompts. */
   matchAll?: boolean;
   finalReply: string;
-  /** Derive the final reply from the real tool result or model system instructions. */
-  finalReplyFrom?: "last-tool-text" | "system-text";
+  /** Derive the final reply from the real result/instructions; connection-decision uses the connection-action model witness. */
+  finalReplyFrom?: "last-tool-text" | "system-text" | "connection-decision";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
   /** Exact content-delta boundaries. Their concatenation must equal finalReply. */

@@ -1,6 +1,6 @@
 import { browserScript, locate } from "@openwork/cdp";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { app as startApp, faultProxy as startFaultProxy, resolveEvalEngine } from "@openwork/env";
 import type { Den, MockHandle, Seed } from "@openwork/env";
@@ -8,7 +8,7 @@ import { denFetch, evalIn as rawEvalIn } from "@openwork/behaviors";
 import type { DenFetchResult, DenSession } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
 import { startMockMcp, type MockAgentWorkload } from "@openwork/labs";
-import { electronProfilePaths } from "@openwork/hosts";
+import { electronProfilePaths, startScriptOnSandbox } from "@openwork/hosts";
 import { configureProvider } from "./chat.ts";
 import { browserScriptValue, runBrowserHost } from "../packages/env/src/browser-task.ts";
 
@@ -1180,12 +1180,13 @@ export const connectionActionQuestion = {
   multiple: false,
   custom: false,
 };
-export const connectionActionSkipPrompt = "Skip Notion setup if I choose.";
-export const connectionStatusSkipPrompt = "Recheck Notion sign-in and skip if I choose.";
+export const connectionActionSkipPrompt = "Draft a dashboard outline, then let me skip Notion setup if I choose.";
+export const connectionStatusSkipPrompt = "Draft a dashboard outline, then recheck Notion sign-in and skip if I choose.";
 export const ordinaryDiscoveryPrompt = "Create a dashboard using my notes.";
 export const ordinaryDiscoveryReply = "I found the available capabilities for the dashboard.";
-export const connectionActionPrompt = "I want to connect Notion.";
-export const connectionStatusPrompt = "Check my Notion connection so I can sign in.";
+export const connectionActionPrompt = "Draft a dashboard outline, then help me connect Notion.";
+export const connectionStatusPrompt = "Draft a dashboard outline, then check my Notion connection so I can sign in.";
+export const connectionUsefulWork = "Dashboard outline: show the latest notes, group them by project, and highlight next actions.";
 
 export const allConnectorsPrompt = "Show me all the quick-add connectors.";
 export const allConnectorsReply = "Here are all the connectors available to add.";
@@ -1193,47 +1194,60 @@ export const connectorCatalogPrompt = "I want to set up Slack.";
 export const connectorCatalogReply = "Slack setup options are available in your organization Connections dashboard.";
 
 export async function connectionActionMcpApp(seed: Seed) {
+  await using setup = new AsyncDisposableStack();
   const providerId = "connection-action-mcp-app-provider";
   const modelId = "connection-action-mcp-app-model";
+  const engine = resolveEvalEngine();
+  // v1 deliberately keeps its model-issued question fixture: a v2 runtime hook
+  // is not evidence for the separate legacy engine path.
+  const legacyWorkloads: MockAgentWorkload[] = [{
+    promptMarker: ordinaryDiscoveryPrompt,
+    latestUserTurn: true,
+    finalReply: ordinaryDiscoveryReply,
+    steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
+  }, ...[connectionActionPrompt, connectionActionSkipPrompt].map((promptMarker): MockAgentWorkload => ({
+    promptMarker,
+    latestUserTurn: true,
+    finalReply: "No connection outcome was observed.",
+    finalReplyFrom: "last-tool-text",
+    steps: [
+      { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", intent: "connect" } },
+      { tool: "question", arguments: { questions: [connectionActionQuestion] } },
+    ],
+  })), ...[connectionStatusPrompt, connectionStatusSkipPrompt].map((promptMarker): MockAgentWorkload => ({
+    promptMarker,
+    latestUserTurn: true,
+    finalReply: "No connection outcome was observed.",
+    finalReplyFrom: "last-tool-text",
+    steps: [
+      { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", limit: 1 } },
+      { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+      { tool: "question", arguments: { questions: [connectionActionQuestion] } },
+    ],
+  })), {
+    promptMarker: connectorCatalogPrompt,
+    latestUserTurn: true,
+    finalReply: connectorCatalogReply,
+    steps: [{ tool: "search_capabilities", arguments: { query: "Slack", type: "mcp", intent: "connect" } }],
+  }, {
+    promptMarker: allConnectorsPrompt,
+    latestUserTurn: true,
+    finalReply: allConnectorsReply,
+    steps: [{ tool: "search_capabilities", arguments: { query: "quick add connectors", type: "connectors" } }],
+  }];
+  const workloads = engine === "v1" ? legacyWorkloads : legacyWorkloads.map((workload): MockAgentWorkload => ({
+    ...workload,
+    ...(workload.finalReplyFrom ? { finalReplyFrom: "connection-decision" } : {}),
+    steps: workload.steps.filter(step => step.tool !== "question").map((step, index) => ({
+      tool: "execute",
+      arguments: step.argumentsFrom ? {} : { code: `return await tools["openwork-cloud"].${step.tool}(${JSON.stringify(step.arguments)});` },
+      ...(step.argumentsFrom ? { argumentsFrom: step.argumentsFrom } : {}),
+      ...(workload.finalReplyFrom && index === 0 ? { textBeforeTool: connectionUsefulWork } : {}),
+    })),
+  }));
   const den = await seed.den({
     org: { name: `Connection Action ${Date.now()}`, admin: { name: "Connection Admin" } },
-    mocks: {
-      connector: seed.mock({ agentWorkloads: [{
-        promptMarker: ordinaryDiscoveryPrompt,
-        latestUserTurn: true,
-        finalReply: ordinaryDiscoveryReply,
-        steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
-      }, ...[connectionActionPrompt, connectionActionSkipPrompt].map((promptMarker): MockAgentWorkload => ({
-        promptMarker,
-        latestUserTurn: true,
-        finalReply: "No connection outcome was observed.",
-        finalReplyFrom: "last-tool-text",
-        steps: [
-          { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", intent: "connect" } },
-          { tool: "question", arguments: { questions: [connectionActionQuestion] } },
-        ],
-      })), ...[connectionStatusPrompt, connectionStatusSkipPrompt].map((promptMarker): MockAgentWorkload => ({
-        promptMarker,
-        latestUserTurn: true,
-        finalReply: "No connection outcome was observed.",
-        finalReplyFrom: "last-tool-text",
-        steps: [
-          { tool: "search_capabilities", arguments: { query: "Notion", type: "mcp", limit: 1 } },
-          { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
-          { tool: "question", arguments: { questions: [connectionActionQuestion] } },
-        ],
-      })), {
-        promptMarker: connectorCatalogPrompt,
-        latestUserTurn: true,
-        finalReply: connectorCatalogReply,
-        steps: [{ tool: "search_capabilities", arguments: { query: "Slack", type: "mcp", intent: "connect" } }],
-      }, {
-        promptMarker: allConnectorsPrompt,
-        latestUserTurn: true,
-        finalReply: allConnectorsReply,
-        steps: [{ tool: "search_capabilities", arguments: { query: "quick add connectors", type: "connectors" } }],
-      }] }),
-    },
+    mocks: { connector: seed.mock({ agentWorkloads: engine === "v1" ? workloads : [] }) },
   });
   const organizationId = await activeOrganizationId(seed, den.admin);
   const connection = await seed.orgConnection(den.admin, {
@@ -1252,8 +1266,48 @@ export async function connectionActionMcpApp(seed: Seed) {
   const appHostToken = stringField(tokenResult.body, "appHostToken");
   if (!mcpToken || !appHostToken || mcpToken === appHostToken) throw new Error("Distinct model and app-host tokens were not minted.");
   const app = await seed.desktop({ den, as: "admin", name: "connection-action-mcp-app" });
+  let modelUrl = den.mocks.connector.url;
+  if (engine === "v2") {
+    // Keep this small model witness on the desktop host in both lanes. It emits
+    // ordinary text before an advertised Code Mode call, not a question tool or
+    // a fake decision. The gateway/OAuth connector remains the existing mock.
+    const source = new URL("../packages/labs/src/connection-action-model.mjs", import.meta.url);
+    if (app.handle.hostKind === "daytona") {
+      if (!app.handle.sandboxId) throw new Error("The connection witness needs its desktop sandbox");
+      const remote = await startScriptOnSandbox({ sandbox: app.handle.sandboxId, label: "connection-model", port: 3996, scriptSource: await readFile(source, "utf8") });
+      setup.defer(() => remote.stop());
+      modelUrl = remote.loopbackUrl;
+      // Arrangement only: configure the model on the same host as the desktop.
+      const configured = await runBrowserHost(app, `
+        const response = await fetch(${browserScriptValue(modelUrl + "/admin/agent-workloads")}, {
+          method: "POST", headers: { "content-type": "application/json" }, body: ${browserScriptValue(JSON.stringify({ workloads }))}
+        });
+        return response.status;
+      `);
+      if (configured !== 200) throw new Error("Could not configure the connection model witness");
+    } else {
+      const model = await startMockMcp({ scriptPath: fileURLToPath(source), port: await allocateFreePort(), isolatedProcessEnv: true, agentWorkloads: workloads });
+      setup.defer(() => model.stop());
+      modelUrl = model.url;
+    }
+  }
+  // Read-only observer: model requests must be counted when received, including
+  // while the host holds the connection result. No browser/session mutation.
+  const modelRequests = async (prompt: string) => {
+    if (engine === "v1") return den.mocks.connector.agentRequests({ promptMarker: prompt });
+    const result = await rawEvalIn(app, browserScript(async (url) => {
+      const response = await fetch(url + "/requests");
+      if (!response.ok) throw new Error("Could not read model requests");
+      return response.json();
+    }, [modelUrl]), { awaitPromise: true });
+    return records(isRecord(result) ? result.requests : undefined).map(entry => {
+      if (!isRecord(entry.agentCompletion)) throw new Error("Invalid connection model request");
+      return entry.agentCompletion;
+    }).filter(entry => entry.promptMarker === prompt);
+  };
   const workspace = await seed.workspace(app, seed.tmpPath("connection-action-mcp-app"));
-  const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId) => {
+  // v1 still needs the legacy question permission; v2 has no model question.
+  const questionPolicyWritten = engine === "v2" || await seed.evalIn(app, browserScript(async (workspaceId) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
@@ -1266,7 +1320,7 @@ export async function connectionActionMcpApp(seed: Seed) {
   if (questionPolicyWritten !== true) throw new Error("Could not arrange the connection question-tool policy.");
   await configureWorkspaceModel(seed, {
     app, workspaceId: workspace.workspaceId, providerId, modelId,
-    fixtureUrl: den.mocks.connector.url, denApiUrl: den.ref.apiUrl, mcpToken, appHostToken,
+    fixtureUrl: modelUrl, denApiUrl: den.ref.apiUrl, mcpToken, appHostToken,
   });
   await reloadConfiguredApp(app);
   let session: { sessionId: string; title: string } | undefined;
@@ -1285,7 +1339,8 @@ export async function connectionActionMcpApp(seed: Seed) {
   const connectionAppHeading = async () => (await locate(app, {
     mcpApp: { resourceUri: "ui://openwork/connection-action/v2/view.html" }, role: "heading",
   })).text;
-  return { app, den, connection, organizationId, workspace, session, connectionAppHeading, mcpSession: { ...den.admin, token: mcpToken }, appHostSession: { ...den.admin, token: appHostToken } };
+  const resources = setup.move();
+  return withDispose({ app, den, engine, connection, organizationId, workspace, session, modelRequests, connectionAppHeading, mcpSession: { ...den.admin, token: mcpToken }, appHostSession: { ...den.admin, token: appHostToken } }, () => resources.disposeAsync());
 }
 
 export const inlineResourceUri = "ui://openwork/artifacts/arv_eval_card/views/avr_eval_card/index.html";

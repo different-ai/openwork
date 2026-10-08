@@ -52,6 +52,7 @@ export interface ManagedOpencodeV2ServerOptions {
   env?: Record<string, string>;
   bootTimeoutMs?: number;
   contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
+  connectionGate?: { url: string; token: string };
   permissions?: () => Promise<EnginePermissionRule[]>;
 }
 
@@ -111,6 +112,7 @@ export function renderOpencodeV2Config(input: {
   mcpResultsPluginDirectory?: string;
   contextPluginDirectory?: string;
   contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
+  connectionGate?: { url: string; token: string };
 }): Record<string, unknown> {
   const disabled = new Set(input.disabledProviderIds ?? []);
   const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id));
@@ -176,7 +178,10 @@ export function renderOpencodeV2Config(input: {
       package: pathToFileURL(input.providerFiltersPluginDirectory).href,
       options: { providers: filters },
     }] : []),
-    ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
+    ...(input.mcpResultsPluginDirectory ? [{
+      package: pathToFileURL(input.mcpResultsPluginDirectory).href,
+      ...(input.connectionGate ? { options: { connectionGate: input.connectionGate } } : {}),
+    }] : []),
   ];
   return {
     $schema: "https://opencode.ai/config.json",
@@ -351,6 +356,7 @@ export async function createManagedOpencodeV2Server(
       mcpResultsPluginDirectory,
       contextPluginDirectory,
       contextTools: options.contextTools,
+      connectionGate: options.connectionGate,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       skills,
     }), null, 2)}\n`;

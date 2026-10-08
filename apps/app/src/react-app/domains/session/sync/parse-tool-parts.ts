@@ -3,6 +3,9 @@ import type { ToolPart } from "@opencode-ai/sdk/v2/client";
 import {
   connectionActionAppSchemaVersion,
   connectionActionPayloadSchema,
+  connectionTargetFromResult,
+  hostConnectionDecisionSchema,
+  isMemberConnectionDecision,
 } from "@openwork/types/connection-action-app";
 
 import { safeStringify } from "@/app/utils";
@@ -23,14 +26,19 @@ function isJsonValue(value: unknown, depth = 0): value is JSONValue {
   return entries.length <= 4_096 && entries.every((entry) => isJsonValue(entry, depth + 1));
 }
 
-function connectionActionMcpResultFromError(error: string): JSONValue | null {
-  let parsed: unknown;
+function structuredToolError(error: string): Record<string, unknown> | null {
+  if (error.length > 64 * 1_024) return null;
   try {
-    parsed = JSON.parse(error);
+    const parsed: unknown = JSON.parse(error);
+    return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }
-  if (!isRecord(parsed) || !isRecord(parsed.connectionStatus)) return null;
+}
+
+function connectionActionMcpResultFromError(error: string): JSONValue | null {
+  const parsed = structuredToolError(error);
+  if (!parsed || !isRecord(parsed.connectionStatus)) return null;
   const status = parsed.connectionStatus;
   const action = isRecord(status.action) ? status.action : null;
   const payload = connectionActionPayloadSchema.safeParse({
@@ -57,6 +65,31 @@ function connectionActionMcpResultFromError(error: string): JSONValue | null {
   };
 }
 
+/** Host provenance comes from our native tool metadata, or a gateway root error. */
+function toolConnectionDecision(part: ToolPart, metadata: Record<string, unknown>) {
+  const gatewayTool = /^(?:openwork|openwork-cloud)_(?:search_capabilities|execute_capability|connection_action)$/.test(part.tool);
+  const codeMode = part.tool === "execute" && part.metadata?.openworkV2CodeMode === true;
+  if (!gatewayTool && !codeMode) return null;
+  if ("openworkConnectionDecision" in metadata) {
+    const decision = hostConnectionDecisionSchema.safeParse(metadata.openworkConnectionDecision);
+    return decision.success && isMemberConnectionDecision(decision.data.connection) ? decision.data : null;
+  }
+  // Only these gateway tools own this root error envelope. Never search a
+  // provider's prose, nested error text, or an outer script error for metadata.
+  if (part.state.status !== "error" || !/^(?:openwork|openwork-cloud)_(?:execute_capability|connection_action)$/.test(part.tool)) return null;
+  const error = structuredToolError(part.state.error);
+  if (!error || !isRecord(error.connectionStatus)) return null;
+  const decision = hostConnectionDecisionSchema.safeParse(error.openworkConnectionDecision);
+  if (!decision.success || !isMemberConnectionDecision(decision.data.connection)) return null;
+  const target = connectionTargetFromResult(error);
+  if (!target?.memberOAuth || !isMemberConnectionDecision(target.connection)) return null;
+  // The shared normalizer rejects conflicting identity, state, actor or action.
+  const consistent = connectionTargetFromResult({ connectionStatus: target.connection, connectionAction: decision.data.connection });
+  return consistent
+    && target.connection.action?.label === decision.data.connection.action?.label
+    && target.connection.action?.url === decision.data.connection.action?.url ? decision.data : null;
+}
+
 function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const stateMetadata = "metadata" in part.state && isRecord(part.state.metadata) ? part.state.metadata : {};
   const persistedMcpResult = isJsonValue(stateMetadata.openworkMcpResult)
@@ -76,9 +109,11 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
     && Number.isFinite(part.state.time.start)
     ? part.state.time.start
     : null;
+  const connectionDecision = toolConnectionDecision(part, stateMetadata);
   const toolCompletedAt = appBuilder && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
     && Number.isFinite(part.state.time.end) ? part.state.time.end : null;
   const openwork = {
+    ...(connectionDecision ? { connectionDecision } : {}),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),

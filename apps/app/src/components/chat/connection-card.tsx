@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
+import { connectionFromChatToolPart, reconnectActionFromConnection, settledConnectionDecisionFromChatToolPart } from "@/components/tools/error-attribution"
 import { useChatToolReconnect, type ChatToolReconnectCallbacks } from "@/components/tools/use-chat-tool-reconnect"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import { useOptionalMessageList } from "./message-list-provider"
@@ -64,11 +64,14 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   allowDiscovery?: boolean
 }) {
   const messageList = useOptionalMessageList()
+  const candidate = reconnectCallbacks?.decision ?? callbacks?.decision ?? messageList?.getConnectionDecision?.(part.toolCallId)
+  const pendingConnection = candidate?.request.toolCallId === part.toolCallId && candidate.isPending()
+    ? candidate.request.connection : undefined
+  const persistedDecision = settledConnectionDecisionFromChatToolPart(part)
   const found = connectionFromChatToolPart(part, { allowDiscovery })
-  const connection = found?.connection ?? null
-  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect" || connection.action?.type === "update_credentials")
-    ? found?.action ?? null
-    : null
+  const connection = pendingConnection ?? persistedDecision?.connection ?? found?.connection ?? null
+  const action = pendingConnection ? reconnectActionFromConnection(pendingConnection)
+    : persistedDecision ? null : found?.action ?? null
   const {
     reconnectState, reconnectError, reconnectBlocked, decisionAvailable,
     responseSubmitted, handleReconnect, handleSkip, handleContinue, handleDismiss,
@@ -84,11 +87,10 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const identity = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)
   const iconUrl = identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
-  const skipped = reconnectState === "skipped"
-  // The tool result is a snapshot from when the step ran; the live org
-  // connection list says whether this member is connected now, so a card
-  // signed in earlier stays connected after leaving and reopening the session.
-  const connected = connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
+  const skipped = persistedDecision ? persistedDecision.outcome === "skipped" : reconnectState === "skipped"
+  // Host-owned decisions preserve this turn's outcome. Legacy cards can use
+  // the live connection list to stay connected after reopening the session.
+  const connected = persistedDecision ? persistedDecision.outcome === "connected" : connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
   const settled = connected || skipped
   const opening = !settled && reconnectState === "opening"
   const waiting = !settled && reconnectState === "authorization_opened"
@@ -104,7 +106,7 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
     : action?.credentialKind === "personal_key" ? `${verb} for ${name}${decisionAvailable ? " to continue" : ""}`
     : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
   const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate" : verb
-  const actionable = !readOnly && (!settled || decisionAvailable)
+  const actionable = !readOnly && !persistedDecision && (!settled || decisionAvailable)
   const showDetails = actionable && Boolean(reconnectError)
 
   return (
