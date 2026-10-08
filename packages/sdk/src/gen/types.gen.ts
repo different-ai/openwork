@@ -38,6 +38,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     activePeople: number;
     activeOrganizations: number;
@@ -50,6 +54,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     activePeople: number;
   };
@@ -61,6 +69,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
   };
   week: {
@@ -83,6 +95,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     id: string;
     name: string;
@@ -110,6 +126,10 @@ export type AdminFreeAutoUsageResponse = {
      */
     estimatedRequests: number;
     inputTokens: number;
+    /**
+     * The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached.
+     */
+    cachedInputTokens: number;
     outputTokens: number;
     organizations: number;
   } | null;
@@ -160,6 +180,7 @@ export type AdminFeature = {
     | "litellm"
     | "permissions"
     | "gatewayCloudSignIn"
+    | "engineV2Upgrade"
     | "platformAuditReads";
   label: string;
   description: string;
@@ -216,6 +237,7 @@ export type AdminOrganizationsPageResponse = {
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
+      engineV2Upgrade: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -373,6 +395,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       gatewayCloudSignIn: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -470,6 +501,7 @@ export type AdminOverviewResponse = {
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
+      engineV2Upgrade: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -627,6 +659,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       gatewayCloudSignIn: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1834,6 +1875,7 @@ export type CapabilityDisabledError = {
     | "litellm"
     | "permissions"
     | "gatewayCloudSignIn"
+    | "engineV2Upgrade"
     | "platformAuditReads";
 };
 
@@ -6010,6 +6052,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
+      engineV2Upgrade: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -6167,6 +6210,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       gatewayCloudSignIn: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6252,6 +6304,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
+      engineV2Upgrade: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -6409,6 +6462,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       gatewayCloudSignIn: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      engineV2Upgrade: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

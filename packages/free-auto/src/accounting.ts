@@ -6,12 +6,17 @@ import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference
  * (INFERENCE_USAGE_CONVERSION_FACTOR per USD).
  */
 
-export type FreePrices = { inputPrice: number; outputPrice: number };
-/** Cost of a completion from its token counts, rounded up. Prices are USD per million tokens. */
-export function freeUsageAmount(prices: FreePrices, inputTokens: number, outputTokens: number): number {
+export type FreePrices = { inputPrice: number; cachedInputPrice: number; outputPrice: number };
+/**
+ * Cost of a completion from its token counts, rounded up. Prices are USD per million tokens.
+ * Input tokens include the cached ones, which OpenAI bills at the cheaper cached input price.
+ */
+export function freeUsageAmount(prices: FreePrices, inputTokens: number, outputTokens: number, cachedInputTokens = 0): number {
   // Luna prices the entire request at long-context rates once input exceeds 272K tokens.
   const longContext = inputTokens > 272_000;
-  return Math.ceil((inputTokens * prices.inputPrice * (longContext ? 2 : 1) + outputTokens * prices.outputPrice * (longContext ? 1.5 : 1)) * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000);
+  const cached = Math.min(cachedInputTokens, inputTokens);
+  const input = (inputTokens - cached) * prices.inputPrice + cached * prices.cachedInputPrice;
+  return Math.ceil((input * (longContext ? 2 : 1) + outputTokens * prices.outputPrice * (longContext ? 1.5 : 1)) * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000);
 }
 
 /** Guest allowance tiers by minutes with the app open; ascending, first tier at 0. */

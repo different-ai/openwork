@@ -346,6 +346,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `litellm` | `DEN_FEATURE_LITELLM` | default off | Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person. |
 | `permissions` | `DEN_FEATURE_PERMISSIONS` | default off | Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults. |
 | `gatewayCloudSignIn` | `DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN` | default off | Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key. |
+| `engineV2Upgrade` | `DEN_FEATURE_ENGINE_V2_UPGRADE` | default off | Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. |
 | `platformAuditReads` | `DEN_FEATURE_PLATFORM_AUDIT_READS` | default off | Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect. |
 <!-- END GENERATED features -->
 

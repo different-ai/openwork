@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readdir, rm, stat, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { importNodeSqlite } from "./runtime-db.js";
@@ -19,6 +19,69 @@ export interface EngineV2MigrationStatus {
   /** ISO time the current migration started. */
   startedAt?: string;
   error?: string;
+  /** Copy of the v2 chat database taken before this migration wrote to it. */
+  backupPath?: string;
+}
+
+/** Backups of the v2 chat database kept on disk; older ones are removed. */
+const KEPT_V2_BACKUPS = 2;
+/** Room left free after a migration so the computer keeps working. */
+const FREE_SPACE_MARGIN_BYTES = 1024 ** 3;
+
+async function fileSize(path: string): Promise<number> {
+  try { return (await stat(path)).size; } catch { return 0; }
+}
+
+/** A SQLite database with its write-ahead log, as it would be snapshotted. */
+async function databaseSize(path: string): Promise<number> {
+  return (await fileSize(path)) + (await fileSize(`${path}-wal`));
+}
+
+export function conversionTimeoutMs(snapshotBytes: number): number {
+  return 10 * 60_000 + Math.ceil(snapshotBytes / 1024 ** 3) * 3 * 60_000;
+}
+
+function formatGigabytes(bytes: number): string {
+  return `${Math.max(0.1, Math.ceil((bytes / 1024 ** 3) * 10) / 10)} GB`;
+}
+
+/**
+ * Refuse before writing anything when the snapshot and backup would not fit.
+ * Hosts without statfs skip the check rather than block the migration.
+ */
+export async function ensureMigrationDiskSpace(options: { directory: string; neededBytes: number }): Promise<void> {
+  let available: number;
+  try {
+    const fs = await statfs(options.directory);
+    available = Number(fs.bavail) * Number(fs.bsize);
+  } catch {
+    return;
+  }
+  const needed = options.neededBytes + FREE_SPACE_MARGIN_BYTES;
+  if (available >= needed) return;
+  throw new Error(
+    `Not enough free disk space to upgrade safely. Free up about ${formatGigabytes(needed - available)} and try again. Nothing was changed.`,
+  );
+}
+
+/**
+ * Keep a copy of the v2 chat database before a migration imports into it.
+ * v1 history is never written, so this is the only data a migration can change.
+ */
+export async function backupV2Database(options: { database: string; directory: string; now?: Date }): Promise<string | undefined> {
+  try { await access(options.database); } catch { return undefined; }
+  await mkdir(options.directory, { recursive: true, mode: 0o700 });
+  const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, "-");
+  const destination = join(options.directory, `opencode-v2-${stamp}.db`);
+  await snapshotV1Database(options.database, destination);
+  const backups = (await readdir(options.directory))
+    .filter((name) => /^opencode-v2-.+\.db$/.test(name))
+    .sort()
+    .reverse();
+  for (const old of backups.slice(KEPT_V2_BACKUPS)) {
+    await rm(join(options.directory, old), { force: true });
+  }
+  return destination;
 }
 
 export function opencodeV1DatabasePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -48,6 +111,30 @@ export async function snapshotV1Database(source: string, destination: string): P
   await chmod(destination, 0o600);
 }
 
+/** Key OpenCode v2 sets in a database it has already converted (`kv` table). */
+const V2_CONVERSION_MARKER = "migration.v1-v2";
+
+/**
+ * A v1 database that an OpenCode v2 build once opened directly carries a
+ * "conversion completed" marker from that day. The converter then skips its
+ * work and exports that stale projection, so every chat added since arrives
+ * empty. Clear the marker in the private snapshot (never the original) so the
+ * converter rebuilds from the v1 tables, which are the source of truth.
+ */
+export async function clearStaleConversionMarker(database: string): Promise<boolean> {
+  const db = typeof process.versions.bun === "string"
+    ? new (await import("bun:sqlite")).Database(database)
+    : new (await importNodeSqlite()).DatabaseSync(database);
+  try {
+    const table: unknown = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kv'").get();
+    if (!isRecord(table)) return false;
+    const marker: unknown = db.prepare("SELECT key FROM kv WHERE key = ?").get(V2_CONVERSION_MARKER);
+    if (!isRecord(marker)) return false;
+    db.prepare("DELETE FROM kv WHERE key = ?").run(V2_CONVERSION_MARKER);
+    return true;
+  } finally { db.close(); }
+}
+
 export async function readMigrationSessions(database: string): Promise<Array<{ id: string; directory: string; parentId: string | null }>> {
   const db = typeof process.versions.bun === "string"
     ? new (await import("bun:sqlite")).Database(database, { readonly: true })
@@ -70,6 +157,8 @@ export async function migrateOpencodeV1History(options: {
   storageDir: string;
   bin: string;
   target: Pick<ManagedOpencodeV2Server, "fetchJson">;
+  /** The live v2 chat database, copied into `directory` before any chat is imported. */
+  backup?: { database: string; directory: string };
   progress: (status: EngineV2MigrationStatus) => void;
 }): Promise<void> {
   await mkdir(options.storageDir, { recursive: true, mode: 0o700 });
@@ -79,7 +168,15 @@ export async function migrateOpencodeV1History(options: {
   try {
     const database = join(root, "opencode.db");
     try { await access(options.source); } catch { throw new Error("No v1 chat history found for this profile. Create a v1 chat before migrating."); }
+    // The snapshot (about the size of v1 history) and the v2 backup are both
+    // written next to OpenWork's data; a full disk mid-copy is the one way a
+    // migration could hurt the computer, so check before writing anything.
+    await ensureMigrationDiskSpace({
+      directory: options.storageDir,
+      neededBytes: (await databaseSize(options.source)) + (options.backup ? await databaseSize(options.backup.database) : 0),
+    });
     await snapshotV1Database(options.source, database);
+    await clearStaleConversionMarker(database);
     const sessions = await readMigrationSessions(database);
     status.total = sessions.length;
     status.phase = "converting";
@@ -93,7 +190,8 @@ export async function migrateOpencodeV1History(options: {
         XDG_CONFIG_HOME: join(home, "config"), XDG_CACHE_HOME: join(home, "cache"),
         XDG_STATE_HOME: join(home, "state"), OPENCODE_DISABLE_MODELS_FETCH: "1",
       } });
-      const deadline = Date.now() + 10 * 60_000;
+      // Conversion time grows with history size: 10 minutes, plus 3 per GB of snapshot.
+      const deadline = Date.now() + conversionTimeoutMs(await fileSize(database));
       while (true) {
         const result = await converter.fetchJson("/api/experimental/migration/v1");
         if (result.status !== 200 || !isRecord(result.json)) throw new Error("Could not verify OpenCode's history conversion.");
@@ -101,6 +199,10 @@ export async function migrateOpencodeV1History(options: {
         if (result.json.status === "error") throw new Error("OpenCode could not convert the history snapshot. Your v1 history is unchanged.");
         if (Date.now() > deadline) throw new Error("History conversion timed out. Retry migration.");
         await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (options.backup) {
+        const backupPath = await backupV2Database(options.backup);
+        if (backupPath) status.backupPath = backupPath;
       }
       status.phase = "copying";
       options.progress({ ...status });

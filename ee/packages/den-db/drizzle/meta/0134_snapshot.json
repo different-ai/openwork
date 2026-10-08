@@ -1,8 +1,8 @@
 {
-  "id": "706bce20-2f9c-45ac-a31f-3531952f90f3",
-  "prevId": "777748dc-ff0b-41a1-bf03-90559faba6e9",
   "version": "5",
   "dialect": "mysql",
+  "id": "24135913-d3ea-4129-94ab-8563667d0adb",
+  "prevId": "bb3e6fdc-3b26-4411-84b0-17d9aafb311b",
   "tables": {
     "account": {
       "name": "account",
@@ -3953,6 +3953,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "cached_input_tokens": {
+          "name": "cached_input_tokens",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "output_tokens": {
           "name": "output_tokens",
           "type": "int",
@@ -4937,6 +4944,13 @@
         },
         "input_tokens": {
           "name": "input_tokens",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cached_input_tokens": {
+          "name": "cached_input_tokens",
           "type": "int",
           "primaryKey": false,
           "notNull": false,
@@ -18267,9 +18281,9 @@
   },
   "views": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "tables": {},

@@ -74,6 +74,7 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     unreportedUsageAmount: integer("INFERENCE_FREE_UNREPORTED_USAGE_MICRO_USD", 40000, 0, 10000000) * 100,
     // OpenAI list prices for the free model, in USD per million tokens.
     inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 100000, 1, 100000000) / 1000000,
+    cachedInputPrice: integer("INFERENCE_FREE_CACHED_INPUT_PRICE_MICRO_USD_PER_MILLION", 10000, 0, 100000000) / 1000000,
     outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 500000, 1, 100000000) / 1000000,
     // Match the paid Gateway body ceiling; free requests do not get a smaller context limit.
     maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 32 * 1024 * 1024, 1024, 32 * 1024 * 1024),

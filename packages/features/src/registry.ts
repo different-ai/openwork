@@ -172,6 +172,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  engineV2Upgrade: {
+    label: "Desktop: upgrade prompt to OpenCode v2",
+    description: "Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   platformAuditReads: {
     label: "Platform audit: read-only requests",
     description: "Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.",

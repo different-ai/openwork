@@ -506,6 +506,8 @@ export const AnonymousInferenceUsageTable = mysqlTable("anonymous_inference_usag
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
+  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
+  cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
   /** No usage report arrived, so the fixed estimate was charged. */
   estimated: boolean("estimated").notNull().default(false),
@@ -555,6 +557,8 @@ export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
+  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
+  cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
   estimated: boolean("estimated").notNull().default(false),
   created_at: timestamps.created_at,
