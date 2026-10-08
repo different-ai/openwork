@@ -66,8 +66,30 @@ const NAME_LIMIT = 60
 
 /** A short name from the request: its first sentence or line, capped at 60 characters on a word. */
 export function automationNameFrom(instructions: string): string {
-  const first = instructions.trim().split(/\n|(?<=[.!?])\s/)[0]?.trim().replace(/[.!?]+$/, "") ?? ""
+  const first = trimEnd(firstSentence(instructions.trim()), (char) => char === "." || char === "!" || char === "?")
   if (!first) return "New automation"
-  const capped = first.length <= NAME_LIMIT ? first : `${first.slice(0, NAME_LIMIT).replace(/\s+\S*$/, "")}…`
+  const capped = first.length <= NAME_LIMIT ? first : `${cutOnWord(first.slice(0, NAME_LIMIT))}…`
   return capped.charAt(0).toUpperCase() + capped.slice(1)
+}
+
+// Plain scans rather than regular expressions: the request is free text of any length.
+function firstSentence(text: string): string {
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (char === "\n") return text.slice(0, index).trim()
+    if ((char === "." || char === "!" || char === "?") && /\s/.test(text[index + 1] ?? "")) return text.slice(0, index + 1).trim()
+  }
+  return text
+}
+
+function trimEnd(text: string, drop: (char: string) => boolean): string {
+  let end = text.length
+  while (end > 0 && drop(text[end - 1] ?? "")) end -= 1
+  return text.slice(0, end)
+}
+
+/** Drops a partial last word, unless the text is one word. */
+function cutOnWord(text: string): string {
+  const space = text.lastIndexOf(" ")
+  return space > 0 ? text.slice(0, space).trimEnd() : text
 }

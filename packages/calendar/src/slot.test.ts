@@ -38,3 +38,12 @@ describe("creating an Automation from a calendar slot", () => {
     expect(long.endsWith("…")).toBe(true);
   });
 });
+
+describe("naming from free text", () => {
+  test("long runs of punctuation stay fast", () => {
+    const started = performance.now();
+    expect(automationNameFrom(`Ship it ${"! ".repeat(50_000)}`)).toBe("Ship it");
+    expect(automationNameFrom(`Ship it${"!".repeat(50_000)}`)).toBe("Ship it");
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+});
