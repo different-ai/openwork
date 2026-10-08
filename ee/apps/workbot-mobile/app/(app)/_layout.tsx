@@ -36,7 +36,7 @@ export default function SignedInLayout() {
   if (me.isError) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.title}>Workbot can't reach OpenWork right now.</Text>
+        <Text style={styles.title}>{me.error.message}</Text>
         <View style={styles.action}>
           <PrimaryButton label="Try again" onPress={() => void me.refetch()} />
         </View>
@@ -68,7 +68,8 @@ export default function SignedInLayout() {
 
 const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 24, gap: 6, backgroundColor: color.bg },
-  title: { marginTop: 6, fontSize: 14, color: color.text, textAlign: "center" },
-  body: { fontSize: 13, color: color.muted, textAlign: "center" },
+  // A narrower measure breaks a two-line message evenly instead of leaving one word on its own line.
+  title: { maxWidth: 280, marginTop: 6, fontSize: 14, lineHeight: 20, color: color.text, textAlign: "center" },
+  body: { maxWidth: 280, fontSize: 13, lineHeight: 18, color: color.muted, textAlign: "center" },
   action: { paddingTop: 16 },
 })

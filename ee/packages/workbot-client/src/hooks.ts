@@ -68,7 +68,10 @@ export function useWorkbotMe(enabled = true) {
     staleTime: 60_000,
     retry: 1,
     queryFn: async () => {
-      const { status, ok, payload } = await transport.request("/v1/workbot/me", { timeoutMs: 20_000 })
+      // No answer at all: this device is offline, or Workbot itself is down.
+      const answer = await transport.request("/v1/workbot/me", { timeoutMs: 20_000 }).catch(() => null)
+      if (!answer) throw new Error("Can't reach Workbot. Check your connection and try again.")
+      const { status, ok, payload } = answer
       if (status === 401) return null
       if (!ok) throw new Error("Workbot couldn't reach OpenWork. Try again in a minute.")
       return meSchema.parse(payload)

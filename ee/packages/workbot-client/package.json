@@ -20,6 +20,7 @@
   },
   "sideEffects": false,
   "scripts": {
+    "test": "node --test scripts/client.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
