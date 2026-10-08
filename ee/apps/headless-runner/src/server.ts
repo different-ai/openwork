@@ -11,11 +11,12 @@ import { remoteMcpConnector } from "./mcp.js"
 import { anthropicModel, fetchGatewayModels, openAIModel, type ModelOption } from "./model.js"
 import { Runner } from "./runner.js"
 import { Store } from "./store.js"
+import { nodeSqlite } from "./node-sqlite.js"
 import { readToolFile } from "./tool-files.js"
 import type { SessionComputer } from "./types.js"
 
 const config = loadConfig()
-const store = new Store(config.dbPath)
+const store = new Store(nodeSqlite(config.dbPath))
 const recovered = store.recoverInterruptedTurns()
 const events = new SessionEvents()
 const blobs =

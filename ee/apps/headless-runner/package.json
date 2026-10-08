@@ -12,7 +12,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
-    "test:computer-config": "tsx --test scripts/computer-config.test.ts"
+    "test:computer-config": "tsx --test scripts/computer-config.test.ts",
+    "test:sql-store": "tsx --test scripts/sql-store.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
