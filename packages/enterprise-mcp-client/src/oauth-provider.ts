@@ -1,5 +1,5 @@
 import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/core"
-import { discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
+import { checkResourceAllowed, discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
 import type {
   AuthorizationServerMetadata,
   OAuthClientInformationContext,
@@ -8,6 +8,7 @@ import type {
   StoredOAuthClientInformation,
   StoredOAuthTokens,
 } from "@modelcontextprotocol/client"
+import { getDomain } from "tldts"
 import { isEquivalentOAuthDiscoveryAlias } from "./oauth-resource-alias.js"
 import type {
   EnterpriseMcpClock,
@@ -165,16 +166,15 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   // Some providers serve one MCP endpoint from several hosts and declare a
-  // single canonical resource, such as a regional API host. Like other MCP
-  // clients, request tokens for the declared resource instead of requiring it
-  // to share the configured URL's origin.
-  async validateResourceURL(_serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
+  // single canonical resource, such as a regional API host. Accept a declared
+  // resource on the configured URL's site, but never one on another site: its
+  // tokens would still be sent to the configured URL.
+  async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
     if (!resource) return undefined
     const declared = new URL(resource)
-    if (declared.protocol !== "https:" && declared.protocol !== "http:") {
-      throw new Error(`The protected resource ${resource} must use HTTP or HTTPS.`)
-    }
-    return declared
+    if (checkResourceAllowed({ requestedResource: serverUrl, configuredResource: declared })) return declared
+    if (isSameSiteResource(new URL(serverUrl), declared)) return declared
+    throw new Error(`Protected resource ${resource} does not match expected ${serverUrl} (or its site)`)
   }
 
   private assertDiscoveryBinding(state: OAuthDiscoveryState): void {
@@ -579,4 +579,16 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     }
     if (retainedClient) throw retainedClient
   }
+}
+
+function isSameSiteResource(configured: URL, declared: URL): boolean {
+  if (configured.protocol !== declared.protocol) return false
+  if (declared.protocol !== "https:" && declared.protocol !== "http:") return false
+  if (isLoopbackHost(configured.hostname) && isLoopbackHost(declared.hostname)) return true
+  const site = getDomain(configured.hostname, { allowPrivateDomains: true })
+  return site !== null && site === getDomain(declared.hostname, { allowPrivateDomains: true })
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname)
 }

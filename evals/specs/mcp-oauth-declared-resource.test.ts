@@ -49,3 +49,30 @@ test("Den OAuth connects when the MCP server declares its resource on another ho
   expect(tools.response.status, tools.text).toBe(200);
   evidence.recordAssertionEvidence("Connection completes and lists tools", "Callback returned HTTP 200, Den reports the connection connected, and authenticated tool discovery succeeded.", true);
 });
+
+// Tokens are always sent to the configured URL, so a resource declared on
+// another site must be refused: otherwise a server could obtain a token meant
+// for someone else's API.
+test("Den OAuth refuses a protected resource declared on another site", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"], placement: "local" });
+  const declaredResource = "https://mcp.example.com/mcp";
+  await using den = await server({
+    place, web: false,
+    mocks: { connector: mcpMock({ protectedResource: declaredResource }) },
+    org: { name: `OAuth Cross-Site Resource ${Date.now()}`, members: {} },
+  });
+  const provider = den.mocks.connector;
+  const headers = { authorization: `Bearer ${den.admin.token}` };
+
+  const created = await denFetch(den.admin, "/v1/mcp-connections", {
+    method: "POST", headers,
+    body: JSON.stringify({ name: "Cross-site resource", url: provider.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } }),
+  });
+  expect(created.response.status, created.text).toBe(200);
+  if (!isRecord(created.body) || typeof created.body.id !== "string") throw new Error("Connection id missing");
+
+  const started = await denFetch(den.admin, `/v1/mcp-connections/${created.body.id}/connect/start`, { headers });
+  expect(started.response.status, started.text).not.toBe(200);
+  expect(isRecord(started.body) && "authorizeUrl" in started.body).toBe(false);
+  evidence.recordAssertionEvidence("Sign-in is refused for a resource on another site", `Configured ${provider.mcpUrl}; resource ${declaredResource} returned HTTP ${started.response.status} without an authorization URL.`, true);
+});
