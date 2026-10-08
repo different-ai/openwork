@@ -1,10 +1,11 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "openwork-connect",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Use the skills, MCP connections, and connected services assigned to you through OpenWork.",
   "author": {
     "name": "OpenWork",
+    "email": "team@openworklabs.com",
     "url": "https://openworklabs.com"
   },
   "homepage": "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp",
@@ -15,5 +16,34 @@
     "mcp",
     "agent-skills",
     "organization"
-  ]
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "OpenWork Connect",
+        "shortDescription": "Your team's skills and tools",
+        "longDescription": "OpenWork Connect brings the skills, MCP connections, connected services, saved Workflows, and Apps your organization manages in OpenWork into ChatGPT and Codex through one sign-in.\n\nAdministrators connect services and publish skills once in OpenWork. Each member signs in with OpenWork, picks an organization, and gets only the capabilities granted to them through their organization, teams, and access rules. When a connection, permission, or setup step is missing, OpenWork Connect returns that state and its next step instead of running the request.\n\nRequires an OpenWork account. What you can do depends on what your organization has connected and shared.",
+        "developerName": "OpenWork",
+        "category": "Productivity",
+        "capabilities": [
+          "Find and follow your organization's skills",
+          "Use shared MCP connections and connected services",
+          "Run saved Workflows",
+          "Build and open OpenWork Apps"
+        ],
+        "websiteURL": "https://openworklabs.com",
+        "supportURL": "https://openworklabs.com/contact",
+        "privacyPolicyURL": "https://openworklabs.com/privacy",
+        "termsOfServiceURL": "https://openworklabs.com/terms",
+        "defaultPrompt": [
+          "Which OpenWork skills can I use?",
+          "What can OpenWork Connect do for me in this organization?",
+          "Which OpenWork organization am I connected to?"
+        ],
+        "brandColor": "#267CE8",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png"
+      }
+    }
+  }
 }

@@ -1,20 +1,22 @@
 ---
 title: "Connect ChatGPT"
 sidebarTitle: "ChatGPT"
-description: "Add OpenWork MCP to ChatGPT: paste https://api.openworklabs.com/mcp/agent in Settings > MCP servers and sign in with OAuth."
+description: "Add OpenWork MCP to ChatGPT as a plugin: add https://api.openworklabs.com/mcp/agent as a custom MCP server and sign in with OAuth."
 ---
 
 Give ChatGPT your organization's OpenWork skills, plugins, and connections.
 
 <Steps>
-<Step title="Open MCP settings">
-In ChatGPT, open `Settings > MCP servers` ([open settings](https://chatgpt.com/#settings/Connectors)).
+<Step title="Add a custom MCP server">
+Open [ChatGPT Plugins](https://chatgpt.com/plugins), select the plus button, then **Add custom MCP server**. Name it `OpenWork`.
 </Step>
 <Step title="Paste the URL">
 
 ```text
 https://api.openworklabs.com/mcp/agent
 ```
+
+Keep OAuth as the authentication method, review the warning, and select **Create as a plugin**.
 
 </Step>
 <Step title="Sign in">
@@ -23,8 +25,11 @@ Start OAuth from the connection prompt, sign in to OpenWork, and pick your organ
 </Steps>
 
 <AccordionGroup>
+  <Accordion title="Share it with your workspace">
+    Workspace admins can publish the plugin to selected workspace roles: in ChatGPT Plugins, select **Personal**, open the plugin's menu, and select **Publish**. Each member still signs in to OpenWork and sees only what their organization grants them.
+  </Accordion>
   <Accordion title="Switch organizations">
-    In `Settings > MCP servers`, disconnect `OpenWork`, then connect again and pick another organization.
+    Open the OpenWork plugin in ChatGPT Plugins, disconnect it, then connect again and pick another organization.
   </Accordion>
   <Accordion title="Support status">
     Setup only: these steps follow OpenWork's OAuth profile, but native end-to-end proof is not complete. See the [MCP Gateway reference](/cloud/run-in-the-cloud/cloud-mcp#reference).

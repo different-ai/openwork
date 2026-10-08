@@ -1,0 +1,105 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "openwork",
+  "version": "1.0.0",
+  "description": "Find, follow, and save the skills your organization shares with you in OpenWork.",
+  "author": {
+    "name": "OpenWork",
+    "email": "team@openworklabs.com",
+    "url": "https://openworklabs.com"
+  },
+  "homepage": "https://openworklabs.com/docs/model-context-protocol/agent-plugins",
+  "repository": "https://github.com/different-ai/openwork",
+  "license": "MIT",
+  "keywords": [
+    "openwork",
+    "agent-skills",
+    "team",
+    "procedures"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "OpenWork",
+        "shortDescription": "Your team's shared skills",
+        "longDescription": "OpenWork lets an organization write its step-by-step procedures once as skills and share them with every agent its team uses. This plugin brings the skills your organization shares with you in OpenWork into ChatGPT and Codex.\n\nAsk which skills you can use, or describe a task and name the skill your team uses for it. OpenWork returns the skills available to your account, reads the one you choose, and the assistant follows it in the conversation. You can also save a procedure from the conversation as a new private skill, or publish a new version of a skill you are allowed to edit; earlier versions are kept.\n\nRequires an OpenWork account. The plugin only reads and writes OpenWork skills available to your signed-in account and selected organization. It does not run your organization's connected services, Workflows, or Apps, and it does not share skills with your team; sharing happens in OpenWork.",
+        "developerName": "OpenWork",
+        "category": "Productivity",
+        "capabilities": [
+          "List the skills your organization shares with you",
+          "Read a skill's instructions",
+          "Save a procedure as a new private skill",
+          "Publish a new version of a skill you can edit"
+        ],
+        "websiteURL": "https://openworklabs.com",
+        "supportURL": "https://openworklabs.com/contact",
+        "privacyPolicyURL": "https://openworklabs.com/privacy",
+        "termsOfServiceURL": "https://openworklabs.com/terms",
+        "defaultPrompt": [
+          "Which OpenWork skills can I use?",
+          "Use my team's OpenWork skill for this task.",
+          "Save these steps as a new OpenWork skill."
+        ],
+        "brandColor": "#267CE8",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "onboardingSkill": "./skills/get-started/SKILL.md",
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "List the skills shared with the account",
+              "prompt": "Which OpenWork skills can I use?",
+              "tools_triggered": "list_skills",
+              "expected_behavior": "Lists the skills available to the test account, including Weekly status update and Customer follow-up email, each with its description."
+            },
+            {
+              "description": "Follow a team skill on user-provided notes",
+              "prompt": "Use my team's weekly status update skill to write this week's update from these notes: shipped the login fix, started the billing page, blocked on design review.",
+              "tools_triggered": "list_skills, get_skill",
+              "expected_behavior": "Reads the Weekly status update skill and writes the update in the skill's sections using only the three notes, without inventing work."
+            },
+            {
+              "description": "Answer a question from a skill's instructions",
+              "prompt": "What does our customer follow-up email skill say every email must include?",
+              "tools_triggered": "list_skills, get_skill",
+              "expected_behavior": "Reads the Customer follow-up email skill and lists the required parts it names, without adding requirements that are not in the skill."
+            },
+            {
+              "description": "Save a procedure as a new private skill",
+              "prompt": "Save these steps as a new OpenWork skill called Bug report triage: reproduce the bug, record the app version, label severity, and assign an owner.",
+              "tools_triggered": "create_skill",
+              "expected_behavior": "Confirms the skill content with the user, saves a private skill named bug-report-triage with valid frontmatter and the four steps, and reports that it was saved."
+            },
+            {
+              "description": "Publish a new version of an editable skill",
+              "prompt": "Add a last step to my Meeting recap skill: end with open questions.",
+              "tools_triggered": "list_skills, get_skill, update_skill",
+              "expected_behavior": "Reads the current Meeting recap skill, confirms the change, publishes a new version that keeps the existing steps and adds the open-questions step, and reports the update."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Request to send a message, which the plugin cannot do",
+              "prompt": "Email my manager this week's status update."
+            },
+            {
+              "description": "Request to delete skills, which the plugin does not support",
+              "prompt": "Delete every OpenWork skill in my organization."
+            },
+            {
+              "description": "Request for skills outside the signed-in account",
+              "prompt": "Show me the OpenWork skills another company uses."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "OpenWork does not sell products or process payments in ChatGPT or Codex."
+      },
+      "publication": {
+        "release_notes": "Initial release: list, read, save, and update the OpenWork skills shared with your account."
+      }
+    }
+  }
+}

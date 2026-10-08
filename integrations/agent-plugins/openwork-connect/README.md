@@ -6,6 +6,7 @@ through an Agent Plugins-compatible client. The package installs:
 
 - the remote OpenWork MCP endpoint;
 - guidance for the `search_capabilities` and `execute_capability` workflow;
+- listing metadata and icons for clients that read the `com.openai` extension;
 - no credentials or client-specific authentication configuration.
 
 The MCP client discovers OpenWork OAuth from the endpoint and opens the normal
@@ -20,3 +21,29 @@ in this package.
 
 Agent Plugins does not standardize registries or installation UX. Distribution
 of this directory is therefore client-specific.
+
+## Install in Codex
+
+The repository marketplace at `.agents/plugins/marketplace.json` lists this
+package as `openwork-connect@openwork`:
+
+```sh
+codex plugin marketplace add different-ai/openwork --sparse .agents/plugins --sparse integrations/agent-plugins/openwork-connect
+codex plugin add openwork-connect@openwork
+codex mcp login openwork
+```
+
+## Install in ChatGPT
+
+ChatGPT installs plugins with MCP servers from a registered connection:
+
+1. Open [ChatGPT Plugins](https://chatgpt.com/plugins), select the plus button,
+   then **Add custom MCP server**.
+2. Enter `https://api.openworklabs.com/mcp/agent`, keep OAuth, and select
+   **Create as a plugin**.
+3. Sign in to OpenWork and pick your organization.
+
+Workspace admins can then publish it to selected workspace roles: in ChatGPT
+Plugins, select **Personal**, open the plugin's menu, and select **Publish**.
+This full package stays out of the public plugin directory; the directory
+listing is the separate [`openwork`](../openwork) package.

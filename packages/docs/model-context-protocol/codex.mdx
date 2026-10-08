@@ -31,6 +31,16 @@ Ask: "Which OpenWork organization am I connected to?"
 </Steps>
 
 <AccordionGroup>
+  <Accordion title="Install as a plugin">
+    The OpenWork Connect plugin adds the same server plus a skill that explains the OpenWork workflow:
+
+```sh
+codex plugin marketplace add different-ai/openwork --sparse .agents/plugins --sparse integrations/agent-plugins/openwork-connect
+codex plugin add openwork-connect@openwork
+codex mcp login openwork
+```
+
+  </Accordion>
   <Accordion title="Switch organizations">
 
 ```sh

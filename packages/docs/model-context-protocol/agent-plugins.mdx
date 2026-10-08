@@ -22,6 +22,20 @@ The package contains:
 Install or copy the complete package directory using your client's Agent
 Plugins workflow. The standard does not define a registry or one universal
 installation command, so the last installation step depends on the client.
+Codex installs it from the repository marketplace; see [Connect Codex](/model-context-protocol/codex).
+
+The package also carries listing text and icons under `extensions.com.openai`,
+which ChatGPT and Codex show in their plugin browsers.
+
+## The OpenWork directory package
+
+[`integrations/agent-plugins/openwork`](https://github.com/different-ai/openwork/tree/dev/integrations/agent-plugins/openwork)
+is the package prepared for the plugin directory that ChatGPT and Codex share.
+Directory plugins must expose each operation as its own reviewed tool, so this
+package connects to a skills-only endpoint that serves `list_skills`,
+`get_skill`, `create_skill`, and `update_skill`. It bundles an onboarding skill
+and the listing and review metadata the directory requires. Use the
+`openwork-connect` package for shared connections, Workflows, and Apps.
 
 The package does not contain credentials or an `Authorization` header. Your
 MCP client discovers OpenWork OAuth from the endpoint, opens browser sign-in,
