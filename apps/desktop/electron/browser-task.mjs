@@ -1,9 +1,9 @@
 // The browser host owns task identity, the session allow, observations and dispatch.
 // No model-specific API, arbitrary script execution, cookies or raw CDP surface.
 import { createHash, randomUUID } from "node:crypto";
+import { createBrowserSessionAllows } from "./browser-session-allows.mjs";
 
 const WORLD = 1001;
-const OBSERVATION_MS = 15_000;
 const TRUST = "untrusted-site-content";
 
 export class BrowserTaskError extends Error {
@@ -105,12 +105,9 @@ async function isolated(webContents, fn, ...args) {
 }
 
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
-  allowed, enabled, confirm, changed, siteTools, runSiteTool }) {
+  allowed, enabled, confirm, changed, siteTools, runSiteTool, sessionAllows = createBrowserSessionAllows() }) {
   const states = new Map();
   const controls = new Map();
-  // One "use the browser" decision per session. Takeover, cancellation and
-  // closing tabs stop in-flight work but never ask again.
-  const allowedSessions = new Set();
   const pausedSessions = new Set();
   const opening = new Map();
   const navigations = new Map();
@@ -206,7 +203,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   }
   async function access(scope) {
     const { tab, sessionId, control } = scope;
-    if (allowedSessions.has(sessionId)) return;
+    // One "use the browser" decision per session, kept across restarts.
+    // Takeover, cancellation and closing tabs stop in-flight work but never ask again.
+    if (sessionAllows.has(sessionId)) return;
     if (!control.pending) {
       control.pending = (async () => {
         publish(tab.tabId, "needs_attention", "Browser control");
@@ -217,7 +216,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         checkNavigation(scope);
         if (decision === false) fail("user_denied", "The user did not allow browser use for this session.");
         if (decision !== true) fail("canceled", "The browser request was dismissed before a decision. Retry when the user is ready.");
-        allowedSessions.add(sessionId);
+        sessionAllows.add(sessionId);
       })();
     }
     const pending = control.pending;
@@ -281,7 +280,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed during observation. Observe again.");
     signal.throwIfAborted();
-    state.observation = { id, at: Date.now(), revision, url, viewport: page.viewport, elements: page.elements, digest };
+    state.observation = { id, revision, url, viewport: page.viewport, elements: page.elements, digest };
     return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...page, ...(image ? { image } : {}) };
   }
   /**
@@ -383,7 +382,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         }
         if (operation !== "act") fail("unknown_operation", "Use a supported browser operation.");
         const observed = state.observation;
-        if (!observed || observed.id !== args.observationId || Date.now() - observed.at > OBSERVATION_MS || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
+        if (!observed || observed.id !== args.observationId || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
         const action = structuredClone(args.action);
         if (!action || !["click", "fill", "key", "scroll"].includes(action.type)) fail("invalid_action", "Use click, fill, key or scroll.");
         if (action.type === "click" && !action.ref && !observed.digest) fail("image_required", "Observe with includeImage before clicking image coordinates.");
@@ -393,7 +392,6 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (action.type === "scroll" && (!Number.isFinite(action.deltaY) || Math.abs(action.deltaY) > 1200)) fail("invalid_scroll", "Scroll distance must be between -1200 and 1200.");
         if (!await allowed(observed.url) || state.observation !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
-        if (Date.now() - observed.at > OBSERVATION_MS) fail("stale_observation", "The observation expired. Observe again.");
         if (action.type === "click" && !action.ref && imageDigest(await captureObservation(tab.view.webContents, observed.viewport)) !== observed.digest) fail("stale_observation", "The image changed. Observe again before choosing coordinates.");
         checkNavigation(navigationScope);
         let point;
@@ -405,7 +403,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           throw error;
         }
         checkNavigation(navigationScope);
-        if (state.observation !== observed || Date.now() - observed.at > OBSERVATION_MS || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
+        if (state.observation !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
         state.observation = null; requestSignal.throwIfAborted();
         publish(tab.tabId, "running", action.type);
         const contents = tab.view.webContents;

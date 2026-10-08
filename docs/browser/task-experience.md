@@ -8,8 +8,9 @@ it does not create a different website account for every conversation.
 ## User experience
 
 The first browser operation in a session asks **Allow this agent to use the
-browser?** once. **Allow for this session** lasts until desktop restart: takeover,
-cancellation and closing tabs never ask again. There are no per-action or
+browser?** once. **Allow for this session** is saved in the desktop profile and
+survives restarts; takeover, cancellation and closing tabs never ask again. Deleting
+the session forgets it. There are no per-action or
 per-tool prompts and no operation time limit. Organization policy and takeover
 are the other gates. Denying returns `user_denied`; a prompt dismissed without a
 choice (cancellation, closed tab) returns `canceled`, never `user_denied`.
@@ -49,8 +50,7 @@ browser-tool boundary; it does not sandbox unrelated shell tools or user-added
 plugins with independent machine permissions.
 
 Each tab allows one operation at a time. There is no mutation queue. DOM
-observations carry random IDs and must be no older than 15 seconds when an action
-starts. Before dispatch the host rechecks observation identity, document, URL, policy,
+observations carry random IDs and have no age limit. Before dispatch the host rechecks observation identity, document, URL, policy,
 DOM changes, viewport, scroll and target readiness. Key input also requires the
 same directly focused native input, textarea, select, button or link. Keyboard
 input to frames, shadow hosts and generic/custom editors is refused because their

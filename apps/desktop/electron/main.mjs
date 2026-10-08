@@ -1096,6 +1096,7 @@ const pendingDeepLinks = [];
 const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
+  sessionAllowsPath: path.join(app.getPath("userData"), "browser-session-allows.json"),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,

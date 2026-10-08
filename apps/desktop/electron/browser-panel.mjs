@@ -14,6 +14,7 @@ import {
 import { runDetachedTask } from "./process-resilience.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
+import { createBrowserSessionAllows } from "./browser-session-allows.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
@@ -42,7 +43,7 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu, sessionAllowsPath }) {
   let browserSessionHooksInstalled = false;
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
@@ -667,6 +668,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   });
 
 
+  const sessionAllows = createBrowserSessionAllows({ filePath: sessionAllowsPath });
   const taskHost = createBrowserTaskHost({
     getTab: getBrowserTab,
     tabsFor: (sessionId) => registry.tabsFor(sessionId).map((item) => getBrowserTab(item.tabId)).filter(Boolean),
@@ -681,6 +683,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     changed: (tabId, activity) => { const tab = getBrowserTab(tabId); if (tab) { tab.browserTask = activity; sendBrowserState(); } },
     siteTools: (args) => webMcpBroker.listTools(args),
     runSiteTool: (args, options) => webMcpBroker.executeTool(args, options),
+    sessionAllows,
   });
 
   function scheduleWebMcpToolCountRefresh(tabId) {
@@ -1456,6 +1459,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // tabs or the currently visible conversation.
     const ownerSessionId = normalizeSessionId(sessionId);
     if (!ownerSessionId) return [];
+    // The session is gone, so its browser allow is too.
+    sessionAllows.remove(ownerSessionId);
     closedTabs = closedTabs.filter((entry) => entry.ownerSessionId !== ownerSessionId);
     if (shortcutFocus?.ownerSessionId === ownerSessionId) shortcutFocus = null;
     const closedTabIds = registry.list()
