@@ -158,6 +158,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotMobile: {
+    label: "Workbot: phone app",
+    description: "Members can sign in to the Workbot app on iPhone and Android and use Workbot there. Needs Workbot.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   litellm: {
     label: "AI Gateway: LiteLLM",
     description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
