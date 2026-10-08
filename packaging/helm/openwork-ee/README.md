@@ -332,6 +332,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `installLinks` | `DEN_FEATURE_INSTALL_LINKS` | default on | Workspace admins can create desktop install links for their organization. |
 | `mcpConnections` | `DEN_FEATURE_MCP_CONNECTIONS` | default on | Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. |
 | `implicitCloudSkills` | `DEN_FEATURE_IMPLICIT_CLOUD_SKILLS` | default off | Agents discover organization skills automatically without waiting for Cloud before starting a task. |
+| `skillsMcpEndpoint` | `DEN_FEATURE_SKILLS_MCP_ENDPOINT` | default off | Members can connect ChatGPT, Codex, or another MCP client to /mcp/agent/skills to list, read, save, and update their OpenWork skills, without capability search or connections. |
 | `dashboardActivity` | `DEN_FEATURE_DASHBOARD_ACTIVITY` | default off | Organization admins see recent additions and skill updates on their dashboard instead of Quick add. |
 | `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
 | `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |

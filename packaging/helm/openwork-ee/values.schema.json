@@ -48,6 +48,16 @@
               ],
               "description": "Implicit Cloud skills: Agents discover organization skills automatically without waiting for Cloud before starting a task. Renders DEN_FEATURE_IMPLICIT_CLOUD_SKILLS."
             },
+            "skillsMcpEndpoint": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Skills-only MCP endpoint: Members can connect ChatGPT, Codex, or another MCP client to /mcp/agent/skills to list, read, save, and update their OpenWork skills, without capability search or connections. Renders DEN_FEATURE_SKILLS_MCP_ENDPOINT."
+            },
             "dashboardActivity": {
               "enum": [
                 "",

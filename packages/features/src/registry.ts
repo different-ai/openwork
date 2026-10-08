@@ -74,6 +74,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  skillsMcpEndpoint: {
+    label: "Skills-only MCP endpoint",
+    description: "Members can connect ChatGPT, Codex, or another MCP client to /mcp/agent/skills to list, read, save, and update their OpenWork skills, without capability search or connections.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   dashboardActivity: {
     label: "Dashboard activity",
     description: "Organization admins see recent additions and skill updates on their dashboard instead of Quick add.",

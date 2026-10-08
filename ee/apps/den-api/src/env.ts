@@ -27,6 +27,8 @@ const EnvSchema = z.object({
   DATABASE_REDIS_ALLOW_INSECURE_INTERNAL: z.string().optional(),
   DEN_MCP_RESOURCE_URL: z.string().optional(),
   DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
+  /** Exact token OpenAI's plugin portal asks the MCP host to serve at /.well-known/openai-apps-challenge. */
+  DEN_OPENAI_APPS_CHALLENGE_TOKEN: z.string().optional(),
   DEN_BETTER_AUTH_COOKIE_DOMAIN: z.string().optional(),
   /**
    * The prefix of Den's sign-in cookies (default "openwork-den"). Browsers share cookies across every port of one
@@ -809,6 +811,7 @@ export const env = {
   microsoftGraphBaseUrl: optionalString(parsed.DEN_MICROSOFT_GRAPH_BASE_URL),
   desktopDenBaseUrl: optionalString(parsed.DEN_DESKTOP_DEN_BASE_URL),
   marketingUrl: optionalString(parsed.DEN_MARKETING_URL) ?? configuredDenUrls?.web,
+  openaiAppsChallengeToken: optionalString(parsed.DEN_OPENAI_APPS_CHALLENGE_TOKEN),
   mcpClaimNamespace: normalizeOrigin(optionalString(parsed.DEN_MCP_CLAIM_NAMESPACE) ?? betterAuthUrl),
   bootstrapAdminEmails: splitCsv(parsed.DEN_BOOTSTRAP_ADMIN_EMAILS).map((email) => email.toLowerCase()),
   initialAdminBootstrapCode,

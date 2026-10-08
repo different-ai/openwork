@@ -67,6 +67,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   // MCP consumption transports (MCP_CONSUMPTION_EXCLUSIONS only)
   mcp("ALL", "/mcp", "mcp.transport"),
   mcp("ALL", "/mcp/agent", "mcp_agent.transport"),
+  mcp("ALL", "/mcp/agent/skills", "mcp_agent.skills.transport"),
   mcp("ALL", "/mcp/agent/connections/:connectionId", "mcp_agent.connection.proxy"),
   mcp("ALL", "/mcp/admin", "mcp_admin.transport"),
   mcp("GET", "/mcp/.well-known/oauth-protected-resource", "mcp.protected_resource.read"),
@@ -90,6 +91,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/.well-known/oauth-protected-resource/mcp/agent", "discovery.oauth_protected_resource.mcp_agent.read", "platform.discovery", "discovery_document", null, "Root-anchored RFC 9728 path; not in MCP_CONSUMPTION_EXCLUSIONS."),
   readOnly("/.well-known/oauth-protected-resource/mcp/admin", "discovery.oauth_protected_resource.mcp_admin.read", "platform.discovery", "discovery_document", null, "Root-anchored RFC 9728 path; not in MCP_CONSUMPTION_EXCLUSIONS."),
   readOnly("/oauth/client-metadata.json", "discovery.oauth_client_metadata.read", "platform.discovery", "discovery_document", null),
+  readOnly("/.well-known/openai-apps-challenge", "discovery.openai_apps_challenge.read", "platform.discovery", "discovery_document", null, "Plain-text domain-verification token for OpenAI's plugin portal; 404 when unset."),
   readOnly("/docs", "api_docs.read", "platform.discovery", "api_document", null),
   readOnly("/openapi.json", "api_docs.openapi.read", "platform.discovery", "api_document", null),
   readOnly("/v1/app-version", "app_version.read", "platform.discovery", "app_version", null),

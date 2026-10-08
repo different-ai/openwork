@@ -29,6 +29,7 @@ config:
     installLinks: ""           # default on · Workspace admins can create desktop install links for their organization.
     mcpConnections: ""         # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
     implicitCloudSkills: ""    # default off · Agents discover organization skills automatically without waiting for Cloud before starting a task.
+    skillsMcpEndpoint: ""      # default off · Members can connect ChatGPT, Codex, or another MCP client to /mcp/agent/skills to list, read, save, and update their OpenWork skills, without capability search or connections.
     dashboardActivity: ""      # default off · Organization admins see recent additions and skill updates on their dashboard instead of Quick add.
     modelsAnalytics: ""        # default off · Organization admins can opt in to task analytics for OpenWork Models.
     auditLogs: ""              # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.

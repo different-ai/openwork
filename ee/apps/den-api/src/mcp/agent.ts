@@ -50,6 +50,7 @@ import {
   registerAgentWorkflowArtifactApp,
 } from "./workflow-artifact-app.js"
 import {
+  BUILTIN_CREATE_SKILL_CAPABILITY,
   executeBuiltinSkillCapability,
   listBuiltinSkillDescriptors,
 } from "./builtin-skills.js"
@@ -219,6 +220,25 @@ function agentMcpInstructions(appServers: boolean): string {
 export const AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(true)
 export const LEGACY_AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(false)
 
+/**
+ * Skills-only profile of the agent MCP for plugin directories that review every
+ * tool: only list_skills, get_skill, create_skill, and update_skill, with no
+ * capability search, generic execution, connections, Workflows, or Apps.
+ */
+export const AGENT_SKILLS_MCP_PATH = "/mcp/agent/skills"
+export const AGENT_SKILLS_MCP_INSTRUCTIONS = [
+  "OpenWork skills are step-by-step procedures an organization shares with its members.",
+  "Call list_skills to see the skills this member may use, then get_skill to read one complete SKILL.md before following it.",
+  "Save a new private skill with create_skill, or publish a new version of an existing skill with update_skill, after confirming the content with the user.",
+  "These tools read and write skills only; they do not run connections, Workflows, or Apps.",
+].join(" ")
+/** Built-in skills that drive Connect capabilities the skills-only endpoint does not serve. */
+const SKILLS_ONLY_HIDDEN_BUILTIN_CAPABILITIES: ReadonlySet<string> = new Set(
+  listBuiltinSkillDescriptors()
+    .map((skill) => skill.capability)
+    .filter((capability) => capability !== BUILTIN_CREATE_SKILL_CAPABILITY),
+)
+
 async function mcpRequestInfo(request: Request): Promise<{ method: string | null; resourceUri: string | null; generatedCatalog: boolean }> {
   if (request.method.toUpperCase() !== "POST") return { method: null, resourceUri: null, generatedCatalog: false }
   const body: unknown = await request.clone().json().catch(() => null)
@@ -358,7 +378,16 @@ export async function executeCapabilityWithBudget<T extends ExecuteCapabilityToo
   }
 }
 
-export function createAgentMcpServer(options: { appServers?: boolean } = {}): McpServer {
+export function createAgentMcpServer(options: { appServers?: boolean; skillsOnly?: boolean } = {}): McpServer {
+  if (options.skillsOnly) {
+    return new McpServer({
+      name: "openwork-den-api-agent-skills",
+      version: "1.0.0",
+    }, {
+      capabilities: { tools: { listChanged: true } },
+      instructions: AGENT_SKILLS_MCP_INSTRUCTIONS,
+    })
+  }
   return new McpServer({
     name: "openwork-den-api-agent",
     version: "1.0.0",
@@ -450,7 +479,13 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
   app.get("/mcp/agent/.well-known/oauth-protected-resource", protectedResourceMetadataRoute("agent"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
 
-  app.all("/mcp/agent", tokenRoute, async (c) => {
+  // OpenAI's plugin portal checks this exact token before reviewing a plugin served from this host.
+  app.get("/.well-known/openai-apps-challenge", publicRoute, (c) => env.openaiAppsChallengeToken
+    ? c.text(env.openaiAppsChallengeToken)
+    : c.notFound())
+
+  app.on("ALL", ["/mcp/agent", AGENT_SKILLS_MCP_PATH], tokenRoute, async (c) => {
+    const skillsOnly = c.req.path === AGENT_SKILLS_MCP_PATH
     const requestIdValue = c.get("requestId")
     const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
     const principal = await verifyMcpRequest(
@@ -482,6 +517,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const notificationScope = `${principal.organizationId}\0${principal.userId}`
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
     const organizationFeatures = await getOrganizationFeatures(organizationId)
+    if (skillsOnly && !organizationFeatures.skillsMcpEndpoint) {
+      return c.json({ error: "feature_disabled", feature: "skillsMcpEndpoint" }, 404)
+    }
     const connectMcpAppHostSupported = supportsConnectMcpAppHost(
       c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER),
     ) && principal.scopes.has(DEN_MCP_APP_HOST_SCOPE)
@@ -576,6 +614,173 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       // Without the connection count, offer every App rather than call them all past the limit.
       return connections ? apps.slice(0, connectMcpServerIndexAppCapacity(connections.length)) : apps
     })()
+    // The skill tools, shared by Connect and the skills-only endpoint.
+    const registerMemberSkillTools = (target: McpServer, listSkills: () => Promise<RemoteSkillDescriptor[]>) => {
+      registerAgentSkillCatalogTools({
+        server: target,
+        listSkills,
+        readSkill: (skill) => readRemoteSkillSource({
+          skill,
+          organizationId: principal.organizationId,
+          member: memberIdentity,
+          marketplaceEnabled: externalMcpConnectionsEnabled,
+        }),
+      })
+
+      registerAgentSkillTools({
+        server: target,
+        create: async ({ pluginName, skillMarkdown }) => {
+          if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
+            return {
+              ok: false,
+              error: "insufficient_mcp_scope",
+              message: `Creating a skill requires the ${DEN_MCP_WRITE_SCOPE} scope.`,
+            }
+          }
+          const skillContext = libraryContext
+          if (!skillContext || !auditPrincipal) {
+            return {
+              ok: false,
+              error: "mcp_membership_revoked",
+              message: "The OpenWork Cloud membership for this connection is unavailable.",
+            }
+          }
+          try {
+            const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
+              await requirePluginArchCapability(skillContext, "plugin.create")
+              await requirePluginArchCapability(skillContext, "config_object.create")
+              return createPluginBundle({
+                context: skillContext,
+                name: pluginName,
+                components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+              })
+            })
+            const memberships = await listPluginMemberships({
+              context: skillContext,
+              pluginId: plugin.id,
+              includeConfigObjects: true,
+              onlyActive: true,
+            })
+            const skill = memberships.items
+              .map((membership) => membership.configObject)
+              .find((configObject) => configObject?.objectType === "skill")
+            if (!skill || !skill.description) {
+              return {
+                ok: false,
+                error: "skill_creation_incomplete",
+                message: "The Plugin was created, but its skill could not be resolved.",
+              }
+            }
+            return {
+              ok: true,
+              payload: {
+                schemaVersion: "1",
+                name: skill.title,
+                pluginId: plugin.id,
+                skillId: skill.id,
+                description: skill.description,
+                libraryUrl: new URL(
+                  `/dashboard/library/plugins/${encodeURIComponent(plugin.id)}`,
+                  env.betterAuthUrl,
+                ).toString(),
+              },
+            }
+          } catch (error) {
+            if (error instanceof AuditUnavailableError) return { ok: false, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
+            if (error instanceof PluginArchRouteFailure || error instanceof PluginArchAuthorizationError) {
+              return { ok: false, error: error.error, message: error.message }
+            }
+            throw error
+          }
+        },
+        update: async ({ skillId, skillMarkdown, reason }) => {
+          if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
+            return {
+              ok: false,
+              error: "insufficient_mcp_scope",
+              message: `Updating a skill requires the ${DEN_MCP_WRITE_SCOPE} scope.`,
+            }
+          }
+          const skillContext = libraryContext
+          if (!skillContext || !auditPrincipal) {
+            return {
+              ok: false,
+              error: "mcp_membership_revoked",
+              message: "The OpenWork Cloud membership for this connection is unavailable.",
+            }
+          }
+          try {
+            const configObjectId = normalizeDenTypeId("configObject", skillId)
+            const versioned = await runMcpServiceAction("skill.version.create", auditPrincipal, serviceAuditResourceId(configObjectId), async () => {
+              const existing = await getConfigObjectDetail(skillContext, configObjectId)
+              if (existing.objectType !== "skill") return { created: false as const, objectType: existing.objectType }
+              return {
+                created: true as const,
+                detail: await createConfigObjectVersion({
+                  context: skillContext,
+                  configObjectId,
+                  reason,
+                  value: { rawSourceText: skillMarkdown },
+                }),
+              }
+            }, { result: (value) => value.created ? null : 400 })
+            if (!versioned.created) {
+              return {
+                ok: false,
+                error: "not_a_skill",
+                message: `Config object "${skillId}" is a ${versioned.objectType}, not a skill.`,
+              }
+            }
+            const detail = versioned.detail
+            const memberships = await listConfigObjectPlugins({ context: skillContext, configObjectId })
+            const pluginId = memberships.items.find((membership) => membership.removedAt === null)?.pluginId
+              ?? memberships.items[0]?.pluginId
+            if (!pluginId) {
+              return {
+                ok: false,
+                error: "skill_plugin_missing",
+                message: "The skill was updated, but no owning Plugin is visible to you.",
+              }
+            }
+            if (!detail.description) {
+              return {
+                ok: false,
+                error: "skill_update_incomplete",
+                message: "The skill was updated, but its description could not be resolved.",
+              }
+            }
+            return {
+              ok: true,
+              payload: {
+                schemaVersion: "1",
+                mode: "updated",
+                name: detail.title,
+                pluginId,
+                skillId: detail.id,
+                description: detail.description,
+                libraryUrl: new URL(
+                  `/dashboard/library/plugins/${encodeURIComponent(pluginId)}`,
+                  env.betterAuthUrl,
+                ).toString(),
+              },
+            }
+          } catch (error) {
+            if (error instanceof AuditUnavailableError) return { ok: false, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
+            if (error instanceof PluginArchRouteFailure || error instanceof PluginArchAuthorizationError) {
+              return { ok: false, error: error.error, message: error.message }
+            }
+            throw error
+          }
+        },
+      })
+    }
+    if (skillsOnly) {
+      const skillsServer = createAgentMcpServer({ skillsOnly: true })
+      registerMemberSkillTools(skillsServer, async () => (await loadRemoteSkills())
+        .filter((skill) => !SKILLS_ONLY_HIDDEN_BUILTIN_CAPABILITIES.has(skill.capability)))
+      finishIndexTiming()
+      return await handlers.fetch(notificationScope, c.req.raw, skillsServer)
+    }
     const server = createAgentMcpServer({ appServers: appServersEnabled })
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {
@@ -785,163 +990,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       },
     )
 
-    registerAgentSkillCatalogTools({
-      server,
-      listSkills: loadRemoteSkills,
-      readSkill: (skill) => readRemoteSkillSource({
-        skill,
-        organizationId: principal.organizationId,
-        member: memberIdentity,
-        marketplaceEnabled: externalMcpConnectionsEnabled,
-      }),
-    })
-
-    registerAgentSkillTools({
-      server,
-      create: async ({ pluginName, skillMarkdown }) => {
-        if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
-          return {
-            ok: false,
-            error: "insufficient_mcp_scope",
-            message: `Creating a skill requires the ${DEN_MCP_WRITE_SCOPE} scope.`,
-          }
-        }
-        const skillContext = libraryContext
-        if (!skillContext || !auditPrincipal) {
-          return {
-            ok: false,
-            error: "mcp_membership_revoked",
-            message: "The OpenWork Cloud membership for this connection is unavailable.",
-          }
-        }
-        try {
-          const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
-            await requirePluginArchCapability(skillContext, "plugin.create")
-            await requirePluginArchCapability(skillContext, "config_object.create")
-            return createPluginBundle({
-              context: skillContext,
-              name: pluginName,
-              components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
-            })
-          })
-          const memberships = await listPluginMemberships({
-            context: skillContext,
-            pluginId: plugin.id,
-            includeConfigObjects: true,
-            onlyActive: true,
-          })
-          const skill = memberships.items
-            .map((membership) => membership.configObject)
-            .find((configObject) => configObject?.objectType === "skill")
-          if (!skill || !skill.description) {
-            return {
-              ok: false,
-              error: "skill_creation_incomplete",
-              message: "The Plugin was created, but its skill could not be resolved.",
-            }
-          }
-          return {
-            ok: true,
-            payload: {
-              schemaVersion: "1",
-              name: skill.title,
-              pluginId: plugin.id,
-              skillId: skill.id,
-              description: skill.description,
-              libraryUrl: new URL(
-                `/dashboard/library/plugins/${encodeURIComponent(plugin.id)}`,
-                env.betterAuthUrl,
-              ).toString(),
-            },
-          }
-        } catch (error) {
-          if (error instanceof AuditUnavailableError) return { ok: false, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
-          if (error instanceof PluginArchRouteFailure || error instanceof PluginArchAuthorizationError) {
-            return { ok: false, error: error.error, message: error.message }
-          }
-          throw error
-        }
-      },
-      update: async ({ skillId, skillMarkdown, reason }) => {
-        if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
-          return {
-            ok: false,
-            error: "insufficient_mcp_scope",
-            message: `Updating a skill requires the ${DEN_MCP_WRITE_SCOPE} scope.`,
-          }
-        }
-        const skillContext = libraryContext
-        if (!skillContext || !auditPrincipal) {
-          return {
-            ok: false,
-            error: "mcp_membership_revoked",
-            message: "The OpenWork Cloud membership for this connection is unavailable.",
-          }
-        }
-        try {
-          const configObjectId = normalizeDenTypeId("configObject", skillId)
-          const versioned = await runMcpServiceAction("skill.version.create", auditPrincipal, serviceAuditResourceId(configObjectId), async () => {
-            const existing = await getConfigObjectDetail(skillContext, configObjectId)
-            if (existing.objectType !== "skill") return { created: false as const, objectType: existing.objectType }
-            return {
-              created: true as const,
-              detail: await createConfigObjectVersion({
-                context: skillContext,
-                configObjectId,
-                reason,
-                value: { rawSourceText: skillMarkdown },
-              }),
-            }
-          }, { result: (value) => value.created ? null : 400 })
-          if (!versioned.created) {
-            return {
-              ok: false,
-              error: "not_a_skill",
-              message: `Config object "${skillId}" is a ${versioned.objectType}, not a skill.`,
-            }
-          }
-          const detail = versioned.detail
-          const memberships = await listConfigObjectPlugins({ context: skillContext, configObjectId })
-          const pluginId = memberships.items.find((membership) => membership.removedAt === null)?.pluginId
-            ?? memberships.items[0]?.pluginId
-          if (!pluginId) {
-            return {
-              ok: false,
-              error: "skill_plugin_missing",
-              message: "The skill was updated, but no owning Plugin is visible to you.",
-            }
-          }
-          if (!detail.description) {
-            return {
-              ok: false,
-              error: "skill_update_incomplete",
-              message: "The skill was updated, but its description could not be resolved.",
-            }
-          }
-          return {
-            ok: true,
-            payload: {
-              schemaVersion: "1",
-              mode: "updated",
-              name: detail.title,
-              pluginId,
-              skillId: detail.id,
-              description: detail.description,
-              libraryUrl: new URL(
-                `/dashboard/library/plugins/${encodeURIComponent(pluginId)}`,
-                env.betterAuthUrl,
-              ).toString(),
-            },
-          }
-        } catch (error) {
-          if (error instanceof AuditUnavailableError) return { ok: false, error: "audit_unavailable", message: AUDIT_UNAVAILABLE_TOOL_MESSAGE }
-          if (error instanceof PluginArchRouteFailure || error instanceof PluginArchAuthorizationError) {
-            return { ok: false, error: error.error, message: error.message }
-          }
-          throw error
-        }
-      },
-    })
+    registerMemberSkillTools(server, loadRemoteSkills)
 
     const loadWorkflowArtifact = async ({
       configObjectId,
