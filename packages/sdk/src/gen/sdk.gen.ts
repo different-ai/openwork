@@ -8079,7 +8079,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Create team permissions
    *
-   * Creates the permission set for one team, named "<team name> Permissions" (fixed from then on), links it to the team and stores its initial permissions. A team can have one active set, and the team can't be changed later. You can only turn on permissions you have yourself. Requires permissions.manage, a recent sign-in, and the Permissions feature.
+   * Creates the permission set for one team, named "<team name> Permissions" (fixed from then on), links it to the team and stores its initial permissions. A team can have one active set, and the team can't be changed later. You can only turn on permissions you have yourself. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.
    */
   public postV1PermissionsSets<ThrowOnError extends boolean = false>(
     parameters: {
@@ -8107,7 +8107,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Delete team permissions
    *
-   * Archives a team permission set and unlinks it from its team, so its permissions stop applying to the team's members. The set and its history are kept. Member and Admin permissions can't be deleted. Requires permissions.manage, a recent sign-in, and the Permissions feature.
+   * Archives a team permission set and unlinks it from its team, so its permissions stop applying to the team's members. The set and its history are kept. Member and Admin permissions can't be deleted. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.
    */
   public deleteV1PermissionsSetsByPermissionSetId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -8153,7 +8153,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Change permissions in a set
    *
-   * Turns permissions on (allow) or off (deny) in one set. Only keys whose status actually changes are recorded; every change is kept in the set's history. Only the owner and admins can change Admin permissions. Permissions locked on for admins can't be turned off in Admin permissions, you can only turn on permissions you have yourself (except turning a permission back on in Member or Admin permissions where it is on by default), and archived sets can't be changed. The linked team can't be changed. Returns the set's new state. Requires permissions.manage, a recent sign-in, and the Permissions feature.
+   * Turns permissions on (allow) or off (deny) in one set. Only keys whose status actually changes are recorded; every change is kept in the set's history. Only the owner and admins can change Admin permissions. Permissions locked on for admins can't be turned off in Admin permissions, you can only turn on permissions you have yourself (except turning a permission back on in Member or Admin permissions where it is on by default), and archived sets can't be changed. The linked team can't be changed. Returns the set's new state. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.
    */
   public putV1PermissionsSetsByPermissionSetIdPermissions<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10724,7 +10724,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Create or replace an External MCP Connection by stable key
    *
-   * Admin-only declarative upsert. Creates a connection when the organization has not used the key, otherwise replaces the keyed connection without changing its stable identity.
+   * Declarative upsert; needs the Manage connections permission (owners and admins by default). Creates a connection when the organization has not used the key, otherwise replaces the keyed connection without changing its stable identity. Replacing a connection someone else created also needs Edit any connection, and making a connection org-wide needs Share with everyone.
    */
   public putV1McpConnectionsByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10765,7 +10765,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Remove an External MCP Connection
    *
-   * Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and admins (anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.
+   * Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. The workspace owner (or anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.
    */
   public deleteV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10811,7 +10811,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Edit an External MCP Connection
    *
-   * Workspace owners and admins (anyone with the Manage connections permission) can edit any connection. Other org members can edit only connections they created. Name and direct access changes preserve credentials. URL, authentication type, or credential-mode changes invalidate the old identity atomically. Secret fields are write-only optional replacements and are never returned. expectedUpdatedAt prevents stale edits.
+   * The workspace owner (or anyone with the Edit any connection permission) can edit any connection. Other org members can edit only connections they created. Making a connection org-wide needs the Share with everyone permission. Name and direct access changes preserve credentials. URL, authentication type, or credential-mode changes invalidate the old identity atomically. Secret fields are write-only optional replacements and are never returned. expectedUpdatedAt prevents stale edits.
    */
   public putV1McpConnectionsByConnectionId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10915,7 +10915,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Disconnect (clear credentials for) an External MCP Connection without removing it
    *
-   * Admin-only. Signs out every shared or per-member account stored for this connection, while preserving the connection row, access grants, OAuth client configuration, and plugin bindings.
+   * Needs the Disconnect any connection permission (owners and admins by default) and a recent sign-in. Signs out every shared or per-member account stored for this connection, while preserving the connection row, access grants, OAuth client configuration, and plugin bindings.
    */
   public postV1McpConnectionsByConnectionIdDisconnect<ThrowOnError extends boolean = false>(
     parameters: {

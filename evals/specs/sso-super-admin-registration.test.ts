@@ -3,10 +3,11 @@ import { denFetch, freshSession } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { inviteMember, server, test } from "@openwork/testkit";
 
-// Super-admin was merged into admin (migration 0134_deprecate_super_admin):
-// registering SSO, which used to need super-admin, now needs the sso.manage
-// permission that every admin holds by default.
-const title = "a workspace admin can register SAML SSO, which used to need super-admin, without an internal authorization error";
+// Super-admin was retired (migration 0134_deprecate_super_admin). Registering
+// SSO used to need super-admin, so it now needs the sso.manage permission,
+// which only the owner holds by default: plain admins keep what they could do
+// before, and that never included SSO.
+const title = "only the owner can register SAML SSO, which used to need super-admin: a member and an admin are refused naming sso.manage, and the owner saves it without an internal authorization error";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -98,11 +99,30 @@ test(title, { timeout: 300_000 }, async ({ evidence, place }) => {
   const sessionCookie = signedIn.response.headers.get("set-cookie")?.split(";")[0]?.trim() ?? "";
   expect(sessionCookie).toBeTruthy();
 
-  const registration = await denFetch(den.ref, "/v1/sso/saml", {
+  const adminRegistration = await denFetch(den.ref, "/v1/sso/saml", {
     method: "POST",
     headers: {
       authorization: `Bearer ${ssoAdmin.token}`,
       cookie: sessionCookie,
+      "x-openwork-org-id": orgId,
+    },
+    body: samlBody,
+  });
+  expect(adminRegistration.response.status, adminRegistration.text).toBe(403);
+  expect(adminRegistration.body).toMatchObject({ error: "forbidden", requiredPermission: "sso.manage" });
+
+  const ownerSignIn = await denFetch(den.ref, "/api/auth/sign-in/email", {
+    method: "POST",
+    body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
+  });
+  const ownerCookie = ownerSignIn.response.headers.get("set-cookie")?.split(";")[0]?.trim() ?? "";
+  expect(ownerCookie).toBeTruthy();
+
+  const registration = await denFetch(den.ref, "/v1/sso/saml", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${owner.token}`,
+      cookie: ownerCookie,
       "x-openwork-org-id": orgId,
     },
     body: samlBody,
@@ -112,11 +132,14 @@ test(title, { timeout: 300_000 }, async ({ evidence, place }) => {
   expect(isRecord(registration.body) && isRecord(registration.body.connection)).toBe(true);
   expect(registration.text).not.toMatch(/organization owner or admin/i);
   expect(registration.text).not.toMatch(/internal server error/i);
+  const requiredPermission = (body: unknown) => String(isRecord(body) ? body.requiredPermission : "");
   evidence.recordAssertionEvidence(
-    "An admin can save SAML settings through the real SSO registration route",
-    `A member received HTTP ${memberRegistration.response.status} naming the missing permission ${String(isRecord(memberRegistration.body) ? memberRegistration.body.requiredPermission : "")}; after promotion to admin the same route returned HTTP ${registration.response.status} without either authorization mismatch error.`,
+    "Only the owner can save SAML settings through the real SSO registration route",
+    `A member received HTTP ${memberRegistration.response.status} naming ${requiredPermission(memberRegistration.body)}; after promotion to admin the same person received HTTP ${adminRegistration.response.status} naming ${requiredPermission(adminRegistration.body)} (“${String(isRecord(adminRegistration.body) ? adminRegistration.body.message : "")}”); the owner's registration returned HTTP ${registration.response.status} without an authorization mismatch error.`,
     registration.response.status === 201
       && memberRegistration.response.status === 403
+      && adminRegistration.response.status === 403
+      && requiredPermission(adminRegistration.body) === "sso.manage"
       && !/organization owner or admin/i.test(registration.text)
       && !/internal server error/i.test(registration.text),
   );

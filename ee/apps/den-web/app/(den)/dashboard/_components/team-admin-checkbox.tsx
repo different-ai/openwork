@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { DenNotice } from "../../_components/ui/notice";
-import { getOrgAccessFlags, type DenOrgTeam } from "../../_lib/den-org";
+import { getOrgAccessFlags, permissionLockReason, type DenOrgTeam } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export function TeamAdminCheckbox({ team }: { team: DenOrgTeam }) {
@@ -29,7 +29,8 @@ export function TeamAdminCheckbox({ team }: { team: DenOrgTeam }) {
         <span>Grant organisation Admin to all members of {team.name}</span>
       </label>
       <p className="text-[12px] text-gray-500">
-        Changing this needs permission to manage Admin teams. Admin access is inherited while a member belongs to this team; individual roles are unchanged.
+        {canManageAdminTeams ? "" : `Locked. ${permissionLockReason("teams.manage_admin")} `}
+        Admin access is inherited while a member belongs to this team; individual roles are unchanged.
         {team.managedByScim ? " Membership is managed by your identity provider. Disabling SCIM mapping or removing its group or provider clears this grant and requires reapproval." : ""}
       </p>
       {error ? <DenNotice tone="error" message={error} /> : null}

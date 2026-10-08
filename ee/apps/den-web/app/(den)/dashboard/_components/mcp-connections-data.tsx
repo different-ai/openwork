@@ -61,6 +61,8 @@ export type ExternalMcpConnection = {
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
+  /** Whether the signed-in member added it; they can always edit or remove it. */
+  createdByYou?: boolean;
   updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;

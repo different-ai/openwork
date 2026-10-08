@@ -14,7 +14,7 @@ complete a real authentication test, and explicitly enable SSO.
 You need:
 
 - An OpenWork organization on the Team or Enterprise plan.
-- An OpenWork owner or super-admin.
+- The OpenWork organization owner.
 - A Google Workspace super administrator who can create custom SAML apps.
 - Control of DNS for the email domain you will associate with the connection.
 - The final OpenWork auth origin, for example `https://app.openworklabs.com`.
@@ -187,7 +187,7 @@ profile or suspension changes. If that user later completes SSO, OpenWork can
 link the matching account and provision the organization membership through SSO.
 
 OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
-into elevated organization roles. Owners and super-admins assign roles in
+into elevated organization roles. The owner assigns roles in
 OpenWork; ownership changes require ownership transfer. You can use a manually
 managed OpenWork team for [Team Admin access](/cloud/members-and-rbac#team-admin-access),
 but its membership will not synchronize from Google groups through SAML.

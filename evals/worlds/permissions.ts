@@ -206,29 +206,3 @@ export async function setPermissionsFeature(admin: DenSession, organizationId: s
   if (result.status < 200 || result.status >= 300) throw new Error(`Turning Permissions ${enabled ? "on" : "off"} failed: HTTP ${result.status} ${result.text.slice(0, 300)}`);
   return result;
 }
-
-/**
- * Turn Permissions on for an organization (as a platform administrator, from
- * /admin) and deny `keys` in its Admin permissions, as the owner. Returns the
- * Admin permissions set id. For specs that need an admin who lacks one admin
- * permission, the way super-admin-only actions used to be withheld from admins.
- */
-export async function denyInAdminPermissions(owner: DenSession, organizationId: string, keys: readonly string[]): Promise<string> {
-  const headers = { authorization: `Bearer ${owner.token}`, "x-openwork-org-id": organizationId };
-  const enabled = await denFetch(owner, `/v1/admin/organizations/${encodeURIComponent(organizationId)}/capabilities`, {
-    method: "PUT",
-    headers: { authorization: `Bearer ${owner.token}` },
-    body: JSON.stringify({ capabilities: { permissions: true } }),
-  });
-  if (!enabled.response.ok) throw new Error(`Turning Permissions on failed: HTTP ${enabled.response.status} ${enabled.text.slice(0, 300)}`);
-  const sets = await denFetch(owner, "/v1/permissions/sets", { headers });
-  const list = isRecord(sets.body) && Array.isArray(sets.body.sets) ? sets.body.sets.filter(isRecord) : [];
-  const adminSetId = text(list.find((set) => set.kind === "admin_default")?.id, "Admin permissions set id");
-  const denied = await denFetch(owner, `/v1/permissions/sets/${encodeURIComponent(adminSetId)}/permissions`, {
-    method: "PUT",
-    headers,
-    body: JSON.stringify({ changes: keys.map((key) => ({ key, status: "deny" })) }),
-  });
-  if (!denied.response.ok) throw new Error(`Denying ${keys.join(", ")} in Admin permissions failed: HTTP ${denied.response.status} ${denied.text.slice(0, 300)}`);
-  return adminSetId;
-}

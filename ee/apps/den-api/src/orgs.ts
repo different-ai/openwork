@@ -677,8 +677,9 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
     }
   }
 
-  // Resolved before the transaction: resolution reads (and may seed) permission
-  // tables through its own connection, which must not wait on this transaction's locks.
+  // Resolved before the transaction too: this resolution may seed or reconcile
+  // the default permission sets through its own connection, which must not wait
+  // on this transaction's locks. The re-check inside the transaction is read-only.
   const inviterMayAssignAdminTeam = invitation.teamId && invitation.orgMemberId
     ? (await resolvePermissionsForMember({ organizationId: invitation.organizationId, memberId: invitation.orgMemberId })).has("teams.manage_admin")
     : false
@@ -843,8 +844,14 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
           .limit(1)
 
         // An Admin team grants admin, so the inviter must still be allowed to manage Admin teams when the invitation is accepted.
-        const mayAssignTeam = !teams[0].grantsOrganizationAdmin
-          || (inviterMayAssignAdminTeam && currentInvitation.orgMemberId === invitation.orgMemberId)
+        // Re-checked under the organization lock through this transaction, so a revocation committed after the check above is seen.
+        const inviterId = currentInvitation.orgMemberId
+        const mayAssignTeam = !teams[0].grantsOrganizationAdmin || (
+          inviterMayAssignAdminTeam
+          && inviterId !== null
+          && inviterId === invitation.orgMemberId
+          && (await resolvePermissionsForMember({ organizationId: currentInvitation.organizationId, memberId: inviterId, database: tx })).has("teams.manage_admin")
+        )
         const scimTeams = await getScimManagedTeamIds(currentInvitation.organizationId, tx)
         if (!existingTeamMember[0] && mayAssignTeam && !scimTeams.has(teams[0].id)) {
           await tx.insert(TeamMemberTable).values({
@@ -2033,7 +2040,7 @@ export async function removeOrganizationMember(input: {
       const [actor] = await tx.select({ id: MemberTable.id }).from(MemberTable)
         .where(and(eq(MemberTable.id, input.removedByOrgMemberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId))).for("share")
       if (adminTeams.length > 0 && (!actor || !actorMayManageAdminTeams)) {
-        return { ok: false, error: "forbidden", message: "You don't have permission to manage Admin teams, so you can't remove a member of one. Ask an admin to change your permissions." }
+        return { ok: false, error: "forbidden", message: "You don't have permission to manage Admin teams, so you can't remove a member of one. Ask the organization owner." }
       }
     }
 

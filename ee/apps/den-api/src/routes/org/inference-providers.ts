@@ -38,7 +38,8 @@ import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { readSignedSessionCookieToken } from "../../session.js"
-import { idParamSchema, orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
+import { resolvePermissionsForMember } from "../../permissions/resolve.js"
+import { idParamSchema, orgAccessFailureStatus, permissionDeniedMessage, permissionFailureHeaders, requirePermission } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 import { registerOrgGatewayUsageLimitRoutes } from "./gateway-usage-limits.js"
@@ -170,13 +171,25 @@ async function providerTransaction<T>(c: { req: { raw: Request; param: (key: str
     // Match membership/role mutation order: organization before member/provider.
     if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
     const provider = await getProvider(tx, actor, id, true)
+    await requireLiveManage(tx, actor)
     return providerAuditMutation(tx, capture, () => mutate(tx, provider))
   })
 }
+/**
+ * Re-checks Manage Gateway providers inside a management write transaction,
+ * after liveMember has locked the caller's member row, so a permission revoked
+ * after managementWrite (e.g. while catalog or LiteLLM calls were awaited) is
+ * seen before the mutation. Reads only through `tx` (read-only, share locks):
+ * no second pool connection while this transaction holds row locks. The
+ * recent sign-in part of the check stays with managementWrite.
+ */
+async function requireLiveManage(tx: GatewayTx, actor: Actor) {
+  const permissions = await resolvePermissionsForMember({ organizationId: actor.organization.id, memberId: actor.currentMember.id, database: tx })
+  if (!permissions.has(MANAGE)) throw new GatewayWriteError(403, "forbidden", permissionDeniedMessage(MANAGE))
+}
 // Re-reads the caller's member row so a removal that landed after the route
-// check still fails here. Permissions are checked before any transaction
-// (managementRead / managementWrite or requirePermission): resolving them here
-// would use a second pool connection while this transaction holds row locks.
+// check still fails here. Write transactions behind managementWrite then call
+// requireLiveManage with the same transaction.
 async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: boolean) {
   const query = database.select().from(MemberTable).where(and(eq(MemberTable.id, actor.currentMember.id), eq(MemberTable.organizationId, actor.organization.id), isNull(MemberTable.removedAt)))
   const [member] = await (lock ? query.for("update") : query)
@@ -528,6 +541,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
         if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
         const member = await liveMember(tx, actor, true)
+        await requireLiveManage(tx, actor)
         await providerAuditMutation(tx, capture, async () => {
           await tx.insert(GatewayProviderTable).values(provider)
           await writeGatewayModels(tx, provider, catalog.models)
@@ -550,6 +564,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (pinnedModelIds !== undefined) {
         const provider = await db.transaction(async (tx) => {
           const existing = await getProvider(tx, actor, c.req.valid("param").inferenceProviderId, true)
+          await requireLiveManage(tx, actor)
           const models = (await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, existing.id)))
             .filter((model) => (!existing.model_ids.length || existing.model_ids.includes(model.model_id))
               && !gatewayModelConfigurationError(existing.provider_config, [model.model_config]))
@@ -1125,6 +1140,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: LITELLM_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: buildProviderConfigSnapshot(liteLlmCatalogProvider({ settings: {} })), settings: { upstreamBaseUrl: endpoints.inferenceBaseUrl, litellm: emptySettings(credentialMode, "pending", issue) }, credential_mode: credentialMode, oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
       const sync = await db.transaction(async (tx) => {
         const member = await liveMember(tx, actor, true)
+        await requireLiveManage(tx, actor)
         const created = await createLiteLlmProvider(tx, provider, { name: input.name, mode: credentialMode, endpoints, apiKey: input.apiKey, audiences: liteLlmAudiences(input), creatorId: member.id }, plan)
         return created.result
       })
@@ -1275,6 +1291,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const trusted = await getModelsDevProvider(before.providerId)
       const provider = await db.transaction(async (tx) => {
         const member = await liveMember(tx, actor, true)
+        await requireLiveManage(tx, actor)
         const [source] = await tx.select().from(LlmProviderTable).where(and(eq(LlmProviderTable.id, sourceId), eq(LlmProviderTable.organizationId, actor.organization.id))).for("update", { noWait: true }).catch((error: unknown) => {
           if (isMigrationSourceLockConflict(error)) throw new GatewayWriteError(409, "migration_in_progress")
           throw error

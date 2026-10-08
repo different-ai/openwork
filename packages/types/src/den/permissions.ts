@@ -6,10 +6,15 @@ import { z } from "zod"
  *
  * Rules:
  * - Keys are permanent. Never reuse a key for a different meaning.
- * - Owner-only actions (delete organization, transfer ownership) are not here.
+ * - Actions only the owner can ever do (delete organization, transfer
+ *   ownership) are not here.
  * - Baseline member actions (things every member can do today) are not here.
- * - `defaultOn` reproduces today's role checks; anything that required admin or
- *   super-admin defaults to `["admin"]` (super-admin is deprecated).
+ * - `defaultOn` reproduces the role checks from before Permissions: a key is
+ *   `["admin"]` only when every action it gates was open to plain admins.
+ *   Actions that needed super-admin (now removed) are owner-only by default:
+ *   `defaultOn: []`. The owner holds every key, and with the Permissions
+ *   feature on can grant owner-only keys to Admin or team permissions.
+ * - `sensitive` matches the old recent sign-in requirement of what it gates.
  */
 
 export const PERMISSION_DEFAULT_SET_KEYS = ["member", "admin"] as const
@@ -39,7 +44,7 @@ export type PermissionDefinition = {
   description?: string
   /** Code defaults (feature off) and seed/reconcile targets (feature on). */
   defaultOn: readonly PermissionDefaultSetKey[]
-  /** Can never be denied in these default sets. Prevents admin lockout. */
+  /** Can never be denied in these default sets. No key uses it today: the owner can always restore access. */
   lockedOn?: readonly "admin"[]
   /** Requires a recent sign-in (PRIVILEGED_SESSION_MAX_AGE_MS). */
   sensitive?: boolean
@@ -52,6 +57,8 @@ export type PermissionDefinition = {
 }
 
 const ADMIN = ["admin"] as const
+/** Owner-only by default: formerly super-admin (or owner) actions. */
+const OWNER_ONLY = [] as const
 
 export const PERMISSIONS = {
   // Organization
@@ -59,14 +66,14 @@ export const PERMISSIONS = {
     area: "organization",
     label: "Edit organization settings",
     description: "Change the organization name, slug and other workspace settings.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "branding.update": {
     area: "organization",
     label: "Change branding",
     description: "Upload the organization logo and other brand assets.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "web_origins.view": {
@@ -78,7 +85,7 @@ export const PERMISSIONS = {
     area: "organization",
     label: "Manage approved web origins",
     description: "Approve and remove websites that may embed or call OpenWork.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "install_links.update": {
@@ -93,15 +100,15 @@ export const PERMISSIONS = {
   "invitations.manage": {
     area: "members",
     label: "Invite people",
-    description: "Invite people to the organization and cancel pending invitations.",
+    description: "Invite people as members and cancel pending invitations. Inviting someone as an admin also needs Change member roles.",
     defaultOn: ADMIN,
     sensitive: true,
   },
   "members.update": {
     area: "members",
     label: "Change member roles",
-    description: "Make members admins or members, including when inviting them.",
-    defaultOn: ADMIN,
+    description: "Make people admins or members, including inviting someone as an admin.",
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "members.delete": {
@@ -127,7 +134,7 @@ export const PERMISSIONS = {
     area: "members",
     label: "Manage Admin teams",
     description: "Mark a team as an Admin team, change its members, delete it, or invite people into it.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
 
@@ -137,14 +144,12 @@ export const PERMISSIONS = {
     label: "View permissions",
     description: "See Member, Admin and team permissions and their history.",
     defaultOn: ADMIN,
-    lockedOn: ADMIN,
   },
   "permissions.manage": {
     area: "access",
     label: "Manage permissions",
     description: "Change Member, Admin and team permissions.",
-    defaultOn: ADMIN,
-    lockedOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
 
@@ -172,7 +177,7 @@ export const PERMISSIONS = {
     area: "security",
     label: "Manage single sign-on",
     description: "Configure SAML or OIDC, verify domains, and turn single sign-on on or off.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "scim.view": {
@@ -184,7 +189,7 @@ export const PERMISSIONS = {
     area: "security",
     label: "Manage SCIM provisioning",
     description: "Create SCIM tokens, change mapping, reconcile and turn SCIM off.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "api_keys.view": {
@@ -196,7 +201,7 @@ export const PERMISSIONS = {
     area: "security",
     label: "Manage API keys",
     description: "Create and revoke organization API keys.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "audit.view": {
@@ -220,7 +225,7 @@ export const PERMISSIONS = {
     area: "security",
     label: "Run network diagnostics",
     description: "Configure and run outbound network diagnostics.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
 
@@ -234,7 +239,7 @@ export const PERMISSIONS = {
     area: "desktop",
     label: "Manage desktop policies",
     description: "Create, change and delete desktop app policies.",
-    defaultOn: ADMIN,
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
 
@@ -246,9 +251,16 @@ export const PERMISSIONS = {
   },
   "billing.manage": {
     area: "billing",
-    label: "Manage billing",
-    description: "Start a subscription, sync checkout and open the billing portal.",
+    label: "Start a subscription",
+    description: "Start paid billing in checkout and refresh its status afterwards.",
     defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "billing_portal.use": {
+    area: "billing",
+    label: "Open the billing portal",
+    description: "Change payment details, see invoices and change or cancel the subscription.",
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
 
@@ -303,6 +315,7 @@ export const PERMISSIONS = {
     label: "Manage people's provider keys",
     description: "List, provision and block member credentials for providers.",
     defaultOn: ADMIN,
+    sensitive: true,
   },
 
   // AI Gateway
@@ -347,14 +360,28 @@ export const PERMISSIONS = {
   "connections.manage": {
     area: "connections",
     label: "Manage connections",
-    description: "Add organization connections, edit any connection, set tool policies, connect shared accounts and configure the Slack assistant.",
+    description: "Add organization connections, change who can use any connection, set tool policies, connect shared accounts and configure the Slack assistant.",
     defaultOn: ADMIN,
+  },
+  "connections.update": {
+    area: "connections",
+    label: "Edit any connection",
+    description: "Change any connection's server, sign-in and settings. People can always edit connections they added.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "connections.disconnect": {
+    area: "connections",
+    label: "Disconnect any connection",
+    description: "Sign out every account stored for a connection, keeping the connection itself.",
+    defaultOn: ADMIN,
+    sensitive: true,
   },
   "connections.delete": {
     area: "connections",
     label: "Remove any connection",
-    description: "Delete or disconnect any connection. People can always remove connections they added.",
-    defaultOn: ADMIN,
+    description: "Delete any connection. People can always remove connections they added.",
+    defaultOn: OWNER_ONLY,
     sensitive: true,
   },
   "oauth_clients.view": {
@@ -431,6 +458,11 @@ export function permissionDefaultKeys(set: PermissionDefaultSetKey): PermissionK
 export function isPermissionLockedOn(key: PermissionKey, set: PermissionDefaultSetKey): boolean {
   if (set !== "admin") return false
   return getPermissionDefinition(key).lockedOn?.includes(set) ?? false
+}
+
+/** No default set includes it: only the owner holds it until someone grants it with Permissions on. */
+export function isPermissionOwnerOnlyByDefault(key: PermissionKey): boolean {
+  return getPermissionDefinition(key).defaultOn.length === 0
 }
 
 export function isPermissionSensitive(key: PermissionKey): boolean {

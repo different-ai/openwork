@@ -132,6 +132,7 @@ import {
   hasPermission,
   idParamSchema,
   orgAccessFailureStatus,
+  permissionDeniedResponse,
   permissionFailureHeaders,
   requirePermission,
 } from "./shared.js"
@@ -446,6 +447,8 @@ const connectionResponseSchema = z.object({
   connectedAt: z.string().datetime().nullable(),
   /** Safe creator display label for admin/manageable rows. */
   createdByName: z.string().nullable().optional(),
+  /** Present with createdByName: whether the calling member added this connection (and so may always edit or remove it). */
+  createdByYou: z.boolean().optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
@@ -1206,7 +1209,10 @@ async function toConnectionResponse(
     externalAccountId: callerExternalAccountId,
     connected,
     connectedAt: connectedAt ? connectedAt.toISOString() : null,
-    ...(options.includeAccess ? { createdByName: options.createdByName ?? null } : {}),
+    ...(options.includeAccess ? {
+      createdByName: options.createdByName ?? null,
+      createdByYou: row.createdByOrgMembershipId === options.callerOrgMembershipId,
+    } : {}),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     connectedForMe,
@@ -1554,6 +1560,32 @@ async function callerHasPermission(payload: McpConnectionOrganizationContext, ke
   return (await memberPermissionsForOrganizationContext(payload)).has(key)
 }
 
+const ORG_WIDE_SHARE_DENIED_MESSAGE = "You can't make a connection available to everyone in the organization. Choose specific people or teams instead."
+
+/**
+ * Org-wide access reaches every member, so it needs `sharing.share_org_wide`
+ * on its own, whatever else the caller may do (Manage connections, Edit any
+ * connection). Keeping an already org-wide connection org-wide while editing
+ * it shares nothing new. Returns a 403 response, or null when allowed.
+ */
+async function orgWideShareDenial(
+  c: McpConnectionResponseContext,
+  payload: McpConnectionOrganizationContext,
+  input: { orgWide: boolean; existingConnectionId?: ExternalMcpConnectionRow["id"] },
+): Promise<Response | null> {
+  if (!input.orgWide) return null
+  if (await callerHasPermission(payload, "sharing.share_org_wide")) return null
+  if (input.existingConnectionId) {
+    const grants = await listDirectExternalMcpConnectionAccess({
+      organizationId: payload.organization.id,
+      connectionId: input.existingConnectionId,
+    })
+    if (grants.some((grant) => grant.orgWide)) return null
+  }
+  const denied = { ...permissionDeniedResponse("sharing.share_org_wide"), message: ORG_WIDE_SHARE_DENIED_MESSAGE }
+  return c.json(denied, 403, permissionFailureHeaders(denied))
+}
+
 /**
  * Members add connectors for themselves from My Library. They can only add a
  * server that signs each person in with their own account (or needs no
@@ -1607,6 +1639,8 @@ async function createExternalConnectionResponse(
   if (body.apiKeyAuthScheme !== undefined && !(await callerHasPermission(payload, "connections.manage"))) {
     return c.json({ error: "forbidden", message: "Only workspace owners and admins can configure API-key transport." }, 403)
   }
+  const orgWideDenied = await orgWideShareDenial(c, payload, { orgWide: body.access.orgWide })
+  if (orgWideDenied) return orgWideDenied
   if (body.authType !== "oauth" && (body.authorizationServerIssuer !== undefined || (body.requestedScopes?.length ?? 0) > 0)) {
     return c.json({ error: "invalid_request", message: "OAuth issuer and scopes are only allowed when authType is oauth." }, 400)
   }
@@ -1796,6 +1830,8 @@ async function replaceExternalConnectionResponse(
   if (body.apiKeyAuthScheme !== undefined && !(await callerHasPermission(payload, "connections.manage"))) {
     return c.json({ error: "forbidden", message: "Only workspace owners and admins can configure API-key transport." }, 403)
   }
+  const orgWideDenied = await orgWideShareDenial(c, payload, { orgWide: body.access.orgWide, existingConnectionId: connection.id })
+  if (orgWideDenied) return orgWideDenied
   if (body.oauthClient && body.authType !== "oauth") {
     return c.json({ error: "invalid_request", message: "oauthClient is only allowed when authType is oauth." }, 400)
   }
@@ -1971,7 +2007,7 @@ async function deleteExternalConnection(
       deleted: false,
       response: c.json({
         error: "forbidden",
-        message: "Only workspace owners, admins, or the connection creator can remove this MCP connection.",
+        message: "Only the workspace owner, people allowed to remove any connection, or the connection creator can remove this MCP connection.",
       }, 403),
     }
   }
@@ -2707,6 +2743,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
       const sessionId = c.get("session")?.id
       if (body.kind === "native_provider") {
+        // Native providers are always shared with the whole organization.
+        const orgWideDenied = await orgWideShareDenial(c, payload, { orgWide: true })
+        if (orgWideDenied) return orgWideDenied
         if (isAgentOAuthClientConnection({ oauthClient: body.oauthClient, sessionId })) {
           return c.json({ error: "invalid_request", message: "OAuth client credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Extensions." }, 400)
         }
@@ -2768,7 +2807,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create or replace an External MCP Connection by stable key",
-      description: "Admin-only declarative upsert. Creates a connection when the organization has not used the key, otherwise replaces the keyed connection without changing its stable identity.",
+      description: "Declarative upsert; needs the Manage connections permission (owners and admins by default). Creates a connection when the organization has not used the key, otherwise replaces the keyed connection without changing its stable identity. Replacing a connection someone else created also needs Edit any connection, and making a connection org-wide needs Share with everyone.",
       parameters: [{
         name: "If-Match",
         in: "header",
@@ -2805,11 +2844,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
         return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
       }
-      const canUpdateAnyConnection = await hasPermission(c, "connections.manage")
+      const canUpdateAnyConnection = await hasPermission(c, "connections.update")
       if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
         return c.json({
           error: "forbidden",
-          message: "Only workspace owners, admins, or the connection creator can edit this MCP connection.",
+          message: "Only the workspace owner, people allowed to edit any connection, or the connection creator can edit this MCP connection.",
         }, 403)
       }
       const ifMatch = c.req.header("If-Match")
@@ -2846,7 +2885,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       responses: {
         200: jsonResponse("Removal result.", connectionDeleteByKeyResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners, admins (anyone with the Remove any connection permission), or the connection creator can remove MCP connections.", forbiddenSchema),
+        403: jsonResponse("Only the workspace owner (or anyone with the Remove any connection permission) or the connection creator can remove MCP connections.", forbiddenSchema),
       },
     }),
     orgMemberRoute(),
@@ -2875,12 +2914,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Edit an External MCP Connection",
-      description: "Workspace owners and admins (anyone with the Manage connections permission) can edit any connection. Other org members can edit only connections they created. Name and direct access changes preserve credentials. URL, authentication type, or credential-mode changes invalidate the old identity atomically. Secret fields are write-only optional replacements and are never returned. expectedUpdatedAt prevents stale edits.",
+      description: "The workspace owner (or anyone with the Edit any connection permission) can edit any connection. Other org members can edit only connections they created. Making a connection org-wide needs the Share with everyone permission. Name and direct access changes preserve credentials. URL, authentication type, or credential-mode changes invalidate the old identity atomically. Secret fields are write-only optional replacements and are never returned. expectedUpdatedAt prevents stale edits.",
       responses: {
         200: jsonResponse("Connection updated.", connectionUpdatedResponseSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners, admins (anyone with the Manage connections permission), or the connection creator can edit MCP connections.", forbiddenSchema),
+        403: jsonResponse("Only the workspace owner (or anyone with the Edit any connection permission) or the connection creator can edit MCP connections, and only people who can share with everyone can make a connection org-wide.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
         409: jsonResponse("The edit is stale or changes marketplace-owned identity fields.", connectionUpdateConflictSchema),
         502: jsonResponse("The proposed API-key or no-auth configuration could not be validated.", connectionValidationFailedSchema),
@@ -2905,11 +2944,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
       }
 
-      const canUpdateAnyConnection = await hasPermission(c, "connections.manage")
+      const canUpdateAnyConnection = await hasPermission(c, "connections.update")
       if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
         return c.json({
           error: "forbidden",
-          message: "Only workspace owners, admins, or the connection creator can edit this MCP connection.",
+          message: "Only the workspace owner, people allowed to edit any connection, or the connection creator can edit this MCP connection.",
         }, 403)
       }
 
@@ -2996,11 +3035,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Remove an External MCP Connection",
-      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and admins (anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.",
+      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. The workspace owner (or anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.",
       responses: {
         200: jsonResponse("The connection was removed.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners, admins (anyone with the Remove any connection permission), or the connection creator can remove MCP connections.", forbiddenSchema),
+        403: jsonResponse("Only the workspace owner (or anyone with the Remove any connection permission) or the connection creator can remove MCP connections.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
       },
     }),
@@ -3033,7 +3072,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Disconnect (clear credentials for) an External MCP Connection without removing it",
-      description: "Admin-only. Signs out every shared or per-member account stored for this connection, while preserving the connection row, access grants, OAuth client configuration, and plugin bindings.",
+      description: "Needs the Disconnect any connection permission (owners and admins by default) and a recent sign-in. Signs out every shared or per-member account stored for this connection, while preserving the connection row, access grants, OAuth client configuration, and plugin bindings.",
       responses: {
         200: jsonResponse("Every stored account for the connection was signed out.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -3041,7 +3080,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
       },
     }),
-    orgPermissionRoute("connections.delete"),
+    orgPermissionRoute("connections.disconnect"),
     paramValidator(connectionParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")

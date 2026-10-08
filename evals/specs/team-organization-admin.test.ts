@@ -27,10 +27,10 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   const owner = den.admin;
   const inherited = den.members.inherited;
   const direct = den.members.direct;
-  // Super-admin was merged into admin. This organization keeps role and Admin
-  // team management with a smaller group the way super-admin used to: with
-  // Permissions on, Admin permissions deny members.update and teams.manage_admin,
-  // and the "Admin team managers" team's permissions allow them for `manager`.
+  // Super-admin was retired: changing roles and managing Admin teams are the
+  // owner's alone by default (Admin permissions don't include members.update or
+  // teams.manage_admin). With Permissions on, this organization hands them to
+  // `manager` through the "Admin team managers" team's permissions.
   const manager = den.members.manager;
   const control = den.members.control;
   if (!inherited || !direct || !manager || !control) throw new Error("Missing test members");
@@ -67,8 +67,13 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   const setList = record(sets.body).sets;
   if (!Array.isArray(setList)) throw new Error("Missing permission sets");
   const adminSetId = text(record(setList.map(record).find((set) => set.kind === "admin_default")).id);
-  const restricted = await request(owner, `/v1/permissions/sets/${adminSetId}/permissions`, "PUT", { changes: [{ key: "members.update", status: "deny" }, { key: "teams.manage_admin", status: "deny" }] });
-  expect(restricted.response.status, restricted.text).toBe(200);
+  const adminSet = await request(owner, `/v1/permissions/sets/${adminSetId}`);
+  expect(adminSet.response.status, adminSet.text).toBe(200);
+  const adminStates = record(record(adminSet.body).set).permissions;
+  if (!Array.isArray(adminStates)) throw new Error("Missing Admin permission states");
+  const adminStatus = (key: string) => record(adminStates.map(record).find((state) => state.key === key)).status;
+  expect(adminStatus("members.update")).toBe("deny");
+  expect(adminStatus("teams.manage_admin")).toBe("deny");
   const createTeam = async (name: string, memberIds: string[], grantsOrganizationAdmin?: boolean, session = owner) => {
     const result = await request(session, "/v1/teams", "POST", { name, memberIds, grantsOrganizationAdmin });
     expect(result.response.status, result.text).toBe(201);
@@ -130,7 +135,7 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   await patchTeam(secondary, { grantsOrganizationAdmin: true });
   expect((await request(manager, `/v1/teams/${secondary}`, "DELETE")).response.status).toBe(204);
   await canReadAdmin(inherited, 403);
-  evidence.recordAssertionEvidence("Live team grants preserve direct roles and other grants", "The original bearer gains and loses Admin without re-login; stored member role remains member, a second team survives the first removal, direct Admin survives team revocation, and control stays unprivileged. Admins without Manage Admin teams (denied in this org's Admin permissions) get 403; the member granted it through the Admin team managers team can designate and delete Admin teams.", true);
+  evidence.recordAssertionEvidence("Live team grants preserve direct roles and other grants", "The original bearer gains and loses Admin without re-login; stored member role remains member, a second team survives the first removal, direct Admin survives team revocation, and control stays unprivileged. Admins without Manage Admin teams (owner-only by default, off in Admin permissions) get 403; the member granted it through the Admin team managers team can designate and delete Admin teams.", true);
 
   // Pending placeholders can already belong to a team; refreshing/canceling their
   // invitation is also a privileged mutation even though its direct role is member.

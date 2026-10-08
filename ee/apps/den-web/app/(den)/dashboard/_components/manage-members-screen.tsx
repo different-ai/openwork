@@ -372,7 +372,7 @@ export function ManageMembersScreen() {
           ) : (
             <div className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Role</span>
-              <DenInput value="Member" readOnly disabled />
+              <DenInput value="Member" readOnly disabled aria-describedby="invite-role-locked" />
             </div>
           )}
           <div className="flex gap-2 lg:justify-end">
@@ -381,6 +381,12 @@ export function ManageMembersScreen() {
               Send invite
             </DenButton>
           </div>
+          {access.canManageRoles ? null : (
+            <p id="invite-role-locked" className="flex items-center gap-1.5 text-[13px] text-gray-500 lg:col-span-3">
+              <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {`Inviting someone as an admin is locked. ${permissionLockReason("members.update")}`}
+            </p>
+          )}
         </form>
       </DenCard>
     ) : null;
@@ -809,6 +815,16 @@ export function ManageMembersScreen() {
                                 <Settings className="h-3.5 w-3.5" />
                                 Edit role
                               </button>
+                            ) : !isInvited ? (
+                              <button
+                                type="button"
+                                disabled
+                                title={permissionLockReason("members.update")}
+                                className="flex w-full cursor-not-allowed items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-400"
+                              >
+                                <Lock className="h-3.5 w-3.5" />
+                                Edit role
+                              </button>
                             ) : null}
                             {canTransferOwnershipToMember ? (
                               <button
@@ -1064,7 +1080,10 @@ export function ManageMembersScreen() {
                         </ActionButton>
                       </>
                     ) : (
-                      <span className="text-[13px] text-gray-400">
+                      <span
+                        className="text-[13px] text-gray-400"
+                        title={access.canManageTeams ? permissionLockReason("teams.manage_admin") : permissionLockReason("teams.manage")}
+                      >
                         Read only
                       </span>
                     )}

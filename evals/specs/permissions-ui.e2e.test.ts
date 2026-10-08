@@ -96,26 +96,34 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await owner.screenshot();
   });
 
-  await step("Admin permissions keep Manage permissions on and locked", async () => {
+  await step("Admin permissions hold what admins always could: View permissions is on, the owner-only Manage permissions is off, and nothing is locked", async () => {
     await owner.navigate(world.url("/dashboard/permissions"));
     await owner.click({ role: "link", label: /^Admin permissions/ });
     await owner.see({ role: "heading", label: "Admin permissions" }, { timeoutMs: 30_000 });
-    await owner.see({ text: "Always on for admins" });
-    const locked = await ownerProbe.dom('[data-permission-key="permissions.manage"][data-locked="true"][data-status="allow"] [role="switch"][aria-checked="true"]:disabled');
-    evidence.recordAssertionEvidence("Manage permissions is on and can't be turned off for admins", `locked rows that are on: ${locked.elements.length}`, locked.elements.length === 1);
-    expect(locked.elements.length).toBe(1);
+    await owner.notSee({ text: "Always on for admins" }, { timeoutMs: 2_000 });
+    const view = await ownerProbe.dom('[data-permission-key="permissions.view"][data-locked="false"][data-status="allow"]');
+    const manage = await ownerProbe.dom('[data-permission-key="permissions.manage"][data-locked="false"][data-status="deny"] [role="switch"][aria-checked="false"]:not(:disabled)');
+    const locked = await ownerProbe.dom('[data-testid="permission-row"][data-locked="true"]');
+    const ok = view.elements.length === 1 && manage.elements.length === 1 && locked.elements.length === 0;
+    evidence.recordAssertionEvidence(
+      "Manage permissions starts with the owner, who can still turn it on for admins",
+      `View permissions on: ${view.elements.length === 1}; Manage permissions off with a working switch: ${manage.elements.length === 1}; locked rows: ${locked.elements.length}`,
+      ok,
+    );
+    expect(ok).toBe(true);
     await owner.screenshot();
   });
 
-  await step("searching Admin permissions for \"billing\" shows only the billing permissions, and Allow all is on", async () => {
+  await step("searching Admin permissions for \"billing\" shows only the billing permissions; the owner-only billing portal is off, so Allow all is off", async () => {
     await owner.type({ testId: "permission-search" }, "billing");
     await owner.see({ testId: "permission-area-billing" });
     await owner.notSee({ testId: "permission-area-members" });
     const rows = await ownerProbe.dom('[data-testid="permission-row"]');
-    const billingRows = await ownerProbe.dom('[data-testid="permission-row"][data-permission-key^="billing."]');
-    const allowAll = await ownerProbe.dom('[data-testid="permission-area-allow-all-billing"][aria-checked="true"]');
-    const ok = rows.elements.length === 2 && billingRows.elements.length === 2 && allowAll.elements.length === 1;
-    evidence.recordAssertionEvidence("Search filters by title or description; the area's Allow all reflects that every billing permission is on", `rows shown: ${rows.elements.length} (billing: ${billingRows.elements.length}); Allow all on: ${allowAll.elements.length === 1}`, ok);
+    const billingRows = await ownerProbe.dom('[data-testid="permission-row"][data-permission-key^="billing"]');
+    const portal = await ownerProbe.dom('[data-permission-key="billing_portal.use"][data-status="deny"]');
+    const allowAll = await ownerProbe.dom('[data-testid="permission-area-allow-all-billing"][aria-checked="false"]');
+    const ok = rows.elements.length === 3 && billingRows.elements.length === 3 && portal.elements.length === 1 && allowAll.elements.length === 1;
+    evidence.recordAssertionEvidence("Search filters by title or description; the area's Allow all shows that not every billing permission is on", `rows shown: ${rows.elements.length} (billing: ${billingRows.elements.length}); billing portal off: ${portal.elements.length === 1}; Allow all off: ${allowAll.elements.length === 1}`, ok);
     expect(ok).toBe(true);
     await owner.screenshot();
   });

@@ -8,6 +8,7 @@ import {
 import { ChevronRight, CircleAlert, Lock, X } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { permissionLockReason } from "../../_lib/den-org";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenList, DenListRow } from "../../_components/ui/list-row";
@@ -167,7 +168,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
                       variant="ghost"
                       size="xs"
                       aria-label={`Remove ${entry.origin}`}
-                      title={canManage ? "Remove" : "Removing approved origins needs permission to manage them"}
+                      title={canManage ? "Remove" : permissionLockReason("web_origins.manage")}
                       disabled={!canManage || busy}
                       onClick={() => void handleRemove(entry)}
                     >
@@ -233,7 +234,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
               ) : (
                 <p className="flex items-center gap-2 text-gray-500">
                   <Lock size={16} strokeWidth={1.5} aria-hidden="true" className="shrink-0" />
-                  Locked. Changing approved origins needs permission to manage them.
+                  {`Locked. ${permissionLockReason("web_origins.manage")}`}
                 </p>
               )}
             </form>

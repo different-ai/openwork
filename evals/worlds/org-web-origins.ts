@@ -120,6 +120,24 @@ export async function orgWebOrigins(seed: Seed, { place }: { place: Place }) {
         error: typeof body.error === "string" ? body.error : null,
       };
     },
+    /**
+     * A person asks Den to approve `origin` for the organization. A write, so
+     * it lives here rather than in probe.api (GET-only); specs use it to prove
+     * who is refused.
+     */
+    async approveOrigin(session: DenSession, origin: string) {
+      const result = await denFetch(session, "/v1/org/web-origins", {
+        method: "POST",
+        headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": orgId },
+        body: JSON.stringify({ origin }),
+      });
+      const body = isRecord(result.body) ? result.body : {};
+      return {
+        status: result.response.status,
+        error: typeof body.error === "string" ? body.error : null,
+        requiredPermission: typeof body.requiredPermission === "string" ? body.requiredPermission : null,
+      };
+    },
     /** The CORS preflight a page on `origin` sends before a credentialed call to Den. */
     async preflight(origin: string) {
       // TODO(primitive): probe.api is GET-only; a browser preflight needs OPTIONS with a foreign Origin.

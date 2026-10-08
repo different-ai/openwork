@@ -144,6 +144,15 @@ test.skipIf(skipReason !== "")(title, { timeout: 300_000 }, async ({ evidence, p
   // Permissions feature; it is independent of the auditLogs rollout.
   const permissionsOn = await denFetch(admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", headers: adminHeaders, body: JSON.stringify({ capabilities: { permissions: true } }) });
   expect(permissionsOn.response.status, permissionsOn.text).toBe(200);
+  // Organization API keys are the owner's by default (they used to need
+  // super-admin). Step 4 has an admin teammate hold one, so the owner lets
+  // admins manage API keys before audit capture starts.
+  const sets = await denFetch(admin, "/v1/permissions/sets", { headers });
+  expect(sets.response.status, sets.text).toBe(200);
+  const setList = record(sets.body, "permission sets response").sets;
+  const adminSetId = text((Array.isArray(setList) ? setList : []).map((entry) => record(entry, "permission set")).find((entry) => entry.kind === "admin_default")?.id, "Admin permissions id");
+  const adminKeys = await denFetch(admin, `/v1/permissions/sets/${adminSetId}/permissions`, { method: "PUT", headers, body: JSON.stringify({ changes: [{ key: "api_keys.manage", status: "allow" }] }) });
+  expect(adminKeys.response.status, adminKeys.text).toBe(200);
   const createTeam = async (name: string) => {
     const created = await denFetch(admin, "/v1/teams", { method: "POST", headers, body: JSON.stringify({ name, memberIds: [] }) });
     expect(created.response.status, created.text).toBe(201);

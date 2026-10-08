@@ -254,16 +254,18 @@ export async function readPermissionSetStates(
 /**
  * Team permission sets that apply to members of the given teams: the link is
  * not removed and the set is not archived. One row per (set, team) link.
+ * `lock: "share"` reads the latest committed links inside a transaction.
  */
 export async function listActiveTeamPermissionSetsForTeams(
   database: PermissionDatabase,
   organizationId: OrganizationId,
   teamIds: readonly TeamId[],
+  options: { lock?: "share" } = {},
 ): Promise<ActiveTeamPermissionSet[]> {
   const uniqueIds = [...new Set(teamIds)]
   const result: ActiveTeamPermissionSet[] = []
   for (const chunk of chunks(uniqueIds, ID_CHUNK_SIZE)) {
-    const rows = await database.select({
+    const query = database.select({
       permissionSetId: PermissionSetTable.id,
       permissionSetName: PermissionSetTable.name,
       teamId: TeamTable.id,
@@ -285,7 +287,7 @@ export async function listActiveTeamPermissionSetsForTeams(
         isNull(PermissionSetTable.archivedAt),
       ))
       .orderBy(asc(PermissionSetTeamTable.createdAt), asc(PermissionSetTeamTable.id))
-    result.push(...rows)
+    result.push(...(options.lock ? await query.for(options.lock) : await query))
   }
   return result
 }
@@ -305,14 +307,15 @@ export type AuthoritativeTeamMembership = {
  * identity provider still lists this member in the group. Orphaned
  * projections (provider gone) and members added by hand to an IdP-managed
  * team fail closed. Active (not removed) members only. Never cache: IdP
- * removals and designation changes apply on the next check.
+ * removals and designation changes apply on the next check. `lock: "share"`
+ * reads the latest committed memberships inside a transaction.
  */
 export async function listAuthoritativeTeamMemberships(
   database: PermissionDatabase,
-  input: { organizationId: OrganizationId; memberId?: MemberId; adminTeamsOnly?: boolean },
+  input: { organizationId: OrganizationId; memberId?: MemberId; adminTeamsOnly?: boolean; lock?: "share" },
 ): Promise<AuthoritativeTeamMembership[]> {
   const { organizationId } = input
-  return database.select({
+  const query = database.select({
     memberId: MemberTable.id,
     teamId: TeamTable.id,
     teamName: TeamTable.name,
@@ -348,6 +351,7 @@ export async function listAuthoritativeTeamMemberships(
         and(eq(ScimProviderTable.groupMappingMode, "create_teams"), isNotNull(ScimGroupMemberTable.id)),
       ),
     ))
+  return input.lock ? await query.for(input.lock) : await query
 }
 
 type DefaultSetRow = { id: PermissionSetId; organizationId: OrganizationId; defaultKey: PermissionDefaultSetKey }

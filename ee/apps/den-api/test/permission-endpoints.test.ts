@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { PERMISSION_KEYS, getPermissionDefinition, isPermissionLockedOn, type PermissionKey } from "@openwork/types/den/permissions"
+import { PERMISSION_KEYS, getPermissionDefinition, isPermissionLockedOn, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions"
 import {
   currentPermissionStatus,
   latestPermissionRows,
@@ -23,16 +23,20 @@ function editor(keys: readonly PermissionKey[], options: { isOwner?: boolean; is
 const OWNER = editor([], { isOwner: true })
 const LOCKED_ADMIN_KEYS = PERMISSION_KEYS.filter((key) => isPermissionLockedOn(key, "admin"))
 const UNLOCKED_KEYS = PERMISSION_KEYS.filter((key) => !isPermissionLockedOn(key, "admin"))
-const [KEY_A, KEY_B, KEY_C] = UNLOCKED_KEYS
+// Keys on by default for admins, so the shipped-default rules apply to them.
+const [KEY_A, KEY_B, KEY_C] = permissionDefaultKeys("admin")
+/** On in no default set: only the owner holds it until someone grants it. */
+const OWNER_ONLY_KEY = "sso.manage" satisfies PermissionKey
 
 function states(entries: Record<string, PermissionStatus>): Map<string, PermissionStatus> {
   return new Map(Object.entries(entries))
 }
 
-test("catalog has locked admin keys and enough unlocked keys for these tests", () => {
-  assert.ok(LOCKED_ADMIN_KEYS.includes("permissions.manage"))
-  assert.ok(LOCKED_ADMIN_KEYS.includes("permissions.view"))
+test("catalog has no locked keys and enough admin default keys for these tests", () => {
+  assert.deepEqual(LOCKED_ADMIN_KEYS, [])
+  assert.equal(UNLOCKED_KEYS.length, PERMISSION_KEYS.length)
   assert.ok(KEY_A && KEY_B && KEY_C)
+  assert.deepEqual(getPermissionDefinition(OWNER_ONLY_KEY).defaultOn, [])
 })
 
 test("edit: only changes whose status differs are planned, in request order", () => {
@@ -78,17 +82,29 @@ test("edit: duplicate keys are rejected", () => {
   assert.deepEqual(plan, { ok: false, problem: { error: "duplicate_permission", keys: [KEY_A] } })
 })
 
-test("edit: denying a key locked on for admins is rejected in Admin permissions, even for the owner", () => {
-  const plan = planPermissionSetEdit({
+test("edit: nothing is locked, so the owner can turn permission management off for Admin permissions and back on", () => {
+  const off = planPermissionSetEdit({
     defaultKey: "admin",
     current: states({ "permissions.manage": "allow", "permissions.view": "allow" }),
     changes: [{ key: "permissions.view", status: "deny" }, { key: "permissions.manage", status: "deny" }],
     editor: OWNER,
   })
-  assert.deepEqual(plan, { ok: false, problem: { error: "permission_locked", keys: ["permissions.manage", "permissions.view"] } })
+  assert.deepEqual(off, { ok: true, changes: [{ key: "permissions.view", status: "deny" }, { key: "permissions.manage", status: "deny" }] })
+  const on = planPermissionSetEdit({ defaultKey: "admin", current: new Map(), changes: [{ key: "permissions.manage", status: "allow" }], editor: OWNER })
+  assert.deepEqual(on, { ok: true, changes: [{ key: "permissions.manage", status: "allow" }] })
 })
 
-test("edit: locked keys can be denied in Member and team sets", () => {
+test("edit: an admin can't give admins an owner-only key they don't hold", () => {
+  const plan = planPermissionSetEdit({
+    defaultKey: "admin",
+    current: new Map(),
+    changes: [{ key: OWNER_ONLY_KEY, status: "allow" }],
+    editor: editor(["permissions.manage"], { isAdmin: true }),
+  })
+  assert.deepEqual(plan, { ok: false, problem: { error: "permission_not_held", keys: [OWNER_ONLY_KEY] } })
+})
+
+test("edit: permission management can be denied in Member and team sets", () => {
   for (const defaultKey of ["member", null] as const) {
     const plan = planPermissionSetEdit({
       defaultKey,
@@ -212,7 +228,7 @@ test("latest rows: later createdAt wins, then the larger id", () => {
   assert.equal(latest.get("c.d")?.id, "psp_4")
 })
 
-test("key states: every catalog key, deny without rows, locked only in Admin permissions", () => {
+test("key states: every catalog key, deny without rows, nothing locked", () => {
   assert.ok(KEY_A)
   const rows = [
     { id: "psp_1", permissionKey: KEY_A, createdAt: new Date(1), status: "allow" as const },
@@ -224,7 +240,7 @@ test("key states: every catalog key, deny without rows, locked only in Admin per
   assert.equal(admin.find((state) => state.key === KEY_A)?.status, "allow")
   assert.equal(admin.find((state) => state.key === KEY_A)?.latest?.id, "psp_1")
   assert.equal(admin.find((state) => state.key === "permissions.manage")?.status, "deny")
-  assert.equal(admin.find((state) => state.key === "permissions.manage")?.locked, true)
+  assert.ok(admin.every((state) => !state.locked))
 
   const team = permissionSetKeyStates({ defaultKey: null, rows })
   assert.ok(team.every((state) => !state.locked))

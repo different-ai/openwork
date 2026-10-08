@@ -1,6 +1,6 @@
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
-import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
+import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
 
 export type DenOrgSummary = {
   id: string;
@@ -159,8 +159,10 @@ export type DenOrgAccessFlags = {
   canManageEgressDiagnostics: boolean;
   /** `billing.view` */
   canViewBilling: boolean;
-  /** `billing.manage` */
+  /** `billing.manage`: start a subscription in checkout. */
   canManageBilling: boolean;
+  /** `billing_portal.use`: payment details, invoices, change or cancel the subscription. */
+  canOpenBillingPortal: boolean;
   /** `audit.view` */
   canViewAuditLogs: boolean;
   /** `audit.manage`: turn audit capture on or off. */
@@ -183,9 +185,13 @@ export type DenOrgAccessFlags = {
   canManageGatewayLimits: boolean;
   /** `connections.view`: every connection, its tools and tool policy. */
   canViewAllConnections: boolean;
-  /** `connections.manage`: organization connections, any connection, shared accounts. */
+  /** `connections.manage`: organization connections, who can use any connection, tool policies, shared accounts. */
   canManageConnections: boolean;
-  /** `connections.delete`: remove or sign everyone out of any connection. */
+  /** `connections.update`: edit any connection's settings. */
+  canEditAnyConnection: boolean;
+  /** `connections.disconnect`: sign everyone out of any connection. */
+  canDisconnectAnyConnection: boolean;
+  /** `connections.delete`: remove any connection. */
   canRemoveAnyConnection: boolean;
   /** `marketplaces.manage` */
   canManageMarketplaces: boolean;
@@ -598,6 +604,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canManageEgressDiagnostics: can("egress_diagnostics.manage"),
     canViewBilling: can("billing.view"),
     canManageBilling: can("billing.manage"),
+    canOpenBillingPortal: can("billing_portal.use"),
     canViewAuditLogs: can("audit.view"),
     canManageAuditCapture: can("audit.manage"),
     canViewModelsSettings: can("inference.view"),
@@ -610,6 +617,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canManageGatewayLimits: can("gateway_limits.manage"),
     canViewAllConnections: can("connections.view"),
     canManageConnections: can("connections.manage"),
+    canEditAnyConnection: can("connections.update"),
+    canDisconnectAnyConnection: can("connections.disconnect"),
     canRemoveAnyConnection: can("connections.delete"),
     canManageMarketplaces: can("marketplaces.manage"),
     canImportPlugins: can("plugins.import"),
@@ -626,7 +635,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
 
 /** Plain reason for a control locked by a missing permission (DESIGN.md P4). */
 export function permissionLockReason(key: PermissionKey): string {
-  return `Needs the “${getPermissionDefinition(key).label}” permission. Ask an organization owner or admin for access.`;
+  const needs = `Needs the “${getPermissionDefinition(key).label}” permission.`;
+  return isPermissionOwnerOnlyByDefault(key) ? `${needs} Ask the organization owner.` : `${needs} Ask an organization owner or admin for access.`;
 }
 
 export function formatRoleLabel(role: string): string {

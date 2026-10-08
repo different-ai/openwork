@@ -405,13 +405,13 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         </div>
       ) : !isEditing && !canManage ? (
         <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
-          You can view desktop policies. Creating them needs permission to manage desktop policies.
+          {`You can view desktop policies. Creating them is locked. ${permissionLockReason("desktop_policies.manage")}`}
         </div>
       ) : (
         <section className="grid gap-5 rounded-[28px] border border-gray-200 bg-white p-6">
           {!canManage ? (
             <div className="rounded-[22px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">
-              Read-only: editing needs permission to manage desktop policies.
+              {`Read only. ${permissionLockReason("desktop_policies.manage")}`}
             </div>
           ) : null}
           <div className="flex flex-wrap items-end gap-3">

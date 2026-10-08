@@ -113,7 +113,7 @@ export async function validateInvitationRoleAssignment(input: {
     return {
       ok: false,
       error: "forbidden",
-      message: "You can only invite members. Inviting an admin needs permission to change member roles.",
+      message: "You can only invite members. Inviting someone as an admin needs the Change member roles permission. Ask the organization owner.",
     }
   }
 

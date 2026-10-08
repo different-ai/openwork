@@ -1229,6 +1229,7 @@ export type OrganizationContextResponse = {
       | "desktop_policies.manage"
       | "billing.view"
       | "billing.manage"
+      | "billing_portal.use"
       | "inference.view"
       | "inference.manage"
       | "analytics.view"
@@ -1244,6 +1245,8 @@ export type OrganizationContextResponse = {
       | "gateway_limits.manage"
       | "connections.view"
       | "connections.manage"
+      | "connections.update"
+      | "connections.disconnect"
       | "connections.delete"
       | "oauth_clients.view"
       | "oauth_clients.manage"
@@ -3296,6 +3299,7 @@ export type ExternalMcpConnectionResponse = {
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
+  createdByYou?: boolean;
   createdAt?: string;
   updatedAt?: string;
   connectedForMe: boolean;
@@ -3562,6 +3566,7 @@ export type ExternalMcpConnectionCreatedResponse = {
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
+  createdByYou?: boolean;
   createdAt?: string;
   updatedAt?: string;
   connectedForMe: boolean;
@@ -3635,6 +3640,7 @@ export type ExternalMcpConnectionUpdatedResponse = {
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
+  createdByYou?: boolean;
   createdAt?: string;
   updatedAt: string;
   connectedForMe: boolean;
@@ -23504,7 +23510,7 @@ export type DeleteV1McpConnectionsByKeyByExternalKeyErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners, admins (anyone with the Remove any connection permission), or the connection creator can remove MCP connections.
+   * Only the workspace owner (or anyone with the Remove any connection permission) or the connection creator can remove MCP connections.
    */
   403: ForbiddenError;
 };
@@ -23598,7 +23604,7 @@ export type DeleteV1McpConnectionsByConnectionIdErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners, admins (anyone with the Remove any connection permission), or the connection creator can remove MCP connections.
+   * Only the workspace owner (or anyone with the Remove any connection permission) or the connection creator can remove MCP connections.
    */
   403: ForbiddenError;
   /**
@@ -23699,7 +23705,7 @@ export type PutV1McpConnectionsByConnectionIdErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners, admins (anyone with the Manage connections permission), or the connection creator can edit MCP connections.
+   * Only the workspace owner (or anyone with the Edit any connection permission) or the connection creator can edit MCP connections, and only people who can share with everyone can make a connection org-wide.
    */
   403: ForbiddenError;
   /**

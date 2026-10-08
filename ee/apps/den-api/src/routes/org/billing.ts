@@ -9,7 +9,7 @@ import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { hasPermission } from "./shared.js"
+import { requirePermission } from "./shared.js"
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
 const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat", "web"]).optional() })
@@ -171,11 +171,13 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       const user = c.get("user")
       const payload = c.get("organizationContext")
       const email = getRequiredUserEmail(user)
-      // Visibility only: no recent sign-in needed to see the portal link (as before).
-      const canManageBilling = await hasPermission(c, "billing.manage")
+      // The portal URL is a live Stripe session that can change billing, so it
+      // needs the same check as POST /v1/billing/stripe/portal (billing_portal.use,
+      // including the recent sign-in). Without it the URL is omitted; the read still succeeds.
+      const portal = await requirePermission(c, "billing_portal.use")
       const billing = await getOrgBillingSummary({
         organizationId: payload.organization.id,
-        includePortalUrl: canManageBilling,
+        includePortalUrl: portal.ok,
         returnUrl: billingReturnUrl(c),
       })
       // Den web still reads `billing.polar` as the cloud-worker access summary
@@ -292,10 +294,10 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe billing portal session created successfully.", stripePortalResponseSchema),
         401: jsonResponse("The caller must be signed in to manage billing.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Manage billing permission and a recent sign-in.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Open the billing portal permission and a recent sign-in.", forbiddenSchema),
       },
     }),
-    orgPermissionRoute("billing.manage"),
+    orgPermissionRoute("billing_portal.use"),
     async (c) => {
       const payload = c.get("organizationContext")
       const session = await createInferencePortalSession({
@@ -315,7 +317,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe Checkout session synced successfully.", stripeCheckoutSyncResponseSchema),
         401: jsonResponse("The caller must be signed in to sync billing.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Manage billing permission and a recent sign-in.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Start a subscription permission and a recent sign-in.", forbiddenSchema),
         503: jsonResponse("Managed Models policy is unavailable.", managedModelsPolicyErrorSchema),
       },
     }),

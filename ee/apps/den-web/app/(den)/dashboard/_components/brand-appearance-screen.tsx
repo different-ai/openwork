@@ -7,6 +7,7 @@ import {
   getOrgAccessFlags,
   getManagedBrandAssetFromMetadata,
   parseOrganizationMetadata,
+  permissionLockReason,
   type DenManagedBrandAsset,
 } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
@@ -307,7 +308,7 @@ export function BrandAppearanceScreen() {
             </DenCard>
 
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[13px] text-gray-500">{!canManageBrandAppearance ? "You can view brand appearance. Changing it needs permission to change branding." : null}</p>
+              <p className="text-[13px] text-gray-500">{!canManageBrandAppearance ? `Read only. ${permissionLockReason("branding.update")}` : null}</p>
               <DenButton type="submit" loading={saveBusy} disabled={!canManageBrandAppearance}>Save brand appearance</DenButton>
             </div>
           </form>

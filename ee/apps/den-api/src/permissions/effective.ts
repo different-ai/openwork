@@ -1,6 +1,7 @@
 import {
   PERMISSION_KEYS,
   getPermissionDefinition,
+  isPermissionOwnerOnlyByDefault,
   permissionDefaultKeys,
   type PermissionDefaultSetKey,
   type PermissionKey,
@@ -63,6 +64,16 @@ export function codeDefaultPermissionGrants(input: { isAdmin: boolean }): Permis
   return grants
 }
 
+/**
+ * The organization's default permission sets are missing (they should always
+ * exist). Outside a transaction resolution falls back to the code defaults so
+ * the organization is not locked out; inside a write transaction, where sets
+ * can't be created, it denies everything.
+ */
+export function missingDefaultSetsPermissionGrants(input: { isAdmin: boolean; transaction: boolean }): PermissionGrant[] {
+  return input.transaction ? [] : codeDefaultPermissionGrants({ isAdmin: input.isAdmin })
+}
+
 export function createMemberPermissions(input: {
   featureEnabled: boolean
   isOwner: boolean
@@ -115,5 +126,6 @@ function lowerFirst(value: string) {
 
 /** The human 403 message for a missing permission, from its catalog label. */
 export function permissionDeniedMessage(key: PermissionKey): string {
-  return `You don't have permission to ${lowerFirst(getPermissionDefinition(key).label)}. Ask an admin to change your permissions.`
+  const action = `You don't have permission to ${lowerFirst(getPermissionDefinition(key).label)}.`
+  return isPermissionOwnerOnlyByDefault(key) ? `${action} Ask the organization owner.` : `${action} Ask an admin to change your permissions.`
 }

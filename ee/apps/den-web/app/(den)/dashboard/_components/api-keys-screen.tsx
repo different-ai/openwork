@@ -322,7 +322,7 @@ export function ApiKeysScreen() {
 
                     {!access.canManageApiKeys ? (
                         <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-                            Read-only: creating or deleting API keys needs permission to manage API keys.
+                            {`Read only. ${permissionLockReason("api_keys.manage")}`}
                         </div>
                     ) : null}
 

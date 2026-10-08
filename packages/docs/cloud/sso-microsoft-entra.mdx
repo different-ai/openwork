@@ -15,7 +15,7 @@ members and groups automatically.
 You need:
 
 - An OpenWork organization on the Team or Enterprise plan.
-- Owner or super-admin access in that OpenWork organization.
+- Owner access in that OpenWork organization.
 - Admin access to a Microsoft Entra enterprise application.
 - The final OpenWork auth origin, for example `https://app.openworklabs.com`.
 
@@ -140,7 +140,7 @@ SSO, OpenWork can link the matching account and provision the organization
 membership through SSO.
 
 OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
-into elevated organization roles. Owners and super-admins assign roles in
+into elevated organization roles. The owner assigns roles in
 OpenWork; ownership changes require ownership transfer. For group-based Admin,
 first configure [Entra SCIM provisioning](/cloud/scim-microsoft-entra), then
 explicitly approve the synchronized team using

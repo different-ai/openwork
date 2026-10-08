@@ -487,7 +487,7 @@ export function SsoScreen() {
           {error ? <DenNotice message={error} className="mb-6" /> : null}
           {!access.canManageSso ? (
             <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-              Read-only: creating, editing, deleting or verifying SSO connections needs permission to manage SSO.
+              {`Read only. ${permissionLockReason("sso.manage")}`}
             </div>
           ) : null}
 

@@ -349,7 +349,7 @@ export function ScimScreen() {
         <>
           {!access.canManageScim ? (
             <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-              Read-only: creating tokens, reconciling, changing mappings or deleting SCIM connections needs permission to manage SCIM.
+              {`Read only. ${permissionLockReason("scim.manage")}`}
             </div>
           ) : null}
           <div className="mb-6 flex flex-wrap gap-2 rounded-[24px] border border-gray-200 bg-white px-5 py-4 text-[12px] font-semibold shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">

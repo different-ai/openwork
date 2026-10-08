@@ -1,5 +1,6 @@
 "use client";
 
+import { Lock } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
@@ -20,7 +21,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** Rename a connector, move its address, rotate its key, or replace its OAuth app, in place on its page. */
-export function ConnectorSettingsForm({ connection, onSaved }: { connection: ExternalMcpConnection; onSaved: (message: string) => void }) {
+/** `lockedReason` shows the settings read-only with why (DESIGN.md P4), e.g. the caller can't edit this connection. */
+export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null }: { connection: ExternalMcpConnection; onSaved: (message: string) => void; lockedReason?: string | null }) {
   const updateConnection = useUpdateMcpConnection();
   const [name, setName] = useState(connection.name);
   const [url, setUrl] = useState(connection.url);
@@ -97,6 +99,7 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
         else void save();
       }}
     >
+      <fieldset disabled={lockedReason !== null} className="flex min-w-0 flex-col gap-3">
       <Field label="Name">
         <DenInput value={name} onChange={(event) => setName(event.target.value)} data-testid="connector-settings-name" />
       </Field>
@@ -152,9 +155,16 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
         <input type="checkbox" checked={exposeDirectly} onChange={(event) => setExposeDirectly(event.target.checked)} />
         Available in other MCP apps
       </label>
+      </fieldset>
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
-      <div className="flex justify-end">
-        <DenButton type="submit" size="sm" loading={updateConnection.isPending} disabled={disabled}>Save changes</DenButton>
+      <div className="flex items-center justify-end gap-3">
+        {lockedReason ? (
+          <p className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-gray-500" data-testid="connector-settings-locked">
+            <Lock className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} aria-hidden />
+            {lockedReason}
+          </p>
+        ) : null}
+        <DenButton type="submit" size="sm" loading={updateConnection.isPending} disabled={disabled || lockedReason !== null}>Save changes</DenButton>
       </div>
     </form>
     {connection.authType === "oauth" ? <ConnectorIssuerReview connection={connection} onSaved={onSaved} /> : null}

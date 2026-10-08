@@ -1018,7 +1018,7 @@ export const auth = betterAuth({
               });
               if (!permissions.has("teams.manage_admin")) {
                 throw new APIError("FORBIDDEN", {
-                  message: "Ask an admin who can manage Admin teams to remove your Admin team membership before leaving.",
+                  message: "Ask the organization owner to remove your Admin team membership before you leave.",
                 });
               }
             }
@@ -1684,7 +1684,7 @@ export const auth = betterAuth({
 
         if (!permissions?.has("scim.manage")) {
           throw new APIError("FORBIDDEN", {
-            message: "You don't have permission to manage SCIM. Ask an admin to change your permissions.",
+            message: "You don't have permission to manage SCIM provisioning. Ask the organization owner.",
           });
         }
       },

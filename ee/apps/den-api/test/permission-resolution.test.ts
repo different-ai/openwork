@@ -168,8 +168,15 @@ test("feature off: admins and Admin team members also get Admin code defaults", 
   const expected = [...new Set([...permissionDefaultKeys("member"), ...permissionDefaultKeys("admin")])].sort()
   assert.deepEqual([...featureOffKeys({ directRole: "admin", adminTeamIds: [] })].sort(), expected)
   assert.deepEqual([...featureOffKeys({ directRole: "member", adminTeamIds: ["tem_1"] })].sort(), expected)
-  assert.ok(featureOffKeys({ directRole: "admin", adminTeamIds: [] }).has("permissions.manage"))
-  assert.equal(featureOffKeys({ directRole: "member", adminTeamIds: [] }).has("permissions.manage"), false)
+  assert.ok(featureOffKeys({ directRole: "admin", adminTeamIds: [] }).has("permissions.view"))
+  assert.equal(featureOffKeys({ directRole: "member", adminTeamIds: [] }).has("permissions.view"), false)
+})
+
+test("feature off: former super-admin actions stay with the owner, not admins", () => {
+  for (const key of ["permissions.manage", "members.update", "teams.manage_admin", "sso.manage", "scim.manage", "api_keys.manage", "connections.update", "connections.delete", "billing_portal.use"] as const) {
+    assert.equal(featureOffKeys({ directRole: "admin", adminTeamIds: [] }).has(key), false, key)
+    assert.equal(featureOffKeys({ directRole: "member", adminTeamIds: ["tem_1"] }).has(key), false, key)
+  }
 })
 
 test("permissions are the union of grants, and explanations list every source", () => {
@@ -191,6 +198,7 @@ test("denied messages come from the catalog label", () => {
     permissionDeniedMessage("llm_providers.delete"),
     "You don't have permission to delete any provider. Ask an admin to change your permissions.",
   )
+  assert.equal(permissionDeniedMessage("sso.manage"), "You don't have permission to manage single sign-on. Ask the organization owner.")
 })
 
 test("new rows sort after the set's latest row even when the clock is behind", () => {

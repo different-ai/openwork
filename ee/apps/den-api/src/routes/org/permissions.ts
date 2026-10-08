@@ -644,7 +644,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Create team permissions",
-      description: "Creates the permission set for one team, named \"<team name> Permissions\" (fixed from then on), links it to the team and stores its initial permissions. A team can have one active set, and the team can't be changed later. You can only turn on permissions you have yourself. Requires permissions.manage, a recent sign-in, and the Permissions feature.",
+      description: "Creates the permission set for one team, named \"<team name> Permissions\" (fixed from then on), links it to the team and stores its initial permissions. A team can have one active set, and the team can't be changed later. You can only turn on permissions you have yourself. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.",
       responses: {
         201: jsonResponse("Team permission set created.", permissionSetResponseSchema),
         400: jsonResponse("The body was invalid or named an unknown or repeated permission.", z.union([invalidRequestSchema, permissionEditErrorSchema])),
@@ -801,7 +801,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Change permissions in a set",
-      description: "Turns permissions on (allow) or off (deny) in one set. Only keys whose status actually changes are recorded; every change is kept in the set's history. Only the owner and admins can change Admin permissions. Permissions locked on for admins can't be turned off in Admin permissions, you can only turn on permissions you have yourself (except turning a permission back on in Member or Admin permissions where it is on by default), and archived sets can't be changed. The linked team can't be changed. Returns the set's new state. Requires permissions.manage, a recent sign-in, and the Permissions feature.",
+      description: "Turns permissions on (allow) or off (deny) in one set. Only keys whose status actually changes are recorded; every change is kept in the set's history. Only the owner and admins can change Admin permissions. Permissions locked on for admins can't be turned off in Admin permissions, you can only turn on permissions you have yourself (except turning a permission back on in Member or Admin permissions where it is on by default), and archived sets can't be changed. The linked team can't be changed. Returns the set's new state. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.",
       responses: {
         200: jsonResponse("Permissions updated; the set's current state is returned.", permissionSetResponseSchema),
         400: jsonResponse("The body was invalid, named an unknown or repeated permission, or tried to turn off a locked permission.", z.union([invalidRequestSchema, permissionEditErrorSchema])),
@@ -954,7 +954,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       tags: ["Permissions"],
       "x-mcp": false,
       summary: "Delete team permissions",
-      description: "Archives a team permission set and unlinks it from its team, so its permissions stop applying to the team's members. The set and its history are kept. Member and Admin permissions can't be deleted. Requires permissions.manage, a recent sign-in, and the Permissions feature.",
+      description: "Archives a team permission set and unlinks it from its team, so its permissions stop applying to the team's members. The set and its history are kept. Member and Admin permissions can't be deleted. Requires permissions.manage (only the owner has it by default), a recent sign-in, and the Permissions feature.",
       responses: {
         204: emptyResponse("The team permission set was archived."),
         400: jsonResponse("The id was invalid, or the set is Member or Admin permissions.", z.union([invalidRequestSchema, defaultPermissionSetErrorSchema])),

@@ -12,7 +12,7 @@ import {
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { DenNotice } from "../../_components/ui/notice";
-import { getDesktopPolicyRoute, getNewDesktopPolicyRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getDesktopPolicyRoute, getNewDesktopPolicyRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   deleteDesktopPolicy,
@@ -106,6 +106,7 @@ export function DesktopPoliciesScreen() {
       </div>
 
       {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
+      {canManage ? null : <DenNotice tone="neutral" message={`Read only. ${permissionLockReason("desktop_policies.manage")}`} className="mb-6" />}
       {pageError ? <DenNotice message={pageError} className="mb-6" /> : null}
       {pageSuccess ? <DenNotice tone="neutral" message={pageSuccess} className="mb-6" /> : null}
       {error ? <DenNotice message={error} className="mb-6" /> : null}

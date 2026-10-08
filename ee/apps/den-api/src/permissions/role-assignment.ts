@@ -17,8 +17,9 @@ import type { MemberPermissions } from "./effective.js"
  * - Changing a direct admin's role to member needs the caller to be an
  *   effective admin, so a team-granted `members.update` can't demote admins.
  *
- * With the feature off only admins hold `members.update` and every admin holds
- * the Admin defaults, so these rules are skipped and behaviour is unchanged.
+ * With the feature off only the owner holds `members.update` (it was
+ * super-admin only before Permissions), so these rules are skipped and the
+ * owner decides every role change.
  */
 
 export type RoleAssignmentCaller = Pick<MemberPermissions, "featureEnabled" | "isOwner" | "isAdmin" | "has">
