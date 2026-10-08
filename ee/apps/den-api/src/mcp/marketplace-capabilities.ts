@@ -196,6 +196,8 @@ export type MarketplaceCapabilityExecuteResult =
       providerCallAttempted: false
       missing: Array<{ capabilityName: string; scriptPath: string }>
       receiptId?: string | null
+      connectionStatus?: Record<string, unknown>
+      connectionCard?: Record<string, unknown>
     }
   | {
       ok: false
@@ -1584,6 +1586,11 @@ export async function executeMarketplaceCapability(input: {
   liveRuntime?: { timeZone?: string }
   /** MCP callers record the run as workflow.execute; route and Automation callers omit it. */
   auditWorkflowExecution?: MarketplaceWorkflowAudit
+  /** Names the connection to fix when a required capability is missing. */
+  describeUnavailable?: (missing: readonly { capabilityName: string }[]) => Promise<{
+    connectionStatus: Record<string, unknown>
+    connectionCard: Record<string, unknown>
+  } | null>
 }): Promise<MarketplaceCapabilityExecuteResult> {
   const liveRuntime = input.liveRuntime === undefined ? undefined : artifactRunInputSchema.safeParse(input.liveRuntime)
   if (liveRuntime && (!liveRuntime.success || input.body !== undefined)) {
@@ -1692,7 +1699,10 @@ export async function executeMarketplaceCapability(input: {
         receiptId: execution.receiptId ?? null,
       }
     }
-    if (!execution.ok && execution.error === "capability_unavailable") return execution
+    if (!execution.ok && execution.error === "capability_unavailable") {
+      const connection = await input.describeUnavailable?.(execution.missing).catch(() => null)
+      return connection ? { ...execution, ...connection } : execution
+    }
     if (!execution.ok && execution.error === "script_failed") {
       return {
         ok: false,
