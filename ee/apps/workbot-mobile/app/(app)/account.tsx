@@ -43,7 +43,8 @@ export default function Account() {
 }
 
 const styles = StyleSheet.create({
-  sheet: { flex: 1, backgroundColor: color.surface, padding: 20, gap: 20 },
+  // Sized by its content: the sheet fits it.
+  sheet: { backgroundColor: color.surface, paddingHorizontal: 20, paddingTop: 28, paddingBottom: 12, gap: 20 },
   who: { flexDirection: "row", alignItems: "center", gap: 14 },
   avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.ink, alignItems: "center", justifyContent: "center" },
   avatarText: { color: color.onInk, fontSize: 14, fontWeight: "600" },

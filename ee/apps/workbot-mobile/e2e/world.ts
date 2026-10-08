@@ -99,16 +99,23 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (!record(raw) || !Array.isArray(raw.messages)) throw new Error("Invalid model request");
       const messages = raw.messages.filter(record);
       const parts = (message: Record<string, unknown> | undefined) => (message && Array.isArray(message.content) ? message.content.filter(record) : []);
-      // The person's own message: the newest user message with words in it and no tool results.
-      const person = messages.findLast((message) => message.role === "user" && parts(message).some((part) => part.type === "text") && !parts(message).some((part) => part.type === "tool_result"));
-      const prompt = parts(person).filter((part) => part.type === "text").map((part) => String(part.text)).join("\n");
-      // Each step follows from the one before it: the last tool the model called, if the request ends with its result.
+      // Words in a user message, without the runner's note on background tasks. Adjacent user messages arrive merged,
+      // so new words can share a message with the previous turn's last tool result.
+      const words = (message: Record<string, unknown> | undefined) => parts(message).filter((part) => part.type === "text").map((part) => String(part.text)).filter((value) => !value.startsWith("Background task state"));
+      // What was said last: the person's message, or a finished background task's report.
+      const person = messages.findLast((message) => message.role === "user" && words(message).length > 0);
+      const prompt = words(person).join("\n");
+      // A step goes on from the tool the model just called when the newest message holds only that tool's result.
       const last = messages.at(-1);
-      const afterTool = last?.role === "user" && parts(last).some((part) => part.type === "tool_result");
+      const afterTool = last?.role === "user" && parts(last).some((part) => part.type === "tool_result") && words(last).length === 0;
       const lastTool = afterTool ? parts(messages.at(-2)).filter((part) => part.type === "tool_use").map((part) => String(part.name)).at(-1) ?? null : null;
       const asked = prompt.toLowerCase();
+      const report = prompt.includes('[Background task "') ? prompt : null;
       let blocks: Block[];
-      if (prompt.includes("just opened Workbot for the first time")) blocks = [text(HELLO)];
+      // Workbot names a side chat from its first exchange.
+      if (prompt.startsWith("Their message:")) blocks = [text(/two plus two/i.test(prompt) ? "Quick math" : /brief|draft/i.test(prompt) ? "Launch brief" : "A quick question")];
+      else if (prompt.includes("just opened Workbot for the first time")) blocks = [text(HELLO)];
+      else if (report) blocks = [text(report.includes("stopped before finishing") ? "I couldn't finish the brief." : "Your launch brief is ready. It's in your files: open launch-brief.md.")];
       else if (prompt.includes(CHILD)) {
         // The background job: real work on the runner, long enough to keep chatting meanwhile.
         if (!lastTool) {
@@ -117,8 +124,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           blocks = [tool("write_file", { path: "launch-brief.md", content: "# Launch brief\n\n- **What**: Acme Robotics' spring launch\n- **When**: Tuesday, 9:00 AM\n- **Who**: design, sales and support\n\nThe launch is ready for a team review.\n" })];
         } else if (lastTool === "write_file") blocks = [tool("save_file", { path: "launch-brief.md" })];
         else blocks = [text("The launch brief is saved and ready to open.")];
-      } else if (prompt.startsWith("[Background task")) {
-        blocks = [text(prompt.includes("stopped before finishing") ? "I couldn't finish the brief." : "Your launch brief is ready. It's in your files: open launch-brief.md.")];
       } else if (/brief|draft/.test(asked)) {
         blocks = lastTool === "start_task" ? [text("On it: I'm drafting the launch brief. Keep chatting; I'll come back with it.")] : [tool("start_task", { title: JOB_TITLE, brief: `${CHILD}: draft and save launch-brief.md.` })];
       } else if (/thank/.test(asked)) blocks = [tool("react", { emoji: "❤️", final: true })];

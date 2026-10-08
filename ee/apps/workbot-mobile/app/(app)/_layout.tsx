@@ -59,7 +59,7 @@ export default function SignedInLayout() {
         <Stack.Screen name="calendar" options={{ animation: "fade" }} />
         <Stack.Screen name="chats" options={{ presentation: "formSheet", sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }} />
         <Stack.Screen name="files" options={{ presentation: "formSheet", sheetAllowedDetents: [0.75, 1], sheetGrabberVisible: true }} />
-        <Stack.Screen name="account" options={{ presentation: "formSheet", sheetAllowedDetents: [0.5, 0.75], sheetGrabberVisible: true }} />
+        <Stack.Screen name="account" options={{ presentation: "formSheet", sheetAllowedDetents: "fitToContents", sheetGrabberVisible: true, contentStyle: { backgroundColor: color.surface } }} />
         <Stack.Screen name="preview" options={{ presentation: "fullScreenModal" }} />
       </Stack>
     </MeContext.Provider>
