@@ -19,6 +19,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { machineryFiles } from "./contributor-policy.mjs";
 
 export const SCREEN_CONTEXT = "contributor-pr/screen";
 export const AI_SCREEN_CONTEXT = "contributor-pr/ai-screen";
@@ -265,7 +266,7 @@ export function scanRepository({ gitDir, base, head }) {
     git("diff", "--numstat", "-z", "-M", base, head).toString().split("\0")
       .filter((entry) => entry.startsWith("-\t-\t")).map((entry) => entry.slice(4)).filter(Boolean),
   );
-  const result = { files: files.map((file) => file.path), hidden: [], malformed: [], dependencies: [], database: [], binaries: [], images: [], encoded: [], injection: [] };
+  const result = { files: files.map((file) => file.path), machinery: machineryFiles(files.map((file) => ({ filename: file.path, previous_filename: file.previous }))), hidden: [], malformed: [], dependencies: [], database: [], binaries: [], images: [], encoded: [], injection: [] };
 
   for (const file of files) {
     const paths = [file.path, file.previous].filter(Boolean);
@@ -357,6 +358,7 @@ export function parseWardenJsonl(text, expectedSkills) {
 export function screenDecision(scan) {
   const blocked = [];
   const held = [];
+  if (scan.machinery?.length) blocked.push("CI or agent configuration changes; a maintainer must carry them to a same-repository branch");
   if (scan.hidden.length) blocked.push(`${scan.hidden.length} hidden or look-alike character(s)`);
   if (scan.malformed.length) blocked.push(`${scan.malformed.length} malformed file(s)`);
   if (scan.database.length) held.push("database changes");
@@ -410,6 +412,10 @@ export function renderScreenComment({ sha, decision, scan, runUrl }) {
   const lines = [SCREEN_MARKER, `### Contributor screen: ${title}`, "", `Commit \`${sha.slice(0, 10)}\` · [run](${runUrl})`, ""];
   if (decision.verdict === "clean") {
     lines.push("No hidden characters, dependency, database or obfuscation concerns.");
+  }
+  if (scan.machinery?.length) {
+    lines.push("**CI or agent configuration changes can't run through the fork path.** A maintainer must carry these commits to a same-repository branch, preserving authorship:", "");
+    lines.push(...list(scan.machinery.map((path) => ({ path })), where), "");
   }
   if (scan.hidden.length || scan.malformed.length) {
     lines.push("**Hidden or malformed characters.** Remove these and push again; this can't be overridden.", "");

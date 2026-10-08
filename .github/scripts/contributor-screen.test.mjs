@@ -170,6 +170,16 @@ test('rendered text never carries secrets, mentions, markup or hidden characters
   assert.doesNotMatch(out, /`/);
 });
 
+test('free screen blocks machinery and explains the maintainer carry instead of offering /test', () => {
+  const scan = { ...emptyScan, machinery: ['.github/workflows/ci-tests.yml'] };
+  const decision = screenDecision(scan);
+  assert.equal(decision.state, 'failure');
+  const body = renderScreenComment({ sha: 'a'.repeat(40), decision, scan, runUrl: 'https://example.test/run' });
+  assert.match(body, /same-repository branch/);
+  assert.match(body, /ci-tests\.yml/);
+  assert.doesNotMatch(body, /then comments `\/test`/);
+});
+
 test('a clean or held free screen says nothing else runs until /test', () => {
   const body = renderScreenComment({ sha: 'a'.repeat(40), decision: screenDecision(emptyScan), scan: emptyScan, runUrl: 'https://example.test/run' });
   assert.match(body, /Nothing else runs yet/);
@@ -194,8 +204,12 @@ test('scans a real git range: only added lines, from git objects', () => {
   writeFileSync(join(dir, 'old.ts'), `// existing ${cp(0x200b)} is not new\nexport const a = 1;\n`);
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { zod: '^3.0.0' } }));
   git('add', '.');
+  mkdirSync(join(dir, '.github/workflows'), { recursive: true });
+  writeFileSync(join(dir, '.github/workflows/sample.yml'), 'name: Sample\non: push\njobs: {}\n');
+  git('add', '.');
   git('commit', '-q', '-m', 'base');
   const base = git('rev-parse', 'HEAD');
+  git('mv', '.github/workflows/sample.yml', 'renamed.txt');
   writeFileSync(join(dir, 'old.ts'), `// existing ${cp(0x200b)} is not new\nexport const a = 1;\nexport const b = "x${cp(0x202e)}y";\n`);
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { zod: '^3.0.0', 'left-padd': '1.0.0' } }));
   mkdirSync(join(dir, 'ee/packages/den-db/drizzle'), { recursive: true });
@@ -208,6 +222,7 @@ test('scans a real git range: only added lines, from git objects', () => {
   const head = git('rev-parse', 'HEAD');
 
   const scan = scanRepository({ gitDir: join(dir, '.git'), base, head });
+  assert.deepEqual(scan.machinery, ['.github/workflows/sample.yml']);
   assert.deepEqual(scan.hidden.map((hit) => `${hit.path}:${hit.line}:${hit.codePoint}`), ['old.ts:3:U+202E']);
   assert.deepEqual(scan.database, ['ee/packages/den-db/drizzle/0200_x.sql']);
   assert.deepEqual(scan.binaries, ['blob.bin']);

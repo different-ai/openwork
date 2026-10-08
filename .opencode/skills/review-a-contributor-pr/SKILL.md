@@ -13,15 +13,16 @@ means accepting the DCO, or the Individual or Corporate CLA for `ee/`
 (CONTRIBUTING.md). There is no `Signed-off-by` requirement, no CLA signature
 and no label to enforce.
 
-`contributor-pr-required` (commit status) is the CI gate for contributor PRs.
-It is posted as the diff-warden App from the `warden-clearance` environment,
-and the dev ruleset only accepts it from that App, so a workflow on a branch
-cannot fake it. Everything below runs from dev and never executes PR code:
+The contributor flow is fork-only, including fork bots. Same-repository
+PRs use normal CI and review, with no contributor merge status or `/test`.
+The required `openwork-tests-required` check and trusted maintainer review
+are the merge safeguards; the fork screen and Warden statuses are advisory.
+Everything below runs from dev and never executes PR code:
 
-- `contributor-pr.yml` (`pull_request_target`, every push): passes the
-  status for same-repository and bot PRs, fails it for forks that touch CI or
-  agent configuration, and leaves other forks pending until `/test`.
-- Then, for forks, the free screen (`contributor-warden.yml`, stage `scan`,
+- `contributor-pr.yml` (`pull_request_target`, every fork push): runs the
+  free screen and blocks CI or agent configuration changes. A maintainer
+  carries those changes to a same-repository branch instead.
+- The free screen (`contributor-warden.yml`, stage `scan`,
   no model, no secrets) sets `contributor-pr/screen` and keeps one PR
   comment. Nothing that costs money runs before your `/test`:
   - **blocked** (red): hidden or look-alike characters, invalid UTF-8. The
@@ -37,18 +38,25 @@ cannot fake it. Everything below runs from dev and never executes PR code:
   have write access, the head hasn't moved, and the screen isn't blocked,
   then runs the AI screen (Warden's `contributor-screen` skill, once per
   commit, `contributor-pr/ai-screen`).
-  - **AI screen clear:** it approves the fork's waiting test runs, runs the
-    Warden security review (`contributor-pr/warden`), and passes
-    `contributor-pr-required` once Warden is clear and
-    `openwork-tests-required` (ci-tests.yml, no secrets) succeeds.
+  - **AI screen clear:** it approves only this PR's waiting test runs on
+    the reviewed SHA and runs the Warden security review
+    (`contributor-pr/warden`). Check Warden is clear and
+    `openwork-tests-required` (ci-tests.yml, no secrets) succeeds before
+    approving the PR; no combined contributor status is posted.
   - **AI screen flagged or incomplete:** nothing else runs. Read the
     findings in its PR comment; comment `/test` again to proceed anyway.
   - A new push needs a new review and a new `/test`.
 - Fork tests run without secrets. The Freestyle, live and Windows proofs
   still need the carry in section 6.
 
-The status gates the contributor, not the reviewer: this checklist is still
-required.
+Repository Actions settings must require approval for **all outside
+collaborators**, not only first-time contributors. Never approve fork runs
+manually as a shortcut around `/test`. Required CI, CODEOWNERS and approval
+of the latest push remain enabled. This checklist is the human merge gate;
+failed or missing Warden results are not automatically blocked by the ruleset.
+See [deployment and security caveats](../../../docs/fork-contributor-ci.md).
+Fork diffs with 300 or more changed files need a maintainer carry (GitHub's
+immutable comparison file list is capped).
 
 Every item must be answered explicitly in the review comment. `Blocked` on any
 item means no approval and no merge.
@@ -199,11 +207,12 @@ Post one comment on the PR with the seven items above, each marked `OK`,
 the head changes after the comment, the review is stale; rerun sections 1,
 3, 4, and 5 before approving.
 
-If nothing is Blocked, bind the commit you read so `contributor-pr-required`
-can pass:
+If the pre-test review is clear, authorize tests on the commit you actually
+read (`HEAD` recorded in section 3), not a fresh lookup of a possibly newer
+head. Only approve the PR after its Warden results and required CI are clear:
 
 ```bash
-gh pr comment $N -R $R --body "/test $(gh pr view $N -R $R --json headRefOid --jq .headRefOid)"
+gh pr comment $N -R $R --body "/test $HEAD"
 ```
 
 Naming the SHA you read is the strict form; a plain `/test` comment binds the

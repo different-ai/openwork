@@ -1,89 +1,32 @@
-name: Contributor PR gate
+name: Fork contributor screen
 
-# Every PR: sets the `contributor-pr-required` status. Same-repository PRs
-# pass. The status is posted as the diff-warden App from the warden-clearance
-# environment (dev and v* only); the dev ruleset requires that source, so no
-# workflow on another branch can post it. No sign-off is required: as at GitLab, contributing means accepting
-# the DCO or the ee/ CLA (CONTRIBUTING.md).
-#
-# Fork PRs, on every push: the free screen (contributor-warden.yml, stage
-# scan) checks for hidden or malformed characters, dependency changes,
-# database changes, binaries, encoded code and text aimed at an AI reviewer,
-# and comments what it found. It uses no model and no secrets.
-#
-# Nothing that costs money runs here. The AI screen, the fork's tests and the
-# Warden security review start only after a maintainer reviews the PR and
-# comments `/test` (contributor-pr-test.yml), so opening PRs can't run up a
-# bill. The repository also requires approval for all external
-# contributors' workflow runs, so a fork's tests never start on their own.
-#
-# pull_request_target runs this file and its scripts from dev, never from the
-# PR, so a fork cannot rewrite the gate. Never check out or run PR code here.
+# Forks only, including fork bots: free deterministic screening on every push.
+# pull_request_target loads trusted default-branch code; never execute PR code.
+# No model, secrets, App token or universal required status is used here.
+# Paid work starts only after maintainer /test authorization. Repository Actions
+# settings must require approval for ALL outside collaborators, not first-timers.
 on:
   pull_request_target:
     branches: [dev]
     types: [opened, synchronize, reopened]
-  # Re-check PRs that were opened before this gate existed, or any one PR.
-  # Only people with write access can run it. It sets statuses and runs the
-  # free screen on fork PRs.
   workflow_dispatch:
     inputs:
       pr:
-        description: PR number to re-check (leave empty for every open PR to dev)
+        description: Fork PR to screen (leave empty for all open forks to dev)
         required: false
         type: string
 
 permissions: {}
 
 concurrency:
-  group: contributor-pr-gate-${{ github.event.pull_request.number || 'backfill' }}
+  group: contributor-pr-screen-${{ github.event.pull_request.number || 'backfill' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:
-  gate:
-    if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
-    environment: warden-clearance
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      fork: ${{ steps.gate.outputs.fork }}
-    steps:
-      # The latest dev (github.sha for pull_request_target), the same commit
-      # this workflow file came from. Not the PR's base commit, which can
-      # predate the script.
-      - name: Checkout trusted gate script from dev
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-          sparse-checkout: .github/scripts
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24
-      # contributor-pr-required must come from the diff-warden App: the dev
-      # ruleset requires that source, and its key is only in this environment.
-      - name: Mint the status token
-        id: status-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.WARDEN_APP_ID }}
-          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
-          permission-statuses: write
-      - name: Set contributor-pr-required
-        id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STATUS_TOKEN: ${{ steps.status-token.outputs.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: node .github/scripts/contributor-pr.mjs gate
-
-  # No secrets are passed: this stage has no model.
   screen:
-    needs: gate
-    if: needs.gate.outputs.fork == 'true'
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name != github.repository
     permissions:
       contents: read
       issues: write
@@ -95,10 +38,6 @@ jobs:
       head_sha: ${{ github.event.pull_request.head.sha }}
       stage: scan
 
-  # A manual run uses the workflow file of the branch it is started from.
-  # Only run from dev, and load the script from dev regardless, so a branch
-  # with a modified script can't use this job's status token to post
-  # contributor-pr-required.
   refuse-other-branches:
     if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'
     runs-on: ubuntu-latest
@@ -109,21 +48,20 @@ jobs:
         env:
           REF: ${{ github.ref }}
         run: |
-          echo "::error::Run the Contributor PR gate from dev, not $REF."
+          echo "::error::Run the Fork contributor screen from dev, not $REF."
           exit 1
 
   backfill:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
-    environment: warden-clearance
-    timeout-minutes: 120
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
       forks: ${{ steps.backfill.outputs.forks }}
     steps:
-      - name: Checkout trusted gate script from dev
+      - name: Checkout trusted script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: refs/heads/dev
@@ -132,20 +70,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
-      # contributor-pr-required must come from the diff-warden App: the dev
-      # ruleset requires that source, and its key is only in this environment.
-      - name: Mint the status token
-        id: status-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.WARDEN_APP_ID }}
-          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
-          permission-statuses: write
-      - name: Set contributor-pr-required on open PRs
+      - name: List open forks to screen
         id: backfill
         env:
           GH_TOKEN: ${{ github.token }}
-          STATUS_TOKEN: ${{ steps.status-token.outputs.token }}
           PR_NUMBER: ${{ inputs.pr }}
         run: node .github/scripts/contributor-pr.mjs backfill
 

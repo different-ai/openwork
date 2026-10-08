@@ -50,10 +50,34 @@ _This notice should stay as the first item in this file._
    comments `/test`. That marks the commit they reviewed and starts an AI
    screen for hidden behavior and supply-chain risk.
 3. **Tests and security review.** If the AI screen is clear (or the
-   maintainer decides to proceed), the tests and the Warden security review
-   run, without access to any secrets. `contributor-pr-required` passes once
-   they pass on the reviewed commit. If you push again, the automatic checks
-   run again and a maintainer reviews the new commits before `/test`.
+   maintainer comments `/test` again after reading its findings), the
+   repository approves the waiting test runs for that exact commit. Fork
+   tests have no secrets. Warden reads the diff in a sandbox with no secrets;
+   a separate, restricted proxy uses a spend-limited model key. Before
+   approving the PR, a maintainer checks the screen and Warden results on
+   the current head and the required `openwork-tests-required` CI check.
+   Screen/Warden results are advisory, not a separate required merge status.
+   If you push again, screening runs again and a maintainer reviews the new
+   commits before `/test`. Prefer `/test <full-head-sha>` to name the commit
+   you actually reviewed (explicit SHAs must be all 40 characters); a plain
+   `/test` is refused if its head was pushed
+   after the comment or its push time cannot be established.
+
+This contributor flow is **fork-only**, including forks opened by bots.
+Same-repository PRs use normal CI and review; they do not need `/test` or a
+contributor merge status. The repository must require workflow approval for
+**all outside collaborators**, not just first-time contributors. Maintainers
+must not bypass the reviewed-head check by approving fork workflows directly.
+Required CI and approval of the latest push still apply; keep the
+CODEOWNERS-required rule enabled and verify that owners cover sensitive
+paths (the setting alone does not create coverage). Trusted repository
+members/collaborators can be exempt from GitHub's fork-run approval setting;
+see the administrator caveats below.
+Large fork diffs (300 or more changed files) must be carried to a
+same-repository branch because GitHub's immutable comparison API truncates
+file lists at that limit.
+
+For repository administrators: [fork gate deployment and ruleset migration](./docs/fork-contributor-ci.md).
 
 Changes to CI or agent configuration (`.github/`, `.opencode/`,
 `opencode.json`, `warden.toml`, `.warden/`, agent skills) can't be tested
