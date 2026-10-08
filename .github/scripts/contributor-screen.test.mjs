@@ -35,6 +35,9 @@ test('flags identifiers that mix Latin with look-alike letters, not translations
   assert.equal(mixed[0].name, 'MIXED-SCRIPT IDENTIFIER (look-alike letters)');
   assert.deepEqual(hiddenCharacters('title: "Привет мир"'), []);
   assert.deepEqual(hiddenCharacters('label: "こんにちは"'), []);
+  // Escapes next to a translated word are not look-alike identifiers.
+  assert.deepEqual(hiddenCharacters('hint: "Готово.\\n\\nЛюди и \\tЧто \\u0041Но",'), []);
+  assert.equal(hiddenCharacters(`const \\nok = 1; const p${cp(0x0430)}ss = 2;`).length, 1);
 });
 
 test('detects invalid UTF-8', () => {

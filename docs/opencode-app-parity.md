@@ -30,6 +30,14 @@ The signed-in first-send regression is covered by `LIVE-ORG`. Native v2 create a
 
 Cloud skills now follow the same v1 path on both engines: the shared Connect metadata catalog has a 30-second in-memory cache, and the model retrieves the selected skill's current instructions through Connect on demand. V2 no longer downloads every organization skill or writes their bodies into a native skill directory before sending a message. Existing generated Cloud copies are removed when the v2 runtime starts. No Den deployment is required. This preserves v1 discovery refresh timing; instant metadata updates are future work. `LIVE-CLOUD` uses real Den and real inference to check discovery, use, edited instructions, and removal in one conversation on both engines.
 
+### Implicit Cloud skill discovery (ENG-691)
+
+`implicitCloudSkills` is a default-off organization rollout on Cloud and self-hosted deployments. When enabled in Den, the discovery index opts its entries into the v2 native skill registry. The existing context plugin refreshes that metadata in the background; setup and prompt admission never wait for the index. A cold first turn may run before the index arrives. Later engine steps see the updated native skill guidance without restarting the conversation.
+
+Only names, descriptions and retrieval capabilities are held in memory. No skill bodies, credentials or authorization decisions are persisted by this feature. Native entries contain a retrieval note, not copied instructions: the model must load the current body through Connect `get_skill`, which keeps Den's per-request access checks. Removal therefore denies the next body fetch even if old discovery metadata or an earlier body remains in context. Disabling the rollout removes native entries on the next metadata refresh and leaves the existing Connect path intact. V1 is unchanged.
+
+The inline inventory is bounded to 150 skills and 24,000 metadata characters (descriptions at most 200 characters); larger catalogs remain discoverable through Connect. `SKILL-CLOUD-DISCOVERY` in `opencode-v2-skill-jit.e2e.test.ts` exercises a held first index read, rollout-off behavior, unnamed skill use and removal with stale metadata against the pinned v2 engine and identity-scoped witnesses. This is integration evidence, not a live-model trigger-rate benchmark.
+
 The existing free starter sometimes rejects the pinned v2 beta with HTTP 426. Compatibility with that service is outside the v2 migration gate. OpenWork will add and test its own free models before enabling v2 for GA. Paid OpenAI/Gateway success is separate evidence from signed-out free inference.
 
 ## Verification recorded on 2026-09-23

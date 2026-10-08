@@ -145,6 +145,7 @@ export type AdminFeature = {
   key:
     | "installLinks"
     | "mcpConnections"
+    | "implicitCloudSkills"
     | "dashboardActivity"
     | "modelsAnalytics"
     | "auditLogs"
@@ -199,6 +200,7 @@ export type AdminOrganizationsPageResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -234,6 +236,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      implicitCloudSkills: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -433,6 +444,7 @@ export type AdminOverviewResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -468,6 +480,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      implicitCloudSkills: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1717,6 +1738,7 @@ export type CapabilityDisabledError = {
   capability:
     | "installLinks"
     | "mcpConnections"
+    | "implicitCloudSkills"
     | "dashboardActivity"
     | "modelsAnalytics"
     | "auditLogs"
@@ -5609,6 +5631,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -5644,6 +5667,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      implicitCloudSkills: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5831,6 +5863,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -5866,6 +5899,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      implicitCloudSkills: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

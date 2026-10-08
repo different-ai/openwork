@@ -238,7 +238,7 @@ async function mcpRequestInfo(request: Request): Promise<{ method: string | null
 export const AGENT_SKILL_INDEX_URI = "skill://index.json"
 export const AGENT_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
 
-export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
+export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[], modelDiscovery = false) {
   return {
     $schema: AGENT_SKILL_INDEX_SCHEMA,
     skills: skills.map((skill) => ({
@@ -246,6 +246,7 @@ export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
       type: "skill-md" as const,
       title: skill.title,
       description: skill.description,
+      modelDiscovery,
       url: skill.location,
       capability: skill.capability,
       ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
@@ -377,6 +378,7 @@ export function registerAgentSkillResources(input: {
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
   marketplaceEnabled?: boolean
+  modelDiscovery?: boolean
 }) {
   input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
     title: "Available Agent Skills",
@@ -386,7 +388,7 @@ export function registerAgentSkillResources(input: {
     contents: [{
       uri: AGENT_SKILL_INDEX_URI,
       mimeType: "application/json",
-      text: JSON.stringify(buildAgentSkillIndex(input.skills)),
+      text: JSON.stringify(buildAgentSkillIndex(input.skills, input.modelDiscovery)),
     }],
   }))
   for (const skill of input.skills) {
@@ -657,6 +659,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       registerAgentSkillResources({
         server,
         skills: await loadRemoteSkills(),
+        modelDiscovery: organizationFeatures.implicitCloudSkills,
         organizationId: principal.organizationId,
         member: memberIdentity,
         marketplaceEnabled: externalMcpConnectionsEnabled,

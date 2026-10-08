@@ -38,6 +38,16 @@
               ],
               "description": "OpenWork Connect: Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. Renders DEN_FEATURE_MCP_CONNECTIONS."
             },
+            "implicitCloudSkills": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Implicit Cloud skills: Agents discover organization skills automatically without waiting for Cloud before starting a task. Renders DEN_FEATURE_IMPLICIT_CLOUD_SKILLS."
+            },
             "dashboardActivity": {
               "enum": [
                 "",
