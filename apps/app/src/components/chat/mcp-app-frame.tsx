@@ -22,7 +22,7 @@ import {
 } from "@/app/lib/openwork-server"
 import { useOptionalMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
-import { McpAppSignInPrompts, useMcpAppSignIn } from "./mcp-app-sign-in"
+import { McpAppSignInPrompts, signInPromptFromToolResult, useMcpAppSignIn } from "./mcp-app-sign-in"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { t } from "@/i18n"
@@ -538,9 +538,11 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
         const toolResult = connectionController
           ? await connectionController.callTool(actions, app, name, args, userInteraction)
           : standardMcpToolResult(await actions.callTool(name, args, userInteraction))
+        // A sign-in the viewer can finish gets the row above the App; any
+        // other connection failure goes to the host's connection card.
         if (!disposed && !failed) {
-          reportToolResultRef.current(toolResult)
-          onAppToolResultRef.current?.(toolResult)
+          if (signInPromptFromToolResult(toolResult)) reportToolResultRef.current(toolResult)
+          else onAppToolResultRef.current?.(toolResult)
         }
         return toolResult
       } catch (cause) {
