@@ -504,6 +504,8 @@ import type {
   ListAutomationRunnersErrors,
   ListAutomationRunnersResponses,
   ListAutomationRunsErrors,
+  ListAutomationRunsInRangeErrors,
+  ListAutomationRunsInRangeResponses,
   ListAutomationRunsResponses,
   ListAutomationsErrors,
   ListAutomationsResponses,
@@ -732,6 +734,10 @@ import type {
   PostV1InferenceProvidersLitellmResponses,
   PostV1InferenceProvidersMigrateFromLlmProviderErrors,
   PostV1InferenceProvidersMigrateFromLlmProviderResponses,
+  PostV1InferenceProvidersOauthBrowserAwsPollErrors,
+  PostV1InferenceProvidersOauthBrowserAwsPollResponses,
+  PostV1InferenceProvidersOauthBrowserAwsStartErrors,
+  PostV1InferenceProvidersOauthBrowserAwsStartResponses,
   PostV1InferenceProvidersOauthBrowserLitellmCheckErrors,
   PostV1InferenceProvidersOauthBrowserLitellmCheckResponses,
   PostV1InferenceProvidersOauthBrowserLitellmKeyErrors,
@@ -2856,6 +2862,44 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * List the caller's Automation runs in a time range
+   *
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Returns runs of every Automation the caller owns whose scheduled time (else start, else creation) falls in [from, to), for calendar views. At most 45 days per request.
+   */
+  public listAutomationRunsInRange<ThrowOnError extends boolean = false>(
+    parameters: {
+      from: number;
+      to: number;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "from" },
+            { in: "query", key: "to" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      ListAutomationRunsInRangeResponses,
+      ListAutomationRunsInRangeErrors,
+      ThrowOnError
+    >({
+      url: "/v1/automation-runs",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
    * Inspect an Automation run receipt and execution thread
    *
    * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
@@ -3106,7 +3150,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List retained audit operations
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Newest operations first, ordered by server first-recorded time then ID. Summary action and resources describe the FIRST event only (at most 256 stored references), not all affected resources. Expand events for complete evidence; X-Audit-Resource-Scope is first_event.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. snapshotAt freezes the page set: events recorded after it are excluded, including later children of an existing operation. Events are ordered by their time-ordered IDs; there is no per-organization sequence. Exports leave out the last few seconds so in-flight writes cannot land behind a page already read. Start a new snapshot to see newer events. This is not a lossless-drain or retention protection guarantee. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the snapshot. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the snapshot. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the snapshot, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-snapshot values. Newest operations first, ordered by server first-recorded time then ID. Summary action and resources describe the FIRST event only (at most 256 stored references), not all affected resources. Expand events for complete evidence; X-Audit-Resource-Scope is first_event.
    */
   public getAuditOperations<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -3154,7 +3198,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List retained operation events
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Events are in ascending tenant sequence order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. snapshotAt freezes the page set: events recorded after it are excluded, including later children of an existing operation. Events are ordered by their time-ordered IDs; there is no per-organization sequence. Exports leave out the last few seconds so in-flight writes cannot land behind a page already read. Start a new snapshot to see newer events. This is not a lossless-drain or retention protection guarantee. Events are in ascending event ID (recording time) order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.
    */
   public getAuditOperationEvents<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3190,7 +3234,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read audit retention usage
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Reads stored policy and tenant counters, plus the oldest retained operation. Capture requires audit entitlement, organization captureOn and the deployment capture flag. A ready organization without a policy is lazily initialized ON, including on this GET, with one system lifecycle event. Temporary defaults: 6,000,000 retained OPERATIONS (not child events), 300-second grouping window, change/security/execution/access/request/lifecycle categories, cloud/delete_oldest for Enterprise or operator/keep_all for explicit self-hosted entitlement. Existing OFF and custom policies are preserved. These are provisional declarations, not enforced caps: no billing, cleanup or deletion is activated. Drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Reads the stored policy and tenant totals, plus the oldest retained operation. Totals are recomputed by a scheduled usage refresh, not on every write; measuredAt is when they were last computed. Capture requires audit entitlement, organization captureOn and the deployment capture flag. A ready organization without a policy is lazily initialized ON, including on this GET, with one system lifecycle event. Temporary defaults: 6,000,000 retained OPERATIONS (not child events), 300-second grouping window, change/security/execution/access/request/lifecycle categories, cloud/delete_oldest for Enterprise or operator/keep_all for explicit self-hosted entitlement. Existing OFF and custom policies are preserved. These are provisional declarations, not enforced caps: no billing, cleanup or deletion is activated. Drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.
    */
   public getAuditUsage<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetAuditUsageResponses, GetAuditUsageErrors, ThrowOnError>({
@@ -3202,7 +3246,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Export one audit snapshot page
    *
-   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values. Exports ALL matching operations' children within the watermark in ascending tenant sequence, not date/ID order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-Sequence stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.
+   * Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made. Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. snapshotAt freezes the page set: events recorded after it are excluded, including later children of an existing operation. Events are ordered by their time-ordered IDs; there is no per-organization sequence. Exports leave out the last few seconds so in-flight writes cannot land behind a page already read. Start a new snapshot to see newer events. This is not a lossless-drain or retention protection guarantee. Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the snapshot. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the snapshot. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the snapshot, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-snapshot values. Exports ALL matching operations' children within the snapshot in ascending event ID (recording time) order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-At stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.
    */
   public getAuditExport<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -6576,9 +6620,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * List the caller's member Google connections
+   * List the caller's member sign-in connections
    *
-   * Requires a signed-in user session and current organization membership, without an administrator gate. Returns independently selectable Google member credential sets with current effective access, credential readiness, verified account email and an opaque completed-authorization revision. Includes retained nonrevoked caller-owned credentials after grant loss or provider disablement for disconnection. Never returns another member's credentials, Google subject, OAuth client details or tokens. Readiness is not a Vertex IAM probe.
+   * Requires a signed-in user session and current organization membership, without an administrator gate. Returns independently selectable member credential sets (Google, AWS IAM Identity Center or Microsoft Entra ID sign-in) with current effective access, credential readiness, the signed-in account name and an opaque completed-authorization revision. Includes retained nonrevoked caller-owned credentials after grant loss or provider disablement for disconnection. Never returns another member's credentials, Google subject, OAuth client details or tokens. Readiness is not a Vertex IAM probe.
    */
   public getV1InferenceProvidersMemberConnections<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
@@ -6634,7 +6678,14 @@ export class DenClient extends HeyApiClient {
       status?: "active" | "disabled";
       credentialMode?: "org" | "member";
       credential?: {
-        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        kind:
+          | "api_key"
+          | "api_key_map"
+          | "aws_keys"
+          | "gcp_service_account"
+          | "oauth_google"
+          | "oauth_azure"
+          | "aws_sso";
         secret: string;
       };
       apiKeys?: {
@@ -6642,6 +6693,13 @@ export class DenClient extends HeyApiClient {
       };
       oauthClientId?: string;
       oauthClientSecret?: string;
+      oauthTenantId?: string;
+      awsSso?: {
+        startUrl: string;
+        region: string;
+        accountId: string;
+        roleName: string;
+      } | null;
       allMembers?: boolean;
       memberIds?: Array<string>;
       teamIds?: Array<string>;
@@ -6664,6 +6722,8 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "apiKeys" },
             { in: "body", key: "oauthClientId" },
             { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "oauthTenantId" },
+            { in: "body", key: "awsSso" },
             { in: "body", key: "allMembers" },
             { in: "body", key: "memberIds" },
             { in: "body", key: "teamIds" },
@@ -6757,7 +6817,14 @@ export class DenClient extends HeyApiClient {
       status?: "active" | "disabled";
       credentialMode?: "org" | "member";
       credential?: {
-        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        kind:
+          | "api_key"
+          | "api_key_map"
+          | "aws_keys"
+          | "gcp_service_account"
+          | "oauth_google"
+          | "oauth_azure"
+          | "aws_sso";
         secret: string;
       };
       apiKeys?: {
@@ -6765,6 +6832,13 @@ export class DenClient extends HeyApiClient {
       };
       oauthClientId?: string;
       oauthClientSecret?: string;
+      oauthTenantId?: string;
+      awsSso?: {
+        startUrl: string;
+        region: string;
+        accountId: string;
+        roleName: string;
+      } | null;
       allMembers?: boolean;
       memberIds?: Array<string>;
       teamIds?: Array<string>;
@@ -6788,6 +6862,8 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "apiKeys" },
             { in: "body", key: "oauthClientId" },
             { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "oauthTenantId" },
+            { in: "body", key: "awsSso" },
             { in: "body", key: "allMembers" },
             { in: "body", key: "memberIds" },
             { in: "body", key: "teamIds" },
@@ -7032,7 +7108,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Create gateway credential set
    *
-   * Creates an organization credential set with a supported shared credential, or a member set with a Google OAuth client for each member's own sign-in. Returns configuration status without secrets; access grants are created separately. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.
+   * Creates an organization credential set with a supported shared credential, or a member set where each member signs in with their own account: a Google OAuth client (Vertex), an Entra ID tenant and app registration (Microsoft Foundry) or IAM Identity Center settings (Amazon Bedrock). Returns configuration status without secrets; access grants are created separately. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public postV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7040,7 +7116,14 @@ export class DenClient extends HeyApiClient {
       name: string;
       credentialMode: "org" | "member";
       credential?: {
-        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        kind:
+          | "api_key"
+          | "api_key_map"
+          | "aws_keys"
+          | "gcp_service_account"
+          | "oauth_google"
+          | "oauth_azure"
+          | "aws_sso";
         secret: string;
       };
       apiKeys?: {
@@ -7048,6 +7131,13 @@ export class DenClient extends HeyApiClient {
       };
       oauthClientId?: string;
       oauthClientSecret?: string;
+      oauthTenantId?: string;
+      awsSso?: {
+        startUrl: string;
+        region: string;
+        accountId: string;
+        roleName: string;
+      } | null;
       status?: "active" | "disabled";
     },
     options?: Options<never, ThrowOnError>,
@@ -7064,6 +7154,8 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "apiKeys" },
             { in: "body", key: "oauthClientId" },
             { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "oauthTenantId" },
+            { in: "body", key: "awsSso" },
             { in: "body", key: "status" },
           ],
         },
@@ -7135,7 +7227,14 @@ export class DenClient extends HeyApiClient {
       name?: string;
       credentialMode?: "org" | "member";
       credential?: {
-        kind: "api_key" | "api_key_map" | "aws_keys" | "gcp_service_account" | "oauth_google" | "oauth_azure";
+        kind:
+          | "api_key"
+          | "api_key_map"
+          | "aws_keys"
+          | "gcp_service_account"
+          | "oauth_google"
+          | "oauth_azure"
+          | "aws_sso";
         secret: string;
       };
       apiKeys?: {
@@ -7143,6 +7242,13 @@ export class DenClient extends HeyApiClient {
       };
       oauthClientId?: string;
       oauthClientSecret?: string;
+      oauthTenantId?: string;
+      awsSso?: {
+        startUrl: string;
+        region: string;
+        accountId: string;
+        roleName: string;
+      } | null;
       status?: "active" | "disabled";
     },
     options?: Options<never, ThrowOnError>,
@@ -7160,6 +7266,8 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "apiKeys" },
             { in: "body", key: "oauthClientId" },
             { in: "body", key: "oauthClientSecret" },
+            { in: "body", key: "oauthTenantId" },
+            { in: "body", key: "awsSso" },
             { in: "body", key: "status" },
           ],
         },
@@ -7395,9 +7503,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Begin Google sign-in for a member inference credential
+   * Begin sign-in for a member inference credential
    *
-   * Requires a user session and granted member credential set. Returns { authUrl } for Accept: application/json, otherwise redirects to the Den web /gateway/connect bridge. The ten-minute entry handle binds the initiating user, organization, provider, set, client configuration and allowlisted redirectTo. It is not authentication and cannot be used at the Google callback. The bridge must establish a matching signed-in browser session before browser-start creates Google state and PKCE.
+   * Starts a member's own Google, Microsoft or AWS sign-in (or LiteLLM key connection) for a granted member credential set. Requires a user session. Returns { authUrl } for Accept: application/json, otherwise redirects to the Den web /gateway/connect bridge. The ten-minute entry handle binds the initiating user, organization, provider, set, client configuration and allowlisted redirectTo. It is not authentication and cannot be used at the Google callback. The bridge must establish a matching signed-in browser session before browser-start creates Google state and PKCE.
    */
   public getV1InferenceProvidersByInferenceProviderIdOauthStart<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7431,7 +7539,7 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Check browser readiness for member Google sign-in
+   * Check browser readiness for member sign-in
    *
    * Read-only check of a ten-minute entry handle and the live signed OpenWork browser cookie, never a bearer substitute. Returns sign_in_required without a live cookie, account_mismatch for another signed-in user without revealing identities, or ready only after validating the original member, provider, credential set, OAuth client configuration and current grants. Does not consume or rotate the entry, create Google state, exchange tokens or revoke credentials. Browser-start and callback independently repeat authorization checks.
    */
@@ -7454,9 +7562,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Continue member Google sign-in in a signed-in browser
+   * Continue member Google or Microsoft sign-in in a signed-in browser
    *
-   * Consumes a ten-minute entry handle only with a live signed Den cookie for the initiating user. Rechecks the original member, provider, credential set and OAuth client configuration, independent of the browser's active organization. Returns { authUrl } for JSON clients or redirects to Google. Bearer authentication alone is not accepted.
+   * Consumes a ten-minute entry handle only with a live signed Den cookie for the initiating user. Rechecks the original member, provider, credential set and sign-in configuration, independent of the browser's active organization. Returns { authUrl } for JSON clients or redirects to Google or Microsoft. Bearer authentication alone is not accepted. AWS sign-in uses browser-aws-start instead.
    */
   public getV1InferenceProvidersOauthBrowserStart<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7477,9 +7585,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Google OAuth callback for a member inference credential
+   * Google or Microsoft OAuth callback for a member inference credential
    *
-   * Browser callback with no bearer-token or API-key authentication. The handler requires a signed Den session cookie backed by an unexpired live session for the same user who started Connect; OAuth state alone is not browser authentication. Validates single-use, unexpired state, rechecks current membership and active provider/group/set access before and after the PKCE exchange, and stores only that member's credential. Returns HTML on success or failure when no validated client redirect applies; otherwise redirects to the validated destination, with an error parameter on failure. Invalid query parameters return a JSON validation error.
+   * Browser callback with no bearer-token or API-key authentication. The handler requires a signed Den session cookie backed by an unexpired live session for the same user who started Connect; OAuth state alone is not browser authentication. Validates single-use, unexpired state, rechecks current membership and active provider/group/set access before and after the PKCE exchange, verifies the ID token, and stores only that member's credential. Returns HTML on success or failure when no validated client redirect applies; otherwise redirects to the validated destination, with an error parameter on failure. Invalid query parameters return a JSON validation error.
    */
   public getV1InferenceProvidersOauthCallback<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -7513,7 +7621,63 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Disconnect the caller's Google credential for an inference provider
+   * Start member AWS sign-in from a signed-in browser
+   *
+   * For Amazon Bedrock member credential sets. Consumes the ten-minute entry handle from oauth/start, with the signed-in browser session of the same user, and starts an IAM Identity Center device sign-in against the set's own Identity Center instance. Returns AWS's approval page and code to show the person, and a new attempt handle for browser-aws-poll. Bearer authentication alone is not accepted.
+   */
+  public postV1InferenceProvidersOauthBrowserAwsStart<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "attempt" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersOauthBrowserAwsStartResponses,
+      PostV1InferenceProvidersOauthBrowserAwsStartErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-aws-start",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Check a member AWS sign-in from a signed-in browser
+   *
+   * Polls the IAM Identity Center device sign-in started by browser-aws-start, at most once per AWS polling interval. pending: the person has not approved yet; retry after retryAfter seconds. connected: OpenWork checked that the sign-in gets credentials for the set's AWS account and permission set, and stored them as the member's own credential; the handle is consumed. Bearer authentication alone is not accepted.
+   */
+  public postV1InferenceProvidersOauthBrowserAwsPoll<ThrowOnError extends boolean = false>(
+    parameters: {
+      attempt: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "attempt" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceProvidersOauthBrowserAwsPollResponses,
+      PostV1InferenceProvidersOauthBrowserAwsPollErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference-providers/oauth/browser-aws-poll",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Disconnect the caller's member sign-in for an inference provider
    *
    * Immediately revokes and erases the caller's local credential and cancels pending sign-ins, even after inference grant loss or provider disablement. Requires current organization membership, not inference access. Specify credentialSetId when multiple sets exist. Google revocation is best effort with sanitized outcome telemetry and no retained retry tokens; revoking a Google grant can affect other connections using that grant. Returns an empty 204.
    */
@@ -11813,7 +11977,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get resolved plugin
    *
-   * Lists active plugin memberships with the current config object projection for each item.
+   * Lists active plugin memberships with the current config object projection for each item. Not recorded in organization audit logs: clients call it once per plugin on every load and sync, so it is excluded from audit capture as a high-volume read.
    */
   public getV1PluginsByPluginIdResolved<ThrowOnError extends boolean = false>(
     parameters: {

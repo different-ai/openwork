@@ -16,6 +16,7 @@ import type {
   AutomationExecutionTargetList,
   AutomationList,
   AutomationRun,
+  AutomationRunRange,
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
   CreateAutomation,
@@ -53,6 +54,16 @@ import { getOpenworkGatewayOrigin, readOpenworkGatewayDenBaseUrl } from "./gatew
 import { clearDesktopSignInIntent, clearOrgSelectionPending } from "./den-sign-in-intent";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
 import { isDesktopRuntime } from "./runtime-env";
+import {
+  calendarRangeSearch,
+  denGoogleCalendarEventsResponseSchema,
+  denMicrosoftCalendarEventsResponseSchema,
+  DEN_GOOGLE_CALENDAR_EVENTS_PATH,
+  DEN_MICROSOFT_CALENDAR_EVENTS_PATH,
+  type DenCalendarRangeQuery,
+  type DenGoogleCalendarEvent,
+  type DenMicrosoftCalendarEvent,
+} from "@openwork/calendar";
 import type { ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,
@@ -3315,6 +3326,55 @@ export function createDenClient(options: {
         { method: "POST", token, organizationId: orgId, body: {}, automationModelAttentionCapable: true },
       );
       return payload.run;
+    },
+
+    /**
+     * Runs of every Automation the caller owns placed in [from, to) (epoch ms),
+     * one page at a time. A Den that predates the route answers 404.
+     */
+    async listAutomationRunsInRange(
+      orgId: string,
+      options: { from: number; to: number; cursor?: string; limit?: number },
+    ): Promise<AutomationRunRange> {
+      const params = new URLSearchParams({ from: String(options.from), to: String(options.to) });
+      if (options.cursor) params.set("cursor", options.cursor);
+      if (options.limit) params.set("limit", String(options.limit));
+      return requestJson<AutomationRunRange>(
+        baseUrls,
+        `/v1/automation-runs?${params.toString()}`,
+        { method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true },
+      );
+    },
+
+    /** Effective feature switches for the active organization (`GET /v1/org` `features`); missing keys are off. */
+    async getOrgFeatures(orgId: string): Promise<Record<string, boolean>> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
+      const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
+    },
+
+    /** Primary Google Calendar events overlapping [timeMin, timeMax) as the signed-in member. */
+    async listGoogleCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenGoogleCalendarEvent[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `${DEN_GOOGLE_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      const parsed = denGoogleCalendarEventsResponseSchema.safeParse(payload);
+      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Google Calendar returned an unexpected response.");
+      return parsed.data.events;
+    },
+
+    /** Outlook calendar instances (Graph calendarView) overlapping [timeMin, timeMax) as the signed-in member. */
+    async listMicrosoftCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenMicrosoftCalendarEvent[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `${DEN_MICROSOFT_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      const parsed = denMicrosoftCalendarEventsResponseSchema.safeParse(payload);
+      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Outlook returned an unexpected response.");
+      return parsed.data.events;
     },
 
     async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {

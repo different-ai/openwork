@@ -7,7 +7,7 @@ import { createV2ReadAdapter, readV2SessionActivity } from "./opencode-v2-read-a
 import { isRecord } from "./workspace-kv-store.js";
 import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
 
-const requestSchema = z.object({ name: z.enum(["openwork_context", "openwork_query"]), input: z.unknown() });
+const requestSchema = z.object({ name: z.enum(["openwork_context", "openwork_query", "openwork_skills"]), input: z.unknown() });
 // Advertise only reads this bridge executes. Native MCP discovery owns remote
 // tool names; v1 executor spellings and unregistered commands do not belong here.
 function readAffordances(value: unknown): unknown {
@@ -40,6 +40,11 @@ export async function createV2ContextBridge(hostRequest: (path: string, init?: R
         signal.throwIfAborted();
         return hostRequest(path, { ...init, signal });
       };
+      // Internal plugin discovery only: not a model-visible tool. This read
+      // runs in the background and never participates in prompt admission.
+      if (call.name === "openwork_skills") {
+        return Response.json(await read("/experimental/connect/skills"));
+      }
       const transport: OpenworkReadTransport = {
         engine: "v2",
         activity: (workspaceId: string, sessionId: string) => readV2SessionActivity(path => read(path), workspaceId, sessionId),

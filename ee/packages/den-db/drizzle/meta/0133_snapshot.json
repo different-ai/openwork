@@ -1,8 +1,8 @@
 {
-  "id": "dfe45251-5c0e-4b3a-a514-7c6a89a17e14",
-  "prevId": "371c82d1-92d4-40bf-9e19-dc7ac0ab470d",
   "version": "5",
   "dialect": "mysql",
+  "id": "777748dc-ff0b-41a1-bf03-90559faba6e9",
+  "prevId": "76c97185-2063-4bac-8e95-45ebcbe4f8cb",
   "tables": {
     "account": {
       "name": "account",
@@ -6884,6 +6884,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "oauth_tenant_id": {
+          "name": "oauth_tenant_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "aws_sso": {
+          "name": "aws_sso",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "status": {
           "name": "status",
           "type": "enum('active','disabled')",
@@ -7502,7 +7516,7 @@
         },
         "kind": {
           "name": "kind",
-          "type": "enum('api_key','api_key_map','aws_keys','gcp_service_account','oauth_google','oauth_azure')",
+          "type": "enum('api_key','api_key_map','aws_keys','gcp_service_account','oauth_google','oauth_azure','aws_sso')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -18253,9 +18267,9 @@
   },
   "views": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "tables": {},

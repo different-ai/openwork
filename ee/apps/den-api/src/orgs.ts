@@ -31,7 +31,7 @@ import { memberOwnershipTransferredEvent, memberRemovedEvent, memberRoleUpdatedE
 import { currentAuditChangeCapture } from "./audit/request-capture.js"
 import { cache } from "./cache.js"
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js"
-import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "./llm/inference-provider-lifecycle.js"
+import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from "./llm/inference-provider-lifecycle.js"
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -2109,7 +2109,7 @@ export async function removeOrganizationMember(input: {
     return removed
   }
 
-  await revokeGoogleCredentials(gatewayCredentials)
+  await revokeUpstreamCredentials(gatewayCredentials)
 
   await revokeOrganizationApiKeysForMember({
     organizationId: input.organizationId,

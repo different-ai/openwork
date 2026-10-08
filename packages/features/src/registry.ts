@@ -67,6 +67,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  implicitCloudSkills: {
+    label: "Implicit Cloud skills",
+    description: "Agents discover organization skills automatically without waiting for Cloud before starting a task.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   dashboardActivity: {
     label: "Dashboard activity",
     description: "Organization admins see recent additions and skill updates on their dashboard instead of Quick add.",
@@ -123,6 +130,27 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  automationCalendar: {
+    label: "Calendar: desktop app",
+    description: "Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  workbotCalendar: {
+    label: "Calendar: Workbot",
+    description: "Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  workbotSideChats: {
+    label: "Workbot: side chats",
+    description: "Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   litellm: {
     label: "AI Gateway: LiteLLM",
     description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
@@ -133,6 +161,13 @@ export const FEATURES = defineFeatures({
   permissions: {
     label: "Permissions",
     description: "Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  gatewayCloudSignIn: {
+    label: "AI Gateway: AWS and Microsoft sign-in",
+    description: "Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

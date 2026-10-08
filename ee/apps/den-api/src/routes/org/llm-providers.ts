@@ -1,4 +1,5 @@
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
+import { MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import {
@@ -530,7 +531,7 @@ async function normalizeLlmProviderInput(
     if (!provider) {
       throw createFailure(404, "provider_not_found", "The selected provider was not found in models.dev.")
     }
-    if (provider.npm === "@ai-sdk/amazon-bedrock/mantle") {
+    if (provider.npm === "@ai-sdk/amazon-bedrock/mantle" || provider.id === MICROSOFT_FOUNDRY_PROVIDER_ID) {
       throw createFailure(400, "gateway_only_provider", `${provider.name} is available through AI Gateway, not Bring your own keys.`)
     }
 

@@ -85,6 +85,7 @@ import {
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
   automationsRoute,
+  calendarRoute,
   dashboardRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
@@ -94,7 +95,7 @@ export type UseWorkspaceRouteStateInput = {
   /** A local first-send owner must survive workspace preparation until it has a real session. */
   preservePendingConversationRoute?: boolean;
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations" | "dashboard" | "apps" | "activity";
+  workspaceRoute?: "session" | "automations" | "calendar" | "dashboard" | "apps" | "activity";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -181,6 +182,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (workspaceRoute === "automations") {
       if (/^\/automations(?:\/|$)/.test(location.pathname)) return;
       navigate(automationsRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "calendar") {
+      if (/^\/calendar(?:\/|$)/.test(location.pathname)) return;
+      navigate(calendarRoute(), options);
       return;
     }
     if (workspaceRoute === "apps") {

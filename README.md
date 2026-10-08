@@ -110,7 +110,6 @@ The fastest path from a fresh clone to a running dev build.
 
 - **Node 24** — pinned in [`.nvmrc`](./.nvmrc) (`nvm use` picks it up).
 - **pnpm 11** — pinned in `package.json` (`packageManager`); run `corepack enable` to use the pinned version automatically. Never use npm or yarn.
-- **Git with DCO sign-off** — every commit needs a `Signed-off-by` trailer (`git commit -s`). See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ### First run
 
@@ -149,9 +148,8 @@ Runtime-observable changes need test evidence on the PR. `AGENTS.md` and [`evals
 ### Sending a pull request
 
 1. Branch from `dev` (the default branch) and open your PR against `dev`.
-2. Sign off every commit: `git commit -s`.
-3. Keep the diff as small as possible, and include or update test evidence for runtime-observable changes.
-4. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the DCO and licensing rules — contributions under `ee/` additionally require a CLA.
+2. Keep the diff as small as possible, and include or update test evidence for runtime-observable changes.
+3. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the licensing terms. By contributing you agree to the DCO, or under `ee/` to the [CLA](./legal/individual-contributor-license-agreement.md); there is nothing separate to sign.
 
 ## Local development
 

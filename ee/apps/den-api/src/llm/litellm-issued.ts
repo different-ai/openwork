@@ -201,7 +201,7 @@ async function teamSet(tx: GatewayTx, provider: GatewayProvider, settings: LiteL
   }
   const alias = settings.teams.find((team) => team.id === teamId)?.alias ?? teamId
   const now = new Date()
-  const set: GatewaySet = { id: createDenTypeId("gatewayCredentialSet"), gateway_provider_id: provider.id, created_by_org_membership_id: null, name: `LiteLLM team · ${alias}`.slice(0, 255), credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
+  const set: GatewaySet = { id: createDenTypeId("gatewayCredentialSet"), gateway_provider_id: provider.id, created_by_org_membership_id: null, name: `LiteLLM team · ${alias}`.slice(0, 255), credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, oauth_tenant_id: null, aws_sso: null, status: "active", created_at: now, updated_at: now }
   await tx.insert(GatewayCredentialSetTable).values(set)
   settings.teamSets[teamId] = set.id
   return set

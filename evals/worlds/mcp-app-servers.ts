@@ -376,7 +376,7 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
 
   const { procedure, capabilities, tools, created } = await composeOrderCalculator(seed, den.admin, connection.id, (name, args) => call("owner", name, args));
   appServerPath = created.serverPath;
-  // An empty organization dashboard, for the owner to add the App to from Den's picker.
+  // An empty organization dashboard, for the owner to add the App to.
   const dashboardName = `Pricing board ${Date.now()}`;
   const dashboard = await seed.api(den.admin, "/v1/dashboards", { method: "POST", body: JSON.stringify({ name: dashboardName, elements: [] }) });
   if (dashboard.response.status !== 201) throw new Error(`Creating the dashboard failed: ${dashboard.response.status}`);
@@ -428,14 +428,22 @@ export async function mcpAppServers(seed: Seed, context: { place: Place }) {
   if (context.place.kind !== "local") resources.use(await forwardLoopback(app, origin, created.toolName));
   await app.client.send("Emulation.setDeviceMetricsOverride", { width: 1100, height: 900, deviceScaleFactor: 1, mobile: false });
   const pluginWeb = await seed.web({ den, signedInAs: member, startPath: "/dashboard/library", headless: true, viewport: { width: 1280, height: 900 } });
-  const adminWeb = await seed.web({ den, signedInAs: den.admin, startPath: `/dashboard/dashboards/${dashboardId}`, headless: true, viewport: { width: 1280, height: 900 } });
   const url = (persona: Persona) => `${origin}/${persona}/?tool=${encodeURIComponent(created.toolName)}`;
   const retained = resources.move();
   const elementsOf = (body: unknown) => rows(record(body).elements ?? []);
   return {
-    app, pluginWeb, adminWeb, dashboardId, dashboardName, den, organizationId, created, capabilities, tools, url, requests, rpc, call,
+    app, pluginWeb, dashboardId, dashboardName, den, organizationId, created, capabilities, tools, url, requests, rpc, call,
     /** The App builder tools Connect offered a new organization before any /admin change. */
     builderToolsByDefault,
+    /** Saves the App as the dashboard's tile, from the App catalog the admin reads. */
+    async addAppTile() {
+      const catalog = await seed.api(den.admin, "/v1/mcp-apps");
+      const app = rows(record(catalog.body).apps).find(item => item.connectionId === created.appId);
+      if (!app) throw new Error(`The App catalog did not list ${created.appId}: ${catalog.response.status}`);
+      const { serverName, connectionId, toolName, projectedToolName, resourceUri, title } = app;
+      const saved = await seed.api(den.admin, `/v1/dashboards/${dashboardId}`, { method: "PATCH", body: JSON.stringify({ elements: [{ serverName, connectionId, toolName, projectedToolName, resourceUri, title }] }) });
+      if (!saved.response.ok) throw new Error(`Saving the App's tile failed: ${saved.response.status}`);
+    },
     /** The dashboard's tiles as its admin sees them. */
     async dashboardElements() {
       const read = await seed.api(den.admin, `/v1/dashboards/${dashboardId}`);

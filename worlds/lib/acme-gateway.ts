@@ -13,7 +13,8 @@ import type { Place } from "../../evals/packages/env/src/place.ts";
 import { defaultDaytonaExec, execInSandbox, startScriptOnSandbox } from "../../evals/packages/hosts/src/index.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
 
-export const ACME_MODEL = "claude-haiku-4-5-20251001";
+// Use a catalog-supported alias; inventing a version/date makes Den reject the provider.
+export const ACME_MODEL = "claude-haiku-5-5";
 export const ACME_REPLY = "Acme AI Gateway is working.";
 export const ACME_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 
@@ -221,7 +222,12 @@ export async function seedAcmeGateway(admin: DenSession, upstream: { key: string
       credential: { kind: "api_key", secret: upstream.key }, settings: { upstreamBaseUrl: `${upstream.baseUrl}/v1` }, allMembers: true }),
   });
   const provider = record(created.body) && record(created.body.inferenceProvider) ? created.body.inferenceProvider : undefined;
-  if (created.response.status !== 201 || typeof provider?.id !== "string") throw new Error(`Acme provider creation failed: HTTP ${created.response.status}`);
+  if (created.response.status !== 201 || typeof provider?.id !== "string") {
+    // Log only the structured error code, never credentials or the raw response.
+    const error = record(created.body) && typeof created.body.error === "string" && /^[a-z_]{1,64}$/.test(created.body.error)
+      ? ` (${created.body.error})` : "";
+    throw new Error(`Acme provider creation failed: HTTP ${created.response.status}${error}`);
+  }
   const providerId = provider.id;
   const connected = await denFetch(admin, `/v1/inference-providers/${providerId}/connect`, { headers: orgHeaders });
   const connection = record(connected.body) && record(connected.body.inferenceProvider) ? connected.body.inferenceProvider : undefined;

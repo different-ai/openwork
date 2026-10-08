@@ -183,6 +183,8 @@ export type SessionPageSidebarProps = {
   automationsActive?: boolean;
   automationsNeedAttention?: boolean;
   onOpenAutomations?: () => void;
+  calendarActive?: boolean;
+  onOpenCalendar?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -1401,6 +1403,8 @@ export function SessionPage(props: SessionPageProps) {
           automationsActive={props.sidebar.automationsActive}
           automationsNeedAttention={props.sidebar.automationsNeedAttention}
           onOpenAutomations={props.sidebar.onOpenAutomations}
+          calendarActive={props.sidebar.calendarActive}
+          onOpenCalendar={props.sidebar.onOpenCalendar}
           dashboardActive={props.sidebar.dashboardActive}
           onOpenDashboard={props.sidebar.onOpenDashboard}
           conversationHistory={{
@@ -1619,7 +1623,7 @@ export function SessionPage(props: SessionPageProps) {
             </div>}
           </header>}
 
-          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2 lg:pt-2")}>
+          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}

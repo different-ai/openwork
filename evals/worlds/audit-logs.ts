@@ -51,6 +51,9 @@ function identifier(value: unknown): string {
   return value;
 }
 
+// Synthetic token for this disposable Den's maintenance endpoint (not a secret).
+const MAINTENANCE_TOKEN = "eval-maintenance-token-0123456789abcdef";
+
 export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   if (process.env.OPENWORK_EVAL_DEN_API_URL?.trim() || process.env.OPENWORK_EVAL_DEN_WEB_URL?.trim()) throw new Error("Audit journey requires a fresh disposable Den, never an attached service");
   await requireCurrentRemoteSource(place);
@@ -65,6 +68,7 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
       // Remove inherited overrides from the child process: prove the deployment defaults.
       DEN_AUDIT_CAPTURE_ENABLED: undefined, DEN_AUDIT_VISIBILITY_ENABLED: undefined,
       PROVISIONER_MODE: "stub", RESEND_API_KEY: "", STRIPE_SECRET_KEY: "", SENTRY_DSN: "",
+      DEN_MAINTENANCE_TOKEN: MAINTENANCE_TOKEN,
     },
     org: {
       name: "Audit proof workspace",
@@ -131,5 +135,14 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: teammate, startPath: "/dashboard/audit-logs", headless: true, viewport });
   const unflaggedWeb = await seed.web({ den, signedInAs: unflaggedOwner, startPath: "/dashboard", headless: true, viewport });
-  return { den, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, reviewersTeamId, reviewersTeamName, viewport };
+  // Audit writes never update usage totals; the scheduled refresh does
+  // (POST /internal/audit/usage/refresh, the den-audit-usage cron). Run it on demand.
+  async function refreshAuditUsage() {
+    const response = await fetch(`${den.ref.apiUrl.replace(/\/+$/, "")}/internal/audit/usage/refresh`, {
+      method: "POST", headers: { authorization: `Bearer ${MAINTENANCE_TOKEN}` }, signal: AbortSignal.timeout(60_000),
+    });
+    await response.body?.cancel();
+    if (!response.ok) throw new Error(`Audit usage refresh failed: ${response.status}`);
+  }
+  return { den, refreshAuditUsage, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, reviewersTeamId, reviewersTeamName, viewport };
 }

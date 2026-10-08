@@ -202,8 +202,10 @@ import {
 } from "@/react-app/infra/workspace-server-client";
 import { resolveEngineRootEndpoint } from "@/app/lib/workspace-endpoint";
 import {
-  buildLocalProviderConfig,
+  buildLocalProviderInstallPatch,
+  buildLocalProviderSyncPatch,
   type LocalProviderInstallInput,
+  type LocalProviderSyncInput,
 } from "@/react-app/domains/settings/openai-image-extension";
 import {
   libraryAgentsFromOpencode,
@@ -1230,16 +1232,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return () => { cancelled = true; };
   }, [openworkClient]);
 
-  const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
+  /** Writes a local provider patch, reloads the engine, and reports the outcome in the provider's settings. */
+  const applyLocalProviderPatch = useCallback(async (
+    patch: Parameters<OpenworkServerClient["patchConfig"]>[1],
+    done: { status: string; defaultModel?: { providerID: string; modelID: string } },
+  ) => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
-    const modelId = input.modelId.trim();
     if (!client || !workspaceId) {
       setLocalProviderError("OpenWork server is not connected for this workspace.");
-      return;
-    }
-    if (!modelId) {
-      setLocalProviderError("Model ID is required.");
       return;
     }
 
@@ -1247,19 +1248,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setLocalProviderStatus(null);
     setLocalProviderError(null);
     try {
-      await client.patchConfig(workspaceId, {
-        opencode: {
-          provider: {
-            [input.providerId]: buildLocalProviderConfig({ ...input, modelId }),
-          },
-        },
-      });
-      if (input.setDefault) {
-        local.setPrefs((previous) => ({
-          ...previous,
-          defaultModel: { providerID: input.providerId, modelID: modelId },
-          modelVariant: null,
-        }));
+      await client.patchConfig(workspaceId, patch);
+      const defaultModel = done.defaultModel;
+      if (defaultModel) {
+        local.setPrefs((previous) => ({ ...previous, defaultModel, modelVariant: null }));
       }
       reloadCoordinator.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
       try {
@@ -1273,13 +1265,36 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       } catch {
         // ignore browser event dispatch failures
       }
-      setLocalProviderStatus(`Added ${input.name} with ${modelId}.`);
+      setLocalProviderStatus(done.status);
     } catch (error) {
       setLocalProviderError(describeRouteError(error));
     } finally {
       setLocalProviderBusy(false);
     }
   }, [local, openworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+
+  const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
+    const modelId = input.modelId.trim();
+    if (!modelId) {
+      setLocalProviderError("Model ID is required.");
+      return;
+    }
+    await applyLocalProviderPatch(buildLocalProviderInstallPatch({ ...input, modelId }), {
+      status: `Added ${input.name} with ${modelId}.`,
+      ...(input.setDefault ? { defaultModel: { providerID: input.providerId, modelID: modelId } } : {}),
+    });
+  }, [applyLocalProviderPatch]);
+
+  const syncLocalProvider = useCallback(async (input: LocalProviderSyncInput) => {
+    if (input.models.length === 0) {
+      setLocalProviderError(`${input.name} has no models to sync.`);
+      return;
+    }
+    const count = input.models.length;
+    await applyLocalProviderPatch(buildLocalProviderSyncPatch(input), {
+      status: `Synced ${count} model${count === 1 ? "" : "s"} from ${input.name}.`,
+    });
+  }, [applyLocalProviderPatch]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
@@ -1840,6 +1855,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       status: localProviderStatus,
       error: localProviderError,
       onInstall: installLocalProvider,
+      onSync: syncLocalProvider,
     },
   });
   const extensionCatalogPlatform = resolveOpenWorkExtensionCatalogPlatform(platform.platform, platform.os);
@@ -2247,6 +2263,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             status={localProviderStatus}
             error={localProviderError}
             onInstall={installLocalProvider}
+            onSync={syncLocalProvider}
           />
         );
       case "preferences":

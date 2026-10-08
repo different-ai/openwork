@@ -4,7 +4,7 @@ import { AuthUserTable, MemberTable, OrganizationTable, OrganizationWebOriginTab
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { appendDomainChanges } from "./audit/domain/legacy.js"
 import { webOriginApprovedEvent, webOriginRemovedEvent } from "./audit/domain/web-origins.js"
-import { fenceAuditChanges, type AuditChangeCapture } from "./audit/request-capture.js"
+import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 
 type OrganizationId = DenTypeId<"organization">
@@ -253,7 +253,6 @@ export async function removeOrganizationWebOrigin(input: {
 }, capture: AuditChangeCapture | null = null): Promise<{ origin: string; auditEventIds: string[] } | null> {
   const scope = and(eq(OrganizationWebOriginTable.id, input.id), eq(OrganizationWebOriginTable.organizationId, input.organizationId))
   const removed = await db.transaction(async (tx) => {
-    await fenceAuditChanges(tx, capture)
     const [row] = await tx.select().from(OrganizationWebOriginTable).where(scope).limit(1).for("update")
     if (!row) return null
     await tx.delete(OrganizationWebOriginTable).where(scope)

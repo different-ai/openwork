@@ -14,6 +14,11 @@ export type ModelRequest = {
   onReset?: () => void
   /** The model started writing a call to this tool (streamed calls only), before its input is complete. */
   onTool?: (name: string) => void
+  /**
+   * Messages after which the provider may cache the request so far (Anthropic). Without them, the request is cached
+   * up to its last message. The system prompt is always a cache point, so at most three are used.
+   */
+  cacheAfter?: ReadonlySet<Message>
 }
 export type ModelStep = {
   text: string
@@ -30,9 +35,34 @@ export class ModelError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly retryAfterMs?: number,
+    /** What the provider said (its error message and request id), short, for logs and support; never shown as is. */
+    readonly detail?: string,
   ) {
     super(message)
   }
+}
+
+const errorBody = z
+  .object({ error: z.union([z.string(), z.object({ type: z.string().optional(), code: z.string().nullish(), message: z.string().optional() }).loose()]).optional(), message: z.string().optional() })
+  .loose()
+
+/** One line saying why a provider refused a request, from its error body, with the request id to look it up. */
+export function describeProviderError(body: string, requestId: string | null): string {
+  let text = body.trim()
+  try {
+    const parsed = errorBody.safeParse(JSON.parse(body))
+    if (parsed.success) {
+      const error = parsed.data.error
+      const kind = typeof error === "object" ? (error.type ?? error.code ?? "") : ""
+      const message = typeof error === "string" ? error : (error?.message ?? parsed.data.message ?? "")
+      if (message) text = kind ? `${kind}: ${message}` : message
+    }
+  } catch {
+    // Not JSON: keep the text.
+  }
+  // Provider messages don't carry keys, but never log one if a proxy echoes it.
+  const redacted = text.replace(/\b(sk|ow_[a-z]+|key)[-_][A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 300)
+  return requestId ? `${redacted} (request ${requestId})` : redacted
 }
 
 type Fetch = typeof fetch
@@ -84,12 +114,14 @@ async function openResponse(input: {
       continue
     }
     if (response.ok) return response
-    const detail = (await response.text().catch(() => "")).slice(0, 500)
+    const body = await response.text().catch(() => "")
+    const requestId = response.headers.get("x-openwork-request-id") ?? response.headers.get("request-id")
     lastError = new ModelError(
       `model_http_${response.status}`,
-      `The AI gateway returned ${response.status}${detail ? `: ${detail}` : ""}`,
+      `The AI gateway returned ${response.status}${body ? `: ${body.slice(0, 500)}` : ""}`,
       RETRYABLE_STATUS.has(response.status),
       retryAfterMs(response),
+      describeProviderError(body, requestId),
     )
     if (!lastError.retryable) throw lastError
   }
@@ -181,10 +213,61 @@ type AnthropicBlock = CacheControl &
   )
 type AnthropicMessage = { role: "user" | "assistant"; content: AnthropicBlock[] }
 
-/** Anthropic needs strict user/assistant alternation; adjacent same-role entries are merged. */
-export function toAnthropicMessages(messages: Message[]): AnthropicMessage[] {
-  const out: AnthropicMessage[] = []
+/**
+ * A transcript every provider accepts, whatever produced it: it starts with a message from the person, each tool
+ * result directly follows the call it answers, every call has its result, and no message is empty. Providers
+ * refuse anything else with a 400, and the same transcript would then fail on every retry. Messages it keeps are
+ * returned as they were (same objects), so callers can still recognize them. `repairs` counts what it changed.
+ */
+export function normalizeTranscript(messages: readonly Message[]): { messages: Message[]; repairs: number } {
+  const out: Message[] = []
+  let repairs = 0
+  // The latest assistant message with tool calls, and the calls still waiting for their result.
+  let open: { index: number; waiting: Set<string> } | null = null
+  const settle = () => {
+    if (open && open.waiting.size) {
+      const waiting = open.waiting
+      const call = out[open.index]
+      if (call?.role === "assistant") {
+        const toolCalls = call.toolCalls.filter((entry) => !waiting.has(entry.id))
+        repairs += call.toolCalls.length - toolCalls.length
+        // Nothing answered it and it said nothing: no result follows it, so it is the last message so far.
+        if (toolCalls.length === 0 && !call.text.trim()) out.splice(open.index, 1)
+        else out[open.index] = { ...call, toolCalls }
+      }
+    }
+    open = null
+  }
   for (const message of messages) {
+    if (message.role === "tool") {
+      if (open?.waiting.delete(message.callId)) out.push(message)
+      else repairs += 1
+      continue
+    }
+    settle()
+    const empty = message.role === "user" ? !message.text.trim() && !message.images?.length && !message.documents?.length : false
+    if (empty || (out.length === 0 && message.role !== "user")) {
+      repairs += 1
+      continue
+    }
+    out.push(message)
+    if (message.role === "assistant" && message.toolCalls.length) open = { index: out.length - 1, waiting: new Set(message.toolCalls.map((call) => call.id)) }
+  }
+  settle()
+  return { messages: out, repairs }
+}
+
+/** Anthropic allows four cache points per request; the system prompt takes one. */
+const MAX_MESSAGE_CACHE_POINTS = 3
+
+/**
+ * Anthropic needs strict user/assistant alternation; adjacent same-role entries are merged. Messages in `cacheAfter`
+ * end with a cache point (the newest three at most).
+ */
+export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: ReadonlySet<Message>): AnthropicMessage[] {
+  const out: AnthropicMessage[] = []
+  const cachePoints: AnthropicBlock[] = []
+  for (const message of normalizeTranscript(messages).messages) {
     const role = message.role === "assistant" ? "assistant" : "user"
     const blocks: AnthropicBlock[] =
       message.role === "user"
@@ -199,7 +282,8 @@ export function toAnthropicMessages(messages: Message[]): AnthropicMessage[] {
               type: "image" as const,
               source: { type: "base64" as const, media_type: image.mediaType, data: image.data },
             })),
-            { type: "text" as const, text: message.text },
+            // An empty text block is refused; a message of only files has none.
+            ...(message.text.trim() ? [{ type: "text" as const, text: message.text }] : []),
           ]
         : message.role === "tool"
           ? [
@@ -225,7 +309,8 @@ export function toAnthropicMessages(messages: Message[]): AnthropicMessage[] {
               },
             ]
           : [
-              ...(message.text ? [{ type: "text" as const, text: message.text }] : []),
+              // Whitespace-only text is refused too.
+              ...(message.text.trim() ? [{ type: "text" as const, text: message.text }] : []),
               ...message.toolCalls.map((call) => ({
                 type: "tool_use" as const,
                 id: call.id,
@@ -233,11 +318,14 @@ export function toAnthropicMessages(messages: Message[]): AnthropicMessage[] {
                 input: call.input,
               })),
             ]
-    if (blocks.length === 0) continue
+    const end = blocks.at(-1)
+    if (!end) continue
+    if (cacheAfter?.has(message)) cachePoints.push(end)
     const last = out.at(-1)
     if (last && last.role === role) last.content.push(...blocks)
     else out.push({ role, content: blocks })
   }
+  for (const block of cachePoints.slice(-MAX_MESSAGE_CACHE_POINTS)) block.cache_control = { type: "ephemeral" }
   return out
 }
 
@@ -339,6 +427,8 @@ async function readAnthropicStream(
           kind === "overloaded_error" || kind === "api_error" ? "model_stream_interrupted" : `model_stream_${kind}`,
           `The AI gateway stream failed: ${(value.error?.message ?? kind).slice(0, 300)}`,
           kind === "overloaded_error" || kind === "api_error",
+          undefined,
+          describeProviderError(JSON.stringify({ error: value.error ?? {} }), response.headers.get("x-openwork-request-id") ?? response.headers.get("request-id")),
         )
       }
     }
@@ -373,7 +463,7 @@ export function anthropicModel(options: {
       max_tokens: options.maxOutputTokens,
       ...(stream ? { stream: true } : {}),
       system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
-      messages: withCacheBreakpoint(toAnthropicMessages(request.messages)),
+      messages: request.cacheAfter ? toAnthropicMessages(request.messages, request.cacheAfter) : withCacheBreakpoint(toAnthropicMessages(request.messages)),
       ...(request.tools.length
         ? { tools: request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })) }
         : {}),
@@ -434,9 +524,10 @@ type OpenAIMessage =
     }
   | { role: "tool"; tool_call_id: string; content: string }
 
-export function toOpenAIMessages(system: string, messages: Message[]): OpenAIMessage[] {
+export function toOpenAIMessages(system: string, messages: readonly Message[]): OpenAIMessage[] {
   const out: OpenAIMessage[] = [{ role: "system", content: system }]
-  for (const message of messages) {
+  // OpenAI refuses a tool message that doesn't answer the assistant message before it, as Anthropic does.
+  for (const message of normalizeTranscript(messages).messages) {
     if (message.role === "user") {
       if (!message.images?.length && !message.documents?.length) out.push({ role: "user", content: message.text })
       else
@@ -474,10 +565,10 @@ export function toOpenAIMessages(system: string, messages: Message[]): OpenAIMes
           ],
         })
     }
-    else if (message.text || message.toolCalls.length) {
+    else if (message.text.trim() || message.toolCalls.length) {
       out.push({
         role: "assistant",
-        content: message.text || null,
+        content: message.text.trim() ? message.text : null,
         ...(message.toolCalls.length
           ? {
               tool_calls: message.toolCalls.map((call) => ({

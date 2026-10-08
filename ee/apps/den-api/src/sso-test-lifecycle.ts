@@ -9,7 +9,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { appendDomainChanges } from "./audit/domain/legacy.js"
 import { ssoConnectionStatusEvent } from "./audit/domain/sso.js"
-import { fenceAuditChanges, type AuditChangeCapture } from "./audit/request-capture.js"
+import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
@@ -388,7 +388,6 @@ export async function enableOrganizationSsoConnection(organizationId: SsoConnect
   // Guarded update and its sso_connection.enabled event commit together; the
   // organization share fence (when captured) precedes the connection row lock.
   const auditEventIds = await db.transaction(async (tx) => {
-    await fenceAuditChanges(tx, capture)
     const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
     const result = await tx
       .update(SsoConnectionTable)
@@ -415,7 +414,6 @@ export async function disableOrganizationSsoConnection(organizationId: SsoConnec
     .limit(1)
   if (!connection) return { ok: false as const, message: "SSO configuration was not found." }
   const auditEventIds = await db.transaction(async (tx) => {
-    await fenceAuditChanges(tx, capture)
     const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
     await tx
       .update(SsoConnectionTable)

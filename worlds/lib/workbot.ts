@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { allocateFreePorts } from "../../evals/packages/cdp/src/index.ts";
 import { denFetch } from "../../evals/packages/behaviors/src/den.ts";
+import { publishCalendarModels } from "./calendar.ts";
 import { server } from "../../evals/packages/env/src/den.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../../evals/packages/env/src/place.ts";
@@ -47,13 +48,26 @@ const execFileAsync = promisify(execFile);
 /** `--live`: a real model, the computer on, and an MCP App seeded. Local placement only. */
 export type WorkbotWorldOptions = {
   live: boolean;
+  /**
+   * `--calendar`: seed the owner's Automations and runs, turn on the desktop and Workbot Calendars, and read
+   * meetings from the calendar mock (worlds/lib/calendar.ts).
+   */
+  calendar?: boolean;
+  /** Extra Den settings (e.g. provider base URLs a spec points at a mock). */
+  denEnv?: Record<string, string>;
+  /** Workbot reads meetings from this calendar mock instead of Den (WORKBOT_CALENDAR_MOCK_URL). */
+  workbotCalendarMockUrl?: string;
   upstream?: { baseUrl: string; key: string; model: string };
   runnerProxy?: (runnerUrl: string) => Promise<string>;
+  /** Extra runner settings, for example a small HEADLESS_CONTEXT_CHAR_BUDGET so a short journey outgrows the context. */
+  runnerEnv?: Record<string, string>;
+  /** Features turned on for the seeded organization besides Workbot itself, for example `workbotSideChats`. */
+  features?: Record<string, boolean>;
 };
 
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
-  for (const arg of argv) if (arg !== "--live") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live)`);
-  return { live: argv.includes("--live") };
+  for (const arg of argv) if (arg !== "--live" && arg !== "--calendar") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar)`);
+  return { live: argv.includes("--live"), calendar: argv.includes("--calendar") };
 }
 
 /** A secret from the caller's environment, else the team's dev Infisical; never printed. */
@@ -175,14 +189,14 @@ async function startService(stack: AsyncDisposableStack, input: {
   throw new Error(`${input.label} did not become healthy: ${logs}`);
 }
 
-/** Turns Workbot (and headless Automations) on for the seeded organization, as a platform admin does. */
-export async function enableWorkbot(den: Den): Promise<string> {
+/** Turns Workbot (and headless Automations, and any `features`) on for the seeded organization, as a platform admin does. */
+export async function enableWorkbot(den: Den, features: Record<string, boolean> = {}): Promise<string> {
   const headers = { authorization: `Bearer ${den.admin.token}` };
   const orgs = await denFetch(den.admin, "/v1/me/orgs", { headers });
   const org = record(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs.find(record) : undefined;
   if (!orgs.response.ok || !org || typeof org.id !== "string") throw new Error("Acme organization missing.");
   const updated = await denFetch(den.admin, `/v1/admin/organizations/${org.id}/capabilities`, {
-    method: "PUT", headers, body: JSON.stringify({ capabilities: { workbot: true, headlessAutomations: true } }),
+    method: "PUT", headers, body: JSON.stringify({ capabilities: { workbot: true, headlessAutomations: true, ...features } }),
   });
   if (!updated.response.ok) throw new Error(`Could not turn Workbot on: HTTP ${updated.response.status} ${updated.text.slice(0, 200)}`);
   return org.id;
@@ -209,7 +223,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   const workbotUrl = preview?.workbot ?? workbotInternal;
   const secrets = { runnerToken: token(), sessionSecret: token(), upstreamKey: runner.upstreamKey };
   const den = stack.use(await server({
-    place, web: true, seedProfile: "demo-org",
+    place, web: true, seedProfile: "demo-org", seedAutomations: options.calendar === true,
     env: {
       DEN_WORKBOT_URL: workbotUrl, DEN_HEADLESS_RUNNER_URL: runnerUrl, DEN_HEADLESS_RUNNER_TOKEN: secrets.runnerToken,
       RESEND_API_KEY: "", SMTP_HOST: "",
@@ -218,6 +232,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       DEN_AUTH_COOKIE_PREFIX: `openwork-den-${randomBytes(4).toString("hex")}`,
       // Eval Dens leave Apps built in OpenWork off; --live seeds one, as production has them on.
       ...(options.live ? { DEN_APP_MCP_SERVERS_ENABLED: "true" } : {}),
+      ...options.denEnv,
       ...(preview ? {
         DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
         NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${PREVIEW_EGRESS}`].filter(Boolean).join(" "),
@@ -238,6 +253,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       HEADLESS_API_TOKEN: secrets.runnerToken, HEADLESS_PORT: String(runnerPort), HEADLESS_DB_PATH: join(data, "runner.sqlite"),
       ...runner.env, HEADLESS_MCP_URL: `${den.ref.apiUrl}/mcp/agent`,
       HEADLESS_FILES: "disk", HEADLESS_FILES_DIR: join(data, "files"),
+      ...options.runnerEnv,
     },
   });
   await buildWorkbot();
@@ -249,7 +265,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
     env: {
       PORT: String(workbotPort), WORKBOT_PUBLIC_URL: workbotUrl, WORKBOT_DEN_API_URL: den.ref.apiUrl,
       WORKBOT_DEN_WEB_URL: preview?.den ?? den.ref.webUrl, WORKBOT_RUNNER_URL: options.runnerProxy ? await options.runnerProxy(runnerUrl) : runnerUrl, WORKBOT_RUNNER_TOKEN: secrets.runnerToken,
-      WORKBOT_SESSION_SECRET: secrets.sessionSecret, WORKBOT_DB_PATH: join(data, "workbot.sqlite"),
+      WORKBOT_SESSION_SECRET: secrets.sessionSecret,
+      ...(options.workbotCalendarMockUrl ? { WORKBOT_CALENDAR_MOCK_URL: options.workbotCalendarMockUrl } : {}),
       ...(preview ? {
         // Workbot reaches Den's sign-in at its advertised (template) origin; inside the VM that is loopback.
         NODE_OPTIONS: `--import=${PREVIEW_LOOPBACK}`,
@@ -257,7 +274,10 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       } : {}),
     },
   });
-  const orgId = await enableWorkbot(den);
+  // --calendar turns on both Calendars (desktop and Workbot), each behind its own feature.
+  const orgId = await enableWorkbot(den, { ...options.features, ...(options.calendar ? { automationCalendar: true, workbotCalendar: true } : {}) });
+  // --calendar: a real provider (Anthropic, fixture key) so the Calendar's model pickers show logos and choices.
+  if (options.calendar) await publishCalendarModels(den.admin, orgId);
   // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
   const demo = await bootDemoWorkspace(stack, den);
   await connectDemoWorkspace(den, demo);
@@ -463,7 +483,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
       OPENWORK_LAUNCH_CWD: "/workspace/ee/apps/workbot", OPENWORK_LAUNCH_ARGS: JSON.stringify(["dist/server.js"]),
       WORKBOT_PUBLIC_URL: workbotPreview.browserOrigin, WORKBOT_DEN_API_URL: den.ref.apiUrl, WORKBOT_DEN_WEB_URL: den.ref.webUrl,
       WORKBOT_RUNNER_URL: `http://127.0.0.1:${DAYTONA_RUNNER_PORT}`, WORKBOT_RUNNER_TOKEN: secrets.runnerToken,
-      WORKBOT_SESSION_SECRET: secrets.sessionSecret, WORKBOT_DB_PATH: "/tmp/workbot-world/workbot.sqlite",
+      WORKBOT_SESSION_SECRET: secrets.sessionSecret,
     },
     log: (line) => console.error(`[preview-workbot] ${line}`),
   });

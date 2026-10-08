@@ -23,8 +23,9 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "tsup && node --test test/production-exports.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --conditions=development --test src/*.test.ts"
   },
   "dependencies": {
     "@openwork/types": "workspace:*",

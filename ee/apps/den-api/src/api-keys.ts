@@ -3,7 +3,7 @@ import { AuthApiKeyTable, AuthUserTable, MemberTable } from "@openwork-ee/den-db
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { apiKeyAuditColumns, apiKeyDeletedEvent, apiKeyRevokedEvent, type ApiKeyRevocationReason } from "./audit/domain/api-keys.js"
 import { appendDomainChanges } from "./audit/domain/legacy.js"
-import { currentAuditChangeCapture, fenceAuditChanges, logAuditOutcomeLost, type AuditChangeCapture } from "./audit/request-capture.js"
+import { currentAuditChangeCapture, logAuditOutcomeLost, type AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 
 export const DEN_API_KEY_HEADER = "x-api-key"
@@ -224,7 +224,6 @@ export async function revokeOrganizationApiKeysForMember(input: {
   if (capture) {
     try {
       return await db.transaction(async (tx) => {
-        await fenceAuditChanges(tx, capture)
         const rows = (await tx.select({ ...apiKeyAuditColumns, metadata: AuthApiKeyTable.metadata }).from(AuthApiKeyTable).where(eq(AuthApiKeyTable.referenceId, userId)).for("update")).filter(matches)
         if (rows.length === 0) return 0
         await tx.update(AuthApiKeyTable).set({ enabled: false }).where(inArray(AuthApiKeyTable.id, rows.map((row) => row.id)))
@@ -282,7 +281,6 @@ export async function deleteOrganizationApiKey(input: {
   }
 
   const auditEventIds = await db.transaction(async (tx) => {
-    await fenceAuditChanges(tx, capture)
     const scope = and(eq(AuthApiKeyTable.id, input.apiKeyId), eq(AuthApiKeyTable.referenceId, apiKey.owner.userId))
     const [row] = capture ? await tx.select(apiKeyAuditColumns).from(AuthApiKeyTable).where(scope).limit(1).for("update") : []
     await tx.delete(AuthApiKeyTable).where(scope)

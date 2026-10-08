@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks"
-import { AuditLogError, appendAuditEvent, appendPlatformAuditEvent, assertAuditPolicyCurrent, type AuditActor, type AuditContext, type AuditEventInput, type AuditOperationOutcome, type AuditOrigin, type AuditPolicy, type AuditTx, type PlatformAuditEventInput } from "@openwork-ee/den-db/audit-log"
+import { AuditLogError, appendAuditEvent, appendPlatformAuditEvent, type AuditActor, type AuditContext, type AuditEventInput, type AuditOperationOutcome, type AuditOrigin, type AuditPolicy, type AuditTx, type PlatformAuditEventInput } from "@openwork-ee/den-db/audit-log"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable, PlatformAuditEventTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -193,10 +193,9 @@ export function logAuditOutcomeLost(fields: Readonly<{ requestId: string | null;
   })
 }
 
-/** Recheck entitlement, then policy identity under the state/policy locks, then append (provider pattern). */
+/** Fresh entitlement recheck, then append; the append itself checks the policy identity (plain reads, no locks). */
 export async function appendRequiredAuditEvent(tx: AuditTx, capture: AuditChangeCapture, event: AuditEventInput, operationOutcome?: AuditOperationOutcome) {
   await recheckAuditEntitlement(tx, capture.context.organizationId)
-  await assertAuditPolicyCurrent(tx, capture.policy)
   const appended = await appendAuditEvent(tx, { context: capture.context, policy: capture.policy, event, ...(operationOutcome ? { operationOutcome } : {}) })
   if (!appended) throw new AuditLogError("audit_storage_inconsistent")
   return appended
@@ -230,7 +229,7 @@ export function readEffectiveAuditPolicyWithRetry(organizationId: string) {
 /**
  * The auditLogs feature for one organization, read fresh from the features
  * registry (one query). Callers check env.auditCaptureEnabled first; appends
- * still recheck it under the organization share lock (readAuditAvailability).
+ * recheck it with a fresh, unlocked read (readAuditAvailability).
  */
 export function auditLogsFeatureEnabled(organizationId: string): Promise<boolean> {
   return organizationFeatureEnabled(organizationId, "auditLogs")
@@ -589,18 +588,9 @@ export function auditChangeCapture(c: Context): AuditChangeCapture | null {
 export type AuditChangeEventInput = Omit<AuditEventInput, "category" | "outcome"> & Partial<Pick<AuditEventInput, "category" | "outcome">>
 
 /**
- * Optional fence: take the organization share lock at the START of a business
- * transaction that does not lock the organization row FOR UPDATE first, so the
- * later appendAuditChanges recheck never acquires it after business row locks.
- */
-export async function fenceAuditChanges(tx: AuditTx, capture: AuditChangeCapture | null): Promise<void> {
-  if (capture) await recheckAuditEntitlement(tx, capture.context.organizationId)
-}
-
-/**
  * Appends change events (default category "change", outcome "succeeded") into
- * the caller's business transaction AFTER its business row locks; lock order
- * organization row → business rows → audit_state → audit_policy. Any failure
+ * the caller's business transaction. Audit takes no locks of its own: it only
+ * inserts this request's rows and bumps its own operation row. Any failure
  * throws and must roll back the business mutation. Never retried by
  * withAuditRetry (a retry would re-run the business mutation): a deadlock here
  * rolls the mutation back exactly as before. Emit nothing when before
@@ -612,7 +602,6 @@ export async function appendAuditChanges(tx: AuditTx, capture: AuditChangeCaptur
   const organizationId = capture.context.organizationId
   if (events.some((event) => event.resources.some((resource) => resource.type === "organization" && resource.id !== organizationId))) throw new AuditLogError("audit_invalid_input")
   await recheckAuditEntitlement(tx, capture.context.organizationId)
-  await assertAuditPolicyCurrent(tx, capture.policy)
   const ids: string[] = []
   for (const event of events) {
     const appended = await appendAuditEvent(tx, { context: capture.context, policy: capture.policy, event: { ...event, category: event.category ?? "change", outcome: event.outcome ?? "succeeded" } })

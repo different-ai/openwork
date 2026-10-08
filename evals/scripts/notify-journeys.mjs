@@ -20,6 +20,12 @@ export function validateReport(report) {
 
 const excludedLine = report => report.excluded.length ? `\n${report.excluded.length} skipped (prerequisites unmet): ${report.excluded.map(entry => `${escape(entry.name)} — needs: ${escape(entry.reason)}`).join('; ')}` : '';
 
+const titles = {
+  'Build and core checks': 'Full regression — component checks',
+  'Freestyle world check': 'Nightly core journey and world check',
+  'Den DB Migrate': 'Production Den DB migrations (Den DB Migrate)',
+};
+
 export function notification(previous, run, report, teamId = '') {
   const sequence = [run.run_number, run.run_attempt];
   if (previous && (previous.sequence[0] > sequence[0] || (previous.sequence[0] === sequence[0] && previous.sequence[1] >= sequence[1]))) return { state: previous, message: null };
@@ -34,7 +40,7 @@ export function notification(previous, run, report, teamId = '') {
   const newlyExcluded = previous ? report.excluded.filter(entry => !(previous.excluded ?? []).includes(entry.spec) && !reclassified.includes(entry)) : [];
   const state = { sequence, failures, excluded, thread: bad.length ? previous?.thread : undefined };
   if (bad.length === 0 && !previous?.failures.length && newlyExcluded.length === 0) return { state, message: null };
-  const title = run.name === 'Build and core checks' ? 'Full regression — component checks' : run.name === 'Freestyle world check' ? 'Nightly core journey and world check' : run.name;
+  const title = titles[run.name] ?? run.name;
   const mention = bad.length && newFailures && /^[A-Z0-9]+$/.test(teamId) ? `<!subteam^${teamId}> ` : '';
   const summary = bad.length ? `${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested · ${report.excluded.length} skipped (prerequisites unmet)`
     : reclassified.length ? `Executed checks passed — not a recovery: ${reclassified.length} previously failing journey(s) reclassified: prerequisite unsatisfied`

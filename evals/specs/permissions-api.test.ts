@@ -13,8 +13,8 @@ const test = spec.world(permissionsWorld, {
   resources: { surfaces: [], services: ["den"] },
 });
 
-// 0133_deprecate_super_admin, from ee/packages/den-db/drizzle/meta/_journal.json.
-const DEPRECATE_SUPER_ADMIN_MIGRATION_AT = 1791394855047;
+// 0134_deprecate_super_admin, from ee/packages/den-db/drizzle/meta/_journal.json.
+const DEPRECATE_SUPER_ADMIN_MIGRATION_AT = 1791485224425;
 
 type Row = Record<string, unknown>;
 
@@ -53,10 +53,10 @@ test("with Permissions off, admins (including what super-admins used to do) hold
 
   await step("given an organization booted from the migrations that retire super-admin", async () => {
     const migration = await world.latestMigration();
-    const ok = migration !== null && migration.latestCreatedAt === DEPRECATE_SUPER_ADMIN_MIGRATION_AT;
+    const ok = migration !== null && migration.latestCreatedAt >= DEPRECATE_SUPER_ADMIN_MIGRATION_AT;
     evidence.recordAssertionEvidence(
-      "The world ran the real migration chain up to 0133_deprecate_super_admin",
-      migration ? `${migration.count} migrations recorded; newest journal timestamp ${migration.latestCreatedAt} (0133 is ${DEPRECATE_SUPER_ADMIN_MIGRATION_AT})` : "no scratch database: the Den was attached, not booted",
+      "The world ran the real migration chain through 0134_deprecate_super_admin",
+      migration ? `${migration.count} migrations recorded; newest journal timestamp ${migration.latestCreatedAt} (0134 is ${DEPRECATE_SUPER_ADMIN_MIGRATION_AT})` : "no scratch database: the Den was attached, not booted",
       ok,
     );
     expect(ok).toBe(true);

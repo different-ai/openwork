@@ -1,0 +1,97 @@
+name: Fork contributor screen
+
+# Forks only, including fork bots: free deterministic screening on every push.
+# pull_request_target loads trusted default-branch code; never execute PR code.
+# No model, secrets, App token or universal required status is used here.
+# Paid work starts only after maintainer /test authorization. Repository Actions
+# settings must require approval for ALL outside collaborators, not first-timers.
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Fork PR to screen (leave empty for all open forks to dev)
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: contributor-pr-screen-${{ github.event.pull_request.number || 'backfill' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
+jobs:
+  screen:
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    uses: ./.github/workflows/contributor-warden.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      stage: scan
+
+  refuse-other-branches:
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Refuse
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Run the Fork contributor screen from dev, not $REF."
+          exit 1
+
+  backfill:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      forks: ${{ steps.backfill.outputs.forks }}
+    steps:
+      - name: Checkout trusted script from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: refs/heads/dev
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: List open forks to screen
+        id: backfill
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr }}
+        run: node .github/scripts/contributor-pr.mjs backfill
+
+  backfill-screen:
+    needs: backfill
+    if: needs.backfill.outputs.forks != '' && needs.backfill.outputs.forks != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.backfill.outputs.forks) }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    uses: ./.github/workflows/contributor-warden.yml
+    with:
+      pr_number: ${{ matrix.number }}
+      head_sha: ${{ matrix.sha }}
+      stage: scan

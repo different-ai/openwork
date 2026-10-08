@@ -297,5 +297,52 @@
       "output": 15,
       "cache_read": 0.3
     }
+  },
+  "openai/gpt-6-luna": {
+    "id": "openai/gpt-6-luna",
+    "name": "GPT-6 Luna",
+    "family": "gpt-luna",
+    "attachment": true,
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "effort",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      }
+    ],
+    "tool_call": true,
+    "structured_output": true,
+    "temperature": false,
+    "release_date": "2026-09-22",
+    "last_updated": "2026-09-22",
+    "modalities": {
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ]
+    },
+    "open_weights": false,
+    "limit": {
+      "context": 1050000,
+      "input": 922000,
+      "output": 128000
+    },
+    "cost": {
+      "input": 0.1,
+      "output": 0.5,
+      "cache_read": 0.01,
+      "cache_write": 0.125
+    }
   }
 }

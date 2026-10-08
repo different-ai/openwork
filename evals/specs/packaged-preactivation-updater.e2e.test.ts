@@ -75,7 +75,8 @@ activated("an activated enterprise install still checks for updates", async ({ w
   // Same binary, same watch: once activated the check must appear. Its Den is
   // unreachable, the network may refuse the manifest, and an unpacked Linux
   // directory cannot self-update at all, so only the attempt is asserted, never
-  // its result.
+  // its result. packaged-update-install proves the download, install, and
+  // relaunch on a signed macOS bundle.
   const activity = await probe.eventually(() => world.updaterActivity(), {
     within: 90_000,
     intervalMs: 1_000,

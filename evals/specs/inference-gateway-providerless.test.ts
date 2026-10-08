@@ -33,7 +33,7 @@ const GATEWAY_BOOT_TIMEOUT_MS = 120_000;
 const DEN_DB_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 const ANTHROPIC_UPSTREAM_KEY = "sk-ant-fake-providerless-upstream-key";
 const OPENAI_UPSTREAM_KEY = "sk-openai-fake-providerless-upstream-key";
-const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
+const ANTHROPIC_MODEL = "claude-haiku-5-5";
 const OPENAI_MODEL = "gpt-4o-mini";
 // The gateway commits streaming responses after RESPONSE_START_MS; the slow fake provider answers after SLOW_PROVIDER_MS.
 const RESPONSE_START_MS = 1_000;

@@ -4,6 +4,7 @@
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { bedrockMantleHost, bedrockRuntimeHost, isAwsRegion } from "@openwork-ee/utils/inference-egress"
+import { microsoftFoundryBaseUrl } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import type { CatalogProvider } from "./provider-catalog.js"
 
 export type ProtocolFamily =
@@ -17,6 +18,8 @@ export type ProtocolFamily =
   | "google_vertex_anthropic"
   | "bedrock"
   | "bedrock_mantle"
+  /** Claude on Microsoft Foundry: the Anthropic Messages API on `<resource>.services.ai.azure.com/anthropic`. */
+  | "microsoft_foundry"
 
 export type AuthHeader = { name: string; value: string }
 
@@ -48,6 +51,7 @@ const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
   google_vertex_anthropic: ["anthropic-beta"],
   bedrock: [],
   bedrock_mantle: [],
+  microsoft_foundry: ["anthropic-version", "anthropic-beta"],
 }
 
 const defaultBaseUrlByFamily: Partial<Record<ProtocolFamily, string>> = {
@@ -59,6 +63,7 @@ const defaultBaseUrlByFamily: Partial<Record<ProtocolFamily, string>> = {
 
 export function classifyProtocolFamily(catalog: CatalogProvider | null): ProtocolFamily | null {
   if (!catalog) return null
+  if (catalog.family) return catalog.family
   const family = catalog.npm ? familyByNpm[catalog.npm] : undefined
   if (family) return family
   // Unknown SDK package but a known API base: best-effort OpenAI-compatible.
@@ -70,6 +75,7 @@ export function classifyRequestProtocol(family: ProtocolFamily, restPath: string
   switch (family) {
     case "anthropic":
     case "google_vertex_anthropic":
+    case "microsoft_foundry":
       return /^\/(?:v1\/)?messages$/.test(pathname) ? "anthropic_messages" : "passthrough"
     case "mistral":
       return /^\/(?:v1\/)?chat\/completions$/.test(pathname) ? "openai_chat" : "passthrough"
@@ -109,10 +115,13 @@ export function parseGoogleModelPath(pathname: string): { model: string; operati
   return match ? { model: match[1], operation: match[2] } : null
 }
 
-export function buildAuthHeader(family: ProtocolFamily, secret: string): AuthHeader {
+/** `bearer`: a token the person signed in for (Entra ID on Foundry), not an API key. */
+export function buildAuthHeader(family: ProtocolFamily, secret: string, bearer = false): AuthHeader {
   switch (family) {
     case "anthropic":
       return { name: "x-api-key", value: secret }
+    case "microsoft_foundry":
+      return bearer ? { name: "authorization", value: `Bearer ${secret}` } : { name: "api-key", value: secret }
     case "azure":
       return { name: "api-key", value: secret }
     case "google":
@@ -146,6 +155,7 @@ export function filterQuery(family: ProtocolFamily, search: string) {
 }
 
 export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, unknown>) {
+  if (family === "microsoft_foundry") return microsoftFoundryBaseUrl(settings.resourceName)
   if (family === "azure") {
     const resourceName = settings.resourceName
     return typeof resourceName === "string" && /^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$/.test(resourceName)

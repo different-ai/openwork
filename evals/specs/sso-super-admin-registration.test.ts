@@ -3,7 +3,7 @@ import { denFetch, freshSession } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { inviteMember, server, test } from "@openwork/testkit";
 
-// Super-admin was merged into admin (migration 0133_deprecate_super_admin):
+// Super-admin was merged into admin (migration 0134_deprecate_super_admin):
 // registering SSO, which used to need super-admin, now needs the sso.manage
 // permission that every admin holds by default.
 const title = "a workspace admin can register SAML SSO, which used to need super-admin, without an internal authorization error";

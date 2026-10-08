@@ -34,6 +34,9 @@ const LOCK_CONFLICT_ERRNOS = new Set([1213, 1205, 1020])
 // PlanetScale/Vitess surface MySQL errors as message text: "... Deadlock found when trying to get lock; try restarting transaction (errno 1213) (sqlstate 40001)".
 const LOCK_CONFLICT_MESSAGE = /Deadlock found when trying to get lock|Lock wait timeout exceeded|Record has changed since last read|\(errno (?:12(?:13|05)|1020)\)/
 const CONNECTION_MESSAGE = /Connection lost|PROTOCOL_CONNECTION_LOST/
+// PlanetScale/Vitess: "vttablet: rpc error: code = ResourceExhausted desc = transaction pool connection limit exceeded".
+// Retrying only adds load to the pool every den-api write shares, so it is never retried (ENG-683).
+const POOL_EXHAUSTED_MESSAGE = /ResourceExhausted|transaction pool connection limit exceeded/
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{1,63}$/
 
 const logger = appLogger.child({ component: "audit_retry" })
@@ -55,6 +58,7 @@ function field(value: object, name: "code" | "errno" | "message"): unknown {
 export function classifyTransientAuditError(error: unknown): AuditTransientFailure | null {
   const chain = errorChain(error)
   if (chain.some((entry) => entry instanceof AuditLogError)) return null
+  if (chain.some((entry) => { const message = field(entry, "message"); return typeof message === "string" && POOL_EXHAUSTED_MESSAGE.test(message) })) return null
   for (const entry of chain) {
     const code = field(entry, "code")
     const errno = field(entry, "errno")

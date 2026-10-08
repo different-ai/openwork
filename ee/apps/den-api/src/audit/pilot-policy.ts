@@ -2,7 +2,7 @@ import { parseArgs } from "node:util"
 import { appendAuditEvent, type AuditDatabase, type AuditPolicy, type AuditTx } from "@openwork-ee/den-db/audit-log"
 import { MAX_AUDIT_RETENTION_CANDIDATES, MAX_AUDIT_RETENTION_OPERATIONS, previewAuditRetention } from "@openwork-ee/den-db/audit-accounting"
 import { and, asc, eq, sql } from "@openwork-ee/den-db/drizzle"
-import { AuditOperationTable, AuditPolicyTable, AuditStateTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { AuditOperationTable, AuditPolicyTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, typeId } from "@openwork-ee/utils/typeid"
 import type { AuditCategory } from "@openwork/types/den/audit"
 import { z } from "zod"
@@ -139,7 +139,7 @@ The policy event starts captureStartedAt; it does not imply traffic flags are on
 
 --preview-retention is a separate read-only mode using the stored policy, not
 new settings; it cannot be combined with --apply or configuration options.
-Reads a coherent state/policy/operation snapshot under a state share lock, with
+Reads a coherent policy/operation snapshot from one read view (no locks), with
 at most 10000 operations. Larger/inconsistent snapshots fail explicitly as
 incomplete. At most 1000 candidates are returned, with selectionComplete and
 remainingEligibleDeletions. The digest/confirmation is informational only.
@@ -167,9 +167,9 @@ function pilotActorId(config: PilotConfig) {
   return config.operatorReference ? `${PILOT_SYSTEM_ACTOR}:${config.operatorReference}` : PILOT_SYSTEM_ACTOR
 }
 
-async function lockOrganization(tx: AuditTx, organizationId: string, mode: "update" | "share") {
+async function requireOrganization(tx: AuditTx, organizationId: string) {
   const [organization] = await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
-    .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId))).limit(1).for(mode)
+    .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId))).limit(1)
   if (!organization) throw new AuditPilotError("audit_pilot_organization_not_found")
 }
 
@@ -177,22 +177,20 @@ export async function initializeAuditPilot(database: AuditDatabase, input: Pilot
   const config = validatePilotConfig(input)
   const organizationId = normalizeDenTypeId("organization", config.organizationId)
   return database.transaction(async (tx) => {
-    await lockOrganization(tx, organizationId, apply ? "update" : "share")
-    if (apply) await tx.insert(AuditStateTable).values({ organization_id: organizationId })
-      .onDuplicateKeyUpdate({ set: { organization_id: sql`${AuditStateTable.organization_id}` } })
-    const [state] = await tx.select().from(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId)).limit(1).for(apply ? "update" : "share")
+    await requireOrganization(tx, organizationId)
     const [existing] = await tx.select({ revision: AuditPolicyTable.revision }).from(AuditPolicyTable)
-      .where(eq(AuditPolicyTable.organization_id, organizationId)).limit(1).for(apply ? "update" : "share")
+      .where(eq(AuditPolicyTable.organization_id, organizationId)).limit(1)
     if (existing) throw new AuditPilotError("audit_pilot_policy_exists")
-    if (state && (state.last_sequence !== 0 || state.retained_operations !== 0 || state.event_count !== 0 || state.logical_bytes !== 0)) throw new AuditPilotError("audit_pilot_storage_inconsistent")
+    const [operation] = await tx.select({ id: AuditOperationTable.id }).from(AuditOperationTable).where(eq(AuditOperationTable.organization_id, organizationId)).limit(1)
+    if (operation) throw new AuditPilotError("audit_pilot_storage_inconsistent")
     if (!apply) return { status: "dry_run", organizationExists: true, policyExists: false, initialized: false }
-    if (!state) throw new AuditPilotError("audit_pilot_storage_inconsistent")
     const now = new Date()
     const policy: AuditPolicy = {
       organizationId, revision: 1, source: config.source, enabled: true, categories: config.categories,
       allowance: config.allowance, excessMode: config.excessMode, effectiveAt: now.toISOString(),
       captureStartedAt: null, attachmentWindowSeconds: config.attachmentWindowSeconds,
     }
+    // The policy primary key rejects a concurrent initialization; no lock is taken.
     await tx.insert(AuditPolicyTable).values({
       organization_id: organizationId, revision: policy.revision, source: policy.source, enabled: policy.enabled,
       categories: policy.categories, allowance: policy.allowance, excess_mode: policy.excessMode,
@@ -226,21 +224,21 @@ export async function previewPilotRetention(database: AuditDatabase, inputOrgani
   if (!parsed.success) throw new AuditPilotError("audit_pilot_invalid_arguments")
   const organizationId = normalizeDenTypeId("organization", parsed.data)
   return database.transaction(async (tx) => {
-    await lockOrganization(tx, organizationId, "share")
-    const [state] = await tx.select({ retainedOperations: AuditStateTable.retained_operations }).from(AuditStateTable)
-      .where(eq(AuditStateTable.organization_id, organizationId)).limit(1).for("share")
+    await requireOrganization(tx, organizationId)
     const [policy] = await tx.select({ revision: AuditPolicyTable.revision, allowance: AuditPolicyTable.allowance, excessMode: AuditPolicyTable.excess_mode, source: AuditPolicyTable.source })
-      .from(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId)).limit(1).for("share")
+      .from(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId)).limit(1)
     if (!policy) throw new AuditPilotError("audit_pilot_policy_missing")
     if (policy.excessMode === "paid_overage" || policy.source === "cloud" && policy.excessMode !== "delete_oldest") throw new AuditPilotError("audit_pilot_retention_unsupported_policy")
-    if (!state || !Number.isSafeInteger(state.retainedOperations) || state.retainedOperations < 0 || state.retainedOperations > MAX_AUDIT_RETENTION_OPERATIONS) throw new AuditPilotError("audit_pilot_retention_incomplete_snapshot")
+    // Counted live from this transaction's read snapshot: audit_state totals are
+    // only refreshed on a schedule and can lag.
     const retained = and(eq(AuditOperationTable.organization_id, organizationId), eq(AuditOperationTable.retention_state, "retained"))
     const [count] = await tx.select({ value: sql<number>`count(*)`.mapWith(Number) }).from(AuditOperationTable).where(retained)
-    if (!count || count.value !== state.retainedOperations) throw new AuditPilotError("audit_pilot_retention_incomplete_snapshot")
+    const state = { retainedOperations: count?.value ?? -1 }
+    if (!Number.isSafeInteger(state.retainedOperations) || state.retainedOperations < 0 || state.retainedOperations > MAX_AUDIT_RETENTION_OPERATIONS) throw new AuditPilotError("audit_pilot_retention_incomplete_snapshot")
     const rows = await tx.select({ id: AuditOperationTable.id, organizationId: AuditOperationTable.organization_id,
       firstRecordedAt: AuditOperationTable.first_recorded_at, outcome: AuditOperationTable.outcome,
       attachmentExpiresAt: AuditOperationTable.attachment_expires_at, kind: AuditOperationTable.kind,
-    }).from(AuditOperationTable).where(retained).orderBy(asc(AuditOperationTable.first_recorded_at), asc(AuditOperationTable.id)).limit(MAX_AUDIT_RETENTION_OPERATIONS).for("share")
+    }).from(AuditOperationTable).where(retained).orderBy(asc(AuditOperationTable.first_recorded_at), asc(AuditOperationTable.id)).limit(MAX_AUDIT_RETENTION_OPERATIONS)
     if (rows.length !== state.retainedOperations || rows.some((row) => !/^[a-z][a-z0-9_.-]{0,127}$/.test(row.kind))) throw new AuditPilotError("audit_pilot_retention_incomplete_snapshot")
     const preview = previewAuditRetention({
       organizationId, now: new Date().toISOString(),

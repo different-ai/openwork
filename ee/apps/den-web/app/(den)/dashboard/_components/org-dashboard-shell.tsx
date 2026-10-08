@@ -24,7 +24,6 @@ import {
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDesktopPoliciesRoute,
-  getManagedDashboardsRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
   getLibraryRoute,
@@ -282,9 +281,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
     return "Connectors";
-  }
-  if (pathname.startsWith(getManagedDashboardsRoute(orgSlug))) {
-    return "Dashboards";
   }
   if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
     return "Your Connections";

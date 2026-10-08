@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
-import { revokeGoogleCredentials, revokeInferenceCredentialsForMembers } from "../../llm/inference-provider-lifecycle.js"
+import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from "../../llm/inference-provider-lifecycle.js"
 import type { SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
@@ -1730,7 +1730,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await recordAdminMemberRemoval(membership, currentUser.id)
         await recordAdminSessionsRevoked(membership, sessionRows, currentUser.id)
       }
-      await revokeGoogleCredentials(gatewayCredentials)
+      await revokeUpstreamCredentials(gatewayCredentials)
       // Auth session cache hits intentionally avoid a DB liveness check; user deletion must clear
       // both token and session-id cache entries for every deleted session instead.
       await Promise.all(sessionRows.flatMap((session) => [

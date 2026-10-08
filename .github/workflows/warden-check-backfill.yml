@@ -1,0 +1,61 @@
+name: Warden check backfill
+
+# One-off, manual: posts the required `warden-clear` check on open PRs from
+# this repository that diff-warden already approved at their current head, so
+# making the check required doesn't block PRs opened before it existed. Every
+# other PR gets the check on its next Warden run. Run it from dev only.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: warden-check-backfill
+  cancel-in-progress: false
+
+jobs:
+  refuse-other-branches:
+    if: github.ref != 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Refuse
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::Run the Warden check backfill from dev, not $REF."
+          exit 1
+
+  backfill:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: warden-clearance
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted script from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: refs/heads/dev
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Mint the check token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          permission-checks: write
+          permission-pull-requests: read
+      - name: Post warden-clear where diff-warden approved the current head
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          REPO: ${{ github.repository }}
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .github/scripts/warden-check.mjs backfill

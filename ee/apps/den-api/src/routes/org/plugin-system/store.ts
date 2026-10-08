@@ -2251,6 +2251,7 @@ const mePluginAccessEdgeOrder: Record<MePluginAccessEdge["kind"], number> = {
 
 async function listMeEffectivePluginAccessWithComponentKinds(input: { context: PluginArchActorContext }) {
   const organizationId = input.context.organizationContext.organization.id
+  await retireEmptyStarterPlugins(organizationId)
   const memberId = input.context.organizationContext.currentMember.id
   const teamIds = input.context.memberTeams.map((team) => team.id)
   const activePlugins = await db
@@ -2735,6 +2736,7 @@ async function memberManagesAllSharedResources(input: { organizationId: Organiza
 
 export async function listPlugins(input: { context: PluginArchActorContext; cursor?: KeysetCursor; includeAccess?: boolean; includeTotal?: boolean; includeFacets?: boolean; limit?: number; q?: string; name?: string; status?: PluginRow["status"]; teamId?: TeamId; memberId?: MemberId; ownerId?: MemberId }) {
   const organizationId = input.context.organizationContext.organization.id
+  await retireEmptyStarterPlugins(organizationId)
   const limit = input.limit ?? 50
   const [targetMember] = input.memberId ? await db.select({ role: MemberTable.role, userId: MemberTable.userId }).from(MemberTable).where(and(
     eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt),
@@ -3286,6 +3288,31 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
     ))
   const memberships = new Set(membershipRows.map((membership) => defaultMarketplacePluginMembershipKey(membership.marketplaceId, membership.pluginId)))
   return Array.from(expectedMemberships).every((membership) => memberships.has(membership))
+}
+
+/**
+ * Plugins and My Library can be the first thing an older organization opens,
+ * so they retire empty starter and built-in placeholders too, not only the
+ * marketplace list. Two indexed reads when there is nothing to retire.
+ */
+async function retireEmptyStarterPlugins(organizationId: OrganizationId) {
+  const retirable = await findRetirableStarterPlaceholders(db, organizationId)
+  if (retirable.memberships.length === 0 && retirable.emptyMarketplaceIds.length === 0
+    && (await findRetirableDefaultOpenWorkPluginIds(db, organizationId)).length === 0) {
+    return
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .select({ id: OrganizationTable.id })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId))
+      .limit(1)
+      .for("update")
+    const now = new Date()
+    await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
+    await retireDefaultOpenWorkPlugins({ database: tx, organizationId, retiredAt: now })
+  })
 }
 
 /**

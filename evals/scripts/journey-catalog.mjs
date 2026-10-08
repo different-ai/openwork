@@ -56,10 +56,17 @@ const definitions = {
   'packaged-preactivation-egress.e2e.test.ts': { name: 'Keep an unactivated enterprise install off the network', placement: 'local', needs: PACKAGED_BINARY },
   'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local', needs: PACKAGED_BINARY },
   // Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
+  // Its crash-report half is asserted on macOS, where packaged-smoke-macos runs it; Linux records that half as skipped.
   'desktop-quit-path.e2e.test.ts': { name: 'Quit an enterprise install cleanly', placement: 'local', needs: PACKAGED_BINARY },
-  // Boots a RELEASED enterprise binary already activated against a real Den. Only its update case also needs
-  // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own and the lane that runs
-  // this journey must provide both binaries for it to pass (#4848).
+  // Installs a newer signed build from a loopback feed through Squirrel.Mac; only packaged-smoke-macos provides both builds.
+  'packaged-update-install.e2e.test.ts': {
+    name: 'Update an activated enterprise install in place', placement: 'local',
+    needs: { platform: 'darwin', env: ['OPENWORK_EVAL_ELECTRON_BINARY', 'OPENWORK_EVAL_UPDATE_FEED_DIR'] },
+  },
+  // Boots an enterprise binary already activated against a real Den. Only its update case also needs
+  // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own. The nightly
+  // packaged-upgrade-path job (ci-tests.yml) provides both: this commit's enterprise package and the latest
+  // public release as the baseline; release validation runs it against the release itself (#4848).
   'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local', needs: PACKAGED_BINARY },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   // Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
@@ -101,6 +108,7 @@ const definitions = {
       { id: 'SKILL-ATTACH', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-MISSING', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-NATIVE-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
+      { id: 'SKILL-CLOUD-DISCOVERY', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
     ],
   },
   'opencode-v2-reads-during-mcp-startup.e2e.test.ts': {

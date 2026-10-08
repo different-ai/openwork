@@ -21,9 +21,12 @@ browser ── chat.openworklabs.com (this app: page + API) ──┬── Den 
 
 ## Sessions
 
-The browser holds a random session id in an HttpOnly, `SameSite=Lax`, `__Host-` cookie. This app keeps its hash
-and the person's Den tokens, encrypted with `WORKBOT_SESSION_SECRET`, in SQLite at `WORKBOT_DB_PATH`. Access tokens
-refresh a little before they expire, one refresh per session at a time. Den is asked who the person is at most every
+Workbot keeps nothing on disk, so it runs as any number of instances. The person's Den tokens live in an HttpOnly,
+`SameSite=Lax`, `__Host-` cookie, encrypted and authenticated with `WORKBOT_SESSION_SECRET` (AES-256-GCM); a sign-in
+in progress (PKCE state) lives in a second, ten-minute cookie. Access tokens refresh a little before they expire,
+once per refresh token: requests still carrying the previous cookie get that refresh's tokens instead of spending the
+rotated token again. If two instances race on one refresh anyway, the person goes through Den's sign-in again, which
+returns at once while their Den session lasts. Den is asked who the person is at most every
 30 seconds, so a revoked grant or membership signs them out quickly. Changes must come from this site's own origin.
 Signing out revokes the refresh token at Den.
 
@@ -35,8 +38,7 @@ Signing out revokes the refresh token at Den.
 | `WORKBOT_DEN_API_URL` | required | Den's public API, e.g. `https://api.openworklabs.com`. Sign-in is discovered from its `/mcp/agent` resource |
 | `WORKBOT_DEN_WEB_URL` | sign-in origin | Den's web app, for the link back and app logos |
 | `WORKBOT_RUNNER_URL`, `WORKBOT_RUNNER_TOKEN` | required | The headless runner and its service token (`HEADLESS_API_TOKEN`) |
-| `WORKBOT_SESSION_SECRET` | required | ≥ 32 characters; encrypts stored tokens. Changing it signs everyone out |
-| `WORKBOT_DB_PATH` | `./data/workbot.sqlite` | Put it on a persistent disk |
+| `WORKBOT_SESSION_SECRET` | required | ≥ 32 characters; encrypts the sign-in cookies. Changing it signs everyone out |
 | `PORT` / `WORKBOT_PORT` | `3020` | |
 
 On Den, set `DEN_WORKBOT_URL` (den-api) to the same address as `WORKBOT_PUBLIC_URL`; den-web's `/workbot` redirects
@@ -58,5 +60,5 @@ A web service in the same region as the headless runner (it reaches the runner's
 | Build command | `pnpm install --filter @openwork-ee/workbot... --frozen-lockfile && pnpm --dir ee/apps/workbot run build` |
 | Start command | `pnpm --dir ee/apps/workbot run start` |
 | Health check | `/healthz` |
-| Disk | Mount at `/var/data`, set `WORKBOT_DB_PATH=/var/data/workbot.sqlite` |
+| Disk | None. Scale instances freely |
 | Custom domain | `chat.openworklabs.com` |

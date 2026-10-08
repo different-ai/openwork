@@ -8,12 +8,10 @@ import { createAuth, type AppEnv } from "./auth.js"
 import { loadConfig } from "./config.js"
 import { createDen } from "./den.js"
 import { registerWorkbotRoutes } from "./routes.js"
-import { Store } from "./store.js"
 
 const config = loadConfig()
-const store = new Store(config.dbPath, config.sessionSecret)
 const den = createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl })
-const auth = createAuth({ config, store, den })
+const auth = createAuth({ config, den })
 
 const app = new Hono<AppEnv>()
 app.use("*", async (c, next) => {
@@ -59,7 +57,6 @@ if (config.dev) {
   server = createServer(getRequestListener(app.fetch))
 }
 
-setInterval(() => store.sweep(), 60 * 60_000).unref()
 server.listen(config.port, () => {
   console.log(`[workbot] listening on :${config.port} (${config.publicUrl}, den ${config.denApiUrl}, runner ${config.runner.url}${config.dev ? ", dev" : ""})`)
 })

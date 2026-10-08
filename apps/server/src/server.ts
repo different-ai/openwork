@@ -3487,6 +3487,10 @@ function createRoutes(
       // rendered from the ENGINE_GLOBAL row only, so a workspace-row write
       // would never reach the engine.
       const providerUpdate = isRecord(provider) ? provider : {};
+      // Opt-in per provider: add the patch's models to the ones already saved instead of replacing them.
+      const mergeProviderModels = new Set(Array.isArray(body.mergeProviderModels)
+        ? body.mergeProviderModels.filter((id): id is string => typeof id === "string")
+        : []);
       // Removing a provider is always allowed; adding or changing one must fit the organization's model access.
       if (Object.keys(providerUpdate).length) await managedDesktopPolicy(config).assert("provider", {
         providerIDs: Object.entries(providerUpdate).filter(([, value]) => value !== null).map(([id]) => id),
@@ -3494,7 +3498,7 @@ function createRoutes(
       if (Object.keys(providerUpdate).length) {
         const providerResult = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
           ...current,
-          provider: mergeRuntimeProviderUpdate(current.provider, providerUpdate),
+          provider: mergeRuntimeProviderUpdate(current.provider, providerUpdate, mergeProviderModels),
         }));
         runtimeChanged = providerResult.changed || runtimeChanged;
       }

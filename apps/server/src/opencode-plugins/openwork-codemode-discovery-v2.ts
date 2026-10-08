@@ -1,4 +1,8 @@
-import { parse } from "acorn";
+import { tsPlugin } from "@sveltejs/acorn-typescript";
+import { Parser } from "acorn";
+
+// The engine transpiles scripts as TypeScript, so annotated scripts must parse here too.
+const ScriptParser = Parser.extend(tsPlugin());
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -19,9 +23,9 @@ export function nativeDiscoveryCode(code: string): string {
   if (!code.includes("search")) return code;
   let tree: unknown;
   try {
-    tree = parse(code, { ecmaVersion: "latest", allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
+    tree = ScriptParser.parse(code, { ecmaVersion: "latest", locations: true, allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
   } catch {
-    // Let the engine own syntax diagnostics, including its TypeScript support.
+    // Let the engine own syntax diagnostics.
     return code;
   }
   const ranges: Array<{ start: number; end: number }> = [];

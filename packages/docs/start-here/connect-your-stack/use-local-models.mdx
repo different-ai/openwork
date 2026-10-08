@@ -23,6 +23,12 @@ OpenWork has a built-in Ollama setup screen. It talks to Ollama at `http://local
 
 OpenWork checks whether the model can read images. Models with vision support accept image attachments; text-only models do not.
 
+OpenWork also reads the thinking levels the model supports, such as `low`, `high`, or `max`, and lists them in the model picker's thinking menu. Models that cannot think show no levels.
+
+To use more than one Ollama model, repeat the steps for each model. Models you added earlier stay in the model picker. Adding a model again refreshes its image support and thinking levels, for example after you update Ollama.
+
+To match OpenWork to everything in Ollama at once, click `Sync all models` under the model list. OpenWork adds every model Ollama has, removes models you deleted from Ollama, and refreshes each model's image support and thinking levels.
+
 ## Use LM Studio or another local server
 
 LM Studio, llama.cpp's server, vLLM, and similar tools expose an OpenAI-compatible API. OpenWork connects to them the same way it connects to any [custom LLM](/start-here/connect-your-stack/add-a-custom-llm).

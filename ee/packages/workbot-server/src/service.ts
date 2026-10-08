@@ -5,10 +5,11 @@ import { buildWorkbotTurns, GREETING_RUNNER_ID, interruptedTurnIds, threadBusy, 
 
 /**
  * Workbot: one chat per person, set up once by an admin. Each member has a
- * single durable conversation on the headless runner, reaches their apps
- * through OpenWork MCP with a token minted per turn, and keeps long-term
- * memory as files under memory/ in that conversation, which the runner shows
- * the model every turn. Nothing is configured here.
+ * durable main chat on the headless runner, reaches their apps through OpenWork
+ * MCP with a token minted per turn, and keeps long-term memory as files under
+ * memory/ in that chat, which the runner shows the model every turn. Where side
+ * chats are on, a member can also start side chats for one topic at a time; they
+ * share the main chat's memory. Nothing is configured here.
  *
  * The host (the Workbot app, ee/apps/workbot) signs the member in through Den, which decides whether Workbot is on
  * for their organization; the host passes in the runner client. Everything else about Workbot lives here.
@@ -24,6 +25,9 @@ export type WorkbotActor = {
   firstName: string | null
 }
 
+/** Which of the person's chats: their main chat (null), or one of their side chats by its id. */
+export type WorkbotChat = string | null
+
 export type WorkbotThread = {
   name: string
   organizationName: string
@@ -34,6 +38,9 @@ export type WorkbotThread = {
   filesEnabled: boolean
 }
 
+/** A chat in the person's list: its id (null for the main chat), its name once it has one, and when it was last used. */
+export type WorkbotChatSummary = { id: string; title: string; updatedAt: number }
+
 export type WorkbotFile = RunnerSavedFile
 
 export type WorkbotDeps = {
@@ -43,9 +50,31 @@ export type WorkbotDeps = {
   canSchedule: (organizationId: string) => Promise<boolean>
 }
 
-/** Derived, so each member has exactly one thread and Den stores nothing to find it. */
+const personKey = (organizationId: string, memberId: string) => createHash("sha256").update(`workbot:${organizationId}:${memberId}`).digest("hex").slice(0, 40)
+
+/** Derived, so each member has exactly one main chat and Den stores nothing to find it. */
 export function workbotSessionId(organizationId: string, memberId: string) {
-  return `hs_wb_${createHash("sha256").update(`workbot:${organizationId}:${memberId}`).digest("hex").slice(0, 40)}`
+  return `hs_wb_${personKey(organizationId, memberId)}`
+}
+
+/** A side chat's id, made by the page when the person starts one. */
+export const WORKBOT_CHAT_ID = /^[a-z0-9]{16,40}$/
+
+/** The runner lists a person's chats by this key: derived from them, never their raw ids. */
+export function workbotOwner(organizationId: string, memberId: string) {
+  return `wb:${personKey(organizationId, memberId)}`
+}
+
+/** A side chat's conversation: derived from the person and the chat's id, so nobody can reach another person's chat. */
+export function workbotSideChatSessionId(organizationId: string, memberId: string, chatId: string) {
+  return `hs_wbs_${createHash("sha256").update(`workbot:${organizationId}:${memberId}:${chatId}`).digest("hex").slice(0, 40)}`
+}
+
+/** The runner's ref for the main chat in the person's list; side chats use their own id. */
+const MAIN_CHAT_REF = "main"
+
+function sessionOf(actor: WorkbotActor, chat: WorkbotChat) {
+  return chat ? workbotSideChatSessionId(actor.organizationId, actor.memberId, chat) : workbotSessionId(actor.organizationId, actor.memberId)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -68,20 +97,24 @@ export function workbotName(metadata: WorkbotActor["organizationMetadata"]) {
   return typeof brand === "string" && brand.trim() && brand.trim() !== "OpenWork" ? brand.trim().slice(0, 40) : "Workbot"
 }
 
+/**
+ * The model's instructions for one of the person's chats. They stay the same from one message to the next (the
+ * runner dates each message instead), so the model provider's prompt cache keeps hitting.
+ */
 export function workbotInstructions(input: {
   name: string
   organizationName: string
   firstName: string | null
   timeZone: string
   canSchedule: boolean
-  now?: Date
+  /** A side chat: one topic, next to their main chat, with the same memory. */
+  side?: boolean
 }) {
-  const localNow = (input.now ?? new Date()).toLocaleString("en-US", {
-    timeZone: input.timeZone, weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
-  })
   const person = input.firstName ?? "this person"
   return [
-    `You are ${input.name}, the assistant ${input.organizationName} set up for ${person}. This is your one ongoing conversation with them; it never resets.`,
+    input.side
+      ? `You are ${input.name}, the assistant ${input.organizationName} set up for ${person}. This is a side chat ${person} started for one topic, next to their main chat with you. You share the same memory across their chats.`
+      : `You are ${input.name}, the assistant ${input.organizationName} set up for ${person}. This is your one ongoing conversation with them; it never resets.`,
     "",
     `- ${person} watches this chat live and sees each thing you write as you write it, not only your final message. So sound like a person taking it on: in the same reply where you first use your computer or look through their apps, start with one short sentence of your own before the tool call ("Sure, give me a sec.", "Let me check your inbox."), then do the work, then answer in its own short message. Vary the words; skip it only when the answer is instant.`,
     `- ${person} is not technical. Never mention tools, MCP, capabilities, models, prompts, files or settings. Write like a helpful coworker: short, plain sentences.`,
@@ -95,7 +128,7 @@ export function workbotInstructions(input: {
     input.canSchedule
       ? `- For anything recurring or later ("every Monday at 8", "remind me at 3"), create an Automation: find createCloudAutomation with search_capabilities, then call it with execute_capability. Use their time zone (${input.timeZone}), a short plain name, instructions that make sense on their own later, and model {"providerId":"${AUTOMATION_CLOUD_DEFAULT_MODEL.providerId}","modelId":"${AUTOMATION_CLOUD_DEFAULT_MODEL.modelId}"}. Then confirm in one line.`
       : "- You cannot schedule recurring work here yet. If they ask, say so in one line and offer to do it now instead.",
-    `- Their time zone is ${input.timeZone}. When they sent their latest message it was ${localNow} there; say "today" and "tomorrow" from their point of view.`,
+    `- Their time zone is ${input.timeZone}; each of their messages shows when they sent it, in that time zone. Say "today" and "tomorrow" from their point of view.`,
   ].join("\n")
 }
 
@@ -121,25 +154,42 @@ function clientOf(deps: WorkbotDeps) {
   return deps.client
 }
 
-async function ensureSession(actor: WorkbotActor, timeZone: string, deps: WorkbotDeps) {
+/**
+ * Creates or refreshes the chat's conversation on the runner and returns its id. A side chat needs the main chat
+ * to exist first: it keeps its memory there.
+ */
+async function ensureSession(actor: WorkbotActor, timeZone: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
   const client = clientOf(deps)
   const name = workbotName(actor.organizationMetadata)
   const canSchedule = await deps.canSchedule(actor.organizationId).catch(() => false)
-  const saved = await client.putSession(workbotSessionId(actor.organizationId, actor.memberId), {
-    title: `${name} · ${actor.firstName ?? "member"}`,
-    instructions: workbotInstructions({
-      name,
-      organizationName: actor.organizationName,
-      firstName: actor.firstName,
-      timeZone,
-      canSchedule,
-    }),
+  const main = workbotSessionId(actor.organizationId, actor.memberId)
+  const common = {
     // Workbot keeps the person's files, works on its own computer, reacts to messages with an emoji and hands longer
     // work to background tasks; the runner offers each only on request.
     files: true,
     computer: true,
     reactions: true,
     tasks: true,
+    owner: workbotOwner(actor.organizationId, actor.memberId),
+    timeZone,
+  }
+  const savedMain = await client.putSession(main, {
+    title: `${name} · ${actor.firstName ?? "member"}`,
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule }),
+    ...common,
+    ref: MAIN_CHAT_REF,
+  })
+  if (!savedMain.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  if (!chat) return savedMain.value.id
+  // Named by the runner after its first answer; never sent a title, so that name stays. Strict: a side chat is only
+  // found again through its owner and ref, so it is never kept without them (the main chat's id is derived).
+  const saved = await client.putSession(sessionOf(actor, chat), {
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, side: true }),
+    ...common,
+    ref: chat,
+    autoTitle: true,
+    memoryOf: main,
+    strict: true,
   })
   if (!saved.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return saved.value.id
@@ -171,7 +221,7 @@ export function greetingPrompt(input: { firstName: string | null; timeZone: stri
 
 /**
  * Workbot says hello first, once the person leaves the welcome screen: it starts the conversation with a turn of its
- * own. Only for a conversation that doesn't exist yet; the fixed id makes it happen once, however many tabs ask.
+ * own. Only for a main chat that doesn't exist yet; the fixed id makes it happen once, however many tabs ask.
  */
 export async function startWorkbotGreeting(actor: WorkbotActor, input: { timeZone?: string }, deps: WorkbotDeps) {
   const client = clientOf(deps)
@@ -196,16 +246,16 @@ export async function startWorkbotGreeting(actor: WorkbotActor, input: { timeZon
 
 export async function readWorkbotThread(
   actor: WorkbotActor,
-  input: { turns?: number },
+  input: { turns?: number; chat?: WorkbotChat },
   deps: WorkbotDeps,
 ): Promise<WorkbotThread> {
   const client = clientOf(deps)
-  const sessionId = workbotSessionId(actor.organizationId, actor.memberId)
+  const sessionId = sessionOf(actor, input.chat ?? null)
   const name = workbotName(actor.organizationMetadata)
   // Windowed: reading a year-long thread costs the same as reading a new one.
   const read = await client.readSession(sessionId, { turns: input.turns ?? WORKBOT_PAGE_TURNS, limit: 2_000, outputs: "none" })
   if (!read.ok && read.status === 404) {
-    // First visit: no conversation yet. The welcome screen starts it (startWorkbotGreeting), or the first message.
+    // No conversation yet: the welcome screen starts the main chat (startWorkbotGreeting), the first message any chat.
     return { name, organizationName: actor.organizationName, status: "idle", turns: [], hasEarlier: false, filesEnabled: await client.filesEnabled() }
   }
   if (!read.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
@@ -233,13 +283,36 @@ export async function readWorkbotThread(
   }
 }
 
+/** The person's chats: the main chat (once it exists) and their side chats, most recently used first. */
+export async function listWorkbotChats(actor: WorkbotActor, deps: WorkbotDeps): Promise<{ main: { updatedAt: number } | null; side: WorkbotChatSummary[] }> {
+  const listed = await clientOf(deps).listSessions(workbotOwner(actor.organizationId, actor.memberId), { limit: 100 })
+  if (!listed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  const main = listed.value.sessions.find((session) => session.ref === MAIN_CHAT_REF)
+  return {
+    main: main ? { updatedAt: main.updatedAt } : null,
+    side: listed.value.sessions.flatMap((session) =>
+      session.ref && WORKBOT_CHAT_ID.test(session.ref) ? [{ id: session.ref, title: session.title, updatedAt: session.updatedAt }] : [],
+    ),
+  }
+}
+
+/** Removes a side chat with everything in it; refused while it is answering. The main chat can't be removed. */
+export async function removeWorkbotChat(actor: WorkbotActor, chatId: string, deps: WorkbotDeps) {
+  if (!WORKBOT_CHAT_ID.test(chatId)) return { ok: false as const, code: "unknown_chat" as const }
+  const removed = await clientOf(deps).deleteSession(sessionOf(actor, chatId))
+  if (!removed.ok && removed.status === 409) return { ok: false as const, code: "busy" as const }
+  if (!removed.ok && removed.status === 404) return { ok: false as const, code: "unknown_chat" as const }
+  if (!removed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  return { ok: true as const }
+}
+
 export async function sendWorkbotMessage(
   actor: WorkbotActor,
-  input: { id: string; text: string; timeZone?: string; attachments?: string[] },
+  input: { id: string; text: string; timeZone?: string; attachments?: string[]; chat?: WorkbotChat },
   deps: WorkbotDeps,
 ) {
   const client = clientOf(deps)
-  const sessionId = await ensureSession(actor, validTimeZone(input.timeZone), deps)
+  const sessionId = await ensureSession(actor, validTimeZone(input.timeZone), deps, input.chat ?? null)
   // The page's own id makes retries safe: the runner never starts a second turn for it.
   const sent = await client.sendTurn(
     { userId: actor.userId, organizationId: actor.organizationId },
@@ -255,12 +328,40 @@ export async function sendWorkbotMessage(
 const MESSAGE_ID = /^[A-Za-z0-9_-]{8,64}$/
 
 /**
+ * Answers a message that failed again, in place: the runner resumes the same turn, so the conversation doesn't get a
+ * second copy of the message. Only for a message whose answer failed.
+ */
+export async function retryWorkbotMessage(actor: WorkbotActor, input: { id: string; timeZone?: string; chat?: WorkbotChat }, deps: WorkbotDeps) {
+  if (!MESSAGE_ID.test(input.id)) return { ok: false as const, code: "unknown_message" as const }
+  const client = clientOf(deps)
+  const chat = input.chat ?? null
+  const sessionId = sessionOf(actor, chat)
+  const messageId = `${WORKBOT_MESSAGE_PREFIX}${input.id}`
+  const read = await client.readSession(sessionId, { messageId, limit: 200, outputs: "none" })
+  if (!read.ok && read.status === 404) return { ok: false as const, code: "unknown_message" as const }
+  if (!read.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  const turn = read.value.turns.find((entry) => entry.messageId === messageId)
+  if (!turn) return { ok: false as const, code: "unknown_message" as const }
+  if (turn.status !== "failed") return { ok: false as const, code: "not_failed" as const }
+  // Fresh instructions and time zone, then the same message id: the runner resumes the turn it already has.
+  await ensureSession(actor, validTimeZone(input.timeZone), deps, chat)
+  const text = read.value.messages.find((message) => message.role === "user" && message.messageId === messageId)
+  const sent = await client.sendTurn(
+    { userId: actor.userId, organizationId: actor.organizationId },
+    { sessionId, messageId, prompt: text?.role === "user" && text.text.trim() ? text.text : "Try again." },
+  )
+  if (!sent.ok && sent.status === 429) return { ok: false as const, code: "too_many_queued" as const }
+  if (!sent.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  return { ok: true as const }
+}
+
+/**
  * Deletes one of the person's messages with Workbot's answer to it (and anything that answer started), so it is
  * gone from the conversation and from what Workbot remembers of it.
  */
-export async function deleteWorkbotMessage(actor: WorkbotActor, id: string, deps: WorkbotDeps) {
+export async function deleteWorkbotMessage(actor: WorkbotActor, id: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
   if (!MESSAGE_ID.test(id)) return { ok: false as const, code: "unknown_message" as const }
-  const removed = await clientOf(deps).deleteTurns(workbotSessionId(actor.organizationId, actor.memberId), `${WORKBOT_MESSAGE_PREFIX}${id}`)
+  const removed = await clientOf(deps).deleteTurns(sessionOf(actor, chat), `${WORKBOT_MESSAGE_PREFIX}${id}`)
   if (!removed.ok && removed.status === 409) return { ok: false as const, code: "busy" as const }
   if (!removed.ok && removed.status === 404) return { ok: false as const, code: "unknown_message" as const }
   if (!removed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
@@ -273,38 +374,38 @@ export async function deleteWorkbotMessage(actor: WorkbotActor, id: string, deps
  */
 export async function editWorkbotMessage(
   actor: WorkbotActor,
-  input: { id: string; newId: string; text: string; timeZone?: string; attachments?: string[] },
+  input: { id: string; newId: string; text: string; timeZone?: string; attachments?: string[]; chat?: WorkbotChat },
   deps: WorkbotDeps,
 ) {
   if (!MESSAGE_ID.test(input.id) || !MESSAGE_ID.test(input.newId)) return { ok: false as const, code: "unknown_message" as const }
-  const removed = await clientOf(deps).deleteTurns(workbotSessionId(actor.organizationId, actor.memberId), `${WORKBOT_MESSAGE_PREFIX}${input.id}`, {
+  const removed = await clientOf(deps).deleteTurns(sessionOf(actor, input.chat ?? null), `${WORKBOT_MESSAGE_PREFIX}${input.id}`, {
     andAfter: true,
   })
   if (!removed.ok && removed.status === 409) return { ok: false as const, code: "busy" as const }
   if (!removed.ok && removed.status === 404) return { ok: false as const, code: "unknown_message" as const }
   if (!removed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
-  return sendWorkbotMessage(actor, { id: input.newId, text: input.text, timeZone: input.timeZone, attachments: input.attachments }, deps)
+  return sendWorkbotMessage(actor, { id: input.newId, text: input.text, timeZone: input.timeZone, attachments: input.attachments, chat: input.chat ?? null }, deps)
 }
 
 /** A background task's page id: the id of the message that started it, then `.t<number>`. */
 const TASK_ID = /^[A-Za-z0-9_:-]{1,100}\.t\d{1,3}$/
 
 /** Stops one background task, from its card on the page. It won't report back. */
-export async function stopWorkbotTask(actor: WorkbotActor, taskId: string, deps: WorkbotDeps) {
+export async function stopWorkbotTask(actor: WorkbotActor, taskId: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
   if (!TASK_ID.test(taskId)) return { stopped: false }
-  const stopped = await clientOf(deps).abort(workbotSessionId(actor.organizationId, actor.memberId), `${WORKBOT_MESSAGE_PREFIX}${taskId}`)
+  const stopped = await clientOf(deps).abort(sessionOf(actor, chat), `${WORKBOT_MESSAGE_PREFIX}${taskId}`)
   return { stopped: stopped.stopped }
 }
 
 /** Stops the answer in progress and anything queued behind it; background tasks keep going (Workbot stops one when asked). */
-export async function stopWorkbot(actor: WorkbotActor, deps: WorkbotDeps) {
-  const stopped = await clientOf(deps).abort(workbotSessionId(actor.organizationId, actor.memberId))
+export async function stopWorkbot(actor: WorkbotActor, deps: WorkbotDeps, chat: WorkbotChat = null) {
+  const stopped = await clientOf(deps).abort(sessionOf(actor, chat))
   return { stopped: stopped.stopped }
 }
 
-/** The member's live event stream from the runner, or null when it can't be opened. */
-export async function openWorkbotEvents(actor: WorkbotActor, signal: AbortSignal, deps: WorkbotDeps) {
-  return clientOf(deps).openEvents(workbotSessionId(actor.organizationId, actor.memberId), signal).catch(() => null)
+/** The chat's live event stream from the runner, or null when it can't be opened. */
+export async function openWorkbotEvents(actor: WorkbotActor, signal: AbortSignal, deps: WorkbotDeps, chat: WorkbotChat = null) {
+  return clientOf(deps).openEvents(sessionOf(actor, chat), signal).catch(() => null)
 }
 
 export class WorkbotFilesUnavailableError extends Error {
@@ -317,61 +418,67 @@ export class WorkbotFilesUnavailableError extends Error {
 /** Keeps a file the member sends; it is attached to a message by id when they send it. */
 export async function uploadWorkbotFile(
   actor: WorkbotActor,
-  input: { name: string; mediaType: string; bytes: ArrayBuffer; timeZone?: string },
+  input: { name: string; mediaType: string; bytes: ArrayBuffer; timeZone?: string; chat?: WorkbotChat },
   deps: WorkbotDeps,
 ) {
   const client = clientOf(deps)
   if (!(await client.filesEnabled())) throw new WorkbotFilesUnavailableError()
-  // The thread exists before its first message so a file can be added first.
-  const sessionId = await ensureSession(actor, validTimeZone(input.timeZone), deps)
+  // The chat exists before its first message so a file can be added first.
+  const sessionId = await ensureSession(actor, validTimeZone(input.timeZone), deps, input.chat ?? null)
   const uploaded = await client.uploadFile(sessionId, input)
   if (!uploaded.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return uploaded.value
 }
 
-export async function listWorkbotFiles(actor: WorkbotActor, deps: WorkbotDeps): Promise<{ enabled: boolean; files: WorkbotFile[] }> {
+export async function listWorkbotFiles(actor: WorkbotActor, deps: WorkbotDeps, chat: WorkbotChat = null): Promise<{ enabled: boolean; files: WorkbotFile[] }> {
   const client = clientOf(deps)
   if (!(await client.filesEnabled())) return { enabled: false, files: [] }
-  const listed = await client.listFiles(workbotSessionId(actor.organizationId, actor.memberId))
+  const listed = await client.listFiles(sessionOf(actor, chat))
   if (!listed.ok && listed.status === 404) return { enabled: true, files: [] }
   if (!listed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return { enabled: true, files: listed.value }
 }
 
-export async function downloadWorkbotFile(actor: WorkbotActor, fileId: string, deps: WorkbotDeps) {
-  return clientOf(deps).downloadFile(workbotSessionId(actor.organizationId, actor.memberId), fileId)
+export async function downloadWorkbotFile(actor: WorkbotActor, fileId: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
+  return clientOf(deps).downloadFile(sessionOf(actor, chat), fileId)
 }
 
-export async function readWorkbotPreview(actor: WorkbotActor, fileId: string, deps: WorkbotDeps) {
-  return clientOf(deps).previewManifest(workbotSessionId(actor.organizationId, actor.memberId), fileId)
+export async function readWorkbotPreview(actor: WorkbotActor, fileId: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
+  return clientOf(deps).previewManifest(sessionOf(actor, chat), fileId)
 }
 
-export async function downloadWorkbotPreviewPage(actor: WorkbotActor, fileId: string, page: number, deps: WorkbotDeps) {
-  return clientOf(deps).previewPage(workbotSessionId(actor.organizationId, actor.memberId), fileId, page)
+export async function downloadWorkbotPreviewPage(actor: WorkbotActor, fileId: string, page: number, deps: WorkbotDeps, chat: WorkbotChat = null) {
+  return clientOf(deps).previewPage(sessionOf(actor, chat), fileId, page)
 }
 
-export async function deleteWorkbotFile(actor: WorkbotActor, fileId: string, deps: WorkbotDeps) {
-  return clientOf(deps).deleteFile(workbotSessionId(actor.organizationId, actor.memberId), fileId)
+export async function deleteWorkbotFile(actor: WorkbotActor, fileId: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
+  return clientOf(deps).deleteFile(sessionOf(actor, chat), fileId)
 }
 
-/** Workbot for one host: every operation, bound to its runner and scheduling check. */
+/** Workbot for one host: every operation, bound to its runner and scheduling check. `chat` null is the main chat. */
 export function createWorkbot(deps: WorkbotDeps) {
   return {
-    readThread: (actor: WorkbotActor, input: { turns?: number } = {}) => readWorkbotThread(actor, input, deps),
+    readThread: (actor: WorkbotActor, input: { turns?: number; chat?: WorkbotChat } = {}) => readWorkbotThread(actor, input, deps),
     hello: (actor: WorkbotActor, input: { timeZone?: string }) => startWorkbotGreeting(actor, input, deps),
-    send: (actor: WorkbotActor, input: { id: string; text: string; timeZone?: string; attachments?: string[] }) => sendWorkbotMessage(actor, input, deps),
-    stop: (actor: WorkbotActor) => stopWorkbot(actor, deps),
-    stopTask: (actor: WorkbotActor, taskId: string) => stopWorkbotTask(actor, taskId, deps),
-    deleteMessage: (actor: WorkbotActor, id: string) => deleteWorkbotMessage(actor, id, deps),
-    editMessage: (actor: WorkbotActor, input: { id: string; newId: string; text: string; timeZone?: string; attachments?: string[] }) =>
+    send: (actor: WorkbotActor, input: { id: string; text: string; timeZone?: string; attachments?: string[]; chat?: WorkbotChat }) =>
+      sendWorkbotMessage(actor, input, deps),
+    retry: (actor: WorkbotActor, input: { id: string; timeZone?: string; chat?: WorkbotChat }) => retryWorkbotMessage(actor, input, deps),
+    stop: (actor: WorkbotActor, chat: WorkbotChat = null) => stopWorkbot(actor, deps, chat),
+    stopTask: (actor: WorkbotActor, taskId: string, chat: WorkbotChat = null) => stopWorkbotTask(actor, taskId, deps, chat),
+    deleteMessage: (actor: WorkbotActor, id: string, chat: WorkbotChat = null) => deleteWorkbotMessage(actor, id, deps, chat),
+    editMessage: (actor: WorkbotActor, input: { id: string; newId: string; text: string; timeZone?: string; attachments?: string[]; chat?: WorkbotChat }) =>
       editWorkbotMessage(actor, input, deps),
-    openEvents: (actor: WorkbotActor, signal: AbortSignal) => openWorkbotEvents(actor, signal, deps),
-    uploadFile: (actor: WorkbotActor, input: { name: string; mediaType: string; bytes: ArrayBuffer; timeZone?: string }) => uploadWorkbotFile(actor, input, deps),
-    listFiles: (actor: WorkbotActor) => listWorkbotFiles(actor, deps),
-    downloadFile: (actor: WorkbotActor, fileId: string) => downloadWorkbotFile(actor, fileId, deps),
-    readPreview: (actor: WorkbotActor, fileId: string) => readWorkbotPreview(actor, fileId, deps),
-    downloadPreviewPage: (actor: WorkbotActor, fileId: string, page: number) => downloadWorkbotPreviewPage(actor, fileId, page, deps),
-    deleteFile: (actor: WorkbotActor, fileId: string) => deleteWorkbotFile(actor, fileId, deps),
+    listChats: (actor: WorkbotActor) => listWorkbotChats(actor, deps),
+    removeChat: (actor: WorkbotActor, chatId: string) => removeWorkbotChat(actor, chatId, deps),
+    openEvents: (actor: WorkbotActor, signal: AbortSignal, chat: WorkbotChat = null) => openWorkbotEvents(actor, signal, deps, chat),
+    uploadFile: (actor: WorkbotActor, input: { name: string; mediaType: string; bytes: ArrayBuffer; timeZone?: string; chat?: WorkbotChat }) =>
+      uploadWorkbotFile(actor, input, deps),
+    listFiles: (actor: WorkbotActor, chat: WorkbotChat = null) => listWorkbotFiles(actor, deps, chat),
+    downloadFile: (actor: WorkbotActor, fileId: string, chat: WorkbotChat = null) => downloadWorkbotFile(actor, fileId, deps, chat),
+    readPreview: (actor: WorkbotActor, fileId: string, chat: WorkbotChat = null) => readWorkbotPreview(actor, fileId, deps, chat),
+    downloadPreviewPage: (actor: WorkbotActor, fileId: string, page: number, chat: WorkbotChat = null) =>
+      downloadWorkbotPreviewPage(actor, fileId, page, deps, chat),
+    deleteFile: (actor: WorkbotActor, fileId: string, chat: WorkbotChat = null) => deleteWorkbotFile(actor, fileId, deps, chat),
   }
 }
 export type Workbot = ReturnType<typeof createWorkbot>

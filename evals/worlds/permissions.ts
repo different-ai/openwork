@@ -3,7 +3,7 @@ import { queryDenDatabase, type Seed } from "@openwork/env";
 
 /**
  * One organization booted from the real migration chain (schema: "migrate",
- * so 0132_permissions and 0133_deprecate_super_admin run), with:
+ * so 0133_permissions and 0134_deprecate_super_admin run), with:
  *   - the owner (also the deployment's platform admin, who can turn features on),
  *   - Adam, an admin by role,
  *   - Maya, a member of the Support team,

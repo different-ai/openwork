@@ -28,6 +28,7 @@ config:
   features:
     installLinks: ""           # default on · Workspace admins can create desktop install links for their organization.
     mcpConnections: ""         # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
+    implicitCloudSkills: ""    # default off · Agents discover organization skills automatically without waiting for Cloud before starting a task.
     dashboardActivity: ""      # default off · Organization admins see recent additions and skill updates on their dashboard instead of Quick add.
     modelsAnalytics: ""        # default off · Organization admins can opt in to task analytics for OpenWork Models.
     auditLogs: ""              # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
@@ -36,8 +37,12 @@ config:
     slackAssistantHeadless: "" # default off · Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.
     headlessAutomations: ""    # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
     workbot: ""                # default off · Members can use Workbot. Needs the deployment's Workbot app.
+    automationCalendar: ""     # default off · Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.
+    workbotCalendar: ""        # default off · Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot.
+    workbotSideChats: ""       # default off · Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot.
     litellm: ""                # default off · Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.
     permissions: ""            # default off · Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults.
+    gatewayCloudSignIn: ""     # default off · Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.
     platformAuditReads: ""     # default off · Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.
   # END GENERATED features
   tenancy:
@@ -216,6 +221,7 @@ secret:
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
     connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
+    maintenanceToken: DEN_MAINTENANCE_TOKEN
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     databaseHost: ""
@@ -239,6 +245,8 @@ secret:
     githubConnectorAppWebhookSecret: ""
     connectLinkPrivateKey: ""
     initialAdminBootstrapCode: ""
+    # 24+ characters. Only rendered when set; used by denApi.auditUsage.
+    maintenanceToken: ""
 
 installerArtifacts:
   enabled: false
@@ -258,6 +266,18 @@ denApi:
     loadBalancerClass: ""
     loadBalancerSourceRanges: []
   containerPort: 8788
+  # Daily audit usage refresh. Audit writes never update an organization's usage
+  # totals (retained operations, events, bytes); this CronJob recomputes them by
+  # calling den-api POST /internal/audit/usage/refresh. Same pattern as
+  # inference.retention. Needs a maintenance token: set secret.values.maintenanceToken,
+  # or tokenSecret/tokenKey to read it from your own Secret. The token is also given
+  # to den-api as DEN_MAINTENANCE_TOKEN. Without it, audit usage keeps its last totals.
+  auditUsage:
+    enabled: false
+    schedule: "30 3 * * *"
+    timeZone: "Etc/UTC"
+    tokenSecret: ""
+    tokenKey: DEN_MAINTENANCE_TOKEN
   env: {}
   podAnnotations: {}
   podLabels: {}

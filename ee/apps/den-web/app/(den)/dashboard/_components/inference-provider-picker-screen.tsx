@@ -9,7 +9,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { isSupportedGatewayNpm } from "./inference-provider-request";
+import { isMicrosoftFoundryProvider, isSupportedGatewayNpm } from "./inference-provider-request";
 import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProviderSummary } from "./llm-provider-data";
 import { LITELLM_DOC_URL, LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 
@@ -22,6 +22,8 @@ const TAGLINES: Record<string, string> = {
   "google-vertex": "Gemini and Claude on Google Cloud, your team can sign in with Google",
   "google-vertex-anthropic": "Claude on Google Cloud",
   azure: "GPT models on your Azure resource",
+  "amazon-bedrock": "Claude, Llama and more on AWS",
+  "microsoft-foundry": "Claude on your Microsoft Foundry resource",
   mistral: "Mistral and Codestral models",
   groq: "Fast open models: Llama, Qwen, Kimi",
   deepseek: "DeepSeek V3 and R1",
@@ -45,6 +47,8 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
   const { orgId, orgSlug, orgContext } = useOrgDashboard();
   // LiteLLM is in preview: offered only where a platform admin turned it on.
   const liteLlmOffered = orgFeatureEnabled(orgContext, "litellm");
+  // Microsoft Foundry is rolled out with AWS and Microsoft sign-in.
+  const foundryOffered = orgFeatureEnabled(orgContext, "gatewayCloudSignIn");
   const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -60,10 +64,10 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
   }, [orgId]);
 
   const providers = useMemo(() => {
-    const supported = orderCatalog(catalog.filter((item) => isSupportedGatewayNpm(item.npm)));
+    const supported = orderCatalog(catalog.filter((item) => isSupportedGatewayNpm(item.npm) && (foundryOffered || !isMicrosoftFoundryProvider(item.id))));
     const normalized = query.trim().toLowerCase();
     return normalized ? supported.filter((item) => item.name.toLowerCase().includes(normalized) || item.id.includes(normalized) || providerTagline(item).toLowerCase().includes(normalized)) : supported;
-  }, [catalog, query]);
+  }, [catalog, query, foundryOffered]);
   const visible = showAll || query.trim() ? providers : providers.slice(0, INITIAL_ROWS);
   const hidden = providers.length - visible.length;
   const compatible = catalog.find((item) => item.npm === "@ai-sdk/openai-compatible");

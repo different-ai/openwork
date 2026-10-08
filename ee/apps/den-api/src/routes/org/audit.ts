@@ -25,26 +25,26 @@ type AuditRouteDescription = DescribeRouteOptions & { "x-mcp": false }
 type AuditRouteContext = Pick<Context, "req" | "header" | "json"> & {
   get: <K extends "organizationContext" | "apiKey" | "requestId">(key: K) => Variables[K]
 }
-const describeAuditRoute = (options: AuditRouteDescription) => describeRoute({ security: [{ bearerAuth: [] }, { denApiKey: [] }], ...options })
+const describeAuditRoute = (options: AuditRouteDescription) => describeRoute({ security: [{ denApiKey: [] }, { bearerAuth: [] }], ...options })
 const coverage = "Organization administrator access to currently captured, retained audit history only; this is not coverage of every cloud action. Requires the auditLogs feature to be on for the organization (read fresh) and deployment visibility; feature disable returns 403 audit_feature_disabled without deleting history or changing capture preference. Legacy arbitrary payloads are preserved separately and are not backfilled or returned. One operation may contain multiple child events. Visibility is independent of capture entitlement. No duration, charge or continuous-drain guarantee is made."
-const pagination = "Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. The snapshotSequence is the committed tenant publication watermark, not a timestamp or auto-increment allocation. Events above it are excluded, including later children of an existing operation. Missing retained anchors or changed removal counters return 410 audit_history_unavailable; start a new snapshot. These checks are not lossless-drain or retention protection guarantees."
-const filterDescription = "Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the watermark. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the watermark. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the watermark, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-watermark values."
+const pagination = "Default limit 50, maximum 100. Cursors are signed, organization/filter/mode scoped and expire 24 hours after the first page (not renewed). Repeat the same filters; limit may change. snapshotAt freezes the page set: events recorded after it are excluded, including later children of an existing operation. Events are ordered by their time-ordered IDs; there is no per-organization sequence. Exports leave out the last few seconds so in-flight writes cannot land behind a page already read. Start a new snapshot to see newer events. This is not a lossless-drain or retention protection guarantee."
+const filterDescription = "Time filters are inclusive operation-start bounds (ISO date or offset date-time; date-only means UTC midnight). actorId is the initiating user ID; outcome is the current OPERATION outcome, not an event outcome. action matches an exact stable action of any child event within the snapshot. searchId is an exact case-sensitive ID match (1..255 characters, no controls), not free-text search: operation ID OR any canonical retained child event ID, child envelope requestId or child resource reference ID, scoped to this organization and operation within the snapshot. Legacy payloads are not searched. All other filters are AND combined with searchId. Resource filters match stored references within the snapshot, without live-resource joins; resourceType requires resourceId. Operation outcome/count/byte projections remain current rather than historical as-of-snapshot values."
 const errors = {
   400: jsonResponse("Malformed query, cursor, mismatched filters, operation scope or export format.", z.object({ error: z.enum(["audit_invalid_query", "audit_invalid_cursor"]) })),
   401: jsonResponse("Authentication required.", unauthorizedSchema),
   403: jsonResponse("Organization administrator permission, audit feature and visibility required.", z.object({ error: z.enum(["forbidden", "audit_feature_disabled", "audit_visibility_disabled"]), message: z.string().optional() })),
   404: jsonResponse("Organization or retained operation not found, including foreign-tenant targets.", z.object({ error: z.enum(["organization_not_found", "audit_operation_not_found"]) })),
-  410: jsonResponse("Cursor expired or retained snapshot anchors/history are no longer available.", z.object({ error: z.enum(["audit_cursor_expired", "audit_history_unavailable"]) })),
+  410: jsonResponse("Cursor expired.", z.object({ error: z.enum(["audit_cursor_expired"]) })),
   503: jsonResponse("Audit storage or required access capture unavailable; no audit content is released.", z.object({ error: z.enum(["audit_unavailable", "audit_storage_inconsistent"]) })),
 }
 const filterParameters: NonNullable<DescribeRouteOptions["parameters"]> = [
   ...["from", "to"].map((name) => ({ in: "query", name, schema: { anyOf: [{ type: "string", format: "date" }, { type: "string", format: "date-time", maxLength: 40 }] }, description: "Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to." } satisfies NonNullable<DescribeRouteOptions["parameters"]>[number])),
   { in: "query", name: "actorId", schema: { type: "string", pattern: "^usr_[0-7][0-9a-hjkmnp-tv-z]{25}$" }, description: "Initiating user ID, not a delegated event actor or membership ID." },
-  { in: "query", name: "action", schema: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Exact stable action of any child event within the snapshot watermark." },
+  { in: "query", name: "action", schema: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Exact stable action of any child event within the snapshot." },
   { in: "query", name: "outcome", schema: { type: "string", enum: auditOperationOutcomeSchema.options }, description: "Current operation outcome; not an individual event outcome." },
   { in: "query", name: "origin", schema: { type: "string", enum: auditOriginSchema.options }, description: "Stored operation origin." },
-  { in: "query", name: "searchId", schema: { type: "string", minLength: 1, maxLength: 255, pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f]+$" }, description: "Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search." },
-  { in: "query", name: "resourceId", schema: { type: "string", minLength: 1, maxLength: 255 }, description: "Exact case-sensitive stored reference ID from any child within the watermark." },
+  { in: "query", name: "searchId", schema: { type: "string", minLength: 1, maxLength: 255, pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f]+$" }, description: "Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot; OR across ID kinds, AND with other filters. Not free-text or legacy payload search." },
+  { in: "query", name: "resourceId", schema: { type: "string", minLength: 1, maxLength: 255 }, description: "Exact case-sensitive stored reference ID from any child within the snapshot." },
   { in: "query", name: "resourceType", schema: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Optional stored reference type; requires resourceId." },
 ]
 const pageParameters: NonNullable<DescribeRouteOptions["parameters"]> = [
@@ -130,9 +130,8 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     try {
       const rejection = await db.transaction(async (tx) => {
         const { entitlement } = await requireAuditFeature(tx, organization.organization.id)
-        const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1).for("share")
-        // The route marker checked audit.manage; resolving permissions again here would hold a second pool
-        // connection while this transaction holds the member row lock, so only re-check the member is still active.
+        const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1)
+        // The route marker checked audit.manage, so only re-check the member is still active here.
         if (!member) return "forbidden"
         if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
         if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
@@ -186,7 +185,7 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
 
   app.get("/v1/audit/operations/:operationId/events", describeAuditRoute({
     operationId: "getAuditOperationEvents", tags: ["Organizations"], "x-mcp": false, summary: "List retained operation events",
-    description: `${coverage} ${pagination} Events are in ascending tenant sequence order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.`,
+    description: `${coverage} ${pagination} Events are in ascending event ID (recording time) order and carry complete versioned envelopes. Missing or foreign retained operations return the same 404.`,
     parameters: [...pageParameters, { in: "path", name: "operationId", required: true, schema: { type: "string", pattern: "^aop_[0-7][0-9a-hjkmnp-tv-z]{25}$" } }],
     responses: { ...errors, 200: jsonResponse("A bounded ascending page of event envelopes.", auditEventsResponseSchema) },
   } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => {
@@ -196,8 +195,8 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
 
   app.get("/v1/audit/usage", describeAuditRoute({
     operationId: "getAuditUsage", tags: ["Organizations"], "x-mcp": false, summary: "Read audit retention usage",
-    description: `${coverage} Reads stored policy and tenant counters, plus the oldest retained operation. Capture requires audit entitlement, organization captureOn and the deployment capture flag. A ready organization without a policy is lazily initialized ON, including on this GET, with one system lifecycle event. Temporary defaults: 6,000,000 retained OPERATIONS (not child events), 300-second grouping window, change/security/execution/access/request/lifecycle categories, cloud/delete_oldest for Enterprise or operator/keep_all for explicit self-hosted entitlement. Existing OFF and custom policies are preserved. These are provisional declarations, not enforced caps: no billing, cleanup or deletion is activated. Drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.`,
-    responses: { ...errors, 200: jsonResponse("Current stored audit policy and usage, without a history scan.", auditUsageResponseSchema) },
+    description: `${coverage} Reads the stored policy and tenant totals, plus the oldest retained operation. Totals are recomputed by a scheduled usage refresh, not on every write; measuredAt is when they were last computed. Capture requires audit entitlement, organization captureOn and the deployment capture flag. A ready organization without a policy is lazily initialized ON, including on this GET, with one system lifecycle event. Temporary defaults: 6,000,000 retained OPERATIONS (not child events), 300-second grouping window, change/security/execution/access/request/lifecycle categories, cloud/delete_oldest for Enterprise or operator/keep_all for explicit self-hosted entitlement. Existing OFF and custom policies are preserved. These are provisional declarations, not enforced caps: no billing, cleanup or deletion is activated. Drains are not configured. Logical bytes are not physical database size; access capture may itself add one operation.`,
+    responses: { ...errors, 200: jsonResponse("Current stored audit policy and the last computed usage totals, without a history scan.", auditUsageResponseSchema) },
   } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "usage", async (organizationId) => {
     parseQuery(z.object({}).strict(), c)
     return c.json(await readAuditUsage({ database: db, organizationId }, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true))
@@ -205,18 +204,18 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
 
   app.get("/v1/audit/export", describeAuditRoute({
     operationId: "getAuditExport", tags: ["Organizations"], "x-mcp": false, summary: "Export one audit snapshot page",
-    description: `${coverage} ${pagination} ${filterDescription} Exports ALL matching operations' children within the watermark in ascending tenant sequence, not date/ID order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-Sequence stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.`,
+    description: `${coverage} ${pagination} ${filterDescription} Exports ALL matching operations' children within the snapshot in ascending event ID (recording time) order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-At stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.`,
     parameters: [...pageParameters, ...filterParameters, { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" } }],
     responses: { ...errors, 200: { description: "A bounded attachment page. No next-cursor header means this snapshot is exhausted.", content: { "application/x-ndjson": { schema: { type: "string" } }, "text/csv": { schema: { type: "string" } } }, headers: {
       "X-Audit-Next-Cursor": { description: "Opaque continuation; absent on the last page.", schema: { type: "string" } },
-      "X-Audit-Snapshot-Sequence": { description: "Frozen committed tenant publication watermark.", schema: { type: "string", pattern: "^[0-9]+$" } },
+      "X-Audit-Snapshot-At": { description: "Frozen snapshot instant; events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
       "Content-Disposition": { description: "Attachment filename for this page.", schema: { type: "string" } },
     } } },
   } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "export", async (organizationId) => {
     const query = parseQuery(auditExportQuerySchema, c)
     const result = await listAuditExportEvents({ database: db, organizationId, secret: env.betterAuthSecret }, query)
     const content = query.format === "csv" ? auditCsv(result.events) : auditNdjson(result.events)
-    const headers = new Headers({ "Content-Type": query.format === "csv" ? "text/csv; charset=utf-8" : "application/x-ndjson; charset=utf-8", "Content-Disposition": `attachment; filename="audit-${result.snapshotSequence}.${query.format}"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-Audit-Snapshot-Sequence": String(result.snapshotSequence) })
+    const headers = new Headers({ "Content-Type": query.format === "csv" ? "text/csv; charset=utf-8" : "application/x-ndjson; charset=utf-8", "Content-Disposition": `attachment; filename="audit-${Date.parse(result.snapshotAt)}.${query.format}"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-Audit-Snapshot-At": result.snapshotAt })
     if (result.nextCursor) headers.set("X-Audit-Next-Cursor", result.nextCursor)
     return new Response(content, { headers })
   }))

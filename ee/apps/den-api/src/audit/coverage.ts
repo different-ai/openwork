@@ -43,6 +43,9 @@ export const providerUncoveredRoutes = [
   "PUT /v1/inference-providers/:inferenceProviderId/litellm/member-key",
   "POST /v1/inference-providers/oauth/browser-litellm-key",
   "POST /v1/inference-providers/oauth/browser-litellm-check",
+  // AWS IAM Identity Center member sign-in (gatewayCloudSignIn): request evidence only.
+  "POST /v1/inference-providers/oauth/browser-aws-start",
+  "POST /v1/inference-providers/oauth/browser-aws-poll",
 ]
 export const providerCoverage: AuditCoverageDeclaration = {
   status: "implemented_scoped", operationKinds: ["provider.configuration"],
@@ -51,7 +54,7 @@ export const providerCoverage: AuditCoverageDeclaration = {
     ...[...new Set([...providerCoveredRoutes.map(({ step }) => step), ...providerBackgroundSteps])].flatMap((step) => ["committed", "attempted"].map((outcome) => `provider.configuration.${step}.${outcome}`)),
   ],
   categories: ["change", "request", "security", "execution"],
-  capturePolicy: "auditLogs feature on for the organization (read fresh) AND (Enterprise plan OR explicit self-hosted installation entitlement) AND default-on deployment capture switch AND enabled stored policy AND selected category; missing policies initialize with temporary server defaults before snapshot reads. Organization share lock before snapshot reads, state/policy revision recheck before commit. Existing OFF stays OFF. Generic DB writer semantics are unchanged.",
+  capturePolicy: "auditLogs feature on for the organization (read fresh) AND (Enterprise plan OR explicit self-hosted installation entitlement) AND default-on deployment capture switch AND enabled stored policy AND selected category; missing policies initialize with temporary server defaults before snapshot reads. Unlocked reads; the policy identity is rechecked before each append. Existing OFF stays OFF. Generic DB writer semantics are unchanged.",
   resources: [...providerCoveredResources.map(({ type }) => type), "organization", "member", "team"],
   snapshotPolicy: "Per-resource allowlisted before/after and changed fields; secret/configuration changes use markers, never secret values or comparison hashes; oversize rejects.",
   emitter: "src/audit/provider.ts:providerAuditMutation; recordProviderAttempt; src/llm/gateway-matrix.ts:refreshGatewayCatalog",
@@ -61,7 +64,7 @@ export const providerCoverage: AuditCoverageDeclaration = {
 export const auditReadCoverage: AuditCoverageDeclaration = {
   status: "implemented_scoped", operationKinds: ["audit.access"],
   actions: auditReadCoveredRoutes.flatMap(({ action }) => [`audit.${action}.requested`, `audit.${action}.served`]),
-  categories: ["access", "read"], capturePolicy: "Admin + fresh org auditLogs feature + default-on visibility gate; capture also requires fresh Enterprise/installation entitlement AND default-on capture switch AND enabled policy; organization share fence before state/policy, access preferred, read fallback.",
+  categories: ["access", "read"], capturePolicy: "Admin + fresh org auditLogs feature + default-on visibility gate; capture also requires fresh Enterprise/installation entitlement AND default-on capture switch AND enabled policy; unlocked feature/policy reads, access preferred, read fallback.",
   resources: ["audit_collection", "audit_operation"], snapshotPolicy: "Scope and requested/served outcome only; no content, response body or historical snapshots.",
   emitter: "src/routes/org/audit.ts:serveAudit", failurePolicy: "Durable request intent before read and served event before response release, each up to 3 attempts on transient database errors (idempotent replay by request id), then required capture failure returns 503 without content.",
   limitations: "Only declared audit endpoints; served means response prepared, not human viewed. Authorization/visibility denials occur before capture. Legacy payloads excluded. Visibility does not itself require an enabled capture policy; no continuous drain.",
@@ -70,7 +73,7 @@ export const pilotPolicyCoverage: AuditCoverageDeclaration = {
   status: "implemented_scoped", operationKinds: ["audit.policy"], actions: ["audit.policy.enabled"], categories: ["lifecycle"],
   capturePolicy: "Explicit operator CLI --apply for a NEW policy only; lifecycle forced; direct initialization independent of traffic flag.",
   resources: ["audit_policy", "organization"], snapshotPolicy: "before=null; allowlisted newly inserted configuration at the current clock, not a historical reconstruction; captureStartedAt assigned by append.",
-  emitter: "src/audit/pilot-policy.ts:initializeAuditPilot", failurePolicy: "Organization update lock, state update lock, policy update lock; policy insert and append in one transaction, fail closed.",
+  emitter: "src/audit/pilot-policy.ts:initializeAuditPilot", failurePolicy: "No locks: the policy primary key rejects a concurrent initialization; policy insert and append in one transaction, fail closed.",
   limitations: "No HTTP route, existing policy changes, paid overage, billing, deletion, scheduled cleanup or legacy backfill. Self-reported operator reference does not authenticate a user.",
 }
 
@@ -79,7 +82,7 @@ export const auditCaptureCoverage: AuditCoverageDeclaration = {
   capturePolicy: "Fresh org auditLogs feature, visibility, administrator authorization and live role fence; ON requires fresh Enterprise or explicit installation entitlement and capture rollout; OFF remains allowed after entitlement loss while flagged. Missing ready policy initializes with server defaults; expected revision zero accepted only by its initializer, with explicit OFF applied atomically.",
   resources: ["audit_policy"], snapshotPolicy: "Only captureOn, revision and effectiveAt before/after; fixed immutable control evidence independent of new policy enabled state and lifecycle category selection.",
   emitter: "src/routes/org/audit.ts:updateAuditCapture; den-db/audit-log.ts:setAuditCaptureState",
-  failurePolicy: "Organization share fence then live member/team authority, state and policy update locks; required evidence failure rolls back setting. Stale revisions reject; matching no-ops create no operation.",
+  failurePolicy: "Live member/team authority read, then an optimistic revision-guarded policy update (no row locks); required evidence failure rolls back setting. Stale revisions reject; matching no-ops create no operation.",
   limitations: "No caller-supplied capacity, category, entitlement, source or retention changes; no external effects or deletion. Retained history remains readable after capture OFF or plan loss.",
 }
 
@@ -87,7 +90,7 @@ export const defaultPolicyCoverage: AuditCoverageDeclaration = {
   status: "implemented_scoped", operationKinds: ["audit.policy"], actions: ["audit.policy.initialized"], categories: ["lifecycle"],
   capturePolicy: "Fresh locked literal org flag AND Enterprise/explicit self-hosted entitlement AND deployment capture availability. Lazy creation before capture snapshots, also on GET usage and first settings PATCH. Existing policies never updated by initialization.",
   resources: ["audit_policy", "organization"], snapshotPolicy: "before=null; allowlisted server defaults only, honest system actor den-api.audit-defaults; first event sets captureStartedAt.",
-  emitter: "src/audit/capture.ts:initializeAuditPolicyInTx", failurePolicy: "Organization share fence then unique state INSERT/update lock then policy update lock; re-read concurrent winner. Policy, state and lifecycle evidence commit atomically or roll back.",
+  emitter: "src/audit/capture.ts:initializeAuditPolicyInTx", failurePolicy: "No locks: the policy primary key decides a concurrent first initialization and only the creating request records the lifecycle event. Policy and lifecycle evidence commit atomically or roll back.",
   limitations: "Temporary 6,000,000 retained OPERATIONS, not events; 300-second grouping; PILOT_DEFAULT_CATEGORIES; cloud/delete_oldest or operator/keep_all declarations grant no entitlement. No enforced cap, billing, cleanup, deletion, legacy backfill or forced restore on upgrade.",
 }
 
@@ -108,7 +111,7 @@ export const genericRequestCoverage: AuditCoverageDeclaration = {
   operationKinds: [...new Set(tenantRouteDeclarations.map(({ kind }) => kind))].sort(),
   actions: routeAuditEventTypes,
   categories: ["read", "access", "request", "execution", "security"],
-  capturePolicy: "Every den-api route and HTTP-reachable better-auth endpoint carries a declaration (src/audit/routes, enforced by scripts/check-audit-route-coverage.ts). Tenant classes record only when the trusted organization has the auditLogs feature on (features registry, src/features.ts; never organization metadata), deployment capture is on, a fresh enabled policy exists (lazy default allowed) and the class category is selected: read=read (off by default), access=access, change/external=request, job=execution; 401/403 use security when selected. With DEN_AUDIT_CAPTURE_ENABLED=false nothing is read. Organization-context routes reuse the features getOrganizationContextForUser reads in the same request (in parallel with the membership query; no audit query). Every other tenant path resolves the verified organization's feature itself with one fresh organizationFeatureEnabled read, only after the deployment capture switch passes: handler/token routes (worker heartbeat and compatibility tokens, runner routes, SCIM, Slack webhooks and install callback, install links and connect grants, workbot, brand-asset downloads, device-code decisions, bootstrap credentials, invitation acceptance, member OAuth entries/callbacks, Stripe/GitHub webhooks), useUserOrganizations routes (the active organization, once), platform-admin path routes (plus an existence check when the feature is on), MCP service actions and job outcomes; callers never pass the flag. User fan-out reads every membership organization's features in one batched read. The better-auth hooks check the candidate organization's feature first and only look up the member or verify the SCIM token when it is on. Appends recheck the feature fresh under the organization share lock (readAuditAvailability).",
+  capturePolicy: "Every den-api route and HTTP-reachable better-auth endpoint carries a declaration (src/audit/routes, enforced by scripts/check-audit-route-coverage.ts). Tenant classes record only when the trusted organization has the auditLogs feature on (features registry, src/features.ts; never organization metadata), deployment capture is on, a fresh enabled policy exists (lazy default allowed) and the class category is selected: read=read (off by default), access=access, change/external=request, job=execution; 401/403 use security when selected. With DEN_AUDIT_CAPTURE_ENABLED=false nothing is read. Organization-context routes reuse the features getOrganizationContextForUser reads in the same request (in parallel with the membership query; no audit query). Every other tenant path resolves the verified organization's feature itself with one fresh organizationFeatureEnabled read, only after the deployment capture switch passes: handler/token routes (worker heartbeat and compatibility tokens, runner routes, SCIM, Slack webhooks and install callback, install links and connect grants, workbot, brand-asset downloads, device-code decisions, bootstrap credentials, invitation acceptance, member OAuth entries/callbacks, Stripe/GitHub webhooks), useUserOrganizations routes (the active organization, once), platform-admin path routes (plus an existence check when the feature is on), MCP service actions and job outcomes; callers never pass the flag. User fan-out reads every membership organization's features in one batched read. The better-auth hooks check the candidate organization's feature first and only look up the member or verify the SCIM token when it is on. Appends recheck the feature with a fresh, unlocked read (readAuditAvailability).",
   resources: [...new Set(tenantRouteDeclarations.map(({ resource }) => resource.type))].sort(),
   snapshotPolicy: "Request evidence only: declared resource type, validated path-parameter id (else unparseable) or collection:<type>, parent organization, method, route template and status. Never bodies, query strings, headers, IPs or secrets. Before/after snapshots come only from named domain emitters (changeEvidence) through appendAuditChanges inside the business transaction.",
   emitter: "src/audit/request-capture.ts:auditRequestMiddleware, beginAuditRequest, attributeAuditRequest, appendAuditChanges; src/audit/service-capture.ts:runAuditedServiceAction",

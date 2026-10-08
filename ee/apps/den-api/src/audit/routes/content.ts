@@ -2,7 +2,7 @@
 // dashboards, automations, automation runners, remote-session runner callbacks,
 // Workbot, resources, brand assets and the deprecated memory / skill-hub stubs.
 
-import type { AuditRouteAttribution, AuditRouteClass, AuditRouteDeclaration, AuditRouteMethod } from "./types.js"
+import { HIGH_VOLUME_EXCLUSIONS, type AuditRouteAttribution, type AuditRouteClass, type AuditRouteDeclaration, type AuditRouteMethod } from "./types.js"
 
 type Extra = Pick<AuditRouteDeclaration, "changeEvidence" | "external" | "jobOutcome" | "notes">
 
@@ -37,6 +37,12 @@ function stub(method: AuditRouteMethod, path: string, action: string, kind: stri
   return route(method, path, "platform", action, kind, type, idParam, "none", { notes })
 }
 
+/** Bulk fan-out read excluded from audit logs; the reason lives in HIGH_VOLUME_EXCLUSIONS. */
+function highVolume(method: AuditRouteMethod, path: string, action: string, kind: string, type: string, idParam: string | null): AuditRouteDeclaration {
+  const exclusion = HIGH_VOLUME_EXCLUSIONS.find((entry) => entry.method === method && entry.path === path)
+  return route(method, path, "excluded_high_volume", action, kind, type, idParam, "none", { notes: exclusion?.reason ?? "High-volume read excluded from audit logs." })
+}
+
 function alias(method: AuditRouteMethod, path: string, action: string, notes: string): AuditRouteDeclaration {
   return route(method, path, "proxy", action, "workflow.alias", "workflow", null, "none", { notes })
 }
@@ -61,6 +67,7 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/automations/:id/deactivate", "tenant_change", "automation.deactivate", "automation.management", "automation", "id", { notes: `Stops future runs; a run already in progress is not cancelled. ${MCP_NATIVE}` }),
   member("POST", "/v1/automations/:id/run", "tenant_job", "automation.run.start", "automation.run", "automation", "id", { jobOutcome: DESKTOP_RUN_OUTCOME, notes: `Returns 202; blocked runs are recorded as skipped receipts. The scheduler tick uses the same repository.claim without an HTTP route. ${MCP_NATIVE}` }),
   member("GET", "/v1/automations/:id/runs", "tenant_access", "automation.run.list", "automation.run", "automation", "id", { notes: `Returns run result summaries. ${MCP_NATIVE}` }),
+  member("GET", "/v1/automation-runs", "tenant_access", "automation.run.range_list", "automation.run", "automation", null, { notes: "Returns run result summaries across the caller's own Automations for a bounded time range (calendar views). First-party clients only; not an MCP tool." }),
   member("GET", "/v1/automation-runs/:id", "tenant_access", "automation_run.read", "automation.run", "automation_run", "id", { notes: `Returns run events, thread and results. ${MCP_NATIVE}` }),
   member("POST", "/v1/automation-runs/:id/cancel", "tenant_change", "automation_run.cancel", "automation.run", "automation_run", "id", { notes: `Records cancellationRequested and notifies the runner; the final cancelled status arrives through POST /v1/automation-runs/:id/complete or the cloud executor. ${MCP_NATIVE}` }),
   runner("POST", "/v1/automation-runs/:id/claim", "tenant_change", "automation_run.claim", "automation.run", "automation_run", "id", { notes: "Job outcome callback for automation.run.start; response carries automation instructions." }),
@@ -127,7 +134,8 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/plugins/:pluginId/config-objects", "tenant_access", "plugin.config_object.list", "plugin.configuration", "plugin", "pluginId", { notes: `Memberships embed config objects with latest version source. ${MCP_NATIVE}` }),
   member("POST", "/v1/plugins/:pluginId/config-objects", "tenant_change", "plugin.config_object.add", "plugin.configuration", "plugin", "pluginId", { notes: `Duplicate route for the mutation behind POST /v1/config-objects/:configObjectId/plugins; MCP create_app/update_app attach directly. ${MCP_NATIVE}` }),
   member("DELETE", "/v1/plugins/:pluginId/config-objects/:configObjectId", "tenant_change", "plugin.config_object.remove", "plugin.configuration", "plugin", "pluginId", { notes: `Duplicate route for the mutation behind DELETE /v1/config-objects/:configObjectId/plugins/:pluginId. ${MCP_NATIVE}` }),
-  member("GET", "/v1/plugins/:pluginId/resolved", "tenant_access", "plugin.resolved.read", "plugin.configuration", "plugin", "pluginId", { notes: `Active memberships with config objects and latest version source. ${MCP_NATIVE}` }),
+  // Not audited: see HIGH_VOLUME_EXCLUSIONS in ./types.ts (ENG-683).
+  highVolume("GET", "/v1/plugins/:pluginId/resolved", "plugin.resolved.read", "plugin.configuration", "plugin", "pluginId"),
   member("GET", "/v1/plugins/:pluginId/access", "tenant_read", "plugin.access_grant.list", "plugin.configuration", "plugin", "pluginId", { notes: MCP_NATIVE }),
   member("POST", "/v1/plugins/:pluginId/access", "tenant_change", "plugin.access_grant.create", "plugin.configuration", "plugin", "pluginId", { notes: MCP_NATIVE }),
   member("DELETE", "/v1/plugins/:pluginId/access/:grantId", "tenant_change", "plugin.access_grant.revoke", "plugin.configuration", "plugin_access_grant", "grantId", { notes: MCP_NATIVE }),
@@ -169,6 +177,9 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/resources/marketplace-capabilities", "tenant_read", "marketplace_capability.list", "resource.discovery", "marketplace_capability", null),
   route("GET", "/v1/workbot/session", "tenant_read", "workbot.session.read", "workbot.execution", "workbot_session", null, "handler", { notes: "Handler verifies the MCP OAuth token (verifyMcpRequest) and active membership, then attributes the token's org and user." }),
   route("GET", "/v1/workbot/connections", "tenant_read", "workbot.connection.list", "workbot.execution", "mcp_connection", null, "handler", { notes: "Handler verifies the MCP OAuth token and active membership, returns 403 while the workbot feature is off, then lists the Gmail/Google Workspace, Slack and Microsoft 365 connections this member may use (id, name, readiness, Den connect URL; no secrets)." }),
+  route("GET", "/v1/workbot/calendar/*", "proxy", "workbot.calendar.read", "workbot.execution", "automation", null, "handler", { notes: "Handler verifies the MCP OAuth token, membership and the workbot + workbotCalendar features, then re-dispatches an allowlisted read (the member's Automations, runs, run receipts, native calendar events, and usable LLM providers trimmed to names and model IDs) through app.fetch with a signed internal principal; the destination route records." }),
+  route("POST", "/v1/workbot/calendar/*", "proxy", "workbot.calendar.action", "workbot.execution", "automation", null, "handler", { notes: "Handler verifies the MCP OAuth token (write scope), membership and the workbot + workbotCalendar features, then re-dispatches POST /v1/automations/:id/{activate|deactivate|run} or POST /v1/cloud-automations (create, body forwarded) through app.fetch as the member; the destination route records." }),
+  route("PATCH", "/v1/workbot/calendar/*", "proxy", "workbot.calendar.schedule", "workbot.execution", "automation", null, "handler", { notes: "Handler verifies the MCP OAuth token (write scope), membership and the workbot + workbotCalendar features, accepts a body limited to `name`, `schedule`, `instructions` and `model` (never where it runs), then re-dispatches PATCH /v1/automations/:id through app.fetch as the member; the destination route records." }),
   route("POST", "/v1/workbot/run-token", "tenant_access", "workbot.run_token.issue", "workbot.execution", "oauth_access_token", null, "handler", { notes: "Handler verifies the MCP OAuth token, membership and workbot capability, then mints a ≤1h headless-run MCP token (credential issuance; plaintext returned once, never snapshot). mintHeadlessRunMcpToken is also called by the headless automation executor without an HTTP route." }),
   route("GET", "/v1/brand-assets/:organizationId/:kind/:version", "tenant_read", "brand_asset.download", "organization.branding", "brand_asset", "version", "handler", { notes: "Public capability URL: the HMAC signature binds organizationId, kind, version and extension, so the handler attributes the path organization only after verifyBrandAssetSignature; actor is the anonymous signed-URL holder. Public, immutable, CDN-cached logo (login pages, emails): read category, not access. Invalid signatures 404 before attribution (platform)." }),
 

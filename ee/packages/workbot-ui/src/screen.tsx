@@ -4,14 +4,18 @@ import { ArrowUp, Check, CircleAlert, Copy, FileText, Lock, Pencil } from "lucid
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
+import { ChatsButton, ChatsDrawer, chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import {
   useEditWorkbotMessage,
+  useRetryWorkbotMessage,
   useSendWorkbotMessage,
   useStartWorkbot,
   useStopWorkbot,
   useStopWorkbotTask,
+  useWorkbotChats,
   useWorkbotLive,
   useWorkbotThread,
+  WorkbotChatProvider,
   workbotFilesKey,
   type LiveText,
   type WorkbotAttachment,
@@ -25,6 +29,7 @@ import { WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
 import { PreviewPanel } from "./preview";
 import { Welcome } from "./welcome";
+import { WorkbotCalendar } from "./calendar";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -48,23 +53,70 @@ function newMessageId() {
   return crypto.randomUUID().replaceAll("-", "");
 }
 
+/** Where side chats are on: the chat on screen, its name, and how to move between chats. */
+type ChatNavigation = {
+  /** Null for the main chat. */
+  chat: string | null;
+  title: string;
+  openChats: () => void;
+  openChat: (chat: string | null) => void;
+};
+
 /** The Workbot page. `host` is the app it lives in: signed-in requests, the person, their apps (see WorkbotHost). */
 export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   setWorkbotHost(host);
+  const sideChats = host.sideChats === true;
+  const [chat, openChat] = useChatLocation(sideChats);
+  const [chatsOpen, setChatsOpen] = useState(false);
+  const chats = useWorkbotChats(sideChats);
+  const refetchChats = chats.refetch;
+  // The list says when each chat was last used: it is read again each time it opens.
+  useEffect(() => {
+    if (chatsOpen) void refetchChats();
+  }, [chatsOpen, refetchChats]);
+  const navigation: ChatNavigation | null = sideChats
+    ? { chat, title: chat ? chatTitle(chats.data?.side.find((entry) => entry.id === chat)?.title) : "Main chat", openChats: () => setChatsOpen(true), openChat }
+    : null;
+  return (
+    <WorkbotChatProvider value={chat}>
+      {/* Each chat starts fresh: its own unsent messages, files to send and open file. */}
+      <ChatScreen key={chat ?? "main"} host={host} navigation={navigation} />
+      {sideChats ? (
+        <ChatsDrawer
+          open={chatsOpen}
+          onClose={() => setChatsOpen(false)}
+          current={chat}
+          chats={chats.data}
+          loading={chats.isPending}
+          failed={chats.isError}
+          onRetry={() => void refetchChats()}
+          onOpenChat={openChat}
+        />
+      ) : null}
+    </WorkbotChatProvider>
+  );
+}
+
+/** One chat: the main chat, or one of the person's side chats. */
+function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatNavigation | null }) {
   const { user } = host;
+  const side = navigation?.chat != null;
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<Pending[]>([]);
   const [turnWindow, setTurnWindow] = useState(PAGE_TURNS);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [tab, setTab] = useWorkbotTab();
   const [preview, setPreview] = useState<WorkbotAttachment | null>(null);
   // The welcome shows once, while there's no conversation yet; leaving it, Workbot starts the conversation itself.
-  // "pending" until the conversation is first read: then it shows (no conversation yet) or never does.
-  const [welcome, setWelcome] = useState<"pending" | "showing" | "done">("pending");
+  // "pending" until the conversation is first read: then it shows (no conversation yet) or never does. Side chats
+  // start with the person's first message.
+  const [welcome, setWelcome] = useState<"pending" | "showing" | "done">(side ? "done" : "pending");
   const [greetingAwaited, setGreetingAwaited] = useState(false);
   const start = useStartWorkbot();
   const stream = useWorkbotLive(true);
   const thread = useWorkbotThread({ turns: turnWindow, awaiting: greetingAwaited || pending.some((entry) => !entry.failed), live: stream.connected });
   const send = useSendWorkbotMessage();
+  const retry = useRetryWorkbotMessage();
   const stop = useStopWorkbot();
   const editMessage = useEditWorkbotMessage();
   // Messages replaced by an edit leave the page at once; the conversation catches up on its next read.
@@ -166,6 +218,22 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     );
   };
 
+  if (tab === "calendar" && host.calendar) {
+    return (
+      <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
+        <WorkbotHeader
+          name={data?.name ?? "Workbot"}
+          organizationName={data?.organizationName ?? ""}
+          userName={user?.name ?? null}
+          files={null}
+          nav={<WorkbotNav tab={tab} onTab={setTab} />}
+        />
+        <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
+          <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />
+        </div>
+      </div>
+    );
+  }
   if (thread.isPending) return <WorkbotSkeleton />;
   if (thread.isError && !thread.data) {
     return (
@@ -224,6 +292,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     />
   );
 
+  const chatId = navigation?.chat ?? null;
   return (
     <OpenFileContext.Provider value={setPreview}>
     <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
@@ -232,10 +301,16 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
         organizationName={data.organizationName}
         userName={user?.name ?? null}
         files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+        chats={navigation && !chatId ? <ChatsButton onOpen={navigation.openChats} /> : null}
+        title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
+        remove={navigation && chatId && data.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => navigation.openChat(null)} /> : null}
+        nav={host.calendar && !chatId ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
       />
       <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-      {empty && !starting ? (
+      {empty && side ? (
+        <SideChatStart name={data.name} organizationName={data.organizationName}>{composer}</SideChatStart>
+      ) : empty && !starting ? (
         <FirstOpen
           name={data.name}
           organizationName={data.organizationName}
@@ -259,8 +334,13 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
             onLoadEarlier={() => setTurnWindow((current) => Math.min(200, current + PAGE_TURNS))}
             onRetry={(entry) => submit(entry.text, entry)}
             onRetryTurn={(turn) => {
-              if (turn.greeting) { setGreetingAwaited(true); start.mutate(); }
-              else submit(turn.text);
+              if (turn.greeting) {
+                setGreetingAwaited(true);
+                start.mutate();
+                return;
+              }
+              // The same message is answered again in place, so the conversation keeps one copy of it.
+              retry.mutate(turn.id, { onError: (error) => setEditErrors((current) => ({ ...current, [turn.id]: error.message })) });
             }}
             onSuggestion={(text) => submit(text)}
             starting={starting}
@@ -273,7 +353,8 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
                     // A hello that failed before writing anything leaves the drawn greeting in its place, the same
                     // as one that couldn't start; its turn then adds only the line saying it didn't work.
                     const helloFailed = hello?.greeting === true && hello.status === "failed" && !hello.parts.some((part) => part.kind === "text");
-                    const spoken = starting || (hello?.greeting === true && !helloFailed);
+                    // A side chat has no greeting: the person spoke first.
+                    const spoken = side || starting || (hello?.greeting === true && !helloFailed);
                     // Workbot's own hello carries the time; the drawn greeting brings its own.
                     return { at: spoken ? 0 : at, joined: helloFailed, node: <Intro name={data.name} organizationName={data.organizationName} firstName={firstName} at={at} spoken={spoken} /> };
                   })()
@@ -373,16 +454,76 @@ function useConnectedApps() {
   return workbotHost().useConnectedApps();
 }
 
-function WorkbotHeader({ name, organizationName, userName, files }: { name: string; organizationName: string; userName: string | null; files: ReactNode }) {
+type WorkbotTab = "home" | "calendar";
+
+function tabFromLocation(): WorkbotTab {
+  return typeof window !== "undefined" && window.location.pathname.replace(/\/+$/, "") === "/calendar" ? "calendar" : "home";
+}
+
+/** Home (the conversation) and Calendar, as paths so a reload or a shared link opens the same tab. */
+function useWorkbotTab() {
+  const [tab, setTabState] = useState<WorkbotTab>(tabFromLocation);
+  useEffect(() => {
+    const sync = () => setTabState(tabFromLocation());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  const setTab = (next: WorkbotTab) => {
+    if (next === tab) return;
+    window.history.pushState(null, "", next === "calendar" ? "/calendar" : "/");
+    setTabState(next);
+  };
+  return [tab, setTab] as const;
+}
+
+/** Paper v3: Home / Calendar beside the name; the open tab sits on a soft chip. */
+function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
+  return (
+    <nav className="ml-4 flex items-center gap-0.5" aria-label="Workbot">
+      {(["home", "calendar"] as const).map((entry) => (
+        <button
+          key={entry}
+          type="button"
+          aria-current={tab === entry ? "page" : undefined}
+          onClick={() => onTab(entry)}
+          className={`flex h-8 items-center rounded-lg px-3 text-[13px] leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === entry ? "bg-[#EDF0F2] font-semibold text-[#11181C]" : "font-medium text-[#687076] hover:text-[#11181C]"}`}
+        >
+          {entry === "home" ? "Home" : "Calendar"}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function WorkbotHeader(props: {
+  name: string;
+  organizationName: string;
+  userName: string | null;
+  files: ReactNode;
+  /** Opens the list of chats, before the name (main chat, where side chats are on). */
+  chats?: ReactNode;
+  /** Replaces the mark and name: a side chat's back button and name. */
+  title?: ReactNode;
+  /** Removes the side chat on screen. */
+  remove?: ReactNode;
+  /** Home / Calendar, after the name (where the Calendar is on). */
+  nav?: ReactNode;
+}) {
+  const { name, organizationName, userName, files } = props;
   const apps = useConnectedApps();
   const names = apps.map((app) => app.name);
   return (
-    <header className="flex h-13 shrink-0 items-center justify-between px-4 sm:px-5">
-      <div className="flex min-w-0 items-center gap-2" title={organizationName}>
-        <Mark name={name} size="header" />
-        <h1 className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</h1>
-      </div>
+    <header className="flex h-13 shrink-0 items-center justify-between gap-3 px-4 sm:px-5">
+      {props.title ?? (
+        <div className="flex min-w-0 items-center gap-2" title={organizationName}>
+          {props.chats}
+          <Mark name={name} size="header" />
+          <h1 className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</h1>
+          {props.nav}
+        </div>
+      )}
       <div className="flex shrink-0 items-center gap-2.5 sm:gap-3.5">
+        {props.remove}
         {files}
         {apps.length > 0 ? (
           <span className="flex h-7 items-center gap-[7px] rounded-full bg-[var(--wb-chip)] pl-2 pr-2.5" title={names.join(", ")} aria-label={`Connected: ${names.join(", ")}`}>
@@ -490,6 +631,22 @@ function FirstOpen(props: { name: string; organizationName: string; firstName: s
             </li>
           ))}
         </ul>
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+/** A new side chat, before its first message: who the person is talking to, then the composer. */
+function SideChatStart(props: { name: string; organizationName: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 pb-18 sm:px-10">
+      <div className={`${COLUMN} flex flex-col gap-1`}>
+        <div className="flex flex-col items-center gap-1.5 pb-7">
+          <Mark name={props.name} size="hero" />
+          <span className="pt-1 text-[15px] font-semibold leading-[18px] text-[var(--wb-text)]">{props.name}</span>
+          <span className="text-[12px] leading-4 text-[var(--wb-muted)]">Set up by {props.organizationName}</span>
+        </div>
         {props.children}
       </div>
     </div>
@@ -1245,7 +1402,7 @@ function TurnView(props: {
         </ul>
       ) : null}
       {turn.status === "failed" ? (
-        <ErrorLine action={props.latest ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
+        <ErrorLine action={props.latest && (turn.greeting || turn.retryable) ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
       ) : null}
       {turn.status === "stopped" ? <p className="pl-1 pt-1.5 text-[13px] leading-4 text-[var(--wb-muted)]">Stopped</p> : null}
     </>

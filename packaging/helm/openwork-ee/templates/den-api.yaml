@@ -1,5 +1,6 @@
 {{- include "openwork-ee.gateway.validate" . }}
 {{- include "openwork-ee.customCa.validate" . }}
+{{- include "openwork-ee.denAuditUsage.validate" . }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -120,6 +121,14 @@ spec:
             {{- end }}
             {{- if .Values.customCa.enabled }}
             {{- include "openwork-ee.customCa.env" . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.denApi.auditUsage.enabled }}
+            - name: DEN_MAINTENANCE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "openwork-ee.denMaintenanceTokenSecret" . | quote }}
+                  key: {{ include "openwork-ee.denMaintenanceTokenKey" . | quote }}
+                  optional: false
             {{- end }}
             {{- if eq (include "openwork-ee.allowPrivateMcpUrls" .) "1" }}
             - name: DEN_ALLOW_PRIVATE_MCP_URLS

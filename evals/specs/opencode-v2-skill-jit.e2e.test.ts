@@ -236,7 +236,7 @@ const cloudSkillDescription = "Answers amber release report requests.";
 const cloudSkillBody = (code: string) => `For amber release report requests, reply with the current code: ${code}.`;
 
 /** One conversation driver per case: unseen codes, prompt hygiene, runtime identity, and transcript integrity. */
-function jitConversation({ world, user, probe }: { world: JitWorld; user: User; probe: Probe }) {
+function jitConversation({ world, user, probe, diagnostic }: { world: JitWorld; user: User; probe: Probe; diagnostic: (data: unknown) => void }) {
   const codes: string[] = [];
   const submitted: string[] = [];
   let turnNumber = 0;
@@ -253,11 +253,11 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
     codes.push(code);
     return code;
   };
-  const ask = async (target: SkillJitTurnTarget, expected: string | null) => {
+  const ask = async (target: SkillJitTurnTarget, expected: string | null, topic = "amber release report") => {
     runtime ??= await world.runtimeIdentity();
     sessionRoute ??= await probe.hash();
     const before = await answer();
-    const prompt = `What app are you? What is the current amber release report code? `
+    const prompt = `What app are you? What is the current ${topic} code? `
       + `Use the currently installed instructions; do not reuse an earlier code. `
       + `If no matching instructions are installed, say UNAVAILABLE. Request ${++turnNumber}.`;
     // The user-facing request never smuggles the answer, the skill, or the connector.
@@ -276,6 +276,9 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
       await probe.eventually(answer, {
         within: 150_000, label: `the conversation answers with ${expected === "UNAVAILABLE" ? "UNAVAILABLE" : "the current code"}`,
         until: (value) => value.id !== before.id && value.completed && value.text.includes(expected),
+      }).catch(async error => {
+        diagnostic({ state: await world.cloudDiscoveryState(), model: await world.modelRequests(prompt) });
+        throw error;
       });
     }
     await user.see("Run task", { timeoutMs: 150_000 });
@@ -314,8 +317,79 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
   return { ask, mintCode, skillToolIds, firstModelRequestAt, expectNoCodes, codes, runtime: () => runtime };
 }
 
+jitTest("SKILL-CLOUD-DISCOVERY a member discovers Cloud skills without delaying the first conversation and loses access immediately on removal", async ({ world, user, probe, step, evidence }) => {
+  const talk = jitConversation({ world, user, probe, diagnostic: data => evidence.recordJsonArtifact("Skill turn diagnostic", data) });
+  const target: SkillJitTurnTarget = { kind: "catalog", skill: world.cloudSkillName };
+  const account = "account-a";
+  const code = talk.mintCode();
+  const publish = (enabled: boolean) => world.cloud.publishSkill(account, {
+    name: world.cloudSkillName, description: cloudSkillDescription,
+    body: cloudSkillBody(code), modelDiscovery: enabled,
+  });
+  publish(false);
+  const release = world.cloud.holdSkillIndex();
+  try {
+    await step("before: the first conversation answers while Cloud discovery is still held", async () => {
+      expect((await world.authorizeCloud(account)).status).toBe(200);
+      await probe.eventually(() => world.cloud.resourceReads({ uri: "skill://index.json" }), {
+        within: 45_000, until: reads => reads.some(read => read.status === 0), label: "Cloud catalog request is held",
+      });
+      const turn = await talk.ask(target, "UNAVAILABLE");
+      const pending = world.cloud.resourceReads({ uri: "skill://index.json" }).some(read => read.status === 0);
+      expect(pending).toBe(true);
+      evidence.recordAssertionEvidence("Cold Cloud discovery never holds the first answer", `The conversation completed while the catalog HTTP request was still unanswered; answer: ${turn.text}`, pending);
+    });
+  } finally { release(); }
+
+  await step("the default-off rollout leaves organization skills on the existing Connect path", async () => {
+    const turn = await talk.ask(target, "UNAVAILABLE");
+    expect(await world.cloudNativeSkills()).toEqual([]);
+    evidence.recordAssertionEvidence("Rollout off leaves native discovery unchanged", turn.text, true);
+  });
+
+  await step("after: a natural request loads the matching organization skill and fetches its current instructions", async () => {
+    publish(true);
+    await probe.eventually(() => world.cloudNativeSkills(), {
+      within: 75_000, until: skills => skills.some(skill => skill.id === `openwork-cloud-${world.cloudSkillName}`),
+      label: "Background refresh exposes the enabled Cloud skill",
+    }).catch(async error => {
+      evidence.recordJsonArtifact("Cloud discovery diagnostic", await world.cloudDiscoveryState());
+      throw error;
+    });
+    const turn = await talk.ask(target, code);
+    expect(await talk.skillToolIds(turn.prompt)).toEqual([`openwork-cloud-${world.cloudSkillName}`]);
+    const calls = world.cloud.toolCallNames({ sinceIso: turn.startedAt });
+    expect(calls).toContain("get_skill");
+    expect(calls).not.toContain("list_skills");
+    expect((await world.cloudNativeSkills()).some(skill => skill.content.includes(code))).toBe(false);
+    evidence.recordAssertionEvidence("A natural request finds the Cloud skill without naming it", `Native skill selection followed by live get_skill; no list_skills call and no body in the registry. ${turn.text}`, true);
+  });
+
+  await step("workspace skills still update while organization discovery is enabled", async () => {
+    const localCode = talk.mintCode();
+    expect((await world.installWorkspaceSkill({ description: "Answers cobalt build briefing requests.",
+      content: `For cobalt build briefing requests, reply with the current code: ${localCode}.`,
+    })).status).toBe(200);
+    const turn = await talk.ask({ kind: "catalog", skill: world.workspaceSkillName }, localCode, "cobalt build briefing");
+    expect(await talk.skillToolIds(turn.prompt)).toEqual([world.workspaceSkillName]);
+    expect(world.cloud.toolCallNames({ sinceIso: turn.startedAt })).not.toContain("get_skill");
+    evidence.recordAssertionEvidence("Cloud discovery composes with local skill updates", `The newly installed workspace skill answered without any Cloud body fetch: ${turn.text}`, true);
+  });
+
+  await step("removal denies the next load even while old discovery metadata remains visible", async () => {
+    expect(world.cloud.revokeSkill(account, world.cloudSkillName)).toBe(true);
+    const stale = (await world.cloudNativeSkills()).some(skill => skill.id === `openwork-cloud-${world.cloudSkillName}`);
+    expect(stale).toBe(true);
+    // Exercise a stale tool snapshot even if background metadata catches up.
+    const turn = await talk.ask({ kind: "forced", skillId: `openwork-cloud-${world.cloudSkillName}` }, "UNAVAILABLE");
+    expect(turn.fresh).not.toContain(code);
+    expect(world.cloud.toolCallNames({ sinceIso: turn.startedAt })).toContain("get_skill");
+    evidence.recordAssertionEvidence("Removed skill bodies are inaccessible despite stale context", `Old metadata was still present (${stale}); the next get_skill denied access and the answer was ${turn.text}`, true);
+  });
+});
+
 jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admission while the workspace skill lifecycle still converges", async ({ world, user, probe, step, evidence }) => {
-  const talk = jitConversation({ world, user, probe });
+  const talk = jitConversation({ world, user, probe, diagnostic: data => evidence.recordJsonArtifact("Skill turn diagnostic", data) });
   const catalogTurn: SkillJitTurnTarget = { kind: "catalog", skill: world.workspaceSkillName };
   const install = async (code: string, description: string) => {
     const result = await world.installWorkspaceSkill({ description, content: cloudSkillBody(code) });

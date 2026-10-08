@@ -530,7 +530,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         // Explicit owner-authorized organization erasure, not resource cleanup.
         // No settlement is active for these pilot facts. Billing evidence needs
         // a separate retention policy before commercial settlement is enabled.
-        await tx.select().from(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId)).for("update")
         await tx.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId))
         await tx.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId))
         await tx.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId))

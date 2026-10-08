@@ -8,6 +8,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { postWardenCheck } from "./warden-check.mjs";
 
 const SECURITY = "diff-security-review";
 const CONFIDENTIALITY = "confidentiality-review";
@@ -17,7 +18,7 @@ const MARKER = "<!-- warden-clearance -->";
 // review and could upload a forged receipt; the rest would let one PR rewrite
 // the reviewer for every later PR. Other CI, AGENTS.md, and skills are reviewed
 // like any code (Warden's runtime does not load AGENTS.md or skills from the PR).
-const GUARDED = /^(\.github\/workflows\/warden(-clearance)?\.yml$|\.github\/scripts\/warden-(clearance|report)\.mjs$|warden\.toml$|\.warden\/)/;
+const GUARDED = /^(\.github\/workflows\/warden(-clearance|-check-backfill)?\.yml$|\.github\/scripts\/warden-(clearance|report|check)\.mjs$|warden\.toml$|\.warden\/)/;
 
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 
@@ -220,6 +221,14 @@ export async function main(env = process.env) {
     const decision = guarded.length ? { ...reviewed, verdict: "flagged", reason: "changes-warden" } : reviewed;
     if (guarded.length) console.log(`PR #${number} changes Warden itself; human review required:\n${guarded.join("\n")}`);
 
+    // The required `warden-clear` check goes first, so a failed approval or
+    // comment below can't leave the PR without it.
+    try {
+      await postWardenCheck({ token: env.GH_TOKEN, repo: env.REPO, sha: env.HEAD_SHA, verdict: decision.verdict, reason: decision.reason, detailsUrl: env.RUN_URL });
+    } catch (error) {
+      console.error(`PR #${number}: could not post the warden-clear check: ${error.message}`);
+      process.exitCode = 1;
+    }
     if (decision.verdict === "clear") {
       if (!(await clear(env, number, decision))) continue;
     } else {

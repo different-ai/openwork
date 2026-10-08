@@ -241,6 +241,15 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
       if (result.status !== 200) throw new Error(`Native skill registry unavailable: HTTP ${result.status}`);
       return parseNativeSkills(result.json);
     },
+    async cloudDiscoveryState() {
+      const catalog = await request("/experimental/connect/skills");
+      const plugins = await request(`/workspace/${workspace.workspaceId}/opencode2/api/plugin`);
+      const data = isRecord(plugins.json) && Array.isArray(plugins.json.data) ? plugins.json.data.filter(isRecord) : [];
+      return { catalog: catalog.json, native: await this.nativeSkills(),
+        plugins: data.map(plugin => ({ id: plugin.id, state: plugin.state })),
+        cloudRequests: cloud.log(),
+      };
+    },
     /** Read the same native catalog with a fixture-owned shared-client token. */
     async sharedNativeSkills(scope: "viewer" | "collaborator", encoded = false) {
       const token = sharedTokens.get(scope);

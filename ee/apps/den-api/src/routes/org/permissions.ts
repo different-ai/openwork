@@ -39,7 +39,7 @@ import {
   permissionSetPermissionsChangedEvent,
   type PermissionSetAuditState,
 } from "../../audit/domain/permissions.js"
-import { auditChangeCapture, fenceAuditChanges } from "../../audit/request-capture.js"
+import { auditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { requireFeature } from "../../features.js"
 import { keysetAfter, keysetCursorQuerySchema, keysetPage, nextCursorSchema, type KeysetCursor } from "../../list-pagination.js"
@@ -671,7 +671,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const allowed = plan.changes.map((change) => change.key)
 
       const result = await db.transaction(async (tx) => {
-        await fenceAuditChanges(tx, capture)
         // The team row serializes concurrent creates for the same team. The
         // set is new, so its rows need no notBefore.
         const [team] = await tx.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable)
@@ -831,7 +830,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const actorMemberId = payload.currentMember.id
 
       const result = await db.transaction(async (tx) => {
-        await fenceAuditChanges(tx, capture)
         if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
         const set = await readPermissionSet(tx, organizationId, permissionSetId)
         if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
@@ -973,7 +971,6 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const actorMemberId = payload.currentMember.id
 
       const result = await db.transaction(async (tx) => {
-        await fenceAuditChanges(tx, capture)
         if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
         const set = await readPermissionSet(tx, organizationId, permissionSetId)
         if (!set) return { ok: false as const, error: "permission_set_not_found" as const }

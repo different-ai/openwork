@@ -176,28 +176,11 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
     evidence.recordAssertionEvidence("OpenWork can open the App, and its tools stay scoped to it", "The App host's Connect server index lists the App at its MCP URL without exposing it to the model directly, and executing its search match returns an openwork/mcpApp launch reference to open_app on that server. create_app refuses a tool that is not a real capability and an OpenWork action that changes data (postPluginsAccess), publishing nothing.", true);
   });
 
-  const adminUser = user.on(world.adminWeb);
-  await step("Den's dashboard Add app picker lists the App under Apps built in OpenWork", async () => {
-    await adminUser.see({ text: world.dashboardName }, { timeoutMs: 120_000 });
-    await adminUser.click("Add app");
-    await adminUser.see({ text: "Apps built in OpenWork" }, { timeoutMs: 60_000 });
-    await adminUser.see({ testId: "built-app-sharing-note" }, { text: "Members see an App only when its Plugin is shared with them." });
-    await adminUser.see({ text: appTitle });
-    await adminUser.screenshot();
-    evidence.recordAssertionEvidence("Apps built in OpenWork appear in dashboard assignment", `The owner's Add app picker offers "Apps built in OpenWork" first, lists ${appTitle}, and notes that members need the App's Plugin.`, true);
-  });
-
-  await step("adding it saves a dashboard tile that opens the App through its own server", async () => {
-    await adminUser.click("Add");
-    const saved = await probe.eventually(() => world.dashboardElements(), {
-      within: 60_000, intervalMs: 1_000, label: "the App's tile saved in Den", until: elements => elements.length === 1,
-    });
+  await step("the App's catalog entry saves a dashboard tile that opens the App through its own server", async () => {
+    await world.addAppTile();
     // The tile opens the App through its own server, which the desktop finds by App id.
-    expect(saved).toEqual([appTile(world.created.resourceUri)]);
-    await adminUser.click("Done");
-    await adminUser.see({ text: "App built in OpenWork" }, { timeoutMs: 15_000 });
-    await adminUser.screenshot();
-    evidence.recordAssertionEvidence("The App's dashboard tile opens the App itself", `Adding ${appTitle} saved one tile that opens the App's own server, which the desktop finds by App id: connectionId ${world.created.appId}, open_app, and the App's current revision. The dashboard lists it as "App built in OpenWork".`, true);
+    expect(await world.dashboardElements()).toEqual([appTile(world.created.resourceUri)]);
+    evidence.recordAssertionEvidence("The App's dashboard tile opens the App itself", `Den's App catalog lists ${appTitle}, and saving that entry as a tile stores one that opens the App's own server, which the desktop finds by App id: connectionId ${world.created.appId}, open_app, and the App's current revision.`, true);
   });
 
   await step("Workflow-bound views from before are read-only beside App servers", async () => {
@@ -475,6 +458,11 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     await user.screenshot();
     await user.click({ role: "option", label: `Add ${pricerTitle}` });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
+    // A re-added tile shows its saved copy at once, then replaces that frame with the live App.
+    // Read the order line from the frame that stays, once the tile has finished loading.
+    expect(await probe.eventually(async () => (await probe.dom('[data-dashboard-tile^="personal:"][aria-busy="false"]')).elements, {
+      within: 90_000, intervalMs: 200, label: "the re-added tile has replaced its saved copy with the live App", until: elements => elements.length === 1,
+    })).toHaveLength(1);
     pricer = await focus(pricerTitle);
     await pricer.see({ testId: "order-line" }, { text: pricedLine, timeoutMs: 90_000 });
     evidence.recordAssertionEvidence("Removing a tile changes only personal placement", "After removing Quick order pricer, its tile is gone but the App remains in the Add picker, and adding it again restores a working tile; neither the App nor its sharing grants were deleted.", true);
@@ -496,6 +484,14 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       await frame?.[Symbol.asyncDispose]();
       frame = await world.appFrame(pricerTitle);
       await user.on(frame).see({ text: `Ready — ${text}` }, { timeoutMs: 90_000 });
+    };
+    // An added or restored tile shows its saved copy at once, then replaces that frame with the live App.
+    // Read the revision from the frame that stays, once the tile has finished loading.
+    const tileRevision = async (text: string) => {
+      expect(await probe.eventually(async () => (await probe.dom('[data-dashboard-tile^="personal:"][aria-busy="false"]')).elements, {
+        within: 90_000, intervalMs: 200, label: "the tile has replaced its saved copy with the live App", until: elements => elements.length === 1,
+      })).toHaveLength(1);
+      await revision(text);
     };
     await step("before: discovery and preparation have no App preview", async () => {
       await world.holdCreation(true);
@@ -574,18 +570,18 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       await user.click({ role: "button", label: "Add an artifact" });
       await user.type({ label: "Search artifacts" }, pricerTitle, { replace: true });
       await user.click({ role: "option", label: new RegExp(pricerTitle) });
-      await revision("revision two");
+      await tileRevision("revision two");
       await closeFrame();
       await openTileMenu({ user, probe }, world.den.admin, pricerTitle);
       await user.click({ role: "menuitem", label: `Refresh ${pricerTitle}` });
-      await revision("revision two");
+      await tileRevision("revision two");
       await closeFrame();
       await openTileMenu({ user, probe }, world.den.admin, pricerTitle);
       await user.click({ role: "menuitem", label: `Remove ${pricerTitle} from dashboard` });
       expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
       await user.click({ role: "button", label: "Undo" });
       expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
-      await revision("revision two");
+      await tileRevision("revision two");
       evidence.recordAssertionEvidence("Personal placement survives refresh, removal and Undo", `${name}: the real App shows revision two in its personal tile, refreshes through the tile menu, and remains usable after remove and Undo.`, true);
       await user.screenshot();
     });

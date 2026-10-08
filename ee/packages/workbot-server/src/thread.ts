@@ -98,6 +98,8 @@ export type WorkbotTurn = {
    */
   modelSteps: number
   error: string | null
+  /** A failed turn that can work if sent again: the page offers "Try again", which answers it again in place. */
+  retryable: boolean
   /** Background tasks this message started, oldest first. */
   tasks: WorkbotTask[]
   /** Workbot's first hello: it spoke first, so there is no message from the person above it. */
@@ -141,9 +143,28 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
     })
 }
 
-/** One short line for a failed turn. The page puts "Try again" beside it, so the line doesn't say so again. */
+/** The model refused the request as it was: sending it again gets the same answer. */
+const REFUSED = /^model_(http_(400|413|422)|stream_invalid_request_error)$/
+/** Workbot's model access is broken (key, permission, model): only an admin can fix it. */
+const MISCONFIGURED = /^model_(credentials_missing|http_(401|402|403|404)|stream_(authentication_error|permission_error|not_found_error))$/
+
+/**
+ * Whether trying the same message again can work, so the page offers "Try again" only then: not when the model
+ * refused it as it was, its setup is broken, or the message asked for more than one turn can do.
+ */
+export function retryableError(code: string | null): boolean {
+  if (!code) return true
+  return !REFUSED.test(code) && !MISCONFIGURED.test(code) && code !== "max_steps_exceeded" && code !== "stuck_repeating"
+}
+
+/**
+ * One short line for a failed turn that says what to do next. When trying again can work the page puts "Try again"
+ * beside it, so the line doesn't say so again.
+ */
 function friendlyError(code: string | null): string {
   if (!code) return "Something went wrong on my side."
+  if (REFUSED.test(code)) return "I couldn't take that request as it is. Try asking it a different way."
+  if (MISCONFIGURED.test(code)) return "I can't reach the AI model. An admin needs to check how Workbot is set up."
   if (code.startsWith("model_")) return "I couldn't reach the AI model just now."
   if (code === "mcp_unavailable") return "I couldn't reach your connected apps just now."
   if (code === "turn_timeout") return "That took too long, so I stopped."
@@ -359,6 +380,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       parts,
       modelSteps,
       error: status === "failed" ? friendlyError(turn.error) : null,
+      retryable: status === "failed" && retryableError(turn.error),
       tasks: turn.kind === undefined ? tasksOf(snapshot, turn.messageId, byTurn) : [],
       greeting,
       suggestions,

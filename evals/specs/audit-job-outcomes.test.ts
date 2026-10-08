@@ -32,7 +32,6 @@ type Row = Record<string, unknown>;
 type Envelope = {
   id: string;
   operationId: string;
-  sequence: number;
   action: string;
   category: string;
   outcome: string;
@@ -68,7 +67,6 @@ function envelopeOf(value: unknown): Envelope {
   return {
     id: text(raw.id, "envelope.id"),
     operationId: text(raw.operationId, "envelope.operationId"),
-    sequence: Number(raw.sequence),
     action: text(raw.action, "envelope.action"),
     category: text(raw.category, "envelope.category"),
     outcome: text(raw.outcome, "envelope.outcome"),
@@ -83,7 +81,7 @@ function envelopeOf(value: unknown): Envelope {
   };
 }
 function summary(events: Envelope[]): string {
-  return events.map((event) => `${event.sequence}:${event.action}/${event.outcome}${event.reasonCode ? `(${event.reasonCode})` : ""}`).join(", ") || "(none)";
+  return events.map((event, index) => `${index + 1}:${event.action}/${event.outcome}${event.reasonCode ? `(${event.reasonCode})` : ""}`).join(", ") || "(none)";
 }
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -124,14 +122,15 @@ async function sql(world: { dbUrl: string }, statement: string, values: (string 
   return (await queryDenDatabase(world.dbUrl, statement, values)).filter(isRecord);
 }
 
-async function tenantEvents(world: { dbUrl: string }, orgId: string, afterSequence = 0): Promise<Envelope[]> {
-  const rows = await sql(world, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND sequence > ? ORDER BY sequence", [orgId, afterSequence]);
+async function tenantEvents(world: { dbUrl: string }, orgId: string, afterId = ""): Promise<Envelope[]> {
+  const rows = await sql(world, "SELECT envelope FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL AND id > ? ORDER BY id", [orgId, afterId]);
   return rows.map((row) => envelopeOf(row.envelope));
 }
 
-async function watermark(world: { dbUrl: string }, orgId: string): Promise<number> {
-  const rows = await sql(world, "SELECT COALESCE(MAX(sequence), 0) AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
-  return Number(rows[0]?.n ?? 0);
+async function watermark(world: { dbUrl: string }, orgId: string): Promise<string> {
+  // Newest event id: ids are time-ordered, so "after this id" means "recorded later".
+  const rows = await sql(world, "SELECT COALESCE(MAX(id), '') AS n FROM audit_event WHERE org_id = ? AND envelope IS NOT NULL", [orgId]);
+  return String(rows[0]?.n ?? "");
 }
 
 async function eventsFor(world: { dbUrl: string }, orgId: string, resourceId: string): Promise<Envelope[]> {

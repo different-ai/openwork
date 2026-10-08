@@ -85,6 +85,7 @@ async function main() {
 
   const exclusionKeys = new Set(registry.MCP_CONSUMPTION_EXCLUSIONS.map(({ method, path }) => registry.auditRouteKey(method, path)))
   const operationalKeys = new Set(registry.OPERATIONAL_EXCLUSIONS.map(({ method, path }) => registry.auditRouteKey(method, path)))
+  const highVolumeKeys = new Set(registry.HIGH_VOLUME_EXCLUSIONS.map(({ method, path }) => registry.auditRouteKey(method, path)))
   // The operational exclusion is exactly GET /, /health and /ready; widening it needs a reviewed change here.
   const expectedOperational = ["GET /", "GET /health", "GET /ready"]
   if ([...operationalKeys].sort().join(",") !== expectedOperational.join(",")) fail("OPERATIONAL_EXCLUSIONS must be exactly GET /, /health, /ready", [...operationalKeys].sort().join(", "))
@@ -113,10 +114,17 @@ async function main() {
     if (declaration.class === "tenant_job" && !declaration.jobOutcome) fail("tenant_job without jobOutcome", key)
     if (declaration.class === "support" && declaration.method !== "ALL" && declaration.method !== "OPTIONS") fail("support class on a non-middleware method", key)
     if (declaration.class === "excluded_operational" && !operationalKeys.has(key)) fail("excluded_operational outside OPERATIONAL_EXCLUSIONS", key)
+    if (declaration.class === "excluded_high_volume" && !highVolumeKeys.has(key)) fail("excluded_high_volume outside HIGH_VOLUME_EXCLUSIONS", key)
   }
   for (const key of exclusionKeys) {
     const declaration = declarations.find((entry) => registry.auditRouteKey(entry.method, entry.path) === key)
     if (declaration && declaration.class !== "mcp_consumption") fail("MCP exclusion not declared mcp_consumption", key)
+  }
+  for (const key of highVolumeKeys) {
+    const declaration = declarations.find((entry) => registry.auditRouteKey(entry.method, entry.path) === key)
+    if (!declaration) fail("high-volume exclusion without a declaration", key)
+    else if (declaration.class !== "excluded_high_volume") fail("high-volume exclusion not declared excluded_high_volume", key)
+    else if (declaration.method !== "GET") fail("high-volume exclusion on a non-GET route", key)
   }
   for (const key of operationalKeys) {
     const declaration = declarations.find((entry) => registry.auditRouteKey(entry.method, entry.path) === key)
@@ -224,6 +232,7 @@ const CLASS_POLICY: Readonly<Record<AuditRouteClass, { capture: string; failure:
   domain_audit: { capture: "audit emitter (src/routes/org/audit.ts)", failure: `${RETRY} fails closed with 503` },
   platform: { capture: "platform_audit_event after handler with target; successful readOnly reads only with the platformAuditReads feature", failure: `written before the response is released; ${RETRY} a failed insert never fails the request ([platform-audit-lost])` },
   excluded_operational: { capture: "excluded: operational probe (OPERATIONAL_EXCLUSIONS); no audit record", failure: "none" },
+  excluded_high_volume: { capture: "NOT AUDITED: bulk fan-out read (HIGH_VOLUME_EXCLUSIONS); no audit record", failure: "none" },
   proxy: { capture: "destination route records", failure: "none" },
   support: { capture: "app.use middleware entry, not an endpoint", failure: "none" },
   mcp_consumption: { capture: "excluded: MCP consumption transport", failure: "none" },
@@ -243,7 +252,7 @@ function renderCoverage(input: { registry: Registry; coverage: Coverage; bridge:
     "- Request evidence: declared resource type, validated path-parameter id (`unparseable` otherwise) or `collection:<type>`, parent organization, method, route template and status. Never bodies, query strings, headers, IPs or secrets.",
     "- One operation per request: intent, outcome and domain change events (`appendAuditChanges`) share it. Requests without trustworthy tenant attribution go to `platform_audit_event` (no organization column, not tenant-visible) with a target: the declared resource type plus validated path id, else the first handler-named resource; an organization target only when it is the authenticated context's organization.",
     "- The platform read filter keys on effect, not method: only declarations marked `readOnly` (platform GET/HEAD without side effects) skip successful requests unless the deployment-wide `platformAuditReads` feature is on; every other platform request, including side-effecting GETs (OAuth/social callbacks, verify-email, unsubscribe, end-session, SLO, token), is recorded.",
-    "- Retry: every standalone audit transaction (intent, served, outcome, service-action and job outcomes, user fan-out, after-commit change events, `/v1/audit/*` access evidence, platform rows) is re-run as a whole (entitlement recheck and policy fence included) on transient database errors: deadlock (1213) and lock wait timeout (1205) always, connection loss (ECONNRESET, EPIPE, ETIMEDOUT, PROTOCOL_CONNECTION_LOST) only when the append is idempotent on replay (stable request/job operation plus idempotency key, or a pre-generated platform row id). Up to 3 attempts with ~50/150 ms jittered backoff, each retry logged `[audit-append-retry]`; then the failure behaviour below applies. `AuditLogError`s and feature/entitlement decisions are never retried. Change events appended inside a business transaction are not retried (a deadlock rolls the mutation back).",
+    "- Retry: every standalone audit transaction (intent, served, outcome, service-action and job outcomes, user fan-out, after-commit change events, `/v1/audit/*` access evidence, platform rows) is re-run as a whole (entitlement recheck and policy check included) on transient database errors: deadlock (1213) and lock wait timeout (1205) always, connection loss (ECONNRESET, EPIPE, ETIMEDOUT, PROTOCOL_CONNECTION_LOST) only when the append is idempotent on replay (stable request/job operation plus idempotency key, or a pre-generated platform row id). Up to 3 attempts with ~50/150 ms jittered backoff, each retry logged `[audit-append-retry]`; then the failure behaviour below applies. `AuditLogError`s, feature/entitlement decisions and a full PlanetScale transaction pool (ResourceExhausted) are never retried. Change events appended inside a business transaction are not retried (a deadlock rolls the mutation back).",
     "- When a tenant outcome append fails with `audit_policy_changed` after its intent was recorded (the request itself disabled capture, e.g. an `auditLogs` feature override set to off or a plan change removing the entitlement), the outcome is written to `platform_audit_event` targeting the verified organization.",
     "",
     "## Classes",
@@ -266,12 +275,13 @@ function renderCoverage(input: { registry: Registry; coverage: Coverage; bridge:
     "",
     "## Exclusions",
     "",
-    "The only routes excluded from audit logs, each pinned by this check: MCP consumption transports (`MCP_CONSUMPTION_EXCLUSIONS`, class `mcp_consumption`) and the operational probes (`OPERATIONAL_EXCLUSIONS`, class `excluded_operational`, exactly `GET /`, `/health`, `/ready`). Request capture records nothing for them.",
+    "The only routes excluded from audit logs, each pinned by this check: MCP consumption transports (`MCP_CONSUMPTION_EXCLUSIONS`, class `mcp_consumption`), the operational probes (`OPERATIONAL_EXCLUSIONS`, class `excluded_operational`, exactly `GET /`, `/health`, `/ready`) and bulk fan-out reads (`HIGH_VOLUME_EXCLUSIONS`, class `excluded_high_volume`, GET only). Request capture records nothing for them: no intent, no outcome, and audit never refuses or withholds their response.",
     "",
     "| Exclusion | Method | Path | Reason |",
     "|---|---|---|---|",
     ...registry.MCP_CONSUMPTION_EXCLUSIONS.map((entry) => `| MCP consumption | ${entry.method} | \`${entry.path}\` | ${cell(entry.reason)} |`),
     ...registry.OPERATIONAL_EXCLUSIONS.map((entry) => `| Operational probe | ${entry.method} | \`${entry.path}\` | ${cell(entry.reason)} |`),
+    ...registry.HIGH_VOLUME_EXCLUSIONS.map((entry) => `| High-volume read (not audited) | ${entry.method} | \`${entry.path}\` | ${cell(entry.reason)} |`),
     "",
     "## Service-layer (non-HTTP) actions",
     "",

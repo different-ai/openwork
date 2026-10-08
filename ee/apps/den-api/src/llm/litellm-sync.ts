@@ -382,7 +382,7 @@ export async function createLiteLlmProvider(tx: GatewayTx, provider: GatewayProv
   const set: GatewaySet = {
     id: createDenTypeId("gatewayCredentialSet"), gateway_provider_id: provider.id, created_by_org_membership_id: input.creatorId,
     name: input.mode === "org" ? "Organization LiteLLM key" : readLiteLlmSettings(provider.settings)?.keySource === "issued" ? "LiteLLM keys created by OpenWork" : "Personal LiteLLM keys", credential_mode: input.mode,
-    oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: provider.created_at, updated_at: provider.created_at,
+    oauth_client_id: null, oauth_client_secret: null, oauth_tenant_id: null, aws_sso: null, status: "active", created_at: provider.created_at, updated_at: provider.created_at,
   }
   await tx.insert(GatewayCredentialSetTable).values(set)
   const credential = await upsertKeyRow(tx, provider, set, input.mode === "org" ? "org" : LITELLM_ADMIN_CREDENTIAL_SUBJECT, null, input.apiKey)

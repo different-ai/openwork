@@ -23,6 +23,8 @@ const skillIndexSchema = z.object({
     type: z.literal("skill-md"),
     title: z.string().max(1_024).optional(),
     description: z.string().max(1_024),
+    // Den resolves the default-off rollout; older servers never opt in.
+    modelDiscovery: z.boolean().optional(),
     marketplaceName: z.string().max(1_024).optional(),
     pluginName: z.string().max(1_024).optional(),
     url: z.string().startsWith("skill://"),

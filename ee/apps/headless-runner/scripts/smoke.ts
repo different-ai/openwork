@@ -21,10 +21,11 @@ import { remoteMcpConnector } from "../src/mcp.js"
 import { anthropicModel, openAIModel } from "../src/model.js"
 import { Runner } from "../src/runner.js"
 import { Store } from "../src/store.js"
+import { nodeSqlite } from "../src/node-sqlite.js"
 
 const prompt = process.argv.slice(2).join(" ") || "Use OpenWork to find what I can connect to, then write a short summary to notes/summary.md."
 const config = loadConfig({ ...process.env, HEADLESS_DB_PATH: join(mkdtempSync(join(tmpdir(), "headless-smoke-")), "s.sqlite") })
-const store = new Store(config.dbPath)
+const store = new Store(nodeSqlite(config.dbPath))
 const runner = new Runner({
   store,
   model:

@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2024", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "customConditions": ["development"],
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "types": ["bun-types"]
+  },
+  "include": ["src/**/*"]
+}
