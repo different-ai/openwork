@@ -178,6 +178,16 @@
               ],
               "description": "AI Gateway: AWS and Microsoft sign-in: Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key. Renders DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN."
             },
+            "engineV2Upgrade": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: upgrade prompt to OpenCode v2: Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. Renders DEN_FEATURE_ENGINE_V2_UPGRADE."
+            },
             "platformAuditReads": {
               "enum": [
                 "",

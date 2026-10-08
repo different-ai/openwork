@@ -5,7 +5,7 @@ import { executionRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -88,6 +88,8 @@ export interface EngineV2PreviewStatus {
   /** Most recent upkeep step that did not finish in time or was rejected; requests proceeded. */
   lastWarning?: string;
   migration: EngineV2MigrationStatus;
+  /** This profile has OpenCode v1 chat history that could be migrated. */
+  v1HistoryAvailable: boolean;
 }
 
 export interface RuntimeProviderRecordLike {
@@ -546,10 +548,15 @@ export function createEngineV2Preview(options: {
     }
   }
 
+  function hasV1History(): boolean {
+    try { return existsSync(opencodeV1DatabasePath()); } catch { return false; }
+  }
+
   function status(): EngineV2PreviewStatus {
     return {
       enabled,
       migration: { ...migration },
+      v1HistoryAvailable: hasV1History(),
       chatRouting,
       running,
       ...(version === undefined ? {} : { version }),
@@ -852,8 +859,11 @@ export function createEngineV2Preview(options: {
         await writeEngineV2PreviewState(config, { enabled, chatRouting });
         await start();
         if (!sidecar) throw new Error("OpenCode v2 could not start. Retry migration.");
-        await migrateOpencodeV1History({ source, storageDir: join(runtimeStorageDir(config), "opencode-v2"),
-          bin: resolved.bin, target: sidecar, progress: (next) => { migration = { ...next, startedAt }; } });
+        const storageDir = join(runtimeStorageDir(config), "opencode-v2");
+        await migrateOpencodeV1History({ source, storageDir,
+          bin: resolved.bin, target: sidecar,
+          backup: { database: join(rootDir, "opencode.db"), directory: join(storageDir, "backups") },
+          progress: (next) => { migration = { ...next, startedAt }; } });
       } catch (error) {
         migration = { ...migration, state: "error", error: errorMessage(error) };
       }

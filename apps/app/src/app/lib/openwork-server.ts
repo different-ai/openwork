@@ -88,6 +88,8 @@ export interface EngineV2MigrationStatus {
   /** ISO time the current migration started. */
   startedAt?: string;
   error?: string;
+  /** Where the v2 chat database was copied before this migration wrote to it. */
+  backupPath?: string;
 }
 
 function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undefined {
@@ -102,6 +104,7 @@ function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undef
   return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
     ...(phase ? { phase } : {}),
     ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
+    ...("backupPath" in value && typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
     error: "error" in value && typeof value.error === "string" ? value.error : undefined };
 }
 
@@ -144,6 +147,8 @@ export interface EngineV2PreviewStatus {
   pid?: number;
   binSource?: string;
   migration?: EngineV2MigrationStatus;
+  /** Older servers omit it; treat that as unknown and do not prompt. */
+  v1HistoryAvailable?: boolean;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
   catalogModelIds: string[];
@@ -185,6 +190,8 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
   }
   return {
     migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
+    ...("v1HistoryAvailable" in value && typeof value.v1HistoryAvailable === "boolean"
+      ? { v1HistoryAvailable: value.v1HistoryAvailable } : {}),
     enabled: value.enabled,
     running: value.running,
     chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
