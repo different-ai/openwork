@@ -119,7 +119,14 @@ export async function readJsoncFile<T>(
     if (!(await exists(path))) {
       return { data: fallback, raw: "", missing: true };
     }
-    raw = await readFile(path, { encoding: "utf8", signal: options?.signal });
+    try {
+      raw = await readFile(path, { encoding: "utf8", signal: options?.signal });
+    } catch (error) {
+      if (hasErrorCode(error, "EPERM") || hasErrorCode(error, "EACCES")) {
+        return { data: fallback, raw: "", missing: true };
+      }
+      throw error;
+    }
   }
   const errors: { error: number; offset: number; length: number }[] = [];
   const data = parse(raw, errors, { allowTrailingComma: true }) as T;
