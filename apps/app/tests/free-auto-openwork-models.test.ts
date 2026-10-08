@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildModelCatalog, resolveRetainedSelection } from "../src/react-app/domains/models/catalog";
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, openWorkModelsAutoReplacement, preferredAutoModel, shouldSelectInitialAuto } from "../src/react-app/domains/models/model-catalog";
+import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel, modelTitle, openWorkModelsLunaReplacement, shouldSelectInitialAuto, starterModel } from "../src/react-app/domains/models/model-catalog";
 import type { ModelOption } from "../src/app/types";
 
 const auto: ModelOption = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, title: "Auto", isFree: true };
@@ -30,17 +30,23 @@ test("new members with OpenWork Models do not start on free Auto", () => {
   expect(shouldSelectInitialAuto({ ...input, available: [auto, openWorkModel] })).toBe(false);
 });
 
-const openWorkAuto: ModelOption = { providerID: "openwork", modelID: AUTO_MODEL_ID, title: "Auto" };
+const luna: ModelOption = { providerID: "openwork", modelID: AUTO_MODEL_ID, title: "GPT-6 Luna" };
 
-test("members start on Auto from their OpenWork Models once it is listed", () => {
-  const input = { current: null, empty: true, explicit: false };
-  expect(shouldSelectInitialAuto({ ...input, available: [auto, openWorkModel, openWorkAuto] })).toBe(true);
-  expect(preferredAutoModel([auto, openWorkModel, openWorkAuto])).toBe(openWorkAuto);
-  expect(preferredAutoModel([auto, other])).toBe(auto);
+test("Luna from OpenWork Models is listed under its own name, not as Auto", () => {
+  expect(isAutoModel(luna)).toBe(false);
+  expect(modelTitle(luna)).toBe("GPT-6 Luna");
+  expect(catalog([auto, luna]).options).toEqual([expect.objectContaining({ providerID: "openwork", title: "GPT-6 Luna" })]);
 });
 
-test("a saved free Auto choice moves to OpenWork Models Auto", () => {
-  expect(openWorkModelsAutoReplacement(auto, [auto, openWorkModel, openWorkAuto])).toBe(openWorkAuto);
-  expect(openWorkModelsAutoReplacement(auto, [auto, openWorkModel])).toBeUndefined();
-  expect(openWorkModelsAutoReplacement(other, [auto, openWorkAuto])).toBeUndefined();
+test("members start on Luna from their OpenWork Models once it is listed", () => {
+  const input = { current: null, empty: true, explicit: false };
+  expect(shouldSelectInitialAuto({ ...input, available: [auto, openWorkModel, luna] })).toBe(true);
+  expect(starterModel([auto, openWorkModel, luna])).toBe(luna);
+  expect(starterModel([auto, other])).toBe(auto);
+});
+
+test("a saved free Auto choice moves to Luna from OpenWork Models", () => {
+  expect(openWorkModelsLunaReplacement(auto, [auto, openWorkModel, luna])).toBe(luna);
+  expect(openWorkModelsLunaReplacement(auto, [auto, openWorkModel])).toBeUndefined();
+  expect(openWorkModelsLunaReplacement(other, [auto, luna])).toBeUndefined();
 });

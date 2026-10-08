@@ -119,10 +119,10 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
-  // Auto's model on the organization's own OpenWork Models usage, counted at half its cost.
+  // The model behind free Auto, on the organization's own usage and counted at half its cost.
   "openai/gpt-6-luna": {
     upstreamModel: "openai/gpt-6-luna",
-    displayName: "OpenWork: Auto",
+    displayName: "OpenWork: GPT-6 Luna",
     enabled: true,
     usageFactor: 0.5,
   },

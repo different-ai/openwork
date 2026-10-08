@@ -170,7 +170,7 @@ import {
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
-import { withImportedModelMetadata, isAutoModel, shouldSelectInitialAuto, preferredAutoModel, openWorkModelsAutoReplacement, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
+import { withImportedModelMetadata, isAutoModel, shouldSelectInitialAuto, starterModel, openWorkModelsLunaReplacement, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
 import {
   filterEntitledModelOptions,
   keylessProviderIds,
@@ -1127,11 +1127,11 @@ export function SessionRoute() {
     providerListQuery.data,
     restrictToCloudProviders,
   ]);
-  // Members whose organization serves Auto through OpenWork Models move off free Auto onto their own usage.
-  const newTaskAutoReplacement = openWorkModelsAutoReplacement(configuredNewTaskModel, entitledModelOptions);
+  // Members whose organization has Luna in OpenWork Models move off free Auto onto their own usage.
+  const newTaskLunaReplacement = openWorkModelsLunaReplacement(configuredNewTaskModel, entitledModelOptions);
   useEffect(() => {
-    if (newTaskAutoReplacement) changeNewTaskModel(newTaskAutoReplacement, null);
-  }, [newTaskAutoReplacement?.providerID, newTaskAutoReplacement?.modelID, changeNewTaskModel]);
+    if (newTaskLunaReplacement) changeNewTaskModel(newTaskLunaReplacement, null);
+  }, [newTaskLunaReplacement?.providerID, newTaskLunaReplacement?.modelID, changeNewTaskModel]);
   const { query: initialAutoAccess } = useAutoAccess(entitledModelOptions.some(isAutoModel) || Boolean(configuredNewTaskModel && isAutoModel(configuredNewTaskModel)), autoAccessWorkspace);
   useEffect(() => {
     if ((initialAutoAccess.isPending && initialAutoAccess.fetchStatus !== "idle") || freeAutoSwitchedOff(initialAutoAccess.data)) return;
@@ -1142,8 +1142,8 @@ export function SessionRoute() {
         empty: !Object.values(sessionsByWorkspaceId).some((sessions) => sessions.length > 0),
         explicit: localStorage.getItem(EXPLICIT_MODEL_CHOICE_KEY) !== null,
       })) return;
-      const auto = preferredAutoModel(available);
-      if (auto) local.setPrefs((previous) => ({ ...previous, defaultModel: auto, modelVariant: null }));
+      const starter = starterModel(available);
+      if (starter) local.setPrefs((previous) => ({ ...previous, defaultModel: starter, modelVariant: null }));
     } catch {}
   }, [initialAutoAccess.isPending, initialAutoAccess.fetchStatus, initialAutoAccess.data, cloudProviderList, providerListQuery.data, loading, selectedSessionId, sessionsByWorkspaceId, workspaceSessionGroups, local, workspaceDefault]);
   const openWorkModelsAvailable = hasOpenWorkModelsAvailable({

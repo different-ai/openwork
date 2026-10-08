@@ -30,7 +30,7 @@ export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
 export function shouldSelectInitialAuto(input: { available: readonly ModelRef[]; current: ModelRef | null; empty: boolean; explicit: boolean }) {
-  return input.empty && !input.explicit && Boolean(preferredAutoModel(input.available))
+  return input.empty && !input.explicit && Boolean(starterModel(input.available))
     && (!input.current || (input.current.providerID === "opencode" && input.current.modelID === "big-pickle"));
 }
 export function markExplicitModelChoice() {
@@ -51,21 +51,23 @@ export function freeAutoCoveredByOpenWorkModels(options: readonly (ModelRef & { 
   return options.some((option) => option.providerID === "openwork" && !option.disabled);
 }
 
-/** The Auto to offer: the organization's OpenWork Models one when it has OpenWork Models, free Auto otherwise. */
-export function preferredAutoModel<T extends ModelRef & { disabled?: boolean }>(available: readonly T[]): T | undefined {
-  const autos = available.filter(isAutoModel);
-  return freeAutoCoveredByOpenWorkModels(available) ? autos.find((model) => !isFreeAutoModel(model)) : autos[0];
+/** The organization's OpenWork Models serve Auto's model under its own name; members use it instead of free Auto. */
+export function openWorkModelsLuna<T extends ModelRef & { disabled?: boolean }>(available: readonly T[]): T | undefined {
+  return available.find((model) => model.providerID === "openwork" && model.modelID === AUTO_MODEL_ID && !model.disabled);
 }
 
-/** A saved free Auto choice moves to the organization's OpenWork Models Auto once it is listed. */
-export function openWorkModelsAutoReplacement<T extends ModelRef & { disabled?: boolean }>(current: ModelRef | null | undefined, available: readonly T[]): T | undefined {
-  if (!isFreeAutoModel(current)) return undefined;
-  const preferred = preferredAutoModel(available);
-  return preferred && !isFreeAutoModel(preferred) ? preferred : undefined;
+/** The model a new member starts on: Luna from OpenWork Models when the organization has them, free Auto otherwise. */
+export function starterModel<T extends ModelRef & { disabled?: boolean }>(available: readonly T[]): T | undefined {
+  return freeAutoCoveredByOpenWorkModels(available) ? openWorkModelsLuna(available) : available.find(isAutoModel);
+}
+
+/** A saved free Auto choice moves to Luna from OpenWork Models once the organization has it. */
+export function openWorkModelsLunaReplacement<T extends ModelRef & { disabled?: boolean }>(current: ModelRef | null | undefined, available: readonly T[]): T | undefined {
+  return isAutoModel(current) ? openWorkModelsLuna(available) : undefined;
 }
 
 export function isAutoModel(model: ModelRef | null | undefined) {
-  return model?.modelID === AUTO_MODEL_ID && (model.providerID === AUTO_PROVIDER_ID || model.providerID === "openwork");
+  return isFreeAutoModel(model);
 }
 
 export function modelSource(model: ModelRef & { source?: ModelOption["source"] }): ModelSource {
