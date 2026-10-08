@@ -12,7 +12,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-test("a v2 conversation opens its built-in browser with approval and keeps other conversations' tabs private", async ({ world, user, agent, probe, step, evidence }) => {
+test("a v2 conversation opens its built-in browser after one session allow and keeps other conversations' tabs private", async ({ world, user, agent, probe, step, evidence }) => {
   expect(world.engine).toBe("v2");
   const sessionId = world.session.sessionId;
   const native = `/workspace/${world.workspace.workspaceId}/opencode2/api`;
@@ -24,15 +24,15 @@ test("a v2 conversation opens its built-in browser with approval and keeps other
     evidence.recordAssertionEvidence("no browser tab was opened by fixture setup", "The native browser reports zero tabs owned by this conversation.", true);
     await user.screenshot();
   });
-  await step("after: approving browser control opens the requested page", async () => {
+  await step("after: allowing the session once opens the requested page", async () => {
     const prompt = `Open the built-in browser at ${world.pageOrigin}. ${randomUUID()}`;
     const reply = `The browser is open. ${randomUUID()}`;
     await world.prepareTurn(prompt, reply, [{ tool: "browser_tabs", arguments: {} }, { tool: "browser_open", arguments: { url: world.pageOrigin } }]);
     await user.type("composer", prompt);
     await user.click("Run task");
-    await user.see({ text: "Allow browser control for this thread?" }, { timeoutMs: 60_000 });
+    await user.see({ text: "Allow this agent to use the browser?" }, { timeoutMs: 60_000 });
     expect((await probe.browserFixtureState(world.pageOrigin)).pageRequests).toHaveLength(0);
-    await user.click({ role: "button", label: "Allow for this thread" });
+    await user.click({ role: "button", label: "Allow for this session" });
     await user.see({ text: reply }, { timeoutMs: 90_000 });
     const state = await probe.eventually(() => probe.browserState(), { within: 15_000, label: "the requested page has its owned tab",
       until: state => state.tabs.some(tab => tab.ownerSessionId === sessionId) });

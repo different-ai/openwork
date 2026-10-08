@@ -6,58 +6,21 @@ import { attachBuiltinTab, browserTabHandle } from "../worlds/browser-panel.ts";
 
 const test = spec.world(browserWebMcpWorld);
 
-test("a conversation signs in, uses site tools and page controls with consent, isolation and recovery", async ({ world, seed, user, agent, probe, step, evidence }) => {
+test("a conversation is allowed once, then signs in, uses site tools and page controls without more prompts, with isolation and recovery", async ({ world, seed, user, agent, probe, step, evidence }) => {
   const sessionId = world.session.sessionId;
   const task = (operation: BrowserTaskInput["operation"], args: BrowserTaskInput["args"] = {}) => agent.browserTask({ sessionId, operation, args });
-  const withoutBrowserApproval = async (pending: Promise<BrowserTaskReply>) => {
-    let settled = false;
-    let failure: unknown;
-    const result = pending.then((value) => { settled = true; return value; }, (error: unknown) => { settled = true; failure = error; });
-    await probe.eventually(async () => {
-      expect(await probe.text()).not.toMatch(/Allow browser control for this thread\?|Allow for this thread|Allow origin in this tab|Allow reading this origin|Allow once/);
-      return settled;
-    }, { within: 10_000, until: (value) => value, label: "the granted browser operation completes without another approval" });
-    const reply = await result;
-    if (!reply) throw failure ?? new Error("The browser operation returned no reply.");
-    return reply;
-  };
-  const grantedTask = (operation: BrowserTaskInput["operation"], args: BrowserTaskInput["args"] = {}) => withoutBrowserApproval(task(operation, args));
-  const resumeObservation = async (includeImage = false, revokedSiblingTabId?: string) => {
+  const promptText = /Allow this agent to use the browser\?|Allow for this session|Allow browser control for this thread\?|Allow browser action\?|Allow website action\?|Allow once|Share result/;
+  const resumeObservation = async (includeImage = false, siblingTabId?: string) => {
     await user.click({ role: "button", label: "Resume browser" });
-    if (revokedSiblingTabId) expect(await task("observe", { tabId: revokedSiblingTabId })).toMatchObject({ ok: false, code: "needs_attention" });
-    let settled = false;
-    const pending = task("observe", { tabId: listed.tabId, includeImage }).then((value) => { settled = true; return value; });
-    await user.see({ text: "Allow browser control for this thread?" });
-    await user.see({ role: "button", label: "Allow for this thread" });
-    expect(settled).toBe(false);
-    await user.click({ role: "button", label: "Allow for this thread" });
-    return withoutBrowserApproval(pending);
+    if (siblingTabId) expect(await task("observe", { tabId: siblingTabId })).toMatchObject({ ok: true, tabId: siblingTabId });
+    const observed = await task("observe", { tabId: listed.tabId, includeImage });
+    expect(await probe.text()).not.toMatch(promptText);
+    return observed;
   };
   const witness = () => probe.browserFixtureState(world.origin);
-  const reviewInput = async (args: BrowserTaskInput["args"], decision: "allow" | "deny" = "allow", reviewMs = 0) => {
-    const before = await witness();
-    const unchanged = async () => expect(await witness()).toMatchObject({
-      records: before.records, inputValue: before.inputValue, popups: before.popups,
-      frameClicks: before.frameClicks, pageRequests: before.pageRequests, signInCount: before.signInCount,
-    });
-    let settled = false;
-    const pending = task("act", args).then((value) => { settled = true; return value; });
-    await user.see({ text: "Allow browser action?" });
-    await user.see({ role: "button", label: "Allow once" });
-    await user.notSee({ role: "button", label: "Allow for this thread" });
-    const reviewStarted = Date.now();
-    await probe.eventually(async () => {
-      expect(settled).toBe(false);
-      await unchanged();
-      return Date.now() - reviewStarted;
-    }, { within: reviewMs + 5_000, until: (elapsed) => elapsed >= reviewMs, label: "input stays undispatched throughout action review" });
-    await user.click({ role: "button", label: decision === "allow" ? "Allow once" : "Deny" });
-    const result = await withoutBrowserApproval(pending);
-    if (decision === "deny") {
-      expect(result).toMatchObject({ ok: false, code: "user_denied", dispatched: false, mayHaveChangedState: false });
-      await unchanged();
-    }
-    await user.notSee({ role: "button", label: "Share result" });
+  const act = async (args: BrowserTaskInput["args"]) => {
+    const result = await task("act", args);
+    expect(await probe.text()).not.toMatch(promptText);
     return result;
   };
   const conversation = async () => {
@@ -72,32 +35,23 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(response.status).toBe(204);
   };
 
-  const listed = await step("One thread approval gates the first GET and then covers website discovery", async () => {
+  const listed = await step("One session allow gates the first GET, then discovery needs no other prompt", async () => {
     expect((await probe.browserState()).tabs).toEqual([]);
     expect(await witness()).toMatchObject({ pageRequests: [], signInCount: 0, records: [], sessionReads: 0 });
     await prompt("Open the controlled project page and discover its website tools.");
-    await user.see({ text: "Allow browser control for this thread?" });
-    await user.see({ role: "button", label: "Allow for this thread" });
-    const opening = await conversation();
-    expect(opening.calls.map((call) => call.name)).toEqual(["browser_tabs", "browser_open"]);
-    expect(opening.calls[0].output).toMatchObject({ ok: true, tabs: [] });
-    expect(opening.calls[1].output).toBeUndefined();
-    const mounted = await probe.browserState();
-    expect(mounted.tabs).toHaveLength(1);
-    expect(mounted.tabs[0]).toMatchObject({ id: mounted.activeTabId, ownerSessionId: sessionId, label: "New tab" });
-    expect(mounted.visibleSessionId).toBe(sessionId);
-    expect(mounted.nativeViews.find((view) => view.tabId === mounted.activeTabId)).toMatchObject({ attached: true, aboveApp: true, visible: false });
+    await user.see({ text: "Allow this agent to use the browser?" });
     expect((await witness()).pageRequests).toEqual([]);
-    await user.notSee({ role: "button", label: "Allow origin in this tab" });
-    await user.notSee({ role: "button", label: "Allow reading this origin" });
-    await user.click({ role: "button", label: "Allow for this thread" });
+    await user.click({ role: "button", label: "Allow for this session" });
     const completed = await probe.eventually(async () => {
-      expect(await probe.text()).not.toMatch(/Allow for this thread|Allow origin in this tab|Allow reading this origin|Allow once/);
+      expect(await probe.text()).not.toMatch(promptText);
       return conversation();
     }, {
       within: 60_000, until: (value) => value.calls.length === 3 && value.calls.every((call) => call.status === "completed") && !!value.answer,
-      label: "the discovery turn completes through the engine",
+      label: "the discovery turn completes through the engine without asking for permission",
     });
+    const mounted = await probe.browserState();
+    expect(mounted.tabs).toHaveLength(1);
+    expect(mounted.tabs[0]).toMatchObject({ id: mounted.activeTabId, ownerSessionId: sessionId });
     expect(completed.calls.map((call) => call.name)).toEqual(["browser_tabs", "browser_open", "webmcp_list_tools"]);
     expect(completed.calls[1].output).toMatchObject({ ok: true, tabId: mounted.activeTabId });
     const result = completed.calls[2].output;
@@ -108,7 +62,7 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     return { tabId: result.tabId, tools: result.tools };
   });
   const tabId = listed.tabId;
-  // Resolve the already-approved exact tab for trusted human sign-in, without a new GET.
+  // Resolve the already-open exact tab for trusted human sign-in, without a new GET.
   const handle = browserTabHandle(await agent.run("browser.open_url", { url: `${world.origin}/`, provider: "builtin" }));
   expect(handle.tabId).toBe(tabId);
   await using site = await attachBuiltinTab(world.app, handle.targetId);
@@ -132,8 +86,8 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     for (const decision of ["deny", "close"]) {
       const deniedSessionId = await agent.createSession(`Refused browser ${decision}`);
       const pending = agent.browserTask({ sessionId: deniedSessionId, operation: "open", args: { url: `${world.origin}/navigation-${decision}` } });
-      await user.see({ text: "Allow browser control for this thread?" });
-      await user.see({ role: "button", label: "Allow for this thread" });
+      await user.see({ text: "Allow this agent to use the browser?" });
+      await user.see({ role: "button", label: "Allow for this session" });
       const state = await probe.browserState();
       const blank = state.tabs.find((tab) => tab.id === state.activeTabId);
       if (!blank) throw new Error("The pending open has no review tab.");
@@ -147,7 +101,8 @@ test("a conversation signs in, uses site tools and page controls with consent, i
       }
       const result = await pending;
       expect(result).toMatchObject({ ok: false, dispatched: false, mayHaveChangedState: false });
-      if (decision === "deny") expect(result.code).toBe("user_denied");
+      // Closing the tab dismisses the question; only Deny is reported as a denial.
+      expect(result.code).toBe(decision === "deny" ? "user_denied" : "canceled");
       await probe.eventually(() => probe.browserState(), { within: 5_000, until: (value) => value.tabs.length === before.tabs.length, label: "the refused open releases its blank tab" });
       expect((await probe.browserState()).tabs).toEqual(before.tabs);
       expect((await witness()).pageRequests).toEqual(requests);
@@ -155,16 +110,16 @@ test("a conversation signs in, uses site tools and page controls with consent, i
   });
 
   await user.click({ text: world.session.title });
-  await step("The thread grant covers another tab and allowed cross-origin redirects without reapproval", async () => {
+  await step("The session allow covers another tab and allowed cross-origin redirects", async () => {
     const requests = (await witness()).pageRequests;
     const localhost = `http://localhost:${new URL(world.origin).port}`;
-    const opened = await grantedTask("open", { url: `${world.origin}/redirect` });
+    const opened = await task("open", { url: `${world.origin}/redirect` });
     expect(opened).toMatchObject({ ok: true, visible: true, url: `${localhost}/fallback` });
     expect((await witness()).pageRequests).toEqual([...requests, { path: "/fallback", signedIn: false }]);
     expect((await probe.browserState()).tabs.find((tab) => tab.id === opened.tabId)?.ownerSessionId).toBe(sessionId);
-    expect(await grantedTask("navigate", { tabId: opened.tabId, url: `${localhost}/localhost-approved` })).toMatchObject({ ok: true, tabId: opened.tabId });
+    expect(await task("navigate", { tabId: opened.tabId, url: `${localhost}/localhost-approved` })).toMatchObject({ ok: true, tabId: opened.tabId });
     expect((await witness()).pageRequests).toEqual([...requests, { path: "/fallback", signedIn: false }, { path: "/localhost-approved", signedIn: false }]);
-    expect(await grantedTask("site_tools", { tabId: opened.tabId })).toMatchObject({ ok: true, tabId: opened.tabId });
+    expect(await task("site_tools", { tabId: opened.tabId })).toMatchObject({ ok: true, tabId: opened.tabId });
     await user.hover({ role: "button", label: "Select tab: Project localhost-approved" });
     await user.click({ role: "button", label: "Close tab: Project localhost-approved" });
     expect(await task("observe", { tabId: opened.tabId })).toMatchObject({ ok: false, code: "tab_closed" });
@@ -188,74 +143,39 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(resumed).toMatchObject({ ok: true, tabId });
     expect(resumed.text).toContain("Session active");
     expect(resumed.image?.data.length).toBeGreaterThan(100);
-    evidence.recordAssertionEvidence("Explicit in-tab sign-in survives human takeover and resume", "The initial GET and filled-but-unsubmitted form recorded zero sign-ins. Only trusted form submission established the fixture session. Paused operations were refused; Resume required a new thread grant before the same owned tab returned Session active.", true);
+    evidence.recordAssertionEvidence("Explicit in-tab sign-in survives human takeover and resume", "The initial GET and filled-but-unsubmitted form recorded zero sign-ins. Only trusted form submission established the fixture session. Paused operations were refused; Resume browser returned the same owned tab with Session active and no permission prompt.", true);
   });
 
-  await step("Invalid input and denied action consent never invoke a website callback", async () => {
+  await step("Invalid input never invokes a website callback", async () => {
     expect(await task("site_tool", { tabId, toolId: save.toolId, input: { confirm: false } })).toMatchObject({ ok: false, code: "invalid_input" });
-    const pending = task("site_tool", { tabId, toolId: save.toolId, input: { confirm: true } });
-    await user.see({ role: "button", label: "Deny" });
-    expect((await witness()).records).toEqual([]);
-    await user.click({ role: "button", label: "Deny" });
-    expect(await pending).toMatchObject({ ok: false, code: "user_denied" });
     expect((await witness()).records).toEqual([]);
   });
 
-  await step("Execution approval and result sharing are separate, then the engine observes completion", async () => {
+  await step("A website tool runs and returns its result without another prompt, then the engine observes completion", async () => {
     await prompt("Save the controlled draft with its website tool, then verify the saved result in the page.");
-    await user.see({ role: "button", label: "Allow once" });
-    expect(await witness()).toMatchObject({ records: [], model: { receivedSaveResult: false, observedSaved: false } });
-    await user.click({ role: "button", label: "Allow once" });
-    await user.see({ role: "button", label: "Share result" });
-    expect(await witness()).toMatchObject({
-      signInCount: 1, records: [{ method: "webmcp", count: 1, signedIn: true }],
-      model: { receivedSaveResult: false, observedSaved: false },
-    });
-    const withheld = await conversation();
-    expect(withheld.calls.find((call) => call.name === "webmcp_call_tool")?.output).toBeUndefined();
-    expect(withheld.calls.some((call) => call.name === "browser_observe")).toBe(false);
-    expect(withheld.answer).not.toBe("Saved the draft and verified Saved 1 in the page.");
-    await user.click({ role: "button", label: "Share result" });
-    const completed = await probe.eventually(conversation, {
+    const completed = await probe.eventually(async () => {
+      expect(await probe.text()).not.toMatch(promptText);
+      return conversation();
+    }, {
       within: 60_000, until: (value) => value.calls.length === 5 && value.calls.every((call) => call.status === "completed") && value.answer === "Saved the draft and verified Saved 1 in the page.",
-      label: "the engine verifies the approved save in a new observation",
+      label: "the engine runs the save and verifies it in a new observation",
     });
     expect(completed.calls.slice(3).map((call) => call.name)).toEqual(["webmcp_call_tool", "browser_observe"]);
     expect(completed.calls[3].output).toMatchObject({ ok: true, dispatched: true, outcome: "callback_returned_verify_outcome", result: { saved: 1, signedIn: true } });
     expect(completed.calls[4].output).toMatchObject({ ok: true, tabId });
     expect(completed.calls[4].output?.text).toContain("Saved 1");
     expect(await witness()).toMatchObject({ signInCount: 1, records: [{ method: "webmcp", count: 1, signedIn: true }], model: { receivedSaveResult: true, observedSaved: true } });
-    evidence.recordAssertionEvidence("No action before approval, no disclosure before sharing, no success before observation", "The fixture saw no save at execution review. It saw exactly one authenticated save at result review, while neither the model nor the transcript had its result. Sharing released the receipt; browser_observe then verified Saved 1 before the final answer.", true);
-  });
-
-  await step("A session-reading callback cannot disclose its result when sharing is denied", async () => {
-    const secret = listed.tools.find((tool) => tool.name === "read_session");
-    if (!secret) throw new Error("Missing session-read tool.");
-    let settled = false;
-    const pending = task("site_tool", { tabId, toolId: secret.toolId }).then((result) => { settled = true; return result; });
-    await user.see({ role: "button", label: "Allow once" });
-    expect((await witness()).sessionReads).toBe(0);
-    await user.click({ role: "button", label: "Allow once" });
-    await user.see({ role: "button", label: "Share result" });
-    expect((await witness()).sessionReads).toBe(1);
-    expect(settled).toBe(false);
-    await user.click({ role: "button", label: "Deny" });
-    const withheld = await pending;
-    expect(withheld).toMatchObject({ ok: false, code: "result_withheld", mayHaveChangedState: true });
-    expect(withheld.result).toBeUndefined();
-    expect(JSON.stringify(withheld)).not.toContain("fixture_session");
-    expect(await witness()).toMatchObject({ sessionReads: 1, records: [{ method: "webmcp", count: 1, signedIn: true }] });
+    evidence.recordAssertionEvidence("A website tool runs once with no prompt and success still needs an observation", "The fixture recorded exactly one authenticated save. The model received the tool result directly, and browser_observe verified Saved 1 before the final answer. No browser permission card appeared.", true);
   });
 
   await step("Takeover cancels a running callback and rejects new writes until human resume", async () => {
-    const sibling = await grantedTask("open", { url: `${world.origin}/takeover-sibling` });
+    const sibling = await task("open", { url: `${world.origin}/takeover-sibling` });
     expect(sibling).toMatchObject({ ok: true });
-    if (!sibling.tabId || sibling.tabId === tabId) throw new Error("The thread grant did not open a distinct sibling tab.");
+    if (!sibling.tabId || sibling.tabId === tabId) throw new Error("The sibling open did not create a distinct tab.");
     await user.click({ role: "button", label: "Select tab: Project home" });
     const slow = listed.tools.find((tool) => tool.name === "slow_save");
     if (!slow) throw new Error("Missing cancellation fixture tool.");
     const pending = task("site_tool", { tabId, toolId: slow.toolId });
-    await user.click({ role: "button", label: "Allow once" });
     await probe.eventually(witness, { within: 10_000, until: (value) => value.signals.includes("started"), label: "the callback started" });
     await user.click({ role: "button", label: "Take over" });
     expect(await pending).toMatchObject({ ok: false, mayHaveChangedState: true });
@@ -266,7 +186,7 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(await task("observe", { tabId: sibling.tabId })).toMatchObject({ ok: false, code: "paused" });
     expect(await task("open", { url: `${world.origin}/new` })).toMatchObject({ ok: false, code: "paused" });
     expect((await resumeObservation(false, sibling.tabId)).text).toContain("Saved 1");
-    expect((await grantedTask("observe", { tabId: sibling.tabId })).text).toContain("Session active");
+    expect((await task("observe", { tabId: sibling.tabId })).text).toContain("Session active");
     await user.hover({ role: "button", label: "Select tab: Project takeover-sibling" });
     await user.click({ role: "button", label: "Close tab: Project takeover-sibling" });
     expect(await witness()).toMatchObject({ signInCount: 1, signals: ["started", "canceled"], records: [{ method: "webmcp", count: 1, signedIn: true }] });
@@ -274,18 +194,15 @@ test("a conversation signs in, uses site tools and page controls with consent, i
 
   await step("Takeover during execution-time discovery prevents a callback from starting after the delay is released", async () => {
     const requests = (await witness()).pageRequests;
-    expect(await grantedTask("navigate", { tabId, url: `${world.origin}/execution-delay` })).toMatchObject({ ok: true });
+    expect(await task("navigate", { tabId, url: `${world.origin}/execution-delay` })).toMatchObject({ ok: true });
     expect((await witness()).pageRequests).toEqual([...requests, { path: "/execution-delay", signedIn: true }]);
     const tools = await task("site_tools", { tabId });
     const delayed = tools.tools?.find((tool) => tool.name === "delayed_save");
     if (!delayed) throw new Error("Missing delayed-discovery tool.");
-    const pending = task("site_tool", { tabId, toolId: delayed.toolId });
-    await user.see({ role: "button", label: "Allow once" });
-    // The host's pre-approval revalidation has finished; delay the next getTools
-    // inside actual dispatch, not discovery before the action is approved.
+    // Hold the getTools revalidation that runs inside the call itself.
     await seed.browserFixtureDiscovery(world.app, world.origin, "hold");
     try {
-      await user.click({ role: "button", label: "Allow once" });
+      const pending = task("site_tool", { tabId, toolId: delayed.toolId });
       const held = await probe.eventually(witness, { within: 10_000, until: (value) => value.discovery.waiting >= 1, label: "registered execution waits in discovery before the callback" });
       expect(held.discovery).toMatchObject({ released: 0, resumed: 0, callbacks: 0 });
       const before = await probe.browserState();
@@ -317,28 +234,24 @@ test("a conversation signs in, uses site tools and page controls with consent, i
       expect(await task("observe", { tabId })).toMatchObject({ ok: false, code: "paused" });
       expect((await resumeObservation()).text).toContain("Nothing saved");
       expect((await witness()).discovery.callbacks).toBe(0);
-      evidence.recordAssertionEvidence("Injected webpage input cannot authorize navigation after takeover", "CDP mouse and keyboard input followed by navigation to the redirect left destination requests unchanged. Explicit app address-bar navigation restored the signed-in page while agent operations remained paused until Resume browser and a fresh thread grant.", true);
+      evidence.recordAssertionEvidence("Injected webpage input cannot authorize navigation after takeover", "CDP mouse and keyboard input followed by navigation to the redirect left destination requests unchanged. Explicit app address-bar navigation restored the signed-in page while agent operations remained paused until Resume browser.", true);
     } finally {
       await seed.browserFixtureDiscovery(world.app, world.origin, "release");
     }
   });
 
-  await step("Navigation invalidates site tools; DOM input waits for approval without aging during consent", async () => {
+  await step("Navigation invalidates site tools; a DOM click dispatches without a prompt", async () => {
     const requests = (await witness()).pageRequests;
-    expect(await grantedTask("navigate", { tabId, url: `${world.origin}/fallback` })).toMatchObject({ ok: true, tabId });
+    expect(await task("navigate", { tabId, url: `${world.origin}/fallback` })).toMatchObject({ ok: true, tabId });
     expect(await task("site_tool", { tabId, toolId: save.toolId, input: { confirm: true } })).toMatchObject({ ok: false, code: "stale_tool" });
-    expect((await grantedTask("site_tools", { tabId })).tools).toEqual([]);
-    const denied = await grantedTask("observe", { tabId });
-    const deniedRef = denied.elements?.find((element) => element.name === "Save draft")?.ref;
-    if (!deniedRef) throw new Error("Missing Save draft control for denied input.");
-    await reviewInput({ tabId, observationId: denied.observationId, action: { type: "click", ref: deniedRef } }, "deny");
-    const observed = await grantedTask("observe", { tabId, includeImage: true });
+    expect((await task("site_tools", { tabId })).tools).toEqual([]);
+    const observed = await task("observe", { tabId, includeImage: true });
     expect(observed.text).toContain("Session active");
     expect(observed.image?.data.length).toBeGreaterThan(100);
     const ref = observed.elements?.find((element) => element.name === "Save draft")?.ref;
     if (!ref) throw new Error("Missing observed Save draft control.");
     expect((await witness()).records).toHaveLength(1);
-    expect(await reviewInput({ tabId, observationId: observed.observationId, action: { type: "click", ref } }, "allow", 16_000)).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+    expect(await act({ tabId, observationId: observed.observationId, action: { type: "click", ref } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
     expect(await task("act", { tabId, observationId: observed.observationId, action: { type: "click", ref } })).toMatchObject({ ok: false, code: "stale_observation" });
     const fresh = await probe.eventually(() => task("observe", { tabId }), { within: 5_000, until: (value) => value.text?.includes("Saved 1") === true, label: "the page visibly completes its DOM save" });
     expect(fresh.observationId).not.toBe(observed.observationId);
@@ -349,28 +262,22 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(state.pageRequests).toEqual([...requests, { path: "/fallback", signedIn: true }]);
   });
 
-  await step("Fill and key each need action approval while real wheel scrolling reuses the thread grant", async () => {
-    const deniedFill = await grantedTask("observe", { tabId });
-    expect(deniedFill).toMatchObject({ ok: true, scroll: { x: 0, y: 0 } });
-    const deniedRef = deniedFill.elements?.find((element) => element.name === "Draft title")?.ref;
-    if (!deniedRef) throw new Error("Missing Draft title control for denied input.");
-    await reviewInput({ tabId, observationId: deniedFill.observationId, action: { type: "fill", ref: deniedRef, text: "A" } }, "deny");
-    const observed = await grantedTask("observe", { tabId });
+  await step("Fill, key and real wheel scrolling dispatch without prompts", async () => {
+    const observed = await task("observe", { tabId });
+    expect(observed).toMatchObject({ ok: true, scroll: { x: 0, y: 0 } });
     const ref = observed.elements?.find((element) => element.name === "Draft title")?.ref;
     if (!ref) throw new Error("Missing observed Draft title control.");
-    expect(await reviewInput({ tabId, observationId: observed.observationId, action: { type: "fill", ref, text: "A" } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
-    await probe.eventually(witness, { within: 5_000, until: (value) => value.inputValue === "A", label: "only the approved fill reaches the visible field" });
-    const deniedKey = await grantedTask("observe", { tabId });
-    await reviewInput({ tabId, observationId: deniedKey.observationId, action: { type: "key", key: "Backspace" } }, "deny");
-    const filled = await grantedTask("observe", { tabId });
-    expect(await reviewInput({ tabId, observationId: filled.observationId, action: { type: "key", key: "Backspace" } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
-    await probe.eventually(witness, { within: 5_000, until: (value) => value.inputValue === "", label: "only the approved key clears the focused field" });
-    const before = await grantedTask("observe", { tabId });
+    expect(await act({ tabId, observationId: observed.observationId, action: { type: "fill", ref, text: "A" } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+    await probe.eventually(witness, { within: 5_000, until: (value) => value.inputValue === "A", label: "the fill reaches the visible field" });
+    const filled = await task("observe", { tabId });
+    expect(await act({ tabId, observationId: filled.observationId, action: { type: "key", key: "Backspace" } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+    await probe.eventually(witness, { within: 5_000, until: (value) => value.inputValue === "", label: "the key clears the focused field" });
+    const before = await task("observe", { tabId });
     if (!before.scroll) throw new Error("Observation omitted the real scroll position.");
     const initialY = before.scroll.y;
-    expect(await grantedTask("act", { tabId, observationId: before.observationId, action: { type: "scroll", x: 20, y: 20, deltaY: 400 } })).toMatchObject({ ok: true, dispatched: true });
-    expect(await grantedTask("act", { tabId, observationId: before.observationId, action: { type: "scroll", x: 20, y: 20, deltaY: 400 } })).toMatchObject({ ok: false, code: "stale_observation", dispatched: false });
-    const down = await probe.eventually(() => grantedTask("observe", { tabId }), {
+    expect(await task("act", { tabId, observationId: before.observationId, action: { type: "scroll", x: 20, y: 20, deltaY: 400 } })).toMatchObject({ ok: true, dispatched: true });
+    expect(await task("act", { tabId, observationId: before.observationId, action: { type: "scroll", x: 20, y: 20, deltaY: 400 } })).toMatchObject({ ok: false, code: "stale_observation", dispatched: false });
+    const down = await probe.eventually(() => task("observe", { tabId }), {
       within: 5_000, until: (value) => value.ok && value.scroll !== undefined && value.scroll.y >= initialY + 400,
       label: "one positive wheel dispatch settles the real page down before the next fresh action",
     });
@@ -378,8 +285,8 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(down.scroll.y).toBeGreaterThan(initialY);
     expect(down.scroll.x).toBe(0);
     const downY = down.scroll.y;
-    expect(await grantedTask("act", { tabId, observationId: down.observationId, action: { type: "scroll", x: 20, y: 20, deltaY: -400 } })).toMatchObject({ ok: true, dispatched: true });
-    const up = await probe.eventually(() => grantedTask("observe", { tabId }), {
+    expect(await task("act", { tabId, observationId: down.observationId, action: { type: "scroll", x: 20, y: 20, deltaY: -400 } })).toMatchObject({ ok: true, dispatched: true });
+    const up = await probe.eventually(() => task("observe", { tabId }), {
       within: 5_000, until: (value) => value.ok && value.scroll?.y === initialY,
       label: "one negative wheel dispatch settles the real page up without replay",
     });
@@ -393,21 +300,21 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     const point = browserImageTarget(observed.image);
     expect(point.pixels).toBeGreaterThan(200);
     expect((await witness()).popups).toEqual([]);
-    expect(await reviewInput({ tabId, observationId: observed.observationId, action: { type: "click", x: point.x, y: point.y } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+    expect(await act({ tabId, observationId: observed.observationId, action: { type: "click", x: point.x, y: point.y } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
     const state = await probe.eventually(() => probe.browserState(), { within: 10_000, until: (value) => !!value.activeTabId && value.activeTabId !== tabId, label: "the owned popup becomes active" });
     const popup = state.tabs.find((tab) => tab.id === state.activeTabId);
     if (!popup) throw new Error("No owned popup.");
     expect(popup.ownerSessionId).toBe(sessionId);
-    await probe.eventually(witness, { within: 10_000, until: (value) => value.popups.length === 1, label: "the popup GET uses the existing thread grant" });
+    await probe.eventually(witness, { within: 10_000, until: (value) => value.popups.length === 1, label: "the popup GET loads without a prompt" });
     expect((await witness()).pageRequests.filter((request) => request.path === "/popup")).toEqual([{ path: "/popup", signedIn: true }]);
-    expect((await grantedTask("observe", { tabId: popup.id })).text).toContain("Session active");
+    expect((await task("observe", { tabId: popup.id })).text).toContain("Session active");
     const secure = await probe.eventually(witness, { within: 10_000, until: (value) => value.privileges.some((item) => item.page === "popup"), label: "the popup reports its isolation" });
     expect(secure).toMatchObject({ popups: [true], signInCount: 1 });
     expect(secure.privileges.find((item) => item.page === "popup")).toEqual({ page: "popup", blocked: true, require: "undefined", process: "undefined", Buffer: "undefined" });
     await user.hover({ role: "button", label: "Select tab: Project popup" });
     await user.click({ role: "button", label: "Close tab: Project popup" });
     expect(await task("observe", { tabId: popup.id })).toMatchObject({ ok: false, code: "tab_closed" });
-    evidence.recordAssertionEvidence("Popup ownership, inherited sign-in, and isolation are independently witnessed", "The PNG-derived click required its own input approval before opening the popup. Popup navigation and reading reused the existing thread grant without additional consent. Its request carried the existing session without another sign-in. Hostile popup features exposed no Node globals and could not read the controlled cross-origin response.", true);
+    evidence.recordAssertionEvidence("Popup ownership, inherited sign-in, and isolation are independently witnessed", "The PNG-derived click opened the popup without a prompt, and popup navigation and reading needed none either. Its request carried the existing session without another sign-in. Hostile popup features exposed no Node globals and could not read the controlled cross-origin response.", true);
   });
 
   await step("Foreign conversations cannot inspect a tab or reuse its tool handles", async () => {
@@ -425,49 +332,38 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     }
     const otherRequests = (await witness()).pageRequests;
     const otherOpen = agent.browserTask({ sessionId: otherId, operation: "open", args: { url: `${world.origin}/other` } });
-    await user.see({ text: "Allow browser control for this thread?" });
+    // The allow belongs to one session; another session asks for itself once.
+    await user.see({ text: "Allow this agent to use the browser?" });
     expect((await witness()).pageRequests).toEqual(otherRequests);
-    await user.click({ role: "button", label: "Allow for this thread" });
+    await user.click({ role: "button", label: "Allow for this session" });
     const otherTab = await otherOpen;
     expect(otherTab).toMatchObject({ ok: true });
-    expect((await withoutBrowserApproval(agent.browserTask({ sessionId: otherId, operation: "site_tools", args: { tabId: otherTab.tabId } }))).ok).toBe(true);
+    expect((await witness()).pageRequests).toEqual([...otherRequests, { path: "/other", signedIn: true }]);
+    expect((await agent.browserTask({ sessionId: otherId, operation: "site_tools", args: { tabId: otherTab.tabId } })).ok).toBe(true);
     expect(await agent.browserTask({ sessionId: otherId, operation: "site_tool", args: { tabId: otherTab.tabId, toolId: ownTool.toolId, input: { confirm: true } } })).toMatchObject({ ok: false, code: "wrong_conversation" });
-    const before = await probe.browserState();
-    const requests = (await witness()).pageRequests;
-    let settled = false;
-    const backgroundOpen = task("open", { url: `${world.origin}/background` }).then((result) => { settled = true; return result; });
-    await probe.eventually(() => probe.browserState(), { within: 10_000, until: (value) => value.tabs.length === before.tabs.length + 1, label: "the background open allocates a review tab without switching conversations" });
-    expect(await probe.browserState()).toMatchObject({ visibleSessionId: before.visibleSessionId, activeTabId: before.activeTabId });
-    expect(settled).toBe(false);
-    expect((await witness()).pageRequests).toEqual(requests);
-    await user.notSee({ role: "button", label: "Allow for this thread" });
-    expect((await witness()).records).toHaveLength(2);
     await user.click({ text: world.session.title });
-    await user.see({ text: "Allow browser control for this thread?" });
-    await user.see({ role: "button", label: "Allow for this thread" });
-    expect((await witness()).pageRequests).toEqual(requests);
-    await user.click({ role: "button", label: "Allow for this thread" });
-    expect(await backgroundOpen).toMatchObject({ ok: true, visible: true });
-    expect((await witness()).pageRequests).toEqual([...requests, { path: "/background", signedIn: true }]);
+    expect(await probe.text()).not.toMatch(promptText);
     const ownerTab = (await probe.browserState()).tabs.find((tab) => tab.id === tabId);
     if (!ownerTab) throw new Error("The original tab was lost.");
+    const requests = (await witness()).pageRequests;
+    const opened = await task("open", { url: `${world.origin}/background` });
+    expect(opened).toMatchObject({ ok: true });
+    expect((await witness()).pageRequests).toEqual([...requests, { path: "/background", signedIn: true }]);
     const background = await probe.browserState();
     expect(background.visibleSessionId).toBe(sessionId);
     expect(background.activeTabId).not.toBe(tabId);
     expect(background.nativeViews.find((view) => view.tabId === tabId)).toMatchObject({ attached: false, aboveApp: false });
-    const actions = [
-      { type: "click" }, { type: "fill", text: "must not be entered" }, { type: "key", key: "Enter" }, { type: "scroll", x: 20, y: 20, deltaY: 100 },
-    ] satisfies NonNullable<BrowserTaskInput["args"]>["action"][];
-    for (const action of actions) {
-      const observed = await task("observe", { tabId });
-      const ref = observed.elements?.find((element) => element.name === (action.type === "fill" ? "Draft title" : "Save draft"))?.ref;
-      if (!ref) throw new Error("Missing hidden page control.");
-      expect(await task("act", { tabId, observationId: observed.observationId, action: { ...action, ref } })).toMatchObject({ ok: false, code: "needs_attention", dispatched: false });
-    }
-    expect(await task("site_tool", { tabId, toolId: ownTool.toolId, input: { confirm: true } })).toMatchObject({ ok: false, code: "needs_attention", dispatched: false });
-    await user.notSee({ role: "button", label: "Allow once" });
-    expect(await probe.browserState()).toEqual(background);
-    expect(await witness()).toMatchObject({ inputValue: "", records: [{ method: "webmcp", count: 1, signedIn: true }, { method: "dom", count: 1, signedIn: true }] });
+    // The original tab is now off screen; it still accepts input, and nothing asks the user to select it.
+    const hidden = await task("observe", { tabId });
+    const titleRef = hidden.elements?.find((element) => element.name === "Draft title")?.ref;
+    if (!titleRef) throw new Error("Missing hidden page control.");
+    expect(await act({ tabId, observationId: hidden.observationId, action: { type: "fill", ref: titleRef, text: "B" } })).toMatchObject({ ok: true, dispatched: true });
+    await probe.eventually(witness, { within: 5_000, until: (value) => value.inputValue === "B", label: "the hidden tab receives the fill" });
+    const typed = await task("observe", { tabId });
+    expect(await act({ tabId, observationId: typed.observationId, action: { type: "key", key: "Backspace" } })).toMatchObject({ ok: true, dispatched: true });
+    await probe.eventually(witness, { within: 5_000, until: (value) => value.inputValue === "", label: "the hidden tab receives the key" });
+    expect(await probe.browserState()).toMatchObject({ visibleSessionId: background.visibleSessionId, activeTabId: background.activeTabId });
+    expect(await witness()).toMatchObject({ records: [{ method: "webmcp", count: 1, signedIn: true }, { method: "dom", count: 1, signedIn: true }] });
     await user.click({ role: "button", label: `Select tab: ${ownerTab.label}` });
   });
 
@@ -491,14 +387,8 @@ test("a conversation signs in, uses site tools and page controls with consent, i
       { page: "/frame-same-allowed", require: "undefined", process: "undefined", Buffer: "undefined" },
       { page: "/frame-same-denied", require: "undefined", process: "undefined", Buffer: "undefined" },
     ]);
-    const allowedCall = task("site_tool", { tabId, toolId: sameOriginTool.toolId });
-    await user.see({ role: "button", label: "Allow once" });
-    expect((await witness()).frameToolCalls).toEqual([]);
-    await user.click({ role: "button", label: "Allow once" });
-    await user.see({ role: "button", label: "Share result" });
+    expect(await task("site_tool", { tabId, toolId: sameOriginTool.toolId })).toMatchObject({ ok: true, dispatched: true, result: { ok: true } });
     expect((await witness()).frameToolCalls).toEqual(["/frame-same-allowed"]);
-    await user.click({ role: "button", label: "Share result" });
-    expect(await allowedCall).toMatchObject({ ok: true, dispatched: true, result: { ok: true } });
     const observed = await task("observe", { tabId, includeImage: true });
     expect(observed.elements?.some((element) => element.name === "Frame action")).toBe(false);
     const point = browserImageTarget(observed.image, [238, 111, 18]);
@@ -506,7 +396,7 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(native).toMatchObject({ activeTabId: tabId, visibleSessionId: sessionId });
     expect(native.nativeViews.find((view) => view.tabId === tabId)).toMatchObject({ attached: true, aboveApp: true, visible: true, bounds: { width: point.width, height: point.height } });
     expect((await witness()).frameClicks).toBe(0);
-    expect(await reviewInput({ tabId, observationId: observed.observationId, action: { type: "click", x: point.x, y: point.y } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+    expect(await act({ tabId, observationId: observed.observationId, action: { type: "click", x: point.x, y: point.y } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
     const clicked = await probe.eventually(witness, { within: 5_000, until: (value) => value.frameClicks === 1 && value.frameInputs.some((input) => input.type === "click"), label: "the iframe received one visual click" });
     expect(clicked.frameClicks).toBe(1);
     expect(clicked.frameInputs.filter((input) => input.type === "click")).toEqual([expect.objectContaining({ page: "/frame-allowed", target: "BUTTON", trusted: true })]);
@@ -516,7 +406,7 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     expect(fresh.observationId).not.toBe(observed.observationId);
     expect(fresh.image?.data).not.toBe(observed.image?.data);
     expect((await witness()).records).toHaveLength(2);
-    evidence.recordAssertionEvidence("Frame permissions and visual fallback preserve isolation", "Nested fallback iframe markup did not grant the undelegated sibling tools. Explicit same-origin denial blocked registration and execution without a callback; the allowed same-origin tool ran once after approval and released its result only after separate sharing. All four frames reported no Node globals. The approved PNG-derived click reached the child control once, changed a fresh image, and could not reuse the consumed observation.", true);
+    evidence.recordAssertionEvidence("Frame permissions and visual fallback preserve isolation", "Nested fallback iframe markup did not grant the undelegated sibling tools. Explicit same-origin denial blocked registration and execution without a callback; the allowed same-origin tool ran once and returned its result. All four frames reported no Node globals. The PNG-derived click reached the child control once, changed a fresh image, and could not reuse the consumed observation.", true);
   });
 
   await step("Spoofed page globals and forged policy payloads cannot expose non-origin-keyed callbacks", async () => {
@@ -534,7 +424,6 @@ test("a conversation signs in, uses site tools and page controls with consent, i
       label: "normal delegated tools remain available beside the hostile frame",
     });
     expect(listed.tools?.map((tool) => tool.name)).toEqual(["frame_allowed"]);
-    await user.notSee({ role: "button", label: "Allow once" });
     expect(await witness()).toMatchObject({ originPolicyCallbacks: 0, records: reported.records });
     evidence.recordAssertionEvidence("Origin-keying decisions do not trust the website's JavaScript world", "Both main-world getters returned eligible values and the page directly supplied forged policy booleans. Native opt-out and retained site-keying still refused registration and execution. A forged modelContext did not enter host discovery; the delegated sibling stayed available and no unsafe callback ran.", true);
   });
@@ -551,7 +440,6 @@ test("a conversation signs in, uses site tools and page controls with consent, i
       expect.objectContaining({ name: "hostile_pattern", code: "unsupported_schema", error: expect.stringContaining("pattern") }),
       expect.objectContaining({ name: "hostile_properties", code: "unsupported_schema", error: expect.stringContaining("patternProperties") }),
     ]);
-    await user.notSee({ role: "button", label: "Allow once" });
     expect((await task("observe", { tabId })).text).toContain("Session active");
     await user.click({ role: "button", label: "Take over" });
     await user.see({ role: "button", label: "Resume browser" }, { timeoutMs: 5_000 });
@@ -561,7 +449,7 @@ test("a conversation signs in, uses site tools and page controls with consent, i
   });
 
   await step("Real Den origin and upload policy blocks requests before fixture writes, and can be updated", async () => {
-    expect((await grantedTask("navigate", { tabId, url: `${world.origin}/denied` })).ok).toBe(true);
+    expect((await task("navigate", { tabId, url: `${world.origin}/denied` })).ok).toBe(true);
     expect((await task("site_tools", { tabId })).tools).toEqual([]);
     const den = await seed.den({ org: { name: "Browser restrictions" } });
     await seed.signIn(world.app, den.admin, "admin");
