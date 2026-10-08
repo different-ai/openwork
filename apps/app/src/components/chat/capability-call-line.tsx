@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { CodeXml, ExternalLink, LoaderCircle, RefreshCcw } from "lucide-react"
+import { Check, CodeXml, Copy, ExternalLink, LoaderCircle, RefreshCcw } from "lucide-react"
 
 import { describeChatToolFailure } from "@/components/tools/error-attribution"
 import {
@@ -11,7 +11,7 @@ import {
 } from "@/components/tools/use-chat-tool-reconnect"
 import { Button } from "@/components/ui/button"
 import { getCapabilityCallSentence } from "@/lib/capability-call"
-import { trackToolCallDuration } from "@/lib/tool-call-duration"
+import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
@@ -25,6 +25,11 @@ type CapabilityCallLineProps = ChatToolReconnectCallbacks & {
   quietFailure?: boolean
   /** Calls inside a script have no recorded timing; don't invent one. */
   hideDuration?: boolean
+  /**
+   * Elapsed time of the running step this row stands for (a one-call script),
+   * shown while it runs even when `hideDuration` hides an invented total.
+   */
+  liveDuration?: string | null
   /** Inside a group already named for this service: drop the repeated name. */
   groupService?: string | null
   /** Identical consecutive calls folded into this row. */
@@ -98,8 +103,34 @@ function scriptSource(input: unknown): { code: string } | null {
 
 export function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
   const script = scriptSource(part.input)
+  const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle")
+  const copyDetails = async () => {
+    setCopyState("copying")
+    try {
+      await navigator.clipboard.writeText(formatTechnicalValue({
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        input: part.input,
+        ...("output" in part && part.output !== undefined ? { output: part.output } : {}),
+        ...(part.state === "output-error" ? { error: part.errorText } : {}),
+        ...(part.callProviderMetadata?.openwork?.timingUnavailable === true ? { timingUnavailable: true } : {}),
+      }))
+      setCopyState("copied")
+    } catch {
+      setCopyState("error")
+    }
+  }
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-lg bg-muted p-2 text-xs">
+      <div className="flex items-center justify-end gap-2">
+        {copyState === "error" ? <p role="alert" className="min-w-0 text-muted-foreground">Couldn’t copy details. Try again.</p> : null}
+        <Button type="button" variant="ghost" size="xs" className="shrink-0"
+          aria-label="Copy technical details" disabled={copyState === "copying"}
+          onClick={() => void copyDetails()}>
+          {copyState === "copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          <span aria-live="polite">{copyState === "copied" ? "Copied" : "Copy details"}</span>
+        </Button>
+      </div>
       {part.state === "output-error" && part.errorText ? (
         <p className="whitespace-pre-wrap wrap-break-word text-foreground">{part.errorText}</p>
       ) : null}
@@ -161,6 +192,7 @@ export function CapabilityCallLine({
   statusUnknown = false,
   quietFailure = false,
   hideDuration = false,
+  liveDuration = null,
   groupService = null,
   repeat = 1,
   shimmer = false,
@@ -170,7 +202,20 @@ export function CapabilityCallLine({
   const [open, setOpen] = useState(false)
   const inFlight = !statusUnknown && isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
-  const duration = statusUnknown || hideDuration ? null : trackToolCallDuration(part)
+  const [now, setNow] = useState(Date.now)
+  // A running call counts up from its native start; a finished one shows its
+  // recorded duration (unless it has none of its own).
+  const startedAt = inFlight && !hideDuration ? getToolCallStartedAt(part) : null
+  useEffect(() => {
+    if (startedAt === null) return
+    setNow(Date.now())
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [startedAt])
+  const duration = statusUnknown ? null
+    : inFlight && liveDuration ? liveDuration
+      : startedAt !== null ? formatElapsedSeconds(Math.max(0, Math.floor((now - startedAt) / 1_000)))
+        : hideDuration ? null : trackToolCallDuration(part)
   const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
     useChatToolReconnect(part, { onReconnect, onReopenAuthorization })
   const ReconnectIcon = reconnectState === "opening"

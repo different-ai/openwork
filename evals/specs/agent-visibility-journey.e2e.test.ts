@@ -95,10 +95,37 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
 
   await step("after: the helper finishes, the answer arrives, and the turn ends cleanly", async () => {
     await world.releaseHelper();
+    await user.see({ role: "button", label: /^Thinking/ }, { timeoutMs: 90_000 });
+    await user.notSee({ text: world.reasoning });
+    await user.notSee({ text: world.answer });
+    const thinking = await probe.dom('[data-reasoning-block]');
+    expect(thinking.elements).toHaveLength(1);
+    await user.screenshot();
+    await user.click({ role: "button", label: /^Thinking/ });
+    await user.see({ text: world.reasoning });
+    await user.notSee({ text: world.answer });
+    await user.click({ role: "button", label: /^Thinking/ });
+    await probe.eventually(() => probe.text(), { within: 5_000, intervalMs: 50,
+      label: "reasoning disclosure finishes closing", until: text => !text.includes(world.reasoning) });
+    await user.notSee({ text: world.reasoning });
+    evidence.recordAssertionEvidence("Thinking stays separate from the answer",
+      "The native reasoning stream shows Thinking with no answer; its text appears only after opening the disclosure and hides again when folded", true);
     await world.releaseAnswer();
     await user.see({ text: world.answer }, { timeoutMs: 90_000 });
     await user.see("Run task", { timeoutMs: 30_000 });
     await user.notSee({ text: /Working\s*\d/ });
+    const settled = {
+      liveSteps: (await probe.dom("[data-live-steps]")).elements.length,
+      liveShimmers: (await probe.dom(".ow-text-shimmer")).elements.filter(element => element.rect.height > 0).length,
+    };
+    expect(settled).toMatchObject({ liveSteps: 0, liveShimmers: 0 });
+    evidence.recordJsonArtifact("Finished reply layout", settled);
+    await user.click({ role: "button", label: /Worked for.*Show steps/ });
+    await user.see({ role: "button", label: /^Thought/ });
+    await user.notSee({ text: world.reasoning });
+    await user.click({ role: "button", label: /Worked for.*Hide steps/ });
+    evidence.recordAssertionEvidence("Finished work folds and keeps its completed Thinking",
+      "No running cue remains once the answer settles; the folded run reopens to a completed Thought line whose text stays behind its own disclosure", true);
     evidence.recordAssertionEvidence("The turn ends cleanly", "answer shown, composer back to Run task, no Working line left", true);
     await user.screenshot();
   });
@@ -106,7 +133,7 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
   await step("the agent really did what the person watched: read, command, helper", async () => {
     const tools = (await world.requests()).filter((request) => request.kind === "tool").map((request) => request.toolName);
     const helperTools = (await world.helperRequests()).filter((request) => request.kind === "tool").map((request) => request.toolName);
-    const expected = ["read", world.shell, world.engine === "v2" ? "subagent" : "task"];
+    const expected = ["read", "read", "read", world.shell, world.engine === "v2" ? "subagent" : "task"];
     evidence.recordAssertionEvidence("Model calls match the screen", `parent: ${tools.join(" → ")}; helper: ${helperTools.join(" → ")}`,
       JSON.stringify(tools) === JSON.stringify(expected) && helperTools.length === 1);
     expect(tools).toEqual(expected);

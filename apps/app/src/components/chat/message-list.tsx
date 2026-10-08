@@ -612,6 +612,8 @@ const AssistantMessage = React.memo(
                   key={`reasoning-${index}`}
                   disclosureKey={JSON.stringify(["reasoning", message.id, index])}
                   text={group.text}
+                  startedAt={group.startedAt}
+                  endedAt={group.endedAt}
                   isStreaming={group.isStreaming}
                 />
               )
@@ -1459,7 +1461,7 @@ function MessageGroup({
     item.message.role === "assistant" && !isSessionErrorMessage(item.message)
       ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
         group.kind === "reasoning"
-          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming }]
+          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming, startedAt: group.startedAt, endedAt: group.endedAt }]
           : []
       )
       : []
@@ -1497,7 +1499,7 @@ function MessageGroup({
         key={`folded-reasoning-${reasoning.key}`}
         className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
       >
-        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} />
+        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} startedAt={reasoning.startedAt} endedAt={reasoning.endedAt} />
       </Message>
     ))
     : []
