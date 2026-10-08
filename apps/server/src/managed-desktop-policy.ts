@@ -184,10 +184,10 @@ class ManagedDesktopPolicy {
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
-    // While only model access is enforced, cache a policy only when it restricts models, so
-    // organizations without it keep exactly the engine config and reload behaviour they had.
+    // While only model access and team rules are enforced, cache a policy only when it carries
+    // one of them, so other organizations keep exactly the engine config and reload behaviour they had.
     const restrictsModelAccess = policy.allowCustomProviders === false;
-    const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess
+    const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess || (policy.rules?.length ?? 0) > 0
       ? await writeManagedDesktopPolicy(this.config, policy)
       : await clearManagedDesktopPolicy(this.config);
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");

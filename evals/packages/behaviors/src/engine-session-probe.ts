@@ -18,6 +18,8 @@ export interface EngineSessionProbePart {
   status: string;
   input: Record<string, unknown>;
   output: string;
+  /** Why a tool call failed, as the engine recorded it. */
+  error: string;
 }
 
 export interface EngineSessionProbeMessage {
@@ -123,6 +125,7 @@ function parsePart(value: unknown, engine: EngineSessionProbeEngine): EngineSess
     status: readString(state, "status") ?? "",
     input: readRecord(state, "input") ?? readRecord(value, "input") ?? {},
     output: readString(state, "output") ?? readString(metadata, "output") ?? readString(value, "output") ?? "",
+    error: readString(state, "error") ?? readString(readRecord(state, "error") ?? {}, "message") ?? "",
   };
 }
 
