@@ -28,6 +28,29 @@ const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const FILE_BROWSER_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
+// Filesystem error codes that should cause a single entry to be skipped during a
+// catalog walk instead of failing the whole listing. Includes permission errors,
+// entries that vanished mid-walk, and timeouts/I/O failures from network or
+// cloud-synced mounts (e.g. macOS File Provider folders under ~/Library/CloudStorage).
+const CATALOG_SKIPPABLE_FS_ERROR_CODES = new Set([
+  "EACCES",
+  "EPERM",
+  "ENOENT",
+  "ETIMEDOUT",
+  "EIO",
+  "EBUSY",
+  "ENOTCONN",
+  "ELOOP",
+]);
+
+function isSkippableCatalogFsError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof (error as NodeJS.ErrnoException).code === "string" &&
+    CATALOG_SKIPPABLE_FS_ERROR_CODES.has((error as NodeJS.ErrnoException).code as string)
+  );
+}
 const MAX_PATH_COMPONENT_BYTES = 255;
 const WINDOWS_RESERVED_PATH_COMPONENT = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
 
@@ -464,15 +487,17 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
 
   const walk = async (dirPath: string) => {
     const entries = await readdir(dirPath, { withFileTypes: true }).catch((error: unknown) => {
-      if (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM")) {
-        if (dirPath === rootResolved) {
+      if (dirPath === rootResolved && error instanceof Error && "code" in error) {
+        if (error.code === "EACCES" || error.code === "EPERM") {
           throw new ApiError(403, "workspace_permission_denied", "OpenWork does not have permission to list this workspace folder.");
         }
+        if (error.code === "ENOENT") {
+          throw new ApiError(404, "workspace_not_found", "The workspace folder no longer exists.");
+        }
+      }
+      if (dirPath !== rootResolved && isSkippableCatalogFsError(error)) {
         skippedDirectories.push(relative(rootResolved, dirPath).replace(/\\/g, "/"));
         return [];
-      }
-      if (dirPath === rootResolved && error instanceof Error && "code" in error && error.code === "ENOENT") {
-        throw new ApiError(404, "workspace_not_found", "The workspace folder no longer exists.");
       }
       throw error;
     });
@@ -489,7 +514,9 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       if (entry.isDirectory()) {
         let info;
         try {
-          info = await stat(absPath);
+          if (isSkippableCatalogFsError(error)) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT") skippedDirectories.push(rel);
         } catch (error: unknown) {
           if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
             continue;
@@ -512,7 +539,7 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       try {
         info = await stat(absPath);
       } catch (error: unknown) {
-        if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
+        if (isSkippableCatalogFsError(error)) {
           continue;
         }
         throw error;
