@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { z } from "zod"
-import type { Tokens } from "./store.js"
+import type { Tokens } from "./sealed.js"
 
 /**
  * Workbot signs people in with Den, as Den's first-party OAuth client `openwork-workbot` (no consent screen, one

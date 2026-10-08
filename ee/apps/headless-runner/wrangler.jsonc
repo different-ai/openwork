@@ -1,12 +1,13 @@
-// Experimental owner-cell runtime. Not selected by production callers.
-// Keep the script and class names stable: celld derives persistent actor identities from them.
+// The headless runner on celld: the same API and URL as the Node server, one SQLite cell per Workbot person or per
+// owner-less conversation (src/worker/index.ts). Keep the script and class names stable: celld derives every
+// cell's identity from them, so renaming either one starts every conversation over.
 {
-  "name": "openwork-headless-owner-cells",
+  "name": "openwork-headless-runner",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-09-20",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
-    "bindings": [{ "name": "HEADLESS_OWNER", "class_name": "HeadlessOwner" }]
+    "bindings": [{ "name": "HEADLESS_CELL", "class_name": "HeadlessCell" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HeadlessOwner"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HeadlessCell"] }]
 }

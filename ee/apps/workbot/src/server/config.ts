@@ -26,9 +26,8 @@ const schema = z.object({
   /** The headless runner every Workbot conversation runs on, and its service token. */
   WORKBOT_RUNNER_URL: origin(true),
   WORKBOT_RUNNER_TOKEN: z.string().min(32, "must be at least 32 characters"),
-  /** Encrypts the Den tokens Workbot keeps for each signed-in person. */
+  /** Encrypts the sign-in cookies (Den tokens and sign-ins in progress). Changing it signs everyone out. */
   WORKBOT_SESSION_SECRET: z.string().min(32, "must be at least 32 characters"),
-  WORKBOT_DB_PATH: z.string().min(1).default("./data/workbot.sqlite"),
   /** The port to listen on; Render sets PORT. */
   PORT: z.coerce.number().int().min(1).max(65_535).optional(),
   WORKBOT_PORT: z.coerce.number().int().min(1).max(65_535).default(3020),
@@ -47,7 +46,6 @@ export type Config = {
   denWebUrl: string | null
   runner: { url: string; token: string }
   sessionSecret: string
-  dbPath: string
   port: number
   dev: boolean
   /** Testing only: where Calendar meetings come from instead of Den (see WORKBOT_CALENDAR_MOCK_URL). */
@@ -69,7 +67,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     denWebUrl: value.WORKBOT_DEN_WEB_URL ?? null,
     runner: { url: value.WORKBOT_RUNNER_URL, token: value.WORKBOT_RUNNER_TOKEN },
     sessionSecret: value.WORKBOT_SESSION_SECRET,
-    dbPath: value.WORKBOT_DB_PATH,
     port: value.PORT ?? value.WORKBOT_PORT,
     dev: value.WORKBOT_DEV === "1",
     calendarMockUrl: value.WORKBOT_CALENDAR_MOCK_URL ?? null,

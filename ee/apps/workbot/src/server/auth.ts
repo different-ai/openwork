@@ -1,17 +1,39 @@
+import { createHash } from "node:crypto"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
+import { z } from "zod"
 import type { Config } from "./config.js"
 import { DenSignedOutError, type Den, type DenSession } from "./den.js"
-import { randomToken, type Session, type Store, type Tokens } from "./store.js"
+import { createSealer, MAX_COOKIE_VALUE, randomToken, tokensSchema, type Tokens } from "./sealed.js"
+
+/**
+ * A signed-in person, entirely in their browser's cookie (see sealed.ts): their Den tokens and the id of this
+ * sign-in. Workbot itself keeps nothing on disk, so it runs as any number of instances.
+ */
+export type Session = { id: string; userId: string; organizationId: string; tokens: Tokens; createdAt: number }
 
 /** The signed-in person on a Workbot request: their Den session, and an access token fresh enough to use. */
 export type Member = { session: Session; accessToken: string; den: DenSession }
 export type AppEnv = { Variables: { member: Member } }
 
+const sessionSchema = z.object({ id: z.string(), userId: z.string(), organizationId: z.string(), tokens: tokensSchema, createdAt: z.number() })
+const loginSchema = z.object({ state: z.string(), verifier: z.string(), returnTo: z.string(), createdAt: z.number() })
+const SESSION_PURPOSE = "workbot-session-v1"
+const LOGIN_PURPOSE = "workbot-login-v1"
+
 /** Refresh a little before Den's 45-minute access token runs out. */
 const REFRESH_MARGIN_MS = 2 * 60_000
 /** How long Den's answer about who someone is (and whether Workbot is on) is reused. */
 const DEN_SESSION_CACHE_MS = 30_000
+/** A sign-in must finish within this long. */
+const LOGIN_TTL_MS = 10 * 60_000
+/** Den's refresh tokens last 30 days, and so does the cookie; each refresh starts it again. */
+const SESSION_MAX_AGE_S = 30 * 24 * 60 * 60
+/**
+ * After a refresh, requests the browser sent with its previous cookie still arrive for a moment. They get the
+ * tokens that refresh produced instead of spending the already rotated refresh token again.
+ */
+const REFRESHED_REUSE_MS = 2 * 60_000
 
 /** A path on this site to return to after signing in; anything else (another site, `//host`) becomes `/`. */
 function safeReturnPath(value: string | undefined) {
@@ -28,63 +50,84 @@ a{display:inline-block;background:#011627;color:#fff;text-decoration:none;font-s
 <body><main><h1>${escape(title)}</h1><p>${escape(message)}</p><a href="${escape(action.href)}">${escape(action.label)}</a></main></body></html>`
 }
 
-export function createAuth(input: { config: Config; store: Store; den: Den }) {
-  const { config, store, den } = input
+const hashToken = (token: string) => createHash("sha256").update(token).digest("hex")
+
+/** What sign-in needs from Den. */
+export type DenAuth = Pick<Den, "authorizeUrl" | "exchangeCode" | "session" | "refresh" | "revoke">
+
+export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCookies" | "sessionSecret">; den: DenAuth; now?: () => number }) {
+  const { config, den } = input
+  const now = input.now ?? Date.now
+  const sealer = createSealer(config.sessionSecret)
   // Over plain http (local), cookies are shared by every port of a host, so each Workbot names its own by port:
   // two local Workbots on 127.0.0.1 must never read or replace each other's sign-in.
   const local = new URL(config.publicUrl).port
   const sessionCookie = config.secureCookies ? "__Host-workbot" : `workbot_session${local ? `_${local}` : ""}`
   const loginCookie = config.secureCookies ? "__Host-workbot-login" : `workbot_login${local ? `_${local}` : ""}`
   const cookieOptions = { httpOnly: true, secure: config.secureCookies, sameSite: "Lax" as const, path: "/" }
+  /** Keyed by the refresh token being spent: Den rotates refresh tokens, so each one is spent once. */
   const refreshing = new Map<string, Promise<Tokens>>()
+  const refreshed = new Map<string, { at: number; tokens: Tokens }>()
   const denSessions = new Map<string, { at: number; value: DenSession }>()
 
+  const readSession = (c: Context) => sealer.open(SESSION_PURPOSE, getCookie(c, sessionCookie), sessionSchema)
+  const writeSession = (c: Context, session: Session) => {
+    const value = sealer.seal(SESSION_PURPOSE, session)
+    if (value.length > MAX_COOKIE_VALUE) throw new Error("session_cookie_too_large")
+    setCookie(c, sessionCookie, value, { ...cookieOptions, maxAge: SESSION_MAX_AGE_S })
+  }
   const endSession = (c: Context, sessionId: string | null) => {
-    if (sessionId) {
-      store.deleteSession(sessionId)
-      denSessions.delete(sessionId)
-    }
+    if (sessionId) denSessions.delete(sessionId)
     deleteCookie(c, sessionCookie, cookieOptions)
   }
 
-  /** One refresh per session at a time: Den rotates refresh tokens, so two parallel refreshes would race. */
-  const freshTokens = async (session: Session): Promise<Tokens> => {
-    if (session.tokens.expiresAt - Date.now() > REFRESH_MARGIN_MS) return session.tokens
-    const pending = refreshing.get(session.id)
-    if (pending) return pending
+  /** Tokens fresh enough to use, and whether they changed (the cookie must then be rewritten). */
+  const freshTokens = async (session: Session): Promise<{ tokens: Tokens; changed: boolean }> => {
+    if (session.tokens.expiresAt - now() > REFRESH_MARGIN_MS) return { tokens: session.tokens, changed: false }
     const refreshToken = session.tokens.refreshToken
     if (!refreshToken) throw new DenSignedOutError()
-    const next = den
-      .refresh(refreshToken)
-      .then((tokens) => {
-        store.updateTokens(session.id, tokens)
-        return tokens
-      })
-      .finally(() => refreshing.delete(session.id))
-    refreshing.set(session.id, next)
-    return next
+    const key = hashToken(refreshToken)
+    for (const [entry, value] of refreshed) if (now() - value.at > REFRESHED_REUSE_MS) refreshed.delete(entry)
+    const recent = refreshed.get(key)
+    if (recent) return { tokens: recent.tokens, changed: true }
+    let pending = refreshing.get(key)
+    if (!pending) {
+      pending = den
+        .refresh(refreshToken)
+        .then((tokens) => {
+          refreshed.set(key, { at: now(), tokens })
+          return tokens
+        })
+        .finally(() => refreshing.delete(key))
+      refreshing.set(key, pending)
+    }
+    return { tokens: await pending, changed: true }
   }
 
   const denSession = async (sessionId: string, accessToken: string) => {
     const cached = denSessions.get(sessionId)
-    if (cached && Date.now() - cached.at < DEN_SESSION_CACHE_MS) return cached.value
+    if (cached && now() - cached.at < DEN_SESSION_CACHE_MS) return cached.value
     const value = await den.session(accessToken)
-    denSessions.set(sessionId, { at: Date.now(), value })
+    denSessions.set(sessionId, { at: now(), value })
+    if (denSessions.size > 10_000) {
+      for (const [entry, cachedValue] of denSessions) if (now() - cachedValue.at >= DEN_SESSION_CACHE_MS) denSessions.delete(entry)
+    }
     return value
   }
 
   /** Requires a signed-in person; 401 `signed_out` sends the page to /auth/login. */
   const member: MiddlewareHandler<AppEnv> = async (c, next) => {
-    const raw = getCookie(c, sessionCookie)
-    const session = raw ? store.getSession(raw) : null
+    const session = readSession(c)
     if (!session) {
-      if (raw) deleteCookie(c, sessionCookie, cookieOptions)
+      if (getCookie(c, sessionCookie)) deleteCookie(c, sessionCookie, cookieOptions)
       return c.json({ error: "signed_out" }, 401)
     }
     try {
-      const tokens = await freshTokens(session)
+      const { tokens, changed } = await freshTokens(session)
+      const current = { ...session, tokens }
+      if (changed) writeSession(c, current)
       const value = await denSession(session.id, tokens.accessToken)
-      c.set("member", { session: { ...session, tokens }, accessToken: tokens.accessToken, den: value })
+      c.set("member", { session: current, accessToken: tokens.accessToken, den: value })
     } catch (error) {
       if (error instanceof DenSignedOutError) {
         endSession(c, session.id)
@@ -109,9 +152,9 @@ export function createAuth(input: { config: Config; store: Store; den: Den }) {
     app.get("/auth/login", async (c) => {
       const state = randomToken()
       const verifier = randomToken()
-      store.startLogin(state, verifier, safeReturnPath(c.req.query("return")))
       // Ties the sign-in to this browser, so a link someone else started can't sign it in as them.
-      setCookie(c, loginCookie, state, { ...cookieOptions, maxAge: 600 })
+      const login = { state, verifier, returnTo: safeReturnPath(c.req.query("return")), createdAt: now() }
+      setCookie(c, loginCookie, sealer.seal(LOGIN_PURPOSE, login), { ...cookieOptions, maxAge: LOGIN_TTL_MS / 1000 })
       try {
         return c.redirect(await den.authorizeUrl({ state, verifier }), 302)
       } catch (error) {
@@ -122,18 +165,16 @@ export function createAuth(input: { config: Config; store: Store; den: Den }) {
 
     app.get("/auth/callback", async (c) => {
       const state = c.req.query("state") ?? ""
-      const expected = getCookie(c, loginCookie)
+      const login = sealer.open(LOGIN_PURPOSE, getCookie(c, loginCookie), loginSchema)
       deleteCookie(c, loginCookie, cookieOptions)
-      const login = state && expected === state ? store.takeLogin(state) : null
       const code = c.req.query("code")
-      if (!login || !code) {
+      if (!login || !state || login.state !== state || now() - login.createdAt > LOGIN_TTL_MS || !code) {
         return c.html(page("Let's try that again", "That sign-in link didn't finish. Start again from Workbot.", { href: "/auth/login", label: "Sign in" }), 400)
       }
       try {
         const tokens = await den.exchangeCode(code, login.verifier)
         const who = await den.session(tokens.accessToken)
-        const raw = store.createSession({ userId: who.user.id, organizationId: who.organization.id, tokens })
-        setCookie(c, sessionCookie, raw, { ...cookieOptions, maxAge: 30 * 24 * 60 * 60 })
+        writeSession(c, { id: randomToken(), userId: who.user.id, organizationId: who.organization.id, tokens, createdAt: now() })
         return c.redirect(login.returnTo, 302)
       } catch (error) {
         console.error("[workbot] sign-in failed", { error: error instanceof Error ? error.message : "unknown" })
@@ -142,8 +183,7 @@ export function createAuth(input: { config: Config; store: Store; den: Den }) {
     })
 
     app.post("/auth/logout", sameOrigin, async (c) => {
-      const raw = getCookie(c, sessionCookie)
-      const session = raw ? store.getSession(raw) : null
+      const session = readSession(c)
       if (session?.tokens.refreshToken) await den.revoke(session.tokens.refreshToken)
       endSession(c, session?.id ?? null)
       return c.json({ ok: true })

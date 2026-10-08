@@ -1,79 +1,53 @@
-# Owner cells: evaluation, not production rollout
+# The runner on celld
 
-This draft is stacked on the SQLite driver refactor. Production still starts `src/server.ts` on Node. The Worker
-entry point is separate and no caller selects it. `headlessRunnerCells` is reserved in the feature registry,
-**off** on cloud and self-hosted deployments; its admission check is not wired yet. Enabling the flag alone does
-nothing. Do not replace the production runner URL or remove either service's disk with this draft.
-
-## Shape
+The same runner, the same HTTP API, URL and token, run by [celld](https://celld.dev) instead of `node dist/server.js`.
+celld keeps each cell's SQLite in an S3-compatible bucket you own and moves cells between nodes, so the runner has
+no disk and scales by adding nodes. Cloudflare is optional: the same `wrangler.jsonc` also runs on Workers.
 
 ```text
-trusted caller ── service bearer token + x-openwork-headless-owner ── Worker router
-                                                                        │
-                                                         HeadlessOwner(owner)
-                                                         SQLite + existing Runner
-                                                         chats / memory / tasks
+den-api (Slack, Automations) ─┐                          ┌─ cell "owner:wb:<person>"  Workbot: main chat, side
+                              ├─ bearer token ─ router ──┤                             chats, shared memory, tasks
+Workbot ── + owner header ────┘   (src/worker/index.ts)  └─ cell "session:hs_…"      one Slack/Automation chat
 ```
 
-One actor per owner, not per conversation. An owner must include the caller's tenant/organization identity as well
-as the member or automation identity. The same owner header is required on every session request. The service
-caller authenticates the person and derives that header; browser input must never supply it. `GET /v1/models`
-does not need an owner. The existing Node API ignores the additional header.
+- **Workbot** sends `x-openwork-headless-owner` (derived from Den's answer about who is signed in, never from the
+  browser). All of a person's chats live in one cell, so side chats' shared `memoryOf`, listing, tasks, Stop and
+  live events work exactly as on Node. Deleting a chat removes only that chat.
+- **Slack and Automations** send no owner and are unchanged: each conversation gets its own cell. Creating one
+  picks the id in the router (`POST /v1/sessions` becomes `PUT /v1/sessions/<new id>` in that cell).
+- The owner header can only be set by a caller holding the service token. A cell checks it was addressed by its own
+  name, a body or query can't name another owner, and a conversation cell answers for its own conversation only.
 
-The actor rejects mismatched body/query owners. Creation injects its own owner into the session. Existing
-`memoryOf` reads, owner lists, tasks, Stop and live events all stay inside one SQLite database. Deleting a chat
-only deletes that chat's rows, not the actor's entire database. Caller-chosen session ids must remain globally
-unique (including organization and owner identity), as they also identify computers and blob namespaces.
+`Store` and `Runner` are the Node runner's code; only `src/worker/` knows about cells. Saved files must use
+`HEADLESS_FILES=s3` (or `off`): their bytes stay in the blob bucket, separate from celld's database bucket.
 
-`Store` and `Runner` do not depend on celld. Only `src/worker/sql.ts` and `src/worker/index.ts` depend on the actor
-host. Node uses `nodeSqlite`; the actor uses its host's SQLite and synchronous transactions. The SQL adapter
-drains writes before effects and reads long contexts in bounded pages. celld persists cell state using SQLite/LTX
-and its fleet bucket; the app does not upload database snapshots itself.
+## Deploy (replaces the Node runner)
 
-The same config works for celld and Cloudflare's local runtime. Cloudflare hosting and an account are optional.
-Keep `wrangler.jsonc`'s script/class names stable: changing them changes celld's persistent actor identities.
-The Worker accepts saved-file storage `off` or `s3`, not local disk or Vercel Blob. Files' bytes stay in the existing
-S3-compatible blob store; they are distinct from celld's database replication storage.
+1. Run celld ≥ 0.6.2 on at least two nodes sharing one bucket, behind one private address (see celld's docs for the
+   bucket, TLS and peer network).
+2. `celld deploy` from `ee/apps/headless-runner`, with the same `HEADLESS_*` settings the Node runner has, and
+   `HEADLESS_FILES=s3`. Keep `wrangler.jsonc`'s `name` and class name: celld derives every cell's identity from
+   them.
+3. Point `DEN_HEADLESS_RUNNER_URL` (den-api) and `WORKBOT_RUNNER_URL` (Workbot) at it. Tokens stay the same.
 
-## Reproduce the checks
+**Switching starts every conversation fresh**: conversations on the Node runner stay in its SQLite file and are not
+copied. A Slack or Automation run in flight at the switch ends as `unknown_session`. Pointing the URLs back at the
+Node runner (kept with its disk until you are sure) returns to the earlier conversations.
+
+## Check it
 
 ```sh
-pnpm install --filter @openwork-ee/headless-runner... --frozen-lockfile
-pnpm --filter @openwork-ee/headless-runner build
 pnpm --filter @openwork-ee/headless-runner worker:typecheck
 pnpm --filter @openwork-ee/headless-runner test:sql-store
-pnpm --filter @openwork-ee/headless-runner worker:e2e
-CELLD_BIN=/path/to/celld pnpm --filter @openwork-ee/headless-runner worker:e2e:celld
-pnpm features:check
+pnpm --filter @openwork-ee/headless-runner worker:e2e                                # Cloudflare's local runtime
+CELLD_BIN=/path/to/celld pnpm --filter @openwork-ee/headless-runner worker:e2e:celld  # celld
 ```
 
-`owner-cells-e2e.ts` boots the real runtime, streams a deterministic mock model, writes and reads shared memory,
-checks owner isolation and listing, retries the same message id, kills the runtime while a model request is
-pending, then verifies interrupted-turn recovery and resume. Each run bundles a separate temporary project and
-keeps state there. It does not overwrite the checkout's `.dev.vars` or use anyone's real tokens. Runtime types
-are generated by `worker:typecheck`, not committed as a large generated diff.
+`owner-cells-e2e.ts` boots the real runtime with a streaming mock model and checks: Workbot owner routing and
+isolation between people; side chats sharing memory and listing; owner-less conversations; **Den's own Slack adapter**
+(`headlessRemoteCall`: create, send, read to the answer, stop, unknown session); idempotent re-sends; and killing
+the runtime mid-turn, then interrupted-turn recovery and resume with nothing lost.
 
-The celld check was exercised with v0.6.2. **Local dev persistence is not evidence of S3 durability or multi-node
-failover.** Computer SDKs are bundled, but their actual provider operations are not exercised by this check.
-
-## Remaining work before rollout
-
-1. **Sticky, registry-gated admission.** Workbot, Slack and Automations derive the owner and check
-   `headlessRunnerCells` through Den's registry resolver. Persist the selected backend per owner; never flip an
-   existing chat to an empty database because a flag changed. On a kill switch, stop admitting new owners to
-   cells, while history remains readable and in-flight turns drain or resume on their original backend. Moving
-   an owner back to Node requires an explicit state-transfer procedure, not a URL swap. No automatic cross-backend
-   retry after a write: it can duplicate work.
-2. **Fleet evidence.** Exercise two celld nodes and a throwaway S3 bucket. Kill the writer after an acknowledged
-   turn admission, check that no acknowledged transcript step disappears, test bucket outages, split ownership,
-   rolling deploys, and a restore on fresh nodes. Measure durable-write latency, per-owner CPU contention and
-   memory. Test data must contain no private tokens or identifying outside-party information.
-3. **Complete Workbot journeys.** Prove uploads/downloads and previews on S3, SSE reconnects and Stop, background
-   tasks/reports, and the Freestyle and Daytona computer tools in the actual celld runtime. The Node fallback must
-   remain available if a provider SDK needs APIs the Worker host does not support.
-4. **Diskless Workbot authentication.** Its `sessions` and PKCE `logins` are separate from conversation state.
-   Keep browser cookies opaque and move those records into a shared auth actor/store. Serialize Den refresh-token
-   rotation at that owner; encrypted token cookies alone do not prevent refresh races across replicas. Test login
-   start/callback on different replicas, concurrent refresh, logout and secret rotation before dropping its disk.
-
-There is no production deployment or data migration in this draft.
+Not covered locally: celld's multi-node failover and bucket durability (celld's own guarantees; check them on the
+real fleet before pointing production at it), and the Freestyle/Daytona computer inside celld, which bundles but
+has not run there. If the computer misbehaves, keep `HEADLESS_COMPUTER=off` on the celld deployment.

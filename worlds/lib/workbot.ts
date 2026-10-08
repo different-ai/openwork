@@ -265,7 +265,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
     env: {
       PORT: String(workbotPort), WORKBOT_PUBLIC_URL: workbotUrl, WORKBOT_DEN_API_URL: den.ref.apiUrl,
       WORKBOT_DEN_WEB_URL: preview?.den ?? den.ref.webUrl, WORKBOT_RUNNER_URL: options.runnerProxy ? await options.runnerProxy(runnerUrl) : runnerUrl, WORKBOT_RUNNER_TOKEN: secrets.runnerToken,
-      WORKBOT_SESSION_SECRET: secrets.sessionSecret, WORKBOT_DB_PATH: join(data, "workbot.sqlite"),
+      WORKBOT_SESSION_SECRET: secrets.sessionSecret,
       ...(options.workbotCalendarMockUrl ? { WORKBOT_CALENDAR_MOCK_URL: options.workbotCalendarMockUrl } : {}),
       ...(preview ? {
         // Workbot reaches Den's sign-in at its advertised (template) origin; inside the VM that is loopback.
@@ -483,7 +483,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
       OPENWORK_LAUNCH_CWD: "/workspace/ee/apps/workbot", OPENWORK_LAUNCH_ARGS: JSON.stringify(["dist/server.js"]),
       WORKBOT_PUBLIC_URL: workbotPreview.browserOrigin, WORKBOT_DEN_API_URL: den.ref.apiUrl, WORKBOT_DEN_WEB_URL: den.ref.webUrl,
       WORKBOT_RUNNER_URL: `http://127.0.0.1:${DAYTONA_RUNNER_PORT}`, WORKBOT_RUNNER_TOKEN: secrets.runnerToken,
-      WORKBOT_SESSION_SECRET: secrets.sessionSecret, WORKBOT_DB_PATH: "/tmp/workbot-world/workbot.sqlite",
+      WORKBOT_SESSION_SECRET: secrets.sessionSecret,
     },
     log: (line) => console.error(`[preview-workbot] ${line}`),
   });

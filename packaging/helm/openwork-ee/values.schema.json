@@ -108,16 +108,6 @@
               ],
               "description": "Slack Assistant: headless runtime: Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. Renders DEN_FEATURE_SLACK_ASSISTANT_HEADLESS."
             },
-            "headlessRunnerCells": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Headless runner: owner cells: Runs an owner's conversations together on a durable SQLite cell. Needs a cell runtime; existing conversations stay on their original runtime. Renders DEN_FEATURE_HEADLESS_RUNNER_CELLS."
-            },
             "headlessAutomations": {
               "enum": [
                 "",

@@ -116,13 +116,6 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  headlessRunnerCells: {
-    label: "Headless runner: owner cells",
-    description: "Runs an owner's conversations together on a durable SQLite cell. Needs a cell runtime; existing conversations stay on their original runtime.",
-    since: "2026-10",
-    deployments: everywhere,
-    default: false,
-  },
   headlessAutomations: {
     label: "Cloud Automations: headless runtime",
     description: "Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.",

@@ -2,6 +2,7 @@ import { createHeadlessRunnerClient } from "@openwork-ee/headless-protocol"
 import {
   createWorkbot,
   toWorkbotPageEvent,
+  workbotOwner,
   WORKBOT_CHAT_ID,
   WorkbotFilesUnavailableError,
   WorkbotUnavailableError,
@@ -73,11 +74,17 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   const { config, den } = input
   const sent = new Map<string, number[]>()
 
+  /**
+   * The runner, told whose conversations these are: on celld that is the person's own cell (all their chats and
+   * shared memory together); the Node runner ignores it. It comes from Den's answer, never from the browser.
+   */
+  const runnerFor = (member: Member) => ({ ...config.runner, owner: workbotOwner(member.den.organization.id, member.den.memberId) })
+
   /** Workbot bound to this person: their runner conversation, and turn tokens Den mints for them. */
   const workbotFor = (member: Member) =>
     createWorkbot({
       client: createHeadlessRunnerClient({
-        config: config.runner,
+        config: runnerFor(member),
         fetch,
         mintToken: async ({ readOnly }) => ({ token: await den.runToken(member.accessToken, { readOnly }) }),
         maxTokenTtlMs: RUN_TOKEN_TTL_MS,

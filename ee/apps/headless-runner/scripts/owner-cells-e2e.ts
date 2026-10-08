@@ -72,6 +72,8 @@ async function start(modelPort: number) {
     HEADLESS_MODEL_PROTOCOL: "openai",
     HEADLESS_MODEL_BASE_URL: `http://127.0.0.1:${modelPort}`,
     HEADLESS_MODEL: "test-model",
+    // Slack and Automations send no model key of their own; the runner's default key answers them.
+    HEADLESS_MODEL_API_KEY: "test-default-key",
   }
   writeFileSync(join(temporary, ".dev.vars"), Object.entries(vars).map(([key, value]) => `${key}=${value}`).join("\n"))
   // celld requires main to be inside the project. Bundle into our isolated project instead of clobbering .dev.vars.
@@ -140,7 +142,6 @@ try {
   assert.ok(address && typeof address === "object")
   await start(address.port)
   assert.equal((await fetch(`${base}/v1/models`)).status, 401)
-  assert.equal((await call("/v1/sessions", "", { method: "POST", body: "{}" })).status, 400)
   assert.equal((await call("/v1/sessions", ownerA, { method: "POST", body: JSON.stringify({ owner: ownerB }) })).status, 400)
   const main = await create(ownerA, { title: "Main", tasks: true })
   const side = await create(ownerA, { title: "Side", memoryOf: main })
@@ -148,7 +149,25 @@ try {
   assert.equal((await call(`/v1/sessions/${main}`, ownerB)).status, 404)
   assert.equal((await call(`/v1/sessions?owner=${encodeURIComponent(ownerB)}`, ownerA)).status, 400)
   assert.equal((await call("/v1/sessions", ownerB, { method: "POST", body: JSON.stringify({ memoryOf: main }) })).status, 400)
+  assert.equal((await call("/v1/sessions?owner=x", "")).status, 400)
+  const filesStatus = await call("/v1/files/status", "")
+  assert.equal(filesStatus.status, 200, await filesStatus.clone().text())
   console.log("PASS authenticated owner routing, body consistency, and cross-owner isolation")
+
+  // Slack and Automations: no owner header, one cell per conversation, same API as the Node runner.
+  const slack = await create("", { title: "Slack thread" })
+  assert.match(slack, /^hs_[0-9a-f]{32}$/)
+  assert.equal((await call(`/v1/sessions/${slack}`, ownerA)).status, 404)
+  assert.equal((await call(`/v1/sessions/hs_${"0".repeat(32)}`, "")).status, 404)
+  assert.equal((await send(slack, "msg_slack", "[write] Slack question", "")).status, 202)
+  const slackDone = await untilIdle(slack, "")
+  assert.equal(slackDone.turns[0]?.status, "completed")
+  assert.equal(slackDone.finalAssistantText, "Memory checked.")
+  const stopped = await call(`/v1/sessions/${slack}/abort`, "", { method: "POST", body: "{}" })
+  assert.equal(stopped.status, 200)
+  const slackAgain = z.object({ state: z.string() }).parse(await (await send(slack, "msg_slack", "[write] Slack question", "")).json())
+  assert.equal(slackAgain.state, "already_present")
+  console.log("PASS owner-less (Slack/Automations) conversations: create, send, read, stop, idempotent resend, isolation")
 
   assert.equal((await send(main, "msg_1", "[write] Remember a note")).status, 202)
   assert.equal((await untilIdle(main)).turns[0]?.status, "completed")
@@ -165,6 +184,28 @@ try {
   assert.ok(modelKeys.length > 0 && modelKeys.every((key) => key === "Bearer test-turn-key"))
   console.log("PASS streamed model turns, file tools, shared side-chat memory, owner listing, per-turn credentials, and idempotency")
 
+  // Den's own Slack adapter (the code Slack runs use), unchanged, against this runtime.
+  const { headlessRemoteCall } = await import("../../den-api/src/slack-assistant/headless.ts")
+  const slackDeps = { config: { url: base, token }, fetch, mintToken: async () => ({ token: "test-mcp-token" }), maxTokenTtlMs: 60 * 60_000 }
+  const actor = { userId: "test-user", organizationId: "test-org" }
+  const opened = await headlessRemoteCall(actor, "create", { title: "Slack thread" }, slackDeps)
+  const slackSession = z.object({ sessionId: z.string() }).parse(opened).sessionId
+  assert.deepEqual(await headlessRemoteCall(actor, "send", { sessionId: slackSession, messageId: "slack_run_1", prompt: "[write] What changed?" }, slackDeps), {})
+  let slackRead: Record<string, unknown> = {}
+  for (const until = Date.now() + 30_000; Date.now() < until; await sleep(200)) {
+    slackRead = await headlessRemoteCall(actor, "read", { sessionId: slackSession, messageId: "slack_run_1" }, slackDeps)
+    if (slackRead.status === "idle") break
+  }
+  assert.equal(slackRead.status, "idle", JSON.stringify(slackRead))
+  assert.equal(slackRead.finalAssistantText, "Memory checked.")
+  assert.equal(slackRead.terminalError, undefined)
+  assert.ok(modelKeys.at(-1) === "Bearer test-default-key")
+  const stopResult = await headlessRemoteCall(actor, "stop", { sessionId: slackSession, messageId: "slack_run_1" }, slackDeps)
+  assert.ok("accepted" in stopResult || "stopped" in stopResult, JSON.stringify(stopResult))
+  const unknown = await headlessRemoteCall(actor, "read", { sessionId: `hs_${"1".repeat(32)}`, messageId: "x" }, slackDeps)
+  assert.equal(unknown.error, "unknown_session")
+  console.log("PASS Den's Slack adapter (create, send, read to the answer, stop, unknown session) unchanged on this runtime")
+
   assert.equal((await send(main, "msg_slow", "[slow] [write] Resume after restart")).status, 202)
   const deadline = Date.now() + 10_000
   while (!hanging.length && Date.now() < deadline) await sleep(100)
@@ -177,6 +218,7 @@ try {
   assert.equal(cut?.status, "interrupted")
   assert.equal(cut?.error, "runner_restarted")
   assert.equal((await call(`/v1/sessions/${main}/files/content?path=memory/note.md`)).status, 200)
+  assert.equal((await view(slack, "")).turns[0]?.status, "completed")
   assert.equal((await send(main, "msg_slow", "[slow] [write] Resume after restart")).status, 202)
   assert.equal((await untilIdle(main)).turns.find((turn) => turn.messageId === "msg_slow")?.status, "completed")
   assert.equal((await call(`/v1/sessions/${side}`, ownerA, { method: "DELETE" })).status, 204)

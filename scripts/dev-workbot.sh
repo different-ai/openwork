@@ -76,7 +76,6 @@ WORKBOT_DEN_WEB_URL="http://localhost:${WEB_PORT}" \
 WORKBOT_RUNNER_URL="http://127.0.0.1:${RUNNER_PORT}" \
 WORKBOT_RUNNER_TOKEN="$RUNNER_TOKEN" \
 WORKBOT_SESSION_SECRET="$SESSION_SECRET" \
-WORKBOT_DB_PATH="$DATA_DIR/workbot.sqlite" \
   pnpm --filter @openwork-ee/workbot dev &
 pids+=($!)
 

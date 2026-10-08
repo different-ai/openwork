@@ -8,7 +8,17 @@ import { z } from "zod"
  * first; the client then mints a short-lived, member-scoped OpenWork MCP token for every turn it sends (through the
  * caller's `mintToken`), so the runner can only reach what that member can reach, and only for the life of the turn.
  */
-export type HeadlessRunnerConfig = { url: string; token: string }
+/**
+ * `owner` routes every call to one owner's cell on a cell runtime (ee/apps/headless-runner/OWNER-CELLS.md). The
+ * Node runner ignores it. Only a trusted service sets it, from the person it already authenticated.
+ */
+export type HeadlessRunnerConfig = { url: string; token: string; owner?: string }
+
+export const HEADLESS_OWNER_HEADER = "x-openwork-headless-owner"
+
+function runnerHeaders(config: HeadlessRunnerConfig, extra: Record<string, string> = {}): Record<string, string> {
+  return { authorization: `Bearer ${config.token}`, ...(config.owner ? { [HEADLESS_OWNER_HEADER]: config.owner } : {}), ...extra }
+}
 
 function isSafeRunnerUrl(value: string) {
   try {
@@ -158,7 +168,7 @@ const REQUEST_TIMEOUT_MS = 15_000
 async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown) {
   const response = await deps.fetch(`${deps.config.url}${path}`, {
     method,
-    headers: { authorization: `Bearer ${deps.config.token}`, "content-type": "application/json" },
+    headers: runnerHeaders(deps.config, { "content-type": "application/json" }),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
@@ -274,7 +284,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     /** Reads one scratch file the agent wrote in the session. */
     async readFile(sessionId: string, path: string): Promise<RunnerResult<{ content: string }>> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/files/content?path=${encodeURIComponent(path)}`, {
-        headers: { authorization: `Bearer ${deps.config.token}` },
+        headers: runnerHeaders(deps.config),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
       if (response.status !== 200) return { ok: false, status: response.status, error: `headless_file_${response.status}` }
@@ -347,7 +357,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const query = new URLSearchParams({ name: input.name })
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/saved-files?${query.toString()}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${deps.config.token}`, "content-type": input.mediaType || "application/octet-stream" },
+        headers: runnerHeaders(deps.config, { "content-type": input.mediaType || "application/octet-stream" }),
         body: input.bytes,
         signal: AbortSignal.timeout(10 * 60_000),
       })
@@ -367,7 +377,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     /** The file's bytes as the runner's response, to stream to the browser. */
     async downloadFile(sessionId: string, fileId: string): Promise<Response | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/saved-files/${encodeURIComponent(fileId)}`, {
-        headers: { authorization: `Bearer ${deps.config.token}` },
+        headers: runnerHeaders(deps.config),
         signal: AbortSignal.timeout(10 * 60_000),
       })
       if (!response.ok) {
@@ -380,7 +390,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     /** A file's preview (slides, documents): how many page images it has and their size; null when none. */
     async previewManifest(sessionId: string, fileId: string): Promise<{ pages: number; width: number; height: number } | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/saved-files/${encodeURIComponent(fileId)}/preview`, {
-        headers: { authorization: `Bearer ${deps.config.token}` },
+        headers: runnerHeaders(deps.config),
         // Rendering an older file on first open can take a while.
         signal: AbortSignal.timeout(3 * 60_000),
       })
@@ -392,7 +402,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     /** One preview page as the runner's PNG response, to stream to the browser. */
     async previewPage(sessionId: string, fileId: string, page: number): Promise<Response | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/saved-files/${encodeURIComponent(fileId)}/preview/${page}`, {
-        headers: { authorization: `Bearer ${deps.config.token}` },
+        headers: runnerHeaders(deps.config),
         signal: AbortSignal.timeout(60_000),
       })
       if (!response.ok) {
@@ -413,7 +423,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      */
     async openEvents(sessionId: string, signal: AbortSignal): Promise<Response | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/events`, {
-        headers: { authorization: `Bearer ${deps.config.token}`, accept: "text/event-stream" },
+        headers: runnerHeaders(deps.config, { accept: "text/event-stream" }),
         signal,
       })
       if (!response.ok || !response.body) {
