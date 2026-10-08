@@ -55,6 +55,8 @@ type Pending = {
 }
 
 type Row = { key: string; at: number; stamp: boolean; turn: WorkbotTurn | null; pending: Pending | null }
+/** The conversation's first row: "Show earlier messages" and Workbot's intro, kept with the messages under it. */
+type Head = { key: "head"; head: true }
 
 const WELCOMED_KEY = "welcomed"
 const welcomedAt = () => prefs.get(WELCOMED_KEY)
@@ -401,13 +403,17 @@ function Conversation(props: {
     ]
     // The greeting has its own time; the first message only gets one after a quiet hour or a new day.
     let previousAt: number | null = showIntro && !spoken ? introAt : null
-    return entries.map((entry): Row => {
-      const stamp = showsTimestamp(previousAt, entry.at)
-      previousAt = entry.at || previousAt
-      return { ...entry, stamp }
-    })
+    const head: Head[] = showIntro || props.data.hasEarlier ? [{ key: "head", head: true }] : []
+    return [
+      ...head,
+      ...entries.map((entry): Row => {
+        const stamp = showsTimestamp(previousAt, entry.at)
+        previousAt = entry.at || previousAt
+        return { ...entry, stamp }
+      }),
+    ]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.turns, props.pending, showIntro, spoken, introAt])
+  }, [props.turns, props.pending, showIntro, spoken, introAt, props.data.hasEarlier])
   const lastTurnId = props.turns.at(-1)?.id
   const localUris = useMemo(() => {
     const urls: Record<string, string | null> = {}
@@ -422,6 +428,7 @@ function Conversation(props: {
   )
   const open = (file: WorkbotAttachment) => openFile(file, props.chat)
 
+  // A short conversation sits at the bottom, its intro right above the first message (as on the web).
   return (
     <LegendList
       ref={props.listRef}
@@ -436,7 +443,7 @@ function Conversation(props: {
       contentContainerStyle={styles.listContent}
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
-      ListHeaderComponent={
+      renderItem={({ item, index }) => "head" in item ? (
         <View style={styles.column}>
           {props.data.hasEarlier ? (
             <View style={styles.earlier}>
@@ -449,9 +456,8 @@ function Conversation(props: {
             </View>
           ) : null}
         </View>
-      }
-      renderItem={({ item, index }) => (
-        <View style={[styles.column, index > 0 ? (item.stamp ? styles.rowStamped : styles.row) : null]}>
+      ) : (
+        <View style={[styles.column, index > 0 && rows[index - 1]?.key !== "head" ? (item.stamp ? styles.rowStamped : styles.row) : null]}>
           {item.stamp ? <Timestamp at={item.at} /> : null}
           {item.turn ? (
             <TurnView
