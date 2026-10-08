@@ -45,7 +45,10 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
 
   await step("next week, an Automation that needs HubSpot shows a lock, never a confirmed upcoming run", async () => {
     // Next week, so the slot is ahead of now whatever day the spec runs.
+    const thisWeek = (await look.dom("[data-calendar-range-label]")).elements[0]?.text ?? "";
     await alex.click({ role: "button", label: "Next" });
+    // Wait for next week to render, so the click below cannot land on this week's block as it unmounts.
+    await look.eventually(async () => (await look.dom("[data-calendar-range-label]")).elements[0]?.text ?? "", { within: 15_000, label: "next week is on screen", until: (text) => text !== "" && text !== thisWeek });
     await alex.click({ role: "button", label: /^Update launch deals, Blocked until fixed/ });
     await alex.see({ text: "Needs attention" });
     await alex.see({ text: /Needs HubSpot access/ });

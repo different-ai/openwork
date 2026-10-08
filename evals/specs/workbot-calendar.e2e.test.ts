@@ -40,7 +40,10 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
 
   await step("next week, an Automation that needs HubSpot shows a lock and no scheduled run", async () => {
     // Next week, so the slot is ahead of now whatever day the spec runs.
+    const thisWeek = (await probe.dom("[data-calendar-range-label]")).elements[0]?.text ?? "";
     await user.click({ role: "button", label: "Next" });
+    // Wait for next week to render, so the click below cannot land on this week's block as it unmounts.
+    await probe.eventually(async () => (await probe.dom("[data-calendar-range-label]")).elements[0]?.text ?? "", { within: 15_000, label: "next week is on screen", until: (text) => text !== "" && text !== thisWeek });
     await user.click({ role: "button", label: /^Update launch deals, Blocked until fixed/ });
     await user.see({ text: "Not scheduled until fixed" });
     await user.see({ text: /Needs HubSpot access/ });
