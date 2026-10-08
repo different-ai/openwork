@@ -35,5 +35,8 @@
     "@openwork/labs": "workspace:*",
     "@openwork/matchers": "workspace:*",
     "@openwork/timeline": "workspace:*"
+  },
+  "devDependencies": {
+    "happy-dom": "20.12.0"
   }
 }
