@@ -738,6 +738,63 @@ export function modelPicker(seed: Seed) {
   return seedModelPicker(seed);
 }
 
+/**
+ * A signed-out member offered free Auto and a BYOK model, where the free-access
+ * check that runs before an Auto send can be held, so the member can change
+ * model before the message leaves.
+ */
+export async function autoSendModelChange(seed: Seed) {
+  const workspacePath = seed.tmpPath("auto-send-model-change");
+  const app = await seed.appWeb({
+    name: "auto-send-model-change",
+    workspacePath,
+    mocks: { agent: seed.mock({ isolatedProcessEnv: true }) },
+  });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing Auto send model witness");
+  const workspace = await seed.workspace(app, workspacePath);
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-6-luna" };
+  const byok = { providerID: "auto-send-byok", modelID: "byok-model" };
+  const providerOptions = { baseURL: `${witness.url}/v1`, apiKey: "synthetic-auto-send-key" };
+  // No OpenWork Models provider: with one, members pick it instead of free Auto.
+  await configureProvider(seed, app, workspace.workspaceId, byok.providerID, byok.modelID, {
+    enabled_providers: [auto.providerID, byok.providerID],
+    provider: {
+      [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
+        models: { [auto.modelID]: { name: "GPT-6 Luna" } } },
+      [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,
+        models: { [byok.modelID]: { name: "BYOK witness" } } },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Send with Auto" });
+  return {
+    app, workspace, session, auto, byok,
+    requests: () => witness.agentRequests(),
+    async holdAutoCheck() {
+      await seed.evalIn(app, () => {
+        const originalFetch = window.fetch;
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 60_000);
+          release = () => { clearTimeout(timer); resolve(); };
+        });
+        const fault = { attempts: 0, release: () => { release(); window.fetch = originalFetch; } };
+        window.__openworkSubmissionFault = fault;
+        window.fetch = async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (/\/anonymous-inference\/preflight(\?|$)/.test(url)) {
+            fault.attempts++;
+            await gate;
+          }
+          return originalFetch(input, init);
+        };
+      });
+    },
+    autoCheckAttempts: () => seed.evalIn(app, () => window.__openworkSubmissionFault?.attempts ?? 0),
+    releaseAutoCheck: () => seed.evalIn(app, () => window.__openworkSubmissionFault?.release()),
+  };
+}
+
 /** The picker world plus the chord that opens the command palette on this platform. */
 export async function commandPaletteModels(seed: Seed) {
   const world = await seedModelPicker(seed);
