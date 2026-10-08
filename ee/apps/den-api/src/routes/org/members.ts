@@ -9,7 +9,7 @@ import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, transferOrganizationOwnership, updateOrganizationMemberRole } from "../../orgs.js"
-import { roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, roleAssignmentTarget } from "../../permissions/team-grants.js"
+import { roleAssignmentDecider, roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentTarget, roleAssignmentTargetFromRole } from "../../permissions/team-grants.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOwner, idParamSchema, memberPermissionsForRequest, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
@@ -60,21 +60,26 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     if (!caller) return c.json({ error: "organization_not_found" }, 404)
     const target = await roleAssignmentTarget(payload.organization.id, memberId)
     if (!target) return c.json({ error: "member_not_found", message: "The organization member could not be found." }, 404)
-    const denial = await roleAssignmentDenial({
+    const decideRoleChange = await roleAssignmentDecider({
       organizationId: payload.organization.id,
       caller,
       callerMemberId: payload.currentMember.id,
-      target,
       nextRole: role,
     })
+    const denial = decideRoleChange(target)
     if (denial) return c.json(roleAssignmentDeniedResponse(denial), 403, roleAssignmentDeniedHeaders(denial))
 
     const updated = await updateOrganizationMemberRole({
       organizationId: payload.organization.id,
       memberId,
       nextRole: role,
+      // The target's role may have changed since it was read above; decide again on the locked row.
+      authorize: (member) => decideRoleChange(roleAssignmentTargetFromRole(member.id, member.role)),
     })
     if (!updated.ok) {
+      if (updated.error === "role_assignment_denied") {
+        return c.json(roleAssignmentDeniedResponse(updated.denial), 403, roleAssignmentDeniedHeaders(updated.denial))
+      }
       if (updated.error === "member_not_found") {
         return c.json({ error: updated.error, message: updated.message }, 404)
       }
@@ -173,7 +178,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         204: emptyResponse("Member removed successfully."),
         400: jsonResponse("The member removal request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to remove organization members.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Remove members permission and a recent sign-in.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Remove members permission and a recent sign-in. Removing a member of an Admin team also needs Manage Admin teams, and with Permissions on only the owner or an admin can remove an admin.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),

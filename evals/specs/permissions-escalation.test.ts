@@ -373,3 +373,105 @@ test("with Permissions on, a member who may change roles through a team cannot m
     expect(missing).toEqual([]);
   });
 });
+
+test("with Permissions on, permissions granted through a team cannot mint a lasting admin, remove an admin, or grow an Admin team; an admin can", { timeout: 600_000 }, async ({ world, step, evidence }) => {
+  let adminDefaults: string[] = [];
+  let firstMissing = "";
+  let editorsSet = "";
+  let opsAdmins = "";
+
+  await step("given Permissions is on, Maya is an admin only through the Ops admins team, and Tess may change roles and remove members through her team", async () => {
+    adminDefaults = await catalogDefaults(world, "admin");
+    const enabled = await world.setFeature("permissions", true);
+    expect(enabled.status, summary(enabled)).toBe(200);
+    const team = await world.request(world.owner, "POST", "/v1/teams", { name: "Ops admins", memberIds: [world.ids.maya], grantsOrganizationAdmin: true });
+    expect(team.status, summary(team)).toBe(201);
+    opsAdmins = String(field(field(team.body, "team"), "id"));
+    const created = await world.request(world.owner, "POST", "/v1/permissions/sets", {
+      teamId: world.teams.editors,
+      permissions: ["members.update", "members.delete"].map((key) => ({ key, status: "allow" })),
+    });
+    expect(created.status, summary(created)).toBe(201);
+    editorsSet = String(field(field(created.body, "set"), "id"));
+    const tess = await memberContext(world, world.tess);
+    const maya = await memberContext(world, world.maya);
+    firstMissing = adminDefaults.find((key) => !tess.permissions.includes(key)) ?? "";
+    const ok = tess.role === "member" && maya.role === "member" && adminDefaults.every((key) => maya.permissions.includes(key)) && firstMissing !== "";
+    evidence.recordAssertionEvidence(
+      "Maya holds every Admin permission through the Ops admins team while her own role stays member; Tess holds Change member roles and Remove members",
+      `Maya's role ${maya.role}, holds ${maya.permissions.length} permissions; Tess's role ${tess.role}, permissions ${JSON.stringify(tess.permissions)}; first Admin permission Tess lacks: ${firstMissing}`,
+      ok,
+    );
+    expect(maya.role).toBe("member");
+    expect(maya.permissions).toEqual(expect.arrayContaining(adminDefaults));
+    expect([...tess.permissions].sort()).toEqual(["members.delete", "members.update"]);
+  });
+
+  await step("Tess cannot give Maya the admin role, which would outlast her leaving the Ops admins team, and is told the first Admin permission she lacks", async () => {
+    const promote = await world.request(world.tess, "POST", `/v1/members/${world.ids.maya}/role`, { role: "admin" });
+    const maya = { role: await rosterRole(world, world.ids.maya) };
+    const ok = promote.status === 403 && field(promote.body, "requiredPermission") === firstMissing && maya.role === "member";
+    evidence.recordAssertionEvidence(
+      "Making an Admin-team member a direct admin needs every Admin permission",
+      `Tess POST /v1/members/:maya/role admin → ${said(promote)}: “${String(field(promote.body, "message"))}”; Maya's stored role is still ${maya.role}`,
+      ok,
+    );
+    expect(promote.status, summary(promote)).toBe(403);
+    expect(promote.body).toMatchObject({ error: "forbidden", requiredPermission: firstMissing });
+    expect(maya.role).toBe("member");
+  });
+
+  await step("even holding every Admin permission through her team, Tess cannot remove Adam, an admin", async () => {
+    const expanded = await world.request(world.owner, "PUT", `/v1/permissions/sets/${editorsSet}/permissions`, {
+      changes: adminDefaults.map((key) => ({ key, status: "allow" })),
+    });
+    expect(expanded.status, summary(expanded)).toBe(200);
+    const tess = await memberContext(world, world.tess);
+    const remove = await world.request(world.tess, "DELETE", `/v1/members/${world.ids.adam}`);
+    const adam = { role: await rosterRole(world, world.ids.adam) };
+    const ok = adminDefaults.every((key) => tess.permissions.includes(key)) && tess.role === "member"
+      && remove.status === 403 && field(remove.body, "error") === "forbidden" && adam.role === "admin";
+    evidence.recordAssertionEvidence(
+      "Removing a direct admin needs the owner or an admin, not just Remove members",
+      `Tess (role ${tess.role}) now holds every Admin permission: ${adminDefaults.every((key) => tess.permissions.includes(key))}; DELETE /v1/members/:adam → ${said(remove)}: “${String(field(remove.body, "message"))}”; Adam is still ${adam.role}`,
+      ok,
+    );
+    expect(remove.status, summary(remove)).toBe(403);
+    expect(remove.body).toMatchObject({ error: "forbidden", message: "Only the owner or an admin can remove an admin from the organization." });
+    expect(adam.role).toBe("admin");
+  });
+
+  await step("Tess cannot add Nora to the Ops admins team or make her own team an Admin team", async () => {
+    const add = await world.request(world.tess, "PATCH", `/v1/teams/${opsAdmins}`, { memberIds: [world.ids.maya, world.ids.nora] });
+    const promoteTeam = await world.request(world.tess, "PATCH", `/v1/teams/${world.teams.editors}`, { grantsOrganizationAdmin: true });
+    const nora = await memberContext(world, world.nora);
+    const message = "Only the owner or an admin can make a team an Admin team or add people to one.";
+    const ok = add.status === 403 && field(add.body, "message") === message
+      && promoteTeam.status === 403 && field(promoteTeam.body, "message") === message
+      && !nora.permissions.includes("members.update");
+    evidence.recordAssertionEvidence(
+      "Growing an Admin team needs the owner or an admin, even for someone holding every Admin permission",
+      `PATCH Ops admins add Nora → ${said(add)}: “${String(field(add.body, "message"))}”; PATCH Permission editors grantsOrganizationAdmin true → ${said(promoteTeam)}; Nora holds ${JSON.stringify(nora.permissions)}`,
+      ok,
+    );
+    expect(add.status, summary(add)).toBe(403);
+    expect(add.body).toMatchObject({ error: "forbidden", message });
+    expect(promoteTeam.status, summary(promoteTeam)).toBe(403);
+    expect(promoteTeam.body).toMatchObject({ error: "forbidden", message });
+    expect(nora.permissions).not.toContain("members.update");
+  });
+
+  await step("after: Adam, an admin, adds Nora to the Ops admins team and she holds every Admin permission", async () => {
+    const add = await world.request(world.adam, "PATCH", `/v1/teams/${opsAdmins}`, { memberIds: [world.ids.maya, world.ids.nora] });
+    const nora = await memberContext(world, world.nora);
+    const missing = adminDefaults.filter((key) => !nora.permissions.includes(key));
+    const ok = add.status === 200 && missing.length === 0;
+    evidence.recordAssertionEvidence(
+      "An admin can still grow an Admin team",
+      `Adam PATCH Ops admins add Nora → ${add.status}; Admin permissions Nora lacks: ${JSON.stringify(missing)}`,
+      ok,
+    );
+    expect(add.status, summary(add)).toBe(200);
+    expect(missing).toEqual([]);
+  });
+});

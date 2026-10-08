@@ -40,6 +40,8 @@ import {
   teamGrantsForbiddenResponse,
   TEAM_GRANTS_FORBIDDEN_MESSAGE,
 } from "../../permissions/team-grants.js"
+import { decideAdminTeamChange } from "../../permissions/role-assignment.js"
+import { requiresAdminError } from "../../agent-error-envelope.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
@@ -134,6 +136,14 @@ async function checkHoldsTeamGrants(
   return missing ? { ok: false, response: teamGrantsForbiddenResponse(missing, message) } : { ok: true }
 }
 
+/** Admin teams make their members effective admins, so with Permissions on only the owner or an admin may grow them (role-assignment.ts). */
+async function adminTeamChangeDenial(c: PermissionRouteContext, change: { makesAdminTeam: boolean; addsMembersToAdminTeam: boolean }) {
+  const actor = await memberPermissionsForRequest(c)
+  if (!actor) return { error: "organization_not_found" as const }
+  const denial = decideAdminTeamChange({ actor, ...change })
+  return denial ? { error: "forbidden" as const, ...requiresAdminError(denial.message) } : null
+}
+
 async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
   return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   if (input.grantsOrganizationAdmin !== undefined) {
@@ -141,6 +151,8 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
   }
   if (input.grantsOrganizationAdmin === true) {
+    const adminTeamDenial = await adminTeamChangeDenial(c, { makesAdminTeam: true, addsMembersToAdminTeam: input.memberIds.length > 0 })
+    if (adminTeamDenial) return c.json(adminTeamDenial, orgAccessFailureStatus(adminTeamDenial))
     // A new team has no team permission set yet, so it grants only the Admin defaults.
     const grants = await checkHoldsTeamGrants(c, () => adminDefaultPermissionKeys(payload.organization.id, tx), ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE)
     if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
@@ -249,6 +261,8 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }
   const nextGrantsOrganizationAdmin = input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin
   if (nextGrantsOrganizationAdmin && !team.grantsOrganizationAdmin) {
+    const adminTeamDenial = await adminTeamChangeDenial(c, { makesAdminTeam: true, addsMembersToAdminTeam: false })
+    if (adminTeamDenial) return c.json(adminTeamDenial, orgAccessFailureStatus(adminTeamDenial))
     const grants = await checkHoldsTeamGrants(c, () => adminDefaultPermissionKeys(payload.organization.id, tx), ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE)
     if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
   }
@@ -275,6 +289,10 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       .where(eq(TeamMemberTable.teamId, team.id)))
       .map((row) => row.id))
     if (memberIds.some((memberId) => !currentMemberIds.has(memberId))) {
+      if (nextGrantsOrganizationAdmin) {
+        const adminTeamDenial = await adminTeamChangeDenial(c, { makesAdminTeam: false, addsMembersToAdminTeam: true })
+        if (adminTeamDenial) return c.json(adminTeamDenial, orgAccessFailureStatus(adminTeamDenial))
+      }
       const grants = await checkHoldsTeamGrants(c, () => teamGrantedPermissionKeys({
         organizationId: payload.organization.id,
         teamId: team.id,
@@ -585,7 +603,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         201: jsonResponse("Team created successfully.", teamResponseSchema),
         400: jsonResponse("The team creation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create teams.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in; making an Admin team also needs Manage Admin teams.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in; making an Admin team also needs Manage Admin teams, and with Permissions on only the owner or an admin can make one.", forbiddenSchema),
         404: jsonResponse("The organization or a referenced member could not be found.", notFoundSchema),
       },
     }),
@@ -604,7 +622,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Team updated successfully.", teamResponseSchema),
         400: jsonResponse("The team update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update teams.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in. Admin teams also need Manage Admin teams, and with Permissions on, adding people needs every permission the team grants.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in. Admin teams also need Manage Admin teams, and with Permissions on, adding people needs every permission the team grants, and only the owner or an admin can make a team an Admin team or add people to one.", forbiddenSchema),
         404: jsonResponse("The team, organization, or a referenced member could not be found.", notFoundSchema),
       },
     }),

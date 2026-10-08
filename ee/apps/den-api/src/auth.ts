@@ -564,19 +564,16 @@ async function assertBetterAuthActorMayInvite(input: {
   actor: NonNullable<Awaited<ReturnType<typeof resolveBetterAuthActor>>>;
   role: string;
 }) {
-  const adminAssignmentDenial = organizationRoleValueIncludes(input.role, ORGANIZATION_ADMIN_ROLE)
-    ? await roleAssignmentDenial({
+  const validation = await validateInvitationRoleAssignment({
+    role: input.role,
+    permissions: input.actor.permissions,
+    decideAdminAssignment: () => roleAssignmentDenial({
       organizationId: input.actor.organizationId,
       caller: input.actor.permissions,
       callerMemberId: input.actor.memberId,
       target: null,
-      nextRole: input.role,
-    })
-    : null;
-  const validation = validateInvitationRoleAssignment({
-    role: input.role,
-    permissions: input.actor.permissions,
-    adminAssignmentDenial,
+      nextRole: ORGANIZATION_ADMIN_ROLE,
+    }),
   });
   if (!validation.ok) {
     throw new APIError(validation.error === "invalid_role" ? "BAD_REQUEST" : "FORBIDDEN", {

@@ -57,11 +57,14 @@ import {
 import { ensureDefaultDesktopPolicyForOrganization } from "./desktop-policies.js"
 import {
   ASSIGNABLE_ORGANIZATION_ROLES,
+  ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
   assignableOrganizationRole,
+  organizationRoleValueIncludes,
   shouldRevokeSessionsForRoleChange,
 } from "./organization-role-hierarchy.js"
 import { resolvePermissionsForMember } from "./permissions/resolve.js"
+import { decideMemberRemoval, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
 
@@ -114,7 +117,12 @@ type MemberRoleUpdateResult = {
   nextRole: string
   changed: boolean
   auditEventIds?: string[]
-} | MemberMutationFailure
+} | MemberMutationFailure | {
+  ok: false
+  error: "role_assignment_denied"
+  denial: RoleAssignmentDenial
+  message: string
+}
 
 type OwnershipTransferFailure = {
   ok: false
@@ -1706,6 +1714,8 @@ export async function updateOrganizationMemberRole(input: {
   organizationId: OrgId
   memberId: MemberRow["id"]
   nextRole: string
+  /** Re-decides who may assign the role against the member row locked in the transaction. Null allows. */
+  authorize?: (member: MemberRow) => RoleAssignmentDenial | null
 }): Promise<MemberRoleUpdateResult> {
   // Organization row is locked FOR UPDATE first; the change event is appended last.
   const capture = currentAuditChangeCapture(input.organizationId)
@@ -1720,6 +1730,11 @@ export async function updateOrganizationMemberRole(input: {
     const memberRow = activeRows.find((row) => row.member.id === input.memberId) ?? null
     if (!memberRow) {
       return memberNotFound()
+    }
+
+    const denial = input.authorize?.(memberRow.member) ?? null
+    if (denial) {
+      return { ok: false, error: "role_assignment_denied", denial, message: denial.message }
     }
 
     const validation = validateOrganizationMemberRoleChange({
@@ -1967,9 +1982,10 @@ export async function removeOrganizationMember(input: {
   // appends member.removed here when the request's change capture is active.
   const capture = currentAuditChangeCapture(input.organizationId)
   // Resolved before the transaction (see acceptInvitation). Fails closed for a removed or missing actor.
-  const actorMayManageAdminTeams = input.removedByOrgMemberId
-    ? (await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.removedByOrgMemberId })).has("teams.manage_admin")
-    : false
+  const actorPermissions = input.removedByOrgMemberId
+    ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.removedByOrgMemberId })
+    : null
+  const actorMayManageAdminTeams = actorPermissions?.has("teams.manage_admin") ?? false
   const removed = await withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
@@ -1997,6 +2013,17 @@ export async function removeOrganizationMember(input: {
 
     const member = memberRow.member
     const removedAt = new Date()
+
+    if (actorPermissions) {
+      const adminRemovalDenial = decideMemberRemoval({
+        actor: actorPermissions,
+        targetIsDirectAdmin: organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE),
+        targetIsPendingInvitation: member.userId === null,
+      })
+      if (adminRemovalDenial) {
+        return { ok: false, error: "forbidden", message: adminRemovalDenial.message }
+      }
+    }
 
     if (input.removedByOrgMemberId) {
       const adminTeams = await tx.select({ id: TeamTable.id }).from(TeamTable)

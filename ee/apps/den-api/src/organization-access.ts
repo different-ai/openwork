@@ -64,18 +64,19 @@ export type InvitationRoleValidationResult = {
 /**
  * Which role an invitation may carry, for the inviter's effective permissions.
  * Inviting needs `invitations.manage`; inviting an admin also needs
- * `members.update` and, with Permissions on, every Admin default permission:
- * pass the role-assignment decision for an admin invitation as
- * `adminAssignmentDenial` (permissions/team-grants.ts roleAssignmentDenial
- * with no target). Only `member` and `admin` can be assigned: owner moves by
- * ownership transfer and custom roles are removed. A legacy `super-admin`
- * value is read as admin.
+ * `members.update` and, with Permissions on, every Admin default permission.
+ * `decideAdminAssignment` evaluates that rule (permissions/team-grants.ts
+ * roleAssignmentDenial with no target and the admin role); it is required and
+ * called whenever the normalized roles include admin, so an admin invitation
+ * is never approved without the rule being evaluated. Only `member` and
+ * `admin` can be assigned: owner moves by ownership transfer and custom roles
+ * are removed. A legacy `super-admin` value is read as admin.
  */
-export function validateInvitationRoleAssignment(input: {
+export async function validateInvitationRoleAssignment(input: {
   role: string
   permissions: PermissionHolder
-  adminAssignmentDenial: RoleAssignmentDenial | null
-}): InvitationRoleValidationResult {
+  decideAdminAssignment: () => Promise<RoleAssignmentDenial | null>
+}): Promise<InvitationRoleValidationResult> {
   const requestedRoles = [...new Set(splitOrganizationRoles(input.role || ORGANIZATION_MEMBER_ROLE)
     .map((role) => normalizeOrganizationRoleName(role))
     .filter(Boolean))]
@@ -116,12 +117,13 @@ export function validateInvitationRoleAssignment(input: {
     }
   }
 
-  if (input.adminAssignmentDenial) {
+  const adminAssignmentDenial = await input.decideAdminAssignment()
+  if (adminAssignmentDenial) {
     return {
       ok: false,
       error: "forbidden",
-      message: input.adminAssignmentDenial.message,
-      ...(input.adminAssignmentDenial.requiredPermission ? { requiredPermission: input.adminAssignmentDenial.requiredPermission } : {}),
+      message: adminAssignmentDenial.message,
+      ...(adminAssignmentDenial.requiredPermission ? { requiredPermission: adminAssignmentDenial.requiredPermission } : {}),
     }
   }
 

@@ -5,7 +5,6 @@ import {
   DefaultPermissionSetsMissingError,
   getDefaultPermissionSets,
   listActiveTeamPermissionSetsForTeams,
-  listAuthoritativeTeamMemberships,
   readPermissionSetStates,
   type PermissionDatabase,
 } from "@openwork-ee/den-db/permissions"
@@ -13,12 +12,11 @@ import { MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError, type AgentErrorEnvelope } from "../agent-error-envelope.js"
 import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
-import { ORGANIZATION_ADMIN_ROLE, isEffectiveOrganizationAdmin, organizationRoleValueIncludes } from "../organization-role-hierarchy.js"
+import { ORGANIZATION_ADMIN_ROLE, organizationRoleValueIncludes } from "../organization-role-hierarchy.js"
 import { permissionDeniedResponse, type PermissionDeniedResponse } from "./check.js"
 import type { MemberPermissions } from "./effective.js"
 import {
   decideRoleAssignment,
-  firstMissingPermission,
   roleAssignmentNeedsAdminDefaultKeys,
   type RoleAssignmentDenial,
   type RoleAssignmentTarget,
@@ -101,10 +99,15 @@ export function teamGrantsForbiddenResponse(key: PermissionKey, message = TEAM_G
   return { ...permissionDeniedResponse(key), message }
 }
 
+/** The role-change target built from a stored `member.role`, e.g. a row locked inside the update transaction. */
+export function roleAssignmentTargetFromRole(memberId: string, role: string): RoleAssignmentTarget {
+  return { memberId, isDirectAdmin: organizationRoleValueIncludes(role, ORGANIZATION_ADMIN_ROLE) }
+}
+
 /**
- * The role-change target: whether its stored role names admin and whether it
- * is an effective admin (directly or through an Admin team). Null when the
- * member is not active in the organization.
+ * The role-change target: whether its stored role names admin. Admin-team
+ * membership does not count (src/permissions/role-assignment.ts). Null when
+ * the member is not active in the organization.
  */
 export async function roleAssignmentTarget(
   organizationId: OrganizationId,
@@ -115,20 +118,38 @@ export async function roleAssignmentTarget(
     .from(MemberTable)
     .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
     .limit(1)
-  if (!member) return null
-  // Same authority filter as Admin-team admin status everywhere else (orphaned SCIM projections don't count).
-  const adminTeams = await listAuthoritativeTeamMemberships(database, { organizationId, memberId, adminTeamsOnly: true })
-  return {
-    memberId,
-    isDirectAdmin: organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE),
-    isEffectiveAdmin: isEffectiveOrganizationAdmin({ directRole: member.role, adminTeamIds: adminTeams.map((team) => team.teamId) }),
+  return member ? roleAssignmentTargetFromRole(memberId, member.role) : null
+}
+
+export type RoleAssignmentDecider = (target: RoleAssignmentTarget | null) => RoleAssignmentDenial | null
+
+/**
+ * Who may assign `nextRole` (src/permissions/role-assignment.ts), as a
+ * synchronous decision over any target. The Admin default set is read up
+ * front whenever some target could need it, so the decision can be re-run on
+ * a row locked inside a transaction without further reads.
+ */
+export async function roleAssignmentDecider(input: {
+  organizationId: OrganizationId
+  caller: MemberPermissions
+  callerMemberId: string
+  nextRole: string
+  database?: PermissionDatabase
+}): Promise<RoleAssignmentDecider> {
+  const decision = {
+    caller: input.caller,
+    callerMemberId: input.callerMemberId,
+    nextIsAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_ADMIN_ROLE),
   }
+  const adminDefaultKeys = roleAssignmentNeedsAdminDefaultKeys({ ...decision, target: null })
+    ? await adminDefaultPermissionKeys(input.organizationId, input.database ?? db)
+    : null
+  return (target) => decideRoleAssignment({ ...decision, target, adminDefaultKeys })
 }
 
 /**
- * Who may assign a role (src/permissions/role-assignment.ts): reads the Admin
- * default set only when the decision needs it. `target` is null for a new
- * invitation. Null means allowed.
+ * Who may assign a role: `target` is null for a new invitation. Null means
+ * allowed.
  */
 export async function roleAssignmentDenial(input: {
   organizationId: OrganizationId
@@ -138,16 +159,8 @@ export async function roleAssignmentDenial(input: {
   nextRole: string
   database?: PermissionDatabase
 }): Promise<RoleAssignmentDenial | null> {
-  const decision = {
-    caller: input.caller,
-    callerMemberId: input.callerMemberId,
-    target: input.target,
-    nextIsAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_ADMIN_ROLE),
-  }
-  const adminDefaultKeys = roleAssignmentNeedsAdminDefaultKeys(decision)
-    ? await adminDefaultPermissionKeys(input.organizationId, input.database ?? db)
-    : null
-  return decideRoleAssignment({ ...decision, adminDefaultKeys })
+  const decide = await roleAssignmentDecider(input)
+  return decide(input.target)
 }
 
 export type RoleAssignmentDeniedResponse = PermissionDeniedResponse | (AgentErrorEnvelope & { error: "forbidden" })

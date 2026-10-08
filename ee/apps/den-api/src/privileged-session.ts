@@ -57,8 +57,14 @@ export type FreshPrivilegedSessionResult = { ok: true } | { ok: false; response:
 /**
  * The recent sign-in check shared by sensitive permissions and the legacy
  * ensureOrganizationAdmin / ensureOrganizationSuperAdmin helpers. API keys
- * skip it; every other caller (sessions, and MCP principals, which carry no
- * session) needs a session created within `maxAgeMs`.
+ * skip it; every other caller needs a session created within `maxAgeMs`.
+ *
+ * MCP principals pass: the internal MCP re-entry (session.ts, session id
+ * "mcp_internal") synthesizes a session created at request time, exactly as
+ * before Permissions existed, and MCP tools that change members, teams,
+ * invitations and organization settings rely on that. Routes that must never
+ * be reachable from MCP opt out with `"x-mcp": false` (src/mcp/policy.ts)
+ * rather than relying on this check.
  */
 export function checkFreshPrivilegedSession(
   input: PrivilegedSessionInput,

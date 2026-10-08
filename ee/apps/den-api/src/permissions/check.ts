@@ -48,8 +48,10 @@ export function permissionFailureHeaders(response: PermissionCheckFailure): Reco
 
 /**
  * The one permission check: the key must be held, and a sensitive key also
- * needs a recent sign-in (API keys skip it; MCP principals carry no session
- * and must step up), exactly like ensureOrganizationAdmin / ensureOrganizationSuperAdmin.
+ * needs a recent sign-in, exactly like ensureOrganizationAdmin /
+ * ensureOrganizationSuperAdmin. API keys skip the sign-in check, and MCP
+ * principals pass it because their synthesized session is created per request
+ * (see checkFreshPrivilegedSession); MCP exposure is limited by src/mcp/policy.ts.
  */
 export function checkMemberPermission(
   request: PrivilegedSessionInput,

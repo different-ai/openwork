@@ -29,7 +29,7 @@ import {
   type PermissionKey,
 } from "@openwork/types/den/permissions"
 import type { Hono } from "hono"
-import { describeRoute } from "hono-openapi"
+import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { appendDomainChanges, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
@@ -82,6 +82,8 @@ type PermissionSetRow = typeof PermissionSetTable.$inferSelect
 type TeamId = typeof TeamTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 type PermissionSetKind = "member_default" | "admin_default" | "team"
+type NonMcpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": false }
+const describeNonMcpRoute = (options: NonMcpDescribeRouteOptions) => describeRoute(options)
 
 const MAX_REQUESTED_CHANGES = 500
 const DEFAULT_HISTORY_LIMIT = 50
@@ -638,8 +640,9 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
 
   app.post(
     "/v1/permissions/sets",
-    describeRoute({
+    describeNonMcpRoute({
       tags: ["Permissions"],
+      "x-mcp": false,
       summary: "Create team permissions",
       description: "Creates the permission set for one team, named \"<team name> Permissions\" (fixed from then on), links it to the team and stores its initial permissions. A team can have one active set, and the team can't be changed later. You can only turn on permissions you have yourself. Requires permissions.manage, a recent sign-in, and the Permissions feature.",
       responses: {
@@ -794,8 +797,9 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
 
   app.put(
     "/v1/permissions/sets/:permissionSetId/permissions",
-    describeRoute({
+    describeNonMcpRoute({
       tags: ["Permissions"],
+      "x-mcp": false,
       summary: "Change permissions in a set",
       description: "Turns permissions on (allow) or off (deny) in one set. Only keys whose status actually changes are recorded; every change is kept in the set's history. Only the owner and admins can change Admin permissions. Permissions locked on for admins can't be turned off in Admin permissions, you can only turn on permissions you have yourself (except turning a permission back on in Member or Admin permissions where it is on by default), and archived sets can't be changed. The linked team can't be changed. Returns the set's new state. Requires permissions.manage, a recent sign-in, and the Permissions feature.",
       responses: {
@@ -946,8 +950,9 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
 
   app.delete(
     "/v1/permissions/sets/:permissionSetId",
-    describeRoute({
+    describeNonMcpRoute({
       tags: ["Permissions"],
+      "x-mcp": false,
       summary: "Delete team permissions",
       description: "Archives a team permission set and unlinks it from its team, so its permissions stop applying to the team's members. The set and its history are kept. Member and Admin permissions can't be deleted. Requires permissions.manage, a recent sign-in, and the Permissions feature.",
       responses: {
