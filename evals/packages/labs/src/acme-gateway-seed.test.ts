@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { ACME_MODEL, ACME_REPLY, seedAcmeGateway, startAcmeUpstream } from "../../../../worlds/lib/acme-gateway.ts";
+import { readFile } from "node:fs/promises";
+import { ACME_MODEL, ACME_REPLY, record, seedAcmeGateway, startAcmeUpstream } from "../../../../worlds/lib/acme-gateway.ts";
 import type { DenSession } from "../../behaviors/src/den.ts";
 
 const mocks = vi.hoisted(() => ({ denFetch: vi.fn() }));
@@ -14,6 +15,7 @@ vi.mock("../../../../packages/world/src/ledger.ts", () => ({ trackResource: vi.f
 const catalog = new Map([
   ["claude-haiku-4-5", "Claude Haiku 4.5 (latest)"],
   ["claude-haiku-4-5-20251001", "Claude Haiku 4.5"],
+  ["claude-haiku-5-5", "Claude Haiku 5.5"],
 ]);
 const session: DenSession = {
   apiUrl: "http://fixture.test", webUrl: "http://fixture.test", token: "fixture-token",
@@ -25,6 +27,15 @@ function answer(status: number, body: unknown) {
 }
 
 beforeEach(() => { mocks.denFetch.mockReset(); });
+
+it("the seeded identity exists in the generated provider catalog snapshot", async () => {
+  const snapshot: unknown = JSON.parse(await readFile(new URL("../../../../ee/apps/gateway/src/models/base.json", import.meta.url), "utf8"));
+  if (!record(snapshot) || !record(snapshot.anthropic) || !record(snapshot.anthropic.models)) {
+    throw new Error("Missing Anthropic catalog snapshot");
+  }
+  const model = snapshot.anthropic.models[ACME_MODEL];
+  expect(record(model) && model.id === ACME_MODEL).toBe(true);
+});
 
 it("creates and connects the seeded provider using a catalog-supported model", async () => {
   mocks.denFetch.mockImplementation(async (_session: DenSession, path: string, options?: RequestInit) => {

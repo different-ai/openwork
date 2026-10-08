@@ -14,7 +14,7 @@ import { defaultDaytonaExec, execInSandbox, startScriptOnSandbox } from "../../e
 import { trackResource } from "../../packages/world/src/ledger.ts";
 
 // Use a catalog-supported alias; inventing a version/date makes Den reject the provider.
-export const ACME_MODEL = "claude-haiku-4-5";
+export const ACME_MODEL = "claude-haiku-5-5";
 export const ACME_REPLY = "Acme AI Gateway is working.";
 export const ACME_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 

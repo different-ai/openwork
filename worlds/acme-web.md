@@ -29,7 +29,7 @@ reply through the gateway. The verification conversation is retained for
 inspection. This is runtime-path verification, not proof of browser sign-in.
 
 Open `webUrl`, sign in to `denWeb` as `alex@acme.test`, and select **Acme AI
-Gateway / Claude Haiku 4.5 (latest)**. Retrieve the fixture password privately:
+Gateway / Claude Haiku 5.5**. Retrieve the fixture password privately:
 
 ```sh
 pnpm world outputs acme-web --stage gateway-demo --reveal

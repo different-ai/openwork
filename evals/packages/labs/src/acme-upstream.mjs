@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 const host = process.env.HOST ?? "127.0.0.1";
 const port = Number(process.env.PORT ?? 3990);
 const key = process.env.ACME_UPSTREAM_KEY ?? "";
-const model = process.env.ACME_MODEL ?? "claude-haiku-4-5";
+const model = process.env.ACME_MODEL ?? "claude-haiku-5-5";
 const reply = process.env.ACME_REPLY ?? "Acme AI Gateway is working.";
 if (!key) throw new Error("ACME_UPSTREAM_KEY is required");
 
