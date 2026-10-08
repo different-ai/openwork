@@ -47,7 +47,7 @@ import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBo
 import { env } from "./env.js"
 import { respondBeforeUpstream } from "./early-response.js"
 import type { EarlyStreamProtocol } from "./early-response.js"
-import { createRequestLogRecorder } from "./request-log.js"
+import { createRequestLogRecorder, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
 import { checkGatewayUsage, type CheckGatewayUsage } from "./usage-limits.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage } from "./usage/anthropic-messages.js"
@@ -988,7 +988,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
 
     if (await recorder.whenStarted?.() === false) {
-      return reject(gatewayError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable."), "request_log_unavailable", "Request log unavailable")
+      return reject(gatewayError(503, "request_log_unavailable", REQUEST_LOG_UNAVAILABLE_MESSAGE), "request_log_unavailable", "Request log unavailable")
     }
 
     if (usageRejection) return reject(usageRejection, usageRejection.headers.get("x-openwork-error-code") ?? "openwork_gateway_accounting_unavailable", "Gateway usage admission rejected")

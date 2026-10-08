@@ -31,7 +31,7 @@ import { completeChatResponse, inferenceError, readResponseJson, relayChatStream
 import { gatewayModelEndpoints, gatewayModelsPath, registerGatewayRoutes } from "./gateway.js"
 import type { GatewayDependencies } from "./gateway.js"
 import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
-import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
+import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
 import type { FreeMemberHandler } from "./free/member/handler.js"
@@ -596,6 +596,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         stream: input.stream,
         requestBytes: input.requestBytes,
         startedAt,
+        signal: c.req.raw.signal,
       })
     }
     const reject = (response: Response, errorCode: string) => {
@@ -658,7 +659,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
     startRecorder({ ...prepared, requestBytes: Buffer.byteLength(JSON.stringify(prepared.body)) })
     if (await recorder.whenStarted?.() === false) {
-      return reject(openAiError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable."), "request_log_unavailable")
+      return reject(openAiError(503, "request_log_unavailable", REQUEST_LOG_UNAVAILABLE_MESSAGE), "request_log_unavailable")
     }
 
     const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
