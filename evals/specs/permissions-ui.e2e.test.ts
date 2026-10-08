@@ -56,7 +56,7 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await owner.click({ role: "button", label: "Team" });
     await owner.click({ role: "option", label: "Support" });
     await owner.see({ testId: "new-team-permissions-name" }, { text: /Saved as “Support Permissions”/ });
-    await owner.click({ role: "checkbox", label: /^View permissions$/ });
+    await owner.click({ role: "switch", label: /^View permissions$/ });
     await owner.click({ role: "button", label: "Create team permissions" });
     await owner.see({ role: "heading", label: "Support Permissions" }, { timeoutMs: 30_000 });
     const list = await probe.api(world.owner, "/v1/permissions/sets", scoped);
@@ -75,10 +75,10 @@ test("an owner gives the Support team its own permissions, and only Support memb
   await step("the owner also allows View billing and sees it waiting to be saved", async () => {
     // Let the "Created" toast go so the unsaved-changes bar is what the screenshot shows.
     await ownerProbe.eventually(() => ownerProbe.dom('[data-testid="den-toast"]'), { within: 15_000, label: "created toast dismissed", until: (value) => value.elements.length === 0 });
-    await owner.click({ role: "checkbox", label: /^View billing$/ });
+    await owner.click({ role: "switch", label: /^View billing$/ });
     await owner.see({ testId: "permission-set-save-bar" }, { text: /1 unsaved change/ });
     const pending = await ownerProbe.dom('[data-permission-key="billing.view"][data-status="allow"]');
-    evidence.recordAssertionEvidence("The change is held until saved", `save bar shows 1 unsaved change; View billing row checked: ${pending.elements.length === 1}`, pending.elements.length === 1);
+    evidence.recordAssertionEvidence("The change is held until saved", `save bar shows 1 unsaved change; View billing toggle on: ${pending.elements.length === 1}`, pending.elements.length === 1);
     await owner.screenshot();
   });
 
@@ -101,9 +101,22 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await owner.click({ role: "link", label: /^Admin permissions/ });
     await owner.see({ role: "heading", label: "Admin permissions" }, { timeoutMs: 30_000 });
     await owner.see({ text: "Always on for admins" });
-    const locked = await ownerProbe.dom('[data-permission-key="permissions.manage"][data-locked="true"][data-status="allow"] input:checked:disabled');
-    evidence.recordAssertionEvidence("Manage permissions is checked and can't be turned off for admins", `locked checked rows: ${locked.elements.length}`, locked.elements.length === 1);
+    const locked = await ownerProbe.dom('[data-permission-key="permissions.manage"][data-locked="true"][data-status="allow"] [role="switch"][aria-checked="true"]:disabled');
+    evidence.recordAssertionEvidence("Manage permissions is on and can't be turned off for admins", `locked rows that are on: ${locked.elements.length}`, locked.elements.length === 1);
     expect(locked.elements.length).toBe(1);
+    await owner.screenshot();
+  });
+
+  await step("searching Admin permissions for \"billing\" shows only the billing permissions, and Allow all is on", async () => {
+    await owner.type({ testId: "permission-search" }, "billing");
+    await owner.see({ testId: "permission-area-billing" });
+    await owner.notSee({ testId: "permission-area-members" });
+    const rows = await ownerProbe.dom('[data-testid="permission-row"]');
+    const billingRows = await ownerProbe.dom('[data-testid="permission-row"][data-permission-key^="billing."]');
+    const allowAll = await ownerProbe.dom('[data-testid="permission-area-allow-all-billing"][aria-checked="true"]');
+    const ok = rows.elements.length === 2 && billingRows.elements.length === 2 && allowAll.elements.length === 1;
+    evidence.recordAssertionEvidence("Search filters by title or description; the area's Allow all reflects that every billing permission is on", `rows shown: ${rows.elements.length} (billing: ${billingRows.elements.length}); Allow all on: ${allowAll.elements.length === 1}`, ok);
+    expect(ok).toBe(true);
     await owner.screenshot();
   });
 

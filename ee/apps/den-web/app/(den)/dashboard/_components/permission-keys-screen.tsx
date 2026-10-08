@@ -9,7 +9,6 @@ import { getPermissionKeyRoute, getPermissionKeysRoute, getPermissionSetRoute, g
 import { PermissionsRequestError, usePermissionKeyStatus } from "./permissions-data";
 import {
   PermissionAreaSection,
-  PermissionDescription,
   PermissionRowsSkeleton,
   PermissionStatusLabel,
   PermissionsAccessState,
@@ -35,8 +34,10 @@ export function PermissionKeysScreen() {
               const definition = getPermissionDefinition(key);
               return (
                 <Link key={key} href={getPermissionKeyRoute(permissions.orgSlug, key)} className={rowClass} data-testid="permission-key-row" data-permission-key={key}>
-                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-gray-900">{definition.label}</span>
-                  {definition.sensitive ? <span className="shrink-0 text-[12px] text-gray-500">Needs a recent sign-in</span> : null}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-medium text-gray-900">{definition.label}</span>
+                    {definition.description ? <span className="mt-0.5 block text-[12px] leading-4 text-gray-500">{definition.description}</span> : null}
+                  </span>
                   <ChevronRight className="size-4 shrink-0 text-gray-300 transition-colors group-hover:text-gray-500" aria-hidden="true" strokeWidth={1.5} />
                 </Link>
               );
@@ -66,9 +67,12 @@ export function PermissionKeyScreen({ permissionKey }: { permissionKey: string }
 
   return (
     <PermissionsPage
-      title={<span className="inline-flex items-center gap-1">{title}{isPermissionKey(permissionKey) ? <PermissionDescription permissionKey={permissionKey} /> : null}</span>}
+      title={title}
       back={back}
-      caption={query.data ? `Allowed in ${allowedCount} of ${sets.length}` : undefined}
+      caption={[
+        isPermissionKey(permissionKey) ? getPermissionDefinition(permissionKey).description : undefined,
+        query.data ? `Allowed in ${allowedCount} of ${sets.length}` : undefined,
+      ].filter(Boolean).join(" · ") || undefined}
       testId="permission-key"
     >
       {query.isError ? (

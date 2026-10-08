@@ -213,8 +213,12 @@ function PermissionSetEditor({ ready, set, update }: { ready: ReadyAccess; set: 
 
   return (
     <div className="flex flex-col gap-4">
-      {readOnlyReason ? <DenNotice tone="neutral" icon={LockKeyhole} message={<span id="permission-set-read-only">{readOnlyReason}</span>} /> : null}
-      <PermissionEditor rows={rows} onToggle={toggle} readOnlyReasonId={readOnlyReason ? "permission-set-read-only" : undefined} />
+      <PermissionEditor
+        rows={rows}
+        onToggle={toggle}
+        readOnlyReasonId={readOnlyReason ? "permission-set-read-only" : undefined}
+        beforeList={readOnlyReason ? <DenNotice tone="neutral" icon={LockKeyhole} message={<span id="permission-set-read-only">{readOnlyReason}</span>} /> : null}
+      />
       {update.error ? <DenNotice tone="error" message={update.error.message} /> : null}
       {changes.length > 0 ? (
         <DenStickyActionBar testId="permission-set-save-bar" summary={<span>{plural(changes.length, "unsaved change")}</span>}>

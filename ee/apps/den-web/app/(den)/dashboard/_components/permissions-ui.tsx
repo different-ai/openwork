@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { ArrowLeft, Info, LockKeyhole } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ArrowLeft, LockKeyhole, Search } from "lucide-react";
 import {
   PERMISSION_AREAS,
   PERMISSION_KEYS,
@@ -11,10 +11,11 @@ import {
   type PermissionKey,
 } from "@openwork/types/den/permissions";
 import { buttonVariants } from "../../_components/ui/button";
+import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../_components/ui/tooltip";
+import { DenSwitch } from "../../_components/ui/switch";
 import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import type { PermissionStatus } from "./permissions-data";
@@ -97,10 +98,9 @@ export function PermissionRowsSkeleton({ rows = 6, label = "Loading permissions"
       <DenSkeleton className="mb-2 h-3 w-32" />
       {Array.from({ length: rows }, (_, index) => (
         <div key={index} className="flex min-h-11 items-center gap-3 border-b border-gray-100 py-2" aria-hidden="true">
-          <DenSkeleton className="size-4 shrink-0" />
           <DenSkeleton className="h-3 w-56 max-w-full" />
           <span className="flex-1" />
-          <DenSkeleton className="h-3 w-16" />
+          <DenSkeleton className="h-5 w-9 shrink-0 rounded-full" />
         </div>
       ))}
     </div>
@@ -151,20 +151,33 @@ export function PermissionAreaSection({ label, meta, children, testId }: { label
   );
 }
 
-/** Description of a permission, one tab stop, in a tooltip (DESIGN.md P2). */
-export function PermissionDescription({ permissionKey }: { permissionKey: PermissionKey }) {
+/** The permission's description, shown under its title. */
+export function PermissionDescription({ permissionKey, id }: { permissionKey: PermissionKey; id?: string }) {
   const definition = getPermissionDefinition(permissionKey);
   if (!definition.description) return null;
+  return <p id={id} className="mt-0.5 text-[12px] leading-4 text-gray-500">{definition.description}</p>;
+}
+
+/** Whether a permission's title or description contains the search text. */
+export function permissionMatchesSearch(key: PermissionKey, search: string): boolean {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return true;
+  const definition = getPermissionDefinition(key);
+  return definition.label.toLowerCase().includes(needle) || (definition.description ?? "").toLowerCase().includes(needle);
+}
+
+/** Search field that filters permissions by title or description. */
+export function PermissionSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<button type="button" aria-label={`About ${definition.label}`} />}
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-700 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-gray-400"
-      >
-        <Info className="size-3.5" aria-hidden="true" strokeWidth={1.5} />
-      </TooltipTrigger>
-      <TooltipContent>{definition.description}</TooltipContent>
-    </Tooltip>
+    <DenInput
+      type="search"
+      icon={Search}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder="Search permissions"
+      aria-label="Search permissions"
+      data-testid="permission-search"
+    />
   );
 }
 
@@ -174,36 +187,81 @@ export type PermissionEditorRow = {
   status: PermissionStatus;
   /** Status in the editor, including unsaved changes. */
   draft: PermissionStatus;
-  /** Why this checkbox can't be changed, or null when it can. */
+  /** Why this toggle can't be changed, or null when it can. */
   lockedReason: string | null;
 };
 
 /**
- * Permissions grouped by area with one labelled checkbox each. Locked rows stay
- * visible, checked or not, with the reason (DESIGN.md P4, C5).
+ * Permissions grouped by area with one labelled toggle each, a search over
+ * titles and descriptions, and an "Allow all" toggle per area. Locked rows stay
+ * visible, on or off, with the reason (DESIGN.md P4, C5).
  */
-export function PermissionEditor({ rows, onToggle, readOnlyReasonId }: {
+export function PermissionEditor({ rows, onToggle, readOnlyReasonId, beforeList }: {
   rows: PermissionEditorRow[];
   onToggle: (key: PermissionKey, next: PermissionStatus) => void;
-  /** When set, every checkbox is read only and described by this element (the page's read-only notice). */
+  /** When set, every toggle is read only and described by this element (the page's read-only notice). */
   readOnlyReasonId?: string;
+  /** Rendered between the search field and the list, e.g. a read-only notice. */
+  beforeList?: ReactNode;
 }) {
+  const [search, setSearch] = useState("");
   const byKey = new Map(rows.map((row) => [row.key, row]));
-  const areas = permissionAreas(new Set(byKey.keys()));
+  const visible = new Set(rows.filter((row) => permissionMatchesSearch(row.key, search)).map((row) => row.key));
+  const areas = permissionAreas(visible);
+  const readOnly = readOnlyReasonId !== undefined;
   return (
-    <div className="flex flex-col gap-6" data-testid="permission-editor">
-      {areas.map((area) => {
-        const areaRows = area.keys.flatMap((key) => {
-          const row = byKey.get(key);
-          return row ? [row] : [];
-        });
-        const allowed = areaRows.filter((row) => row.draft === "allow").length;
-        return (
-          <PermissionAreaSection key={area.key} label={area.label} meta={`${allowed} of ${areaRows.length} allowed`} testId={`permission-area-${area.key}`}>
-            {areaRows.map((row) => <PermissionEditorRowView key={row.key} row={row} onToggle={onToggle} readOnlyReasonId={readOnlyReasonId} />)}
-          </PermissionAreaSection>
-        );
-      })}
+    <div className="flex flex-col gap-4" data-testid="permission-editor">
+      <PermissionSearch value={search} onChange={setSearch} />
+      {beforeList}
+      {areas.length === 0 ? (
+        <p className="py-3 text-[13px] text-gray-500" data-testid="permission-search-empty">No permissions match “{search.trim()}”.</p>
+      ) : (
+        <div className="flex flex-col gap-6">
+          {areas.map((area) => {
+            const areaRows = area.keys.flatMap((key) => {
+              const row = byKey.get(key);
+              return row ? [row] : [];
+            });
+            const totalInArea = rows.filter((row) => getPermissionDefinition(row.key).area === area.key);
+            const allowed = totalInArea.filter((row) => row.draft === "allow").length;
+            // "Allow all" acts on the rows shown (all of them unless a search is active) that can change.
+            const toggleable = readOnly ? [] : areaRows.filter((row) => row.lockedReason === null);
+            // With nothing to change (locked or read only), reflect whether everything shown is allowed.
+            const allOn = (toggleable.length > 0 ? toggleable : areaRows).every((row) => row.draft === "allow");
+            const setAll = (next: boolean) => {
+              for (const row of toggleable) {
+                const status: PermissionStatus = next ? "allow" : "deny";
+                if (row.draft !== status) onToggle(row.key, status);
+              }
+            };
+            return (
+              <PermissionAreaSection
+                key={area.key}
+                label={area.label}
+                meta={(
+                  <span className="flex items-center gap-3">
+                    <span>{`${allowed} of ${totalInArea.length} allowed`}</span>
+                    <span className="flex items-center gap-2 text-gray-700">
+                      <span aria-hidden="true">Allow all</span>
+                      <DenSwitch
+                        size="sm"
+                        checked={allOn}
+                        disabled={toggleable.length === 0}
+                        onChange={setAll}
+                        aria-label={`Allow all ${area.label} permissions`}
+                        testId={`permission-area-allow-all-${area.key}`}
+                      />
+                    </span>
+                  </span>
+                )}
+                testId={`permission-area-${area.key}`}
+              >
+                {areaRows.map((row) => <PermissionEditorRowView key={row.key} row={row} onToggle={onToggle} readOnlyReasonId={readOnlyReasonId} />)}
+              </PermissionAreaSection>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -214,36 +272,34 @@ function PermissionEditorRowView({ row, onToggle, readOnlyReasonId }: {
   readOnlyReasonId?: string;
 }) {
   const definition = getPermissionDefinition(row.key);
-  const inputId = `permission-${row.key.replace(/[^a-z0-9_]/g, "-")}`;
-  const reasonId = `${inputId}-reason`;
+  const baseId = `permission-${row.key.replace(/[^a-z0-9_]/g, "-")}`;
+  const reasonId = `${baseId}-reason`;
+  const descriptionId = `${baseId}-description`;
   const changed = row.draft !== row.status;
   const locked = row.lockedReason !== null;
   const disabled = locked || readOnlyReasonId !== undefined;
+  const describedBy = [definition.description ? descriptionId : null, locked ? reasonId : readOnlyReasonId ?? null].filter(Boolean).join(" ") || undefined;
   return (
-    <div className="flex min-h-11 items-center gap-3 py-1.5" data-testid="permission-row" data-permission-key={row.key} data-status={row.draft} data-locked={disabled ? "true" : "false"}>
-      <input
-        id={inputId}
-        type="checkbox"
-        checked={row.draft === "allow"}
-        disabled={disabled}
-        aria-describedby={locked ? reasonId : readOnlyReasonId}
-        onChange={(event) => onToggle(row.key, event.target.checked ? "allow" : "deny")}
-        className="size-4 shrink-0 accent-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed"
-      />
-      <label htmlFor={inputId} className={`min-w-0 truncate text-[13px] font-medium ${disabled ? "text-gray-500" : "cursor-pointer text-gray-900"}`}>
-        {definition.label}
-      </label>
-      <PermissionDescription permissionKey={row.key} />
-      <span className="flex-1" />
+    <div className="flex min-h-11 items-center gap-3 py-2" data-testid="permission-row" data-permission-key={row.key} data-status={row.draft} data-locked={disabled ? "true" : "false"}>
+      <div className="min-w-0 flex-1">
+        <p className={`text-[13px] font-medium ${disabled ? "text-gray-500" : "text-gray-900"}`}>{definition.label}</p>
+        <PermissionDescription permissionKey={row.key} id={descriptionId} />
+      </div>
       {changed ? <span className="shrink-0 text-[12px] font-medium text-gray-700">Not saved</span> : null}
       {locked ? (
         <span id={reasonId} className="inline-flex shrink-0 items-center gap-1 text-[12px] text-gray-500">
           <LockKeyhole className="size-3.5" aria-hidden="true" strokeWidth={1.5} />
           {row.lockedReason}
         </span>
-      ) : definition.sensitive ? (
-        <span className="shrink-0 text-[12px] text-gray-500">Needs a recent sign-in</span>
       ) : null}
+      <DenSwitch
+        size="sm"
+        checked={row.draft === "allow"}
+        disabled={disabled}
+        onChange={(next) => onToggle(row.key, next ? "allow" : "deny")}
+        aria-label={definition.label}
+        aria-describedby={describedBy}
+      />
     </div>
   );
 }
