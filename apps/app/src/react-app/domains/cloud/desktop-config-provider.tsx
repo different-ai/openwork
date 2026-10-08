@@ -250,6 +250,12 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     return () => window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, syncBrowserControl);
   }, [config.allowBuiltInExtensions]);
 
+  // The built-in browser applies the member's website rules to every page it opens.
+  const websiteRules = useMemo(() => (config.rules ?? []).filter((rule) => rule.action === "webfetch"), [config.rules]);
+  useEffect(() => {
+    void window.__OPENWORK_ELECTRON__?.browser?.setPolicyRules?.(websiteRules);
+  }, [websiteRules]);
+
   const applyDesktopConfigActions = useCallback((latestConfig: DenDesktopConfig) => {
     const normalizedConfig = desktopCapabilityConfig(normalizeDenDesktopConfig(latestConfig));
     const actions = getDesktopConfigActions({

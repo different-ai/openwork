@@ -1,10 +1,16 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { teamRules, teamRulesChat, teamRulesEditor, type TeamRule } from "../worlds/team-rules.ts";
+import { randomUUID } from "node:crypto";
+import { teamRules, teamRulesChat, teamRulesEditor, teamWebsiteRulesBrowser, type TeamRule } from "../worlds/team-rules.ts";
 
 const test = spec.world(teamRules, { timeout: 600_000, resources: { surfaces: [], services: ["den"] } });
 const editorTest = spec.world(teamRulesEditor, { timeout: 900_000, resources: { surfaces: ["web"], services: ["den"] } });
 const chatTest = spec.world(teamRulesChat, { timeout: 900_000, resources: { surfaces: ["appWeb"], services: ["den", "mock"] } });
+const browserTest = spec.world(teamWebsiteRulesBrowser, {
+  timeout: 600_000,
+  resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "Website rules apply to the desktop app's built-in browser, which exists only in Electron." },
+  needs: { placement: "local" },
+});
 
 const contractorRules: TeamRule[] = [
   { action: "shell", resource: "*", effect: "deny" },
@@ -185,5 +191,49 @@ chatTest("a contractor's agent works within the Contractors rules for commands, 
     expect(server).not.toBe("disabled");
     await morgan.user.see({ text: "I tried the team notes skill." }, { timeoutMs: 60_000 });
     await morgan.user.screenshot();
+  });
+});
+
+browserTest("a contractor's built-in browser opens only the websites the Contractors rules allow", async ({ world, user, probe, step, evidence }) => {
+  const sessionId = world.session.sessionId;
+  const pageRequests = async () => (await probe.browserFixtureState(world.pageOrigin)).pageRequests.map((request) => request.path);
+
+  await step("given the Contractors rules allow only the project briefing page", async () => {
+    const received = (await world.receivedRules("riley")).filter((rule) => rule.action === "webfetch");
+    await user.see("composer", { editable: true });
+    evidence.recordAssertionEvidence("Riley's website rules", received.map((rule) => `${String(rule.effect)} ${String(rule.resource)}`).join("; "), received.length === 2);
+    expect(received).toHaveLength(2);
+    await user.screenshot();
+  });
+
+  await step("when the agent tries to open the project home page, the browser refuses before loading it", async () => {
+    const prompt = `Open the project home page at ${world.pageOrigin}/. ${randomUUID()}`;
+    const reply = `I could not open the home page. ${randomUUID()}`;
+    await world.prepareTurn(prompt, reply, [{ tool: "browser_open", arguments: { url: `${world.pageOrigin}/` } }]);
+    await user.type("composer", prompt);
+    await user.click("Run task");
+    await user.see({ text: reply }, { timeoutMs: 90_000 });
+    const requests = await pageRequests();
+    const tabs = (await probe.browserState()).tabs.filter((tab) => tab.ownerSessionId === sessionId);
+    evidence.recordAssertionEvidence("blocked before loading", `page requests: ${JSON.stringify(requests)}; tabs for this conversation: ${tabs.length}`, !requests.includes("/") && tabs.length === 0);
+    expect(requests).not.toContain("/");
+    expect(tabs).toHaveLength(0);
+    await user.screenshot();
+  });
+
+  await step("after: the agent opens the briefing page the rules allow", async () => {
+    const prompt = `Open the project briefing at ${world.pageOrigin}/briefing. ${randomUUID()}`;
+    const reply = `The briefing is open. ${randomUUID()}`;
+    await world.prepareTurn(prompt, reply, [{ tool: "browser_open", arguments: { url: `${world.pageOrigin}/briefing` } }]);
+    await user.type("composer", prompt);
+    await user.click("Run task");
+    await user.see({ text: "Allow browser control for this thread?" }, { timeoutMs: 60_000 });
+    await user.click({ role: "button", label: "Allow for this thread" });
+    await user.see({ text: reply }, { timeoutMs: 90_000 });
+    const requests = await probe.eventually(pageRequests, { within: 15_000, label: "the fixture receives the briefing request", until: (paths) => paths.includes("/briefing") });
+    evidence.recordAssertionEvidence("allowed page loads", `page requests: ${JSON.stringify(requests)}`, requests.includes("/briefing") && !requests.includes("/"));
+    expect(requests).toContain("/briefing");
+    expect(requests).not.toContain("/");
+    await user.screenshot();
   });
 });

@@ -1,3 +1,4 @@
+import type { SourcedPolicyRule } from "@openwork/types/den/policy-rules";
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
 
 export type * from "./desktop-types";
@@ -205,6 +206,8 @@ declare global {
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;
+        /** The member's team rules for websites, applied to built-in browser loads. */
+        setPolicyRules?: (rules: SourcedPolicyRule[]) => Promise<boolean>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
