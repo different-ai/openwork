@@ -28,7 +28,10 @@ jobs:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
+    # Only for the automation App's key (release tags and dev may use it).
+    environment: warden-clearance
     env:
+      HAS_AUTOMATION_APP: ${{ secrets.AUTOMATION_PRIVATE_KEY != '' }}
       BASE_BRANCH: dev
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       BRANCH_NAME: automation/changelog-${{ github.event.release.tag_name || inputs.tag }}-${{ github.run_id }}
@@ -62,6 +65,12 @@ jobs:
           else
             echo "documented=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Setup Node
+        if: steps.guard.outputs.stable == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Gather release facts
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
@@ -112,7 +121,14 @@ jobs:
             process.stdout.write(month + " " + day + suffix + "\tchangelog/release-tracker-" + date + ".md\n");
           ' "$PUBLISHED_AT")
 
-          git log --no-merges --format='%h %s' "$PREV".."$TAG" | head -400 > /tmp/commits.txt
+          # PR descriptions, sorted by who they affect, are the agent's source of
+          # truth. The file lives under .opencode/ so the agent can read it and
+          # the churn cleanup below removes it before the output check.
+          FACTS_MD=".opencode/release-facts/$TAG.md"
+          mkdir -p .opencode/release-facts
+          node scripts/release/collect-release-prs.mjs "$PREV" "$TAG" \
+            --json /tmp/release-facts.json --markdown "$FACTS_MD"
+
           cat > /tmp/changelog_prompt.txt <<PROMPT_EOF
           Document OpenWork release $TAG in the changelog. Use these facts exactly; do not invent or recompute any of them.
 
@@ -124,17 +140,9 @@ jobs:
           - tracker file: $TRACKER_FILE
           - loc line (copy verbatim into the tracker): $LOC_LINE
           - compare url: https://github.com/different-ai/openwork/compare/$PREV...$TAG
-
-          Commits between $PREV and $TAG (hash subject):
+          - release facts file (read this first): $FACTS_MD
           PROMPT_EOF
-          cat /tmp/commits.txt >> /tmp/changelog_prompt.txt
           echo "PREV=$PREV" >> "$GITHUB_ENV"
-
-      - name: Setup Node
-        if: steps.guard.outputs.stable == 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
 
       - name: Install opencode
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
@@ -146,7 +154,15 @@ jobs:
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: opencode run --agent changelog "$(cat /tmp/changelog_prompt.txt)"
+        # The agent pins openai/gpt-6-luna. If that model is unavailable to this
+        # key, discard any partial output and retry once on gpt-5.6-luna.
+        run: |
+          if ! opencode run --agent changelog "$(cat /tmp/changelog_prompt.txt)"; then
+            echo "::warning::Changelog agent failed on its pinned model; retrying with openai/gpt-5.6-luna."
+            git checkout -- packages/docs/changelog.mdx changelog/
+            git clean -fd changelog/
+            opencode run --agent changelog -m openai/gpt-5.6-luna "$(cat /tmp/changelog_prompt.txt)"
+          fi
 
       - name: Discard opencode runtime churn
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
@@ -156,7 +172,7 @@ jobs:
 
       - name: Verify generated output
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
-        run: node scripts/check-changelog-output.mjs "$TAG" "$PREV"
+        run: node scripts/check-changelog-output.mjs "$TAG" "$PREV" --facts /tmp/release-facts.json
 
       - name: Commit release notes
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
@@ -179,18 +195,34 @@ jobs:
           git add packages/docs/changelog.mdx changelog/
           git commit -S -m "docs(changelog): release notes for $TAG"
 
+      # Opened by the automation App once it is configured (AUTOMATION_APP_ID
+      # and AUTOMATION_PRIVATE_KEY in the warden-clearance environment), so the
+      # repository can turn off "Allow GitHub Actions to create and approve
+      # pull requests". Not diff-warden: it approves this PR, and an App can't
+      # approve its own. Falls back to GITHUB_TOKEN until then.
+      - name: Mint PR token
+        id: automation
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false' && env.HAS_AUTOMATION_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: read
+
       - name: Open pull request
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PR_TOKEN: ${{ steps.automation.outputs.token || github.token }}
         run: |
           set -euo pipefail
 
           git push --set-upstream origin "$BRANCH_NAME"
           printf '%s\n\n%s\n' \
-            "These release notes were auto-generated from the commits between \`$PREV\` and \`$TAG\` by the changelog agent and verified by \`scripts/check-changelog-output.mjs\`." \
+            "These release notes were auto-generated from the pull request descriptions between \`$PREV\` and \`$TAG\` by the changelog agent and verified by \`scripts/check-changelog-output.mjs\`. The tracker's Pull requests table records why each change was included or left out." \
             "This is a docs-only change with no runtime surface." > /tmp/pr_body.txt
-          pr_url="$(gh pr create \
+          pr_url="$(GH_TOKEN="$PR_TOKEN" gh pr create \
             --base "$BASE_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "docs(changelog): release notes for $TAG" \

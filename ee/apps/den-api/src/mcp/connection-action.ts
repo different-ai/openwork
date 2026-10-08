@@ -1,5 +1,6 @@
 import {
   connectionActionAppSchemaVersion,
+  connectionActionAppResourceUri,
   connectionActionPayloadSchema,
   type ConnectionActionPayload,
 } from "@openwork/types/connection-action-app"
@@ -37,6 +38,10 @@ export function connectedConnectionActionPayload(input: {
     message: `"${input.connectionName}" is connected and its tools are available in this chat.`,
     action: null,
   })
+}
+
+export function connectionActionAppMeta(connectionId: string) {
+  return { "openwork/mcpApp": { toolName: "connection_action", resourceUri: connectionActionAppResourceUri, arguments: { connectionId } } }
 }
 
 export function connectionActionTextFallback(payload: ConnectionActionPayload): string {

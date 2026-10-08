@@ -1,8 +1,9 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { needsViewerSignIn } from "./library-view";
 import type { PluginAccessRole } from "./plugin-access-data";
 
 type LibraryNamedEntity = {
@@ -271,8 +272,8 @@ export function parseLibraryPayload(payload: unknown): LibraryItem[] {
   return items;
 }
 
-export function useLibrary() {
-  return useQuery({
+export function libraryQueryOptions() {
+  return queryOptions({
     queryKey: libraryQueryKeys.items,
     queryFn: async (): Promise<LibraryItem[]> => {
       const { response, payload } = await requestJson(
@@ -286,4 +287,14 @@ export function useLibrary() {
       return parseLibraryPayload(payload);
     },
   });
+}
+
+export function useLibrary() {
+  return useQuery(libraryQueryOptions());
+}
+
+/** Counts what waits on the viewer's sign-in, for the quiet sidebar dot. */
+export function useLibraryNeedsSignInCount(enabled: boolean): number {
+  const library = useQuery({ ...libraryQueryOptions(), enabled });
+  return (library.data ?? []).filter(needsViewerSignIn).length;
 }

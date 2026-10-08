@@ -36,9 +36,9 @@ export function connectionNeedsAdminRepair(connection: Pick<MemberLifecycleConne
   return connection.needsReconnect === true && connection.reconnectActionOwner === "organization_admin";
 }
 
-/** The member may run the OAuth flow themselves (connect or reconnect). */
+/** The member may authorize their own OAuth account or personal API key. */
 export function canMemberAuthorizeConnection(connection: MemberLifecycleConnection): boolean {
-  return connection.credentialMode === "per_member" && connection.authType === "oauth" && !connectionNeedsAdminRepair(connection);
+  return connection.credentialMode === "per_member" && connection.authType !== "none" && !connectionNeedsAdminRepair(connection);
 }
 
 /** The member may remove their own stored account. */

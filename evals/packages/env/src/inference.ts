@@ -26,8 +26,8 @@ function encrypted(value: string) {
   return `enc:v1:${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${ciphertext.toString("base64")}`;
 }
 
-/** Real HTTP service with disposable baseline SQL for auth; generation is local. */
-export async function managedInference(place: Place) {
+/** Real HTTP service with disposable baseline SQL for auth; generation is local. `env` overrides gateway settings. */
+export async function managedInference(place: Place, options: { env?: Record<string, string> } = {}) {
   if (place.kind !== "local") throw new SkipError("managed inference fixture requires a local MySQL service and loopback provider");
   if (!await localMysqlIsRunning()) throw new SkipError("MySQL is not reachable at OPENWORK_EVAL_MYSQL_URL or the default local port");
   const stack = new AsyncDisposableStack();
@@ -49,6 +49,7 @@ export async function managedInference(place: Place) {
         DEN_DB_ENCRYPTION_KEY: encryptionSecret, OPENROUTER_UPSTREAM_URL: witness.url,
         GATEWAY_EGRESS_ALLOWED_ORIGINS: new URL(witness.url).origin,
         INFERENCE_WEBHOOK_SECRET: "fixture-webhook-secret", INFERENCE_UPSTREAM_TIMEOUT_MS: "1000", INFERENCE_STREAM_IDLE_MS: "1000",
+        ...options.env,
       },
     });
     let logs = "";

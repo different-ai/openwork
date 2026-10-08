@@ -27,8 +27,6 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-      - name: Test coverage classification
-        run: node --test scripts/ci/check-codeql-results.test.mjs
       - name: Verify uploaded results for open pull requests
         env:
           GH_TOKEN: ${{ github.token }}

@@ -33,6 +33,7 @@ import {
 import { cache } from "../cache.js"
 import { db } from "../db.js"
 import { listTeamsForMember } from "../orgs.js"
+import { memberApiKeyRejected, memberApiKeyUsable, usesMemberApiKey } from "../capability-sources/member-api-key.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import {
   externalMcpToolSchemaDigest,
@@ -448,6 +449,35 @@ function providerAuthorizationConnectionStatus(input: {
   }
 }
 
+/**
+ * The per-member credential gate shared by search, status and execution.
+ * Null when the member's own credential is usable; otherwise what to tell them.
+ */
+function memberCredentialGap(
+  connection: ExternalMcpConnectionRow,
+  account: Awaited<ReturnType<typeof getConnectedAccount>>,
+): { message: string; status: ExternalConnectionStatus } | null {
+  if (usesMemberApiKey(connection)) {
+    if (memberApiKeyUsable(account)) return null
+    const rejected = memberApiKeyRejected(account)
+    const message = rejected
+      ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
+      : `Add your own ${connection.name} key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
+    return {
+      message,
+      status: buildExternalConnectionStatus({
+        connection,
+        state: rejected ? "reauth_required" : "needs_connection",
+        errorCode: rejected ? "unauthorized" : "not_connected",
+        message,
+      }),
+    }
+  }
+  if (account?.accessToken) return null
+  const message = `You haven't connected your ${connection.name} account yet.`
+  return { message, status: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }) }
+}
+
 export function buildExternalConnectionStatus(input: {
   connection: ConnectionStatusIdentity
   state: ExternalConnectionStatus["state"]
@@ -505,7 +535,9 @@ export function buildExternalConnectionStatus(input: {
   const surface = actor === "member"
     ? "openwork_your_connections"
     : "openwork_organization_connections"
-  const actionType = input.state === "needs_connection"
+  const actionType = usesMemberApiKey(input.connection)
+    ? "update_credentials"
+    : input.state === "needs_connection"
     ? "connect"
     : input.connection.authType === "oauth"
       ? "reconnect"
@@ -692,21 +724,23 @@ async function probeExternalMcpConnection(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken) {
+    const gap = memberCredentialGap(connection, account)
+    if (gap) {
       // Granted but not yet connected: surface the connection itself (not
       // its tools — we can't list them without the member's credential) so
       // the agent can tell the human exactly what to do.
       const nameTokens = tokenize(connection.name)
       const score = scoreText(nameTokens, nameTokens, input.queryTokens)
       if (score > 0) {
-        const message = `You haven't connected your ${connection.name} account yet.`
         add(statusMatch({
           connection,
           score,
-          summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
+          summary: `[${connection.name}] ${gap.message}`,
           status: "needs_connection",
-          hint: `Ask the user to click Connect on the "${connection.name}" card in OpenWork desktop, then search again. In clients without inline connection controls, use OpenWork Cloud -> Your Connections. ${CONNECTION_CARD_HINT}`,
-          connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+          hint: usesMemberApiKey(connection)
+            ? "Ask the user to open the member settings link in connectionStatus.action.url and add or replace their own key in Your Connections, then search again. Never request a key in chat or tool arguments. This is not an OAuth sign-in flow."
+            : `Ask the user to click Connect on the "${connection.name}" card in OpenWork desktop, then search again. In clients without inline connection controls, use OpenWork Cloud -> Your Connections. ${CONNECTION_CARD_HINT}`,
+          connectionStatus: gap.status,
         }))
       }
       return matches
@@ -739,7 +773,10 @@ async function probeExternalMcpConnection(input: {
     credentialMode: connection.credentialMode,
     ...(connection.credentialMode === "per_member" ? { orgMembershipId: input.member.orgMembershipId } : {}),
   }
-  const cachedProbe = getExternalToolsSearchCache(cacheKey)
+  // Personal keys can be replaced or revoked independently of connection
+  // configuration. Do not reuse a credential-dependent catalog or failure.
+  const cacheable = !usesMemberApiKey(connection)
+  const cachedProbe = cacheable ? getExternalToolsSearchCache(cacheKey) : undefined
   try {
     if (cachedProbe?.outcome === "failure") throw cachedProbe.error
     if (cachedProbe?.outcome === "success") {
@@ -753,10 +790,10 @@ async function probeExternalMcpConnection(input: {
         input.deadline,
         EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS,
       )
-      setExternalToolsSearchCache(cacheKey, { outcome: "success", tools })
+      if (cacheable) setExternalToolsSearchCache(cacheKey, { outcome: "success", tools })
     }
   } catch (error) {
-    if (!cachedProbe) setExternalToolsSearchCache(cacheKey, { outcome: "failure", error })
+    if (cacheable && !cachedProbe) setExternalToolsSearchCache(cacheKey, { outcome: "failure", error })
     const message = upstreamErrorMessage(error)
     const diagnostic = error instanceof ExternalMcpDiagnosticError ? error.diagnostic : undefined
     const nameTokens = tokenize(connection.name)
@@ -810,6 +847,7 @@ async function probeExternalMcpConnection(input: {
       argumentsSchema: tool.inputSchema,
       schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
       invocation: { argumentsField: "body" },
+      readOnly: providerMarksReadOnly(tool.annotations),
       ...(resourceUri ? { kind: "mcp_app" as const, mcpApp: { resourceUri } } : {}),
       ...(input.scriptNamespace ? { scriptPath: codemodeScriptPath(input.scriptNamespace, tool.name) } : {}),
     })
@@ -917,6 +955,8 @@ export type ExternalCapabilityExecuteResult =
         | "invalid_capability_arguments"
         | "policy_blocked"
         | "insufficient_mcp_scope"
+      /** Why a policy_blocked call was refused, when a caller acts on it. */
+      reason?: "provider_not_read_only"
       message: string
       requiredScope?: "mcp:read" | "mcp:write"
       referenceId?: string
@@ -1067,14 +1107,8 @@ export async function probeExternalConnectionStatus(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken) {
-      const message = `You haven't connected your ${connection.name} account yet.`
-      return {
-        ok: true,
-        connected: false,
-        status: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
-      }
-    }
+    const gap = memberCredentialGap(connection, account)
+    if (gap) return { ok: true, connected: false, status: gap.status }
   } else if (!hasSharedCredential(connection)) {
     const message = `"${connection.name}" is not connected yet.`
     return {
@@ -1087,25 +1121,31 @@ export async function probeExternalConnectionStatus(input: {
 }
 
 /**
- * Executes a namespaced external capability, scoped to the calling
- * principal's org AND member: the member must hold a grant (org-wide,
- * direct, or team), and for per-member connections must have connected
- * their own account — the call then runs as them.
+ * Whether a provider marks its tool read-only: readOnlyHint true and not
+ * destructive. The provider controls these hints, so they describe the tool;
+ * calling it still requires the caller's write scope.
  */
-export async function executeExternalCapability(input: {
+export function providerMarksReadOnly(annotations: { readOnlyHint?: boolean; destructiveHint?: boolean } | undefined): boolean {
+  return annotations?.readOnlyHint === true && annotations.destructiveHint !== true
+}
+
+type ExternalCapabilityFailure = Extract<ExternalCapabilityExecuteResult, { ok: false }>
+type PreparedExternalCapability = {
+  ok: true
+  connection: NonNullable<Awaited<ReturnType<typeof getExternalMcpConnection>>>
+  member: { orgMembershipId: DenTypeId<"member"> } | undefined
+}
+
+/**
+ * What every call to one external tool checks before reaching its provider:
+ * the connection, the member's grant, the tool policy, and usable credentials.
+ */
+async function prepareExternalCapability(input: {
   organizationId: string
   member: McpMemberIdentity | null
-  scopes: ReadonlySet<string>
   connectionId: string
   toolName: string
-  args: unknown
-  schemaDigest?: string
-  redirectUriBase: string
-  /** Additional provider-hint restriction; never replaces write-scope authorization. */
-  requireReadOnly?: boolean
-  /** Fail closed when the live input schema no longer matches schemaDigest. */
-  requireSchemaMatch?: boolean
-}): Promise<ExternalCapabilityExecuteResult> {
+}): Promise<PreparedExternalCapability | ExternalCapabilityFailure> {
   if (!input.member) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
   }
@@ -1186,17 +1226,15 @@ export async function executeExternalCapability(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken) {
+    const gap = memberCredentialGap(connection, account)
+    if (gap) {
       return {
         ok: false,
         error: "needs_connection",
-        message: `You haven't connected your ${connection.name} account yet. Open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}".`,
-        connectionStatus: buildExternalConnectionStatus({
-          connection,
-          state: "needs_connection",
-          errorCode: "not_connected",
-          message: `You haven't connected your ${connection.name} account yet.`,
-        }),
+        message: usesMemberApiKey(connection)
+          ? gap.message
+          : `${gap.message} Open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}".`,
+        connectionStatus: gap.status,
       }
     }
     member = { orgMembershipId: input.member.orgMembershipId }
@@ -1209,6 +1247,69 @@ export async function executeExternalCapability(input: {
       connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
     }
   }
+  return { ok: true, connection, member }
+}
+
+/**
+ * One external tool as the member would call it, for binding into an App: the
+ * same checks as a call, then the provider's current definition of that tool,
+ * including whether the provider marks it read-only.
+ */
+export async function describeExternalCapability(input: {
+  organizationId: string
+  member: McpMemberIdentity | null
+  connectionId: string
+  toolName: string
+  redirectUriBase: string
+}): Promise<{ ok: true; inputSchema: Record<string, unknown>; readOnly: boolean } | ExternalCapabilityFailure> {
+  const prepared = await prepareExternalCapability(input)
+  if (!prepared.ok) return prepared
+  const { connection, member } = prepared
+  const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
+  let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
+  try {
+    tools = await listExternalMcpTools(connection, redirectUriFor(input.redirectUriBase, connection.id), member, undefined, deadline)
+  } catch {
+    return { ok: false, error: "connection_failed", message: `"${connection.name}" did not list its tools. Try again in a moment.`, retryable: true }
+  }
+  const tool = tools.find((candidate) => candidate.name === input.toolName)
+  if (!tool) {
+    return {
+      ok: false,
+      error: "unknown_capability",
+      capability: buildExternalCapabilityName(connection.id, input.toolName),
+      message: `No current tool named "${input.toolName}" exists on "${connection.name}".`,
+    }
+  }
+  return { ok: true, inputSchema: tool.inputSchema, readOnly: providerMarksReadOnly(tool.annotations) }
+}
+
+/**
+ * Executes a namespaced external capability, scoped to the calling
+ * principal's org AND member: the member must hold a grant (org-wide,
+ * direct, or team), and for per-member connections must have connected
+ * their own account — the call then runs as them.
+ */
+export async function executeExternalCapability(input: {
+  organizationId: string
+  member: McpMemberIdentity | null
+  scopes: ReadonlySet<string>
+  connectionId: string
+  toolName: string
+  args: unknown
+  schemaDigest?: string
+  redirectUriBase: string
+  /**
+   * Refuse the tool unless its provider still marks it read-only in this
+   * caller's live tool list. An extra restriction; never replaces write scope.
+   */
+  requireReadOnly?: boolean
+  /** Fail closed when the live input schema no longer matches schemaDigest. */
+  requireSchemaMatch?: boolean
+}): Promise<ExternalCapabilityExecuteResult> {
+  const prepared = await prepareExternalCapability(input)
+  if (!prepared.ok) return prepared
+  const { connection, member } = prepared
 
   let currentSchemaDigest: string | undefined
   let schemaGuidance: ExternalMcpSchemaGuidance | undefined
@@ -1239,12 +1340,13 @@ export async function executeExternalCapability(input: {
       }
     }
 
-    if (input.requireReadOnly && (tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true)) {
+    if (input.requireReadOnly && !providerMarksReadOnly(tool.annotations)) {
       return {
         ok: false,
         error: "policy_blocked",
+        reason: "provider_not_read_only",
         capability: buildExternalCapabilityName(connection.id, input.toolName),
-        message: `${input.toolName} is no longer advertised as strictly read-only, so OpenWork blocked the Remote MCP App call.`,
+        message: `${input.toolName} is no longer marked read-only by its provider, so OpenWork blocked the call.`,
         sameArgumentsRetryable: false,
         retry: { action: "search_capabilities", searchRequired: true },
       }
@@ -1257,7 +1359,7 @@ export async function executeExternalCapability(input: {
         ok: false,
         error: "policy_blocked",
         capability: buildExternalCapabilityName(connection.id, input.toolName),
-        message: `${input.toolName} now advertises a different input schema, so OpenWork blocked the Remote MCP App call until its cached revision is refreshed.`,
+        message: `${input.toolName} now takes different inputs than when this App was published, so OpenWork blocked the call. An editor can update the App to use the tool's current inputs.`,
         sameArgumentsRetryable: false,
         retry: { action: "search_capabilities", searchRequired: true },
       }

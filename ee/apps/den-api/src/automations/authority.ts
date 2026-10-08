@@ -7,7 +7,7 @@ import {
   TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
+import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { organizationAllowsManagedModels } from "../inference.js"
@@ -37,7 +37,7 @@ export type AutomationModelSelection = {
 }
 
 export type ResolvedAutomationModel = AutomationModelSelection & {
-  accessKind: "free" | "openwork_managed" | "authorized_custom"
+  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default"
   providerRecordId: string | null
   providerName: string
   modelName: string
@@ -159,6 +159,25 @@ export async function resolveAutomationModelAccessWithStore(
   const member = await store.findActiveMember(input)
   if (!member) {
     return { ok: false, code: "owner_membership_lost", message: "The Automation owner is no longer an active organization member." }
+  }
+
+  if (input.providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId) {
+    // Placement (cloud, headless runtime) is enforced where the Automation is
+    // created or changed; here an active owner is all the cloud default needs.
+    if (input.modelId !== AUTOMATION_CLOUD_DEFAULT_MODEL.modelId) {
+      return { ok: false, code: "model_access_lost", message: "The selected cloud model is not available for Automations." }
+    }
+    return {
+      ok: true,
+      value: {
+        accessKind: "cloud_default",
+        providerRecordId: null,
+        providerId: input.providerId,
+        modelId: input.modelId,
+        providerName: AUTOMATION_CLOUD_DEFAULT_MODEL.providerName,
+        modelName: AUTOMATION_CLOUD_DEFAULT_MODEL.modelName,
+      },
+    }
   }
 
   if (input.providerId === AUTOMATION_FREE_MODEL.providerId) {

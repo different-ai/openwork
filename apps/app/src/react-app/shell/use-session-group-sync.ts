@@ -37,7 +37,7 @@ function localGroupStateForWorkspace(
   endpoint: ResolvedWorkspaceEndpoint,
 ): WorkspaceGroupState | undefined {
   const byWorkspace = useSessionManagementStore.getState().groupsByWorkspace;
-  const ids = [workspace.id, endpoint.workspaceId, `rem_${endpoint.workspaceId}`];
+  const ids = [workspace.id, endpoint.workspaceId];
   for (const id of ids) {
     const state = byWorkspace[id];
     if (hasGroupData(state)) return state;

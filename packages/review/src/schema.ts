@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
+export const checkpointSchema = z.unknown().transform((value, ctx) => {
+  try { return parseEvidenceCheckpoint(value); }
+  catch { ctx.addIssue({ code: "custom", message: "Invalid evidence checkpoint" }); return z.NEVER; }
+});
 
 export const reportIdSchema = z.string().regex(/^[a-f0-9]{32}$/);
 export const assetNameSchema = z
@@ -19,6 +24,31 @@ const source = z.object({
   asset: assetNameSchema,
 });
 const evidence = z.object({ id, sourceId: id, caption: z.string() });
+const fraction = z.number().min(0).max(1);
+/** Advisory design finding on a screenshot; never part of the verdict. */
+export const designNoteSchema = z.object({
+  rule: z.string().min(1).max(40),
+  severity: z.enum(["medium", "low"]),
+  title: z.string().min(1).max(200),
+  detail: z.string().max(1_000),
+  source: z.enum(["layout", "vision"]),
+  region: z.object({ x: fraction, y: fraction, width: fraction, height: fraction }).optional(),
+  /** Where in the code: DOM hooks such as `[data-library-row="docs-helper"]`. */
+  anchors: z.array(z.string().max(200)).max(3).optional(),
+  /** Class lists of the boxes involved, as grep targets. */
+  classes: z.array(z.string().max(160)).max(3).optional(),
+});
+export type DesignNote = z.infer<typeof designNoteSchema>;
+/** `design-review.json`, written beside a test run's `test-run.json` by the design review. */
+export const designReviewFileSchema = z.object({
+  schemaVersion: z.literal(1),
+  gitSha: z.string().nullable(),
+  model: z.string().nullable(),
+  rubric: z.string().nullable(),
+  specFile: z.string().nullable().optional(),
+  screens: z.record(z.string(), z.object({ caption: z.string(), route: z.string() })).optional(),
+  notes: z.record(z.string(), z.array(designNoteSchema)),
+});
 
 export const reviewSchema = z
   .object({
@@ -60,6 +90,11 @@ export const reviewSchema = z
           asset: assetNameSchema,
           description: z.string(),
           judgments: z.array(judgment),
+          checkpoint: checkpointSchema.optional(),
+          // "exact": the screen did not change while the checkpoint was captured.
+          checkpointMatch: z.enum(["exact", "approximate"]).optional(),
+          checkpointError: z.string().max(200).optional(),
+          designNotes: z.array(designNoteSchema).max(20).optional(),
         }),
       ]),
     ),
@@ -69,6 +104,12 @@ export const reviewSchema = z
     for (const entries of [report.sources, report.sections, report.evidence]) {
       if (new Set(entries.map((entry) => entry.id)).size !== entries.length)
         fail("IDs must be unique within each collection.");
+    }
+    for (const entry of report.evidence) {
+      if (entry.kind === "image" && entry.checkpoint) {
+        if (entry.checkpoint.sourceSha !== report.gitSha || entry.asset !== `${entry.checkpoint.imageHash}.png`)
+          fail("Checkpoint must match the report commit and screenshot bytes.");
+      }
     }
     const sources = new Set(report.sources.map((entry) => entry.id));
     const evidenceIds = new Set(report.evidence.map((entry) => entry.id));

@@ -1,8 +1,10 @@
 import "./load-env.js"
+import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
+import { registerWorkbotRoutes } from "./workbot/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { MemberTable } from "@openwork-ee/den-db/schema"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -11,6 +13,7 @@ import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { getOrganizationFeatures } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
@@ -19,18 +22,22 @@ import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, emptyResponse, htmlResponse, jsonResponse } from "./openapi.js"
 import { appLogger } from "./observability/logger.js"
+import { isWebOriginApprovedByAnyOrganization } from "./organization-web-origins.js"
 import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddleware, registerAppErrorHandler, registerObservabilityMiddleware } from "./observability/hono.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
+import { registerEmailRoutes } from "./routes/email/index.js"
 import { registerCloudRoutes } from "./routes/cloud/index.js"
 import { registerDeprecatedMemoryRoutes } from "./routes/deprecated-memory.js"
 import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs.js"
 import { registerDevRoutes } from "./routes/dev/index.js"
+import { registerInternalRoutes } from "./routes/internal/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
-import { configureCloudAgentExecutor, configureCloudWorkflowExecutor } from "./automations/service.js"
+import { configureCloudAgentExecutor, configureCloudWorkflowExecutor, configureHeadlessAgentExecutor } from "./automations/service.js"
 import { cloudAgentRuntimeAvailable, executeCloudAgent } from "./automations/cloud-agent-executor.js"
+import { executeHeadlessAgent } from "./automations/headless-agent-executor.js"
 import { getCatalog } from "./mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "./mcp/capability-registry.js"
 import { executeMarketplaceCapability } from "./mcp/marketplace-capabilities.js"
@@ -38,13 +45,14 @@ import { resolveMcpMemberIdentity } from "./mcp/external-capabilities.js"
 import { DEN_MCP_REQUESTED_SCOPES } from "./mcp/scopes.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
-import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
+import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
-import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
+import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
+import { auditRequestMiddleware } from "./audit/request-capture.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
 
@@ -148,25 +156,51 @@ if (!env.corsHandledByEdge) {
   )
 }
 
-// This bearer-token-only compatibility surface must accept native/file-origin
-// preflights before the credentialed browser allowlist can intercept OPTIONS.
-registerCloudWorkerCompatibilityPreflightRoute(app)
+const corsLogger = appLogger.child({ component: "cors" })
+const WEB_ORIGIN_LOOKUP_FAILURE_LOG_INTERVAL_MS = 60_000
+let lastWebOriginLookupFailureLoggedAt = 0
 
-if (env.corsOrigins.length > 0 && !env.corsHandledByEdge) {
+// Operator CORS_ORIGINS plus the exact origins organizations approved in
+// Org settings. The database list is cached per process for 30 seconds and a
+// lookup failure fails closed rather than failing the request.
+async function resolveStrictCorsOrigin(origin: string) {
+  if (!origin) return null
+  if (env.corsOrigins.includes(origin)) return origin
+  try {
+    return await isWebOriginApprovedByAnyOrganization(origin) ? origin : null
+  } catch (error) {
+    const now = Date.now()
+    if (now - lastWebOriginLookupFailureLoggedAt >= WEB_ORIGIN_LOOKUP_FAILURE_LOG_INTERVAL_MS) {
+      lastWebOriginLookupFailureLoggedAt = now
+      corsLogger.warn("approved web origin lookup failed; denying CORS", {
+        error_name: error instanceof Error ? error.name : typeof error,
+      })
+    }
+    return null
+  }
+}
+
+if (!env.corsHandledByEdge) {
   app.use(
     "*",
-      cors({
-        origin: env.corsOrigins,
-        credentials: true,
-        allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id"],
-        allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        exposeHeaders: ["Content-Length"],
-        maxAge: 600,
+    cors({
+      origin: resolveStrictCorsOrigin,
+      credentials: true,
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      exposeHeaders: ["Content-Length", "Content-Disposition", "X-Audit-Next-Cursor", "X-Audit-Snapshot-Sequence", "X-Audit-Resource-Scope"],
+      maxAge: 600,
     }),
   )
 }
 
 app.use("*", sessionMiddleware)
+// Generic operation audit capture (src/audit/request-capture.ts); every route is
+// declared in src/audit/routes and checked by scripts/check-audit-route-coverage.ts.
+// Registered before preclaimScopeMiddleware so its 403 denials are recorded
+// (platform store) against the endpoint they refused.
+app.use("*", auditRequestMiddleware)
+app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(
   "/",
@@ -241,6 +275,7 @@ app.get(
 registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
+registerEmailRoutes(app)
 registerCloudRoutes(app)
 registerDeprecatedMemoryRoutes(app)
 registerDeprecatedSkillHubRoutes(app)
@@ -248,17 +283,21 @@ registerDevRoutes(app)
 registerMeRoutes(app)
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
 registerOrgRoutes(app)
+registerSlackAssistantRoutes(app)
+registerWorkbotRoutes(app)
 registerVersionRoutes(app)
+registerFeatureRoutes(app)
 registerWebhookRoutes(app)
+registerInternalRoutes(app)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
 registerAdminMcpRoutes(app)
-registerTelemetryRoutes(app)
 
 configureCloudAgentExecutor({ execute: executeCloudAgent, runtimeAvailable: cloudAgentRuntimeAvailable })
+configureHeadlessAgentExecutor((input) => executeHeadlessAgent(input))
 
 configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automationRunId, action }) => {
   const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)
@@ -270,10 +309,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
   )).limit(1)
   const userId = members[0]?.userId
   if (!userId) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
-  const organizations = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(
-    eq(OrganizationTable.id, normalizedOrganizationId),
-  ).limit(1)
-  const organizationMetadata = organizations[0]?.metadata
+  const organizationFeatures = await getOrganizationFeatures(normalizedOrganizationId)
   const member = await resolveMcpMemberIdentity({ userId, organizationId })
   if (!member) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
   const catalog = await getCatalog(app as unknown as Hono, undefined)
@@ -287,8 +323,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     member,
     redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-    organizationMetadata,
-    mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
+    organizationFeatures,
   })
   const result = await executeMarketplaceCapability({
     organizationId,
@@ -376,10 +411,10 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Inference Providers", description: "Organization inference Gateway providers, model groups, credential sets, access grants, member connections, and usage." },
       { name: "Gateway Usage Limits", description: "Estimated-cost policies, independent member calendar buckets, assignments, and audited usage-extension requests." },
       { name: "Cloud", description: "Organization Cloud instance lifecycle and browser gateway resolution." },
-      { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
-      { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
+      { name: "Workers", description: "List and delete the organization's workers, including OpenWork Web instances." },
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },
       { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },
@@ -394,11 +429,10 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Connectors", description: "Connector accounts and instances (GitHub and other sources) and their sync state." },
       { name: "GitHub", description: "GitHub App installation, repository discovery, and plugin import from GitHub." },
       { name: "Diagnostics", description: "Controlled egress diagnostics for self-hosted deployments." },
-      { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
       { name: "Webhooks", description: "Signed inbound webhooks from third-party providers." },
       { name: "Admin", description: "Platform administration routes for allowlisted OpenWork administrators." },
       { name: "Deprecated", description: "Removed features that answer with 410 or an empty result for old clients." },
-      { name: "Internal", description: "Runner and development-only routes; excluded from the published document." },
+      { name: "Internal", description: "Runner, scheduled-maintenance and development-only routes; excluded from the published document." },
     ],
     components: {
       securitySchemes: {
@@ -429,6 +463,11 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
           type: "http",
           scheme: "bearer",
           description: "Short-lived Automation runner token issued when a desktop runner registers, passed as `Authorization: Bearer <token>`.",
+        },
+        maintenanceToken: {
+          type: "http",
+          scheme: "bearer",
+          description: "Deployment maintenance token (DEN_MAINTENANCE_TOKEN) used by scheduled jobs, passed as `Authorization: Bearer <token>`.",
         },
         workerHeartbeatToken: {
           type: "http",

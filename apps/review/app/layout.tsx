@@ -14,7 +14,6 @@ export default function Layout({ children }: { children: ReactNode }) {
           <a href="/">
             openwork<span>/ review</span>
           </a>
-          <span>Evidence, in context.</span>
         </header>
         {children}
       </body>

@@ -5,9 +5,13 @@ import { readOrganizationMetadata } from "@openwork/types/den/managed-models-pol
 import { z } from "zod"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
+import { env } from "../env.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
+import { readFeatureRollouts, setFeatureRollout, setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
+import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 
 /**
  * den-admin MCP toolset: read-only Den analytics for allowlisted platform
@@ -23,7 +27,7 @@ import { updateOrganizationMetadata } from "../organization-metadata.js"
  * timeout so one expensive SELECT cannot pin an API worker indefinitely.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.6.0"
+export const DEN_ADMIN_MCP_VERSION = "0.7.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 const DEFAULT_ROW_LIMIT = 200
@@ -205,9 +209,9 @@ function isMissingTable(error: unknown): boolean {
   return isMissingTable(record.cause)
 }
 
-// --- activity (sign-in session days UNION session.active telemetry days) ---
+// --- activity (sign-in session days UNION Gateway request days) ---
 // Matches den-api /v1/admin/overview: a user is "active" on a day if they
-// have a sign-in session day or a session.active telemetry event that day.
+// have a sign-in session day or a Gateway request that day.
 
 async function activeUserCount(days: number): Promise<number> {
   const interval = intLiteral(days)
@@ -216,10 +220,10 @@ async function activeUserCount(days: number): Promise<number> {
         SELECT s.user_id AS uid FROM session s
          WHERE s.updated_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)
         UNION
-        SELECT m.user_id FROM telemetry_event t
-          JOIN member m ON m.id = t.member_id
+        SELECT m.user_id FROM gateway_request_logs t
+          JOIN member m ON m.id = t.org_membership_id
          WHERE m.user_id IS NOT NULL
-           AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)
+           AND t.started_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)
       ) activity`)
     return n(result[0]?.count)
   } catch (error) {
@@ -231,19 +235,16 @@ async function activeUserCount(days: number): Promise<number> {
 }
 
 /**
- * "Real" active users: executed at least one task in a session in the
- * window — task.* telemetry with a session id, not just sign-ins or
- * heartbeat pings. Returns 0 when the telemetry table is missing.
+ * "Real" active users have made an AI Gateway request in the window.
+ * Returns 0 when Gateway request storage is unavailable.
  */
 async function taskActiveUserCount(days: number): Promise<number> {
   const interval = intLiteral(days)
   try {
-    const result = await rows(sql`SELECT COUNT(DISTINCT m.user_id) AS count FROM telemetry_event t
-        JOIN member m ON m.id = t.member_id
+    const result = await rows(sql`SELECT COUNT(DISTINCT m.user_id) AS count FROM gateway_request_logs t
+        JOIN member m ON m.id = t.org_membership_id
        WHERE m.user_id IS NOT NULL
-         AND t.event_type IN ('task.started', 'task.completed', 'task.failed')
-         AND t.session_id IS NOT NULL
-         AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
+         AND t.started_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
     return n(result[0]?.count)
   } catch (error) {
     if (!isMissingTable(error)) throw error
@@ -255,8 +256,8 @@ async function activityDays(): Promise<Row[]> {
   try {
     return await rows(sql`SELECT s.user_id AS uid, DATE(s.updated_at) AS day FROM session s
         UNION
-        SELECT m.user_id, DATE(t.event_timestamp) FROM telemetry_event t
-          JOIN member m ON m.id = t.member_id
+        SELECT m.user_id, DATE(t.started_at) FROM gateway_request_logs t
+          JOIN member m ON m.id = t.org_membership_id
          WHERE m.user_id IS NOT NULL`)
   } catch (error) {
     if (!isMissingTable(error)) throw error
@@ -279,12 +280,12 @@ async function lastActiveByUser(userIds: string[]): Promise<Map<string, number>>
   )
   for (const row of sessionRows) merge(row.user_id, row.last)
   try {
-    const telemetryRows = await rows(
-      sql`SELECT m.user_id AS user_id, MAX(t.event_timestamp) AS last FROM telemetry_event t
-           JOIN member m ON m.id = t.member_id
+    const gatewayRows = await rows(
+      sql`SELECT m.user_id AS user_id, MAX(t.started_at) AS last FROM gateway_request_logs t
+           JOIN member m ON m.id = t.org_membership_id
           WHERE m.user_id IN (${idList(userIds)}) GROUP BY m.user_id`,
     )
-    for (const row of telemetryRows) merge(row.user_id, row.last)
+    for (const row of gatewayRows) merge(row.user_id, row.last)
   } catch (error) {
     if (!isMissingTable(error)) throw error
   }
@@ -373,7 +374,17 @@ export async function buildAdminMcpVersionInfo() {
 
 // --- tool registration ---
 
-export function registerAdminMcpTools(server: McpServer) {
+/**
+ * `admin` is the verified platform admin calling the tools; org-mutating tools
+ * are audited for it (src/audit/service-actions.ts) and refuse without it.
+ * Pass null only for catalog listing.
+ */
+export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAuditActor | null) {
+  const requireAdmin = () => {
+    if (!admin) throw new Error("Admin write tools require an authenticated platform admin.")
+    return admin
+  }
+
   server.registerTool(
     "den_admin_version",
     {
@@ -423,7 +434,7 @@ export function registerAdminMcpTools(server: McpServer) {
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
+          note: "active = sign-in session day or Gateway request; realActive = made at least one Gateway request",
         }
       }),
   )
@@ -456,7 +467,7 @@ export function registerAdminMcpTools(server: McpServer) {
           throw new Error(`No organization found for ${organizationId}`)
         }
 
-        const metadata = await updateOrganizationMetadata(organizationId, (current) => {
+        const metadata = await runPlatformAdminServiceAction("organization.plan.set", requireAdmin(), organization, () => updateOrganizationMetadata(organizationId, (current) => {
           const normalized = normalizeOrganizationMetadata(current).metadata
           const plan = { ...readOrganizationMetadata(current.plan), ...manualPlan(tier) }
           if (tier !== "enterprise") delete plan.grantedAt
@@ -468,7 +479,7 @@ export function registerAdminMcpTools(server: McpServer) {
               members: seatLimit,
             },
           }
-        })
+        }))
 
         return {
           ok: true,
@@ -480,6 +491,101 @@ export function registerAdminMcpTools(server: McpServer) {
             seatLimit,
           },
         }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_org_capability",
+    {
+      description:
+        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbot'. enabled=null removes the override so the feature follows the deployment-wide on/off state again. The kill switch (den_set_feature_rollout) still outranks it.",
+      inputSchema: z.object({
+        organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
+        capability: featureKeySchema.describe("Feature to set (see packages/features/src/registry.ts)"),
+        enabled: z.boolean().nullable().describe("true or false, or null to restore the default"),
+      }),
+    },
+    async ({ organizationId, capability, enabled }) =>
+      run(async () => {
+        if (!isOrganizationId(organizationId)) {
+          throw new Error("Invalid organization id")
+        }
+        const existing = await db
+          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug })
+          .from(OrganizationTable)
+          .where(eq(OrganizationTable.id, organizationId))
+          .limit(1)
+        const organization = existing[0]
+        if (!organization) {
+          throw new Error(`No organization found for ${organizationId}`)
+        }
+        if (!featureAvailableOn(capability, env.features.deployment)) {
+          throw new Error(`${capability} is not part of this deployment.`)
+        }
+        const overrides = await runPlatformAdminServiceAction("organization.capability.set", requireAdmin(), organization, () => setOrganizationFeatureOverrides(db, {
+          organizationId,
+          changes: { [capability]: enabled },
+          source: "platform",
+        }))
+        return {
+          ok: true,
+          organization: { id: organization.id, name: organization.name, slug: organization.slug },
+          capability,
+          enabled: resolveFeature(capability, {
+            ...env.features,
+            rollouts: await readFeatureRollouts(db),
+            overrides,
+          }).enabled,
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_list_features",
+    {
+      description:
+        "Admin read tool: every feature in the registry with the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
+      inputSchema: z.object({}),
+    },
+    async () =>
+      run(async () => {
+        const rollouts = await readFeatureRollouts(db)
+        return {
+          deployment: env.features.deployment,
+          features: FEATURE_KEYS.map((key) => {
+            const definition = featureDefinition(key)
+            return {
+              key,
+              label: definition.label,
+              deployments: definition.deployments,
+              available: featureAvailableOn(key, env.features.deployment),
+              ...featureRollout(key, rollouts),
+              lock: env.features.locks[key] ?? null,
+            }
+          }),
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_feature_rollout",
+    {
+      description:
+        "Admin write tool: change a feature for this whole deployment. enabled turns it on or off for everyone (organization overrides still apply); killed=true turns it off everywhere at once (the revert), outranking operator locks and organization overrides.",
+      inputSchema: z.object({
+        feature: featureKeySchema.describe("Feature key (see den_list_features)"),
+        enabled: z.boolean().optional().describe("true for on for everyone, false for off"),
+        killed: z.boolean().optional().describe("true to turn it off everywhere, false to clear the kill switch"),
+      }),
+    },
+    async ({ feature, enabled, killed }) =>
+      run(async () => {
+        if (enabled === undefined && killed === undefined) throw new Error("Set enabled, killed, or both.")
+        if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
+        // Deployment-wide: no organization's data changes, so platform evidence only.
+        const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
+          setFeatureRollout(db, { key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default }))
+        return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )
 
@@ -536,7 +642,7 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_retention",
     {
       description:
-        "Weekly cohort retention: users grouped by ISO signup week, with the percentage active in each week after signup (activity = sign-in session days + session.active telemetry).",
+        "Weekly cohort retention: users grouped by ISO signup week, with the percentage active in each week after signup (activity = sign-in session days + Gateway requests).",
       inputSchema: z.object({
         weeks: z.number().int().min(2).max(26).default(8).describe("How many signup-week cohorts"),
       }),
@@ -734,7 +840,7 @@ export function registerAdminMcpTools(server: McpServer) {
     "den_query",
     {
       description:
-        "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, session, organization, member, invitation, team, org_subscriptions, telemetry_event, worker, audit_event. Avoid encrypted columns (scim_provider.scim_token, sso_provider.*_config, llm_provider.api_key, config_object_version payloads, inference upstream keys).",
+        "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, session, organization, member, invitation, team, org_subscriptions, gateway_request_logs, worker, audit_event. Avoid encrypted columns (scim_provider.scim_token, sso_provider.*_config, llm_provider.api_key, config_object_version payloads, inference upstream keys).",
       inputSchema: z.object({
         sql: z.string().min(1).describe("A single read-only SQL statement"),
         limit: z.number().int().min(1).max(MAX_ROW_LIMIT).optional().describe("Row limit appended when the query has none"),

@@ -37,7 +37,7 @@ export function AppActionsMenu({ appId, title, canManage: appCanManage, canDelet
   const deletion = useMutation({
     mutationFn: async () => {
       if (!canManage || !canDelete) throw new Error(dashboardManagementReason);
-      if (!client || !orgId) throw new Error("Sign in to delete this app.");
+      if (!client || !orgId) throw new Error("Sign in to delete this artifact.");
       await client.deleteApp(orgId, appId);
     },
     onSuccess: async () => {
@@ -54,31 +54,31 @@ export function AppActionsMenu({ appId, title, canManage: appCanManage, canDelet
   if (!hasActions && !showDelete) return null;
   return <>
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className={cn("shrink-0 text-muted-foreground", onOpen && "bg-background/90")} aria-label={`App options for ${title}`} disabled={busy}><Ellipsis className="size-4" /></Button>} />
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className={cn("shrink-0 text-muted-foreground", onOpen && "bg-background/90")} aria-label={`Artifact options for ${title}`} disabled={busy}><Ellipsis className="size-4" /></Button>} />
       <DropdownMenuContent align="end" className="w-64 min-w-0 max-w-[calc(100vw-2rem)]">
         {hasActions ? <DropdownMenuGroup>
           {badge ? <DropdownMenuLabel><span className="block">{title}</span>{badge}</DropdownMenuLabel> : null}
-          {onOpen ? <DropdownMenuItem onClick={onOpen} aria-label={`Open ${title}`}><ExternalLink />Open app</DropdownMenuItem> : null}
+          {onOpen ? <DropdownMenuItem onClick={onOpen} aria-label={`Open ${title}`}><ExternalLink />Open artifact</DropdownMenuItem> : null}
           {onRefresh ? <DropdownMenuItem onClick={onRefresh} disabled={refreshing} aria-label={`Refresh ${title}`}><RefreshCw />Refresh</DropdownMenuItem> : null}
           {onRun ? <DropdownMenuItem onClick={onRun}><Play />Run again</DropdownMenuItem> : null}
           {canManage && onEdit ? <DropdownMenuItem onClick={onEdit}><Sparkles />Ask for changes</DropdownMenuItem> : null}
-          {canManage && onUpdate ? <DropdownMenuItem onClick={onUpdate} disabled={busy}><Sparkles />Update app</DropdownMenuItem> : null}
+          {canManage && onUpdate ? <DropdownMenuItem onClick={onUpdate} disabled={busy}><Sparkles />Update artifact</DropdownMenuItem> : null}
           {canManage && onRemove ? <DropdownMenuItem onClick={onRemove} aria-label={`Remove ${title} from dashboard`}><Minus />Remove from dashboard</DropdownMenuItem> : null}
         </DropdownMenuGroup> : null}
         {hasActions && showDelete ? <DropdownMenuSeparator /> : null}
-        {showDelete ? <DropdownMenuGroup><DropdownMenuItem variant="destructive" aria-label={`Delete ${title}`} onClick={() => { deletion.reset(); setOpen(true); }}><Trash2 />Delete app</DropdownMenuItem></DropdownMenuGroup> : null}
+        {showDelete ? <DropdownMenuGroup><DropdownMenuItem variant="destructive" aria-label={`Delete ${title}`} onClick={() => { deletion.reset(); setOpen(true); }}><Trash2 />Delete artifact</DropdownMenuItem></DropdownMenuGroup> : null}
       </DropdownMenuContent>
     </DropdownMenu>
     <Dialog open={showDelete && open} onOpenChange={(next) => { if (!deletion.isPending) setOpen(next); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete “{title}”?</DialogTitle>
-          <DialogDescription>This removes the saved app from everyone’s dashboards and the app list. Past results stay available.</DialogDescription>
+          <DialogDescription>This removes the saved artifact from everyone’s dashboards and the artifact list. Past results stay available.</DialogDescription>
         </DialogHeader>
         {deletion.error ? <p role="alert" className="text-sm text-destructive">{deletion.error.message}</p> : null}
         <DialogFooter>
           <Button variant="outline" disabled={deletion.isPending} onClick={() => setOpen(false)}>Cancel</Button>
-          <Button variant="destructive" disabled={deletion.isPending} onClick={() => deletion.mutate()}>{deletion.isPending ? "Deleting…" : "Delete app"}</Button>
+          <Button variant="destructive" disabled={deletion.isPending} onClick={() => deletion.mutate()}>{deletion.isPending ? "Deleting…" : "Delete artifact"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

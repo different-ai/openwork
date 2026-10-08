@@ -16,6 +16,7 @@ on:
       - "ee/apps/den-api/**"
       - "ee/packages/**"
       - "packages/types/**"
+      - "packages/features/**"
 
 permissions:
   contents: read
@@ -80,6 +81,9 @@ jobs:
             exit 1
           fi
           echo "OpenAPI snapshot is in sync with the route source."
+
+      - name: Check audit route coverage
+        run: pnpm --filter @openwork-ee/den-api audit:coverage
 
       - name: Lint the regenerated document with Spectral
         if: ${{ !cancelled() }}

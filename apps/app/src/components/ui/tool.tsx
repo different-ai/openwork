@@ -24,7 +24,6 @@ import {
   Copy,
   ExternalLink,
   FilePen,
-  KeyRound,
   ListTodo,
   LoaderCircle,
   MessageCircleQuestion,
@@ -54,9 +53,6 @@ function toolIcon(part: ToolPart) {
       return ListTodo
     case "question":
       return MessageCircleQuestion
-    case "request_env_var":
-    case "env_var_request":
-      return KeyRound
     case "task":
       return Bot
     default:
@@ -76,7 +72,6 @@ export type ToolProps = {
     onProgress: (progress: ChatToolReconnectProgress) => void,
   ) => Promise<ChatToolReconnectResult>
   onReopenAuthorization?: (action: ChatToolReconnectAction, authorizeUrl: string) => Promise<void>
-  onRetry?: (action: ChatToolReconnectAction) => void | Promise<void>
 }
 
 const formatValue = (value: unknown): string => {
@@ -152,13 +147,12 @@ const Tool = ({
   className,
   onReconnect,
   onReopenAuthorization,
-  onRetry,
 }: ToolProps) => {
   const { state, input } = toolPart
   const inFlight = isToolPartInFlight(toolPart)
   const isError = state === "output-error"
   const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
-    useChatToolReconnect(toolPart, { onReconnect, onReopenAuthorization, onRetry })
+    useChatToolReconnect(toolPart, { onReconnect, onReopenAuthorization })
   const errorAttribution = reconnectAction
     ? reconnectAttribution(reconnectAction, reconnectPresentation?.badgeLabel ?? "Reconnect required")
     : null

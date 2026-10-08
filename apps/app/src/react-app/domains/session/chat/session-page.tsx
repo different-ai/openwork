@@ -15,7 +15,7 @@ import { markDesktopSignInInitiated } from "../../../../app/lib/den-sign-in-inte
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { openDesktopWorkspaceFile, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { openDesktopUrl, openDesktopWorkspaceFile, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   ComposerAttachment,
   PendingPermission,
@@ -25,7 +25,6 @@ import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../../../app/types";
-import type { ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { toast } from "@/components/ui/sonner";
@@ -56,6 +55,7 @@ import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./wor
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
@@ -63,14 +63,12 @@ import { useSessionFindStore } from "../surface/find-store";
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import { SessionEmptyHero } from "./session-empty-hero";
 import type { NewTaskComposerContext, NewTaskComposerHandoff } from "./new-task-composer";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
@@ -85,7 +83,7 @@ import {
   renameSessionIdFromEvent,
 } from "../../../shell/session-actions-bus";
 
-import { isElectronRuntime } from "../../../../app/utils";
+import { isElectronRuntime, isMacPlatform } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
 import { nativeFileAction, resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
@@ -178,16 +176,15 @@ export type SessionPageSidebarProps = {
     handoff?: NewTaskComposerHandoff,
   ) => Promise<void>;
   onOpenRenameWorkspace: (workspaceId: string) => void;
-  onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
-  onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onEditWorkspaceConnection: (workspaceId: string) => void;
+  onRetryWorkspace: (workspaceId: string) => Promise<unknown> | void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
   automationsActive?: boolean;
   automationsNeedAttention?: boolean;
   onOpenAutomations?: () => void;
+  calendarActive?: boolean;
+  onOpenCalendar?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -264,7 +261,6 @@ export type SessionPageProps = {
   history?: SessionPageHistoryControls | null;
   todos: TodoItem[];
   sessionLoadingById: (sessionId: string | null) => boolean;
-  shareWorkspaceModal?: ShareWorkspaceModalProps | null;
   providerAuthModal?: ProviderAuthModalProps | null;
   activePermission?: PendingPermission | null;
   activePermissionSourceTitle?: string | null;
@@ -295,6 +291,10 @@ export type SessionPageProps = {
   settingsSlot?: React.ReactNode;
   /** Workspace-scoped first-class surface rendered in place of the conversation. */
   primarySlot?: React.ReactNode;
+  /** The primary slot is itself a conversation (a first send still being created), so it keeps chat chrome. */
+  primarySlotIsConversation?: boolean;
+  /** Standalone pages use the main canvas instead of the inset conversation pane. */
+  primarySurface?: "flat";
   primaryTitle?: string;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;
@@ -620,7 +620,7 @@ export function SessionPage(props: SessionPageProps) {
   }, [setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
 
   // When the agent calls a built-in browser tool, the main process opens
-  // the WebContentsView and sends panel-opened; when hide_browser is called
+  // the WebContentsView and sends panel-opened; when the panel is dismissed
   // it sends panel-closed. Without this listener the React UI never knows
   // the panel opened and doesn't render the unified panel chrome.
   useEffect(() => {
@@ -686,7 +686,18 @@ export function SessionPage(props: SessionPageProps) {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
+        if (options?.external) {
+          void openDesktopUrl(url).catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : "Could not open this link.");
+          });
+          return;
+        }
         const ownerSessionId = sourceSessionId ?? props.selectedSessionId ?? null;
+        const openLink = window.__OPENWORK_ELECTRON__?.browser?.openLink;
+        if (openLink) {
+          openLink(url, ownerSessionId);
+          return;
+        }
         openOwnerSidePanel(ownerSessionId);
         void createBrowserTab(url, ownerSessionId);
       } else {
@@ -698,7 +709,7 @@ export function SessionPage(props: SessionPageProps) {
     const reportOpenError = (error: unknown) => {
       toast.error(error instanceof Error ? error.message : "Could not open this file.");
     };
-    const canOpenLocally = runtime.workspaceType !== "remote" && isElectronRuntime() && !options?.auto;
+    const canOpenLocally = isElectronRuntime();
     const openLocalFile = (fileTarget: OpenTarget) => {
       // Files outside the workspace are revealed, never launched; see nativeFileAction.
       // The desktop re-checks the resolved file on disk before launching anything.
@@ -719,7 +730,6 @@ export function SessionPage(props: SessionPageProps) {
     };
 
     // A person's explicit native open is not a workspace preview request.
-    // Keep remote files on the server path; never open their paths on this device.
     if (canOpenLocally && options?.external) {
       openLocalFile(target);
       return;
@@ -728,29 +738,13 @@ export function SessionPage(props: SessionPageProps) {
     const openFileTarget = (fileTarget: OpenTarget) => {
       if (!isCollectibleArtifactTarget(fileTarget)) {
         if (isOpenableFileTarget(fileTarget)) {
-          if (runtime.workspaceType === "remote" && runtime.client && runtime.runtimeWorkspaceId) {
-            void runtime.client.downloadWorkspaceFile(runtime.runtimeWorkspaceId, fileTarget.value)
-              .then((result) => {
-                const url = URL.createObjectURL(new Blob([result.data], {
-                  type: result.contentType ?? "application/octet-stream",
-                }));
-                const anchor = document.createElement("a");
-                anchor.href = url;
-                anchor.download = fileTarget.name;
-                anchor.click();
-                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-              })
-              .catch(reportOpenError);
-          } else if (canOpenLocally) {
-            openLocalFile(fileTarget);
-          }
+          if (canOpenLocally) openLocalFile(fileTarget);
         }
         return;
       }
 
       const sessionId = sourceSessionId ?? props.selectedSessionId;
       if (!sessionId) return;
-      if (options?.auto && activePanelTab?.id === fileTarget.id) return;
       openTab(sessionId, {
         id: fileTarget.id,
         type: "artifact",
@@ -778,7 +772,7 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     openFileTarget(target);
-  }, [activePanelTab?.id, browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,
@@ -808,7 +802,7 @@ export function SessionPage(props: SessionPageProps) {
     requiresArgs: true,
     args: [
       { name: "url", type: "string", required: true, description: "The website URL to open." },
-      { name: "provider", type: "string", description: "Browser provider. Use builtin or auto. External is reserved for future support." },
+      { name: "provider", type: "string", description: "Browser provider. Use builtin or auto." },
     ],
     previewArgs: { url: "https://example.com", provider: "builtin" },
     disabled: !isElectronRuntime(),
@@ -1009,7 +1003,7 @@ export function SessionPage(props: SessionPageProps) {
   const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const hasMainContentTakeover = Boolean(props.mainContentTakeover);
-  const sidebarOnlyChrome = isMobile && shellConfig.sidebar && !props.primarySlot && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
+  const sidebarOnlyChrome = isMobile && !isElectronRuntime() && shellConfig.sidebar && (!props.primarySlot || props.primarySlotIsConversation) && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
   const showWorkspaceSetupEmptyState = props.workspaces.length === 0 && !props.selectedSessionId;
   const showStartupSkeleton =
     !bootOverlayVisible &&
@@ -1023,7 +1017,7 @@ export function SessionPage(props: SessionPageProps) {
   // Derive the main-pane error from the same data the sidebar uses so the two
   // panes can never disagree. We check (in priority order):
   // 1. selectedWorkspaceError (errorsByWorkspaceId[selectedWorkspaceId])
-  // 2. workspaceConnectionStateById[selectedWorkspaceId].message (covers test/recover paths)
+  // 2. workspaceConnectionStateById[selectedWorkspaceId].message
   // 3. group.error from workspaceSessionGroups (the same source the sidebar reads)
   const selectedWorkspaceConnectionMessage = (() => {
     const state = props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId];
@@ -1042,10 +1036,7 @@ export function SessionPage(props: SessionPageProps) {
     selectedWorkspaceGroupError ||
     "";
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
-  const selectedWorkspaceErrorTitle =
-    props.selectedWorkspaceDisplay.workspaceType === "remote"
-      ? "Remote workspace unavailable"
-      : "OpenCode unavailable";
+  const selectedWorkspaceErrorTitle = "OpenCode unavailable";
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
@@ -1131,9 +1122,6 @@ export function SessionPage(props: SessionPageProps) {
     !hasMainContentTakeover &&
     !showWorkspaceSetupEmptyState &&
     !canRenderReactSurface;
-  const selectedWorkspaceIsRemote = props.workspaces.some(
-    (workspace) => workspace.id === props.selectedWorkspaceId && workspace.workspaceType === "remote",
-  );
   const findButtonSessionId = props.selectedSessionId;
   const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
@@ -1351,7 +1339,6 @@ export function SessionPage(props: SessionPageProps) {
       client={props.openworkServerClient}
       workspaceId={props.runtimeWorkspaceId}
       workspaceRoot={props.selectedWorkspaceRoot}
-      isRemoteWorkspace={props.surface?.isRemoteWorkspace ?? false}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
     />
@@ -1409,17 +1396,15 @@ export function SessionPage(props: SessionPageProps) {
             setCreateGroupOpen(true);
           }}
           onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
-          onShareWorkspace={props.sidebar.onShareWorkspace}
           onRevealWorkspace={props.sidebar.onRevealWorkspace}
-          onRecoverWorkspace={props.sidebar.onRecoverWorkspace}
-          onTestWorkspaceConnection={props.sidebar.onTestWorkspaceConnection}
-          onEditWorkspaceConnection={props.sidebar.onEditWorkspaceConnection}
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
           onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
           onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
           automationsActive={props.sidebar.automationsActive}
           automationsNeedAttention={props.sidebar.automationsNeedAttention}
           onOpenAutomations={props.sidebar.onOpenAutomations}
+          calendarActive={props.sidebar.calendarActive}
+          onOpenCalendar={props.sidebar.onOpenCalendar}
           dashboardActive={props.sidebar.dashboardActive}
           onOpenDashboard={props.sidebar.onOpenDashboard}
           conversationHistory={{
@@ -1456,33 +1441,20 @@ export function SessionPage(props: SessionPageProps) {
           }}
         />
         <SidebarInset
-          className={cn(
-            // Below `lg` the sidebar is a mobile sheet, not an inline `peer`, so
-            // the collapsed-peer rule never matches there and the header must
-            // reserve the titlebar clearance itself.
-            "min-h-0 overflow-hidden bg-sidebar mac:bg-transparent mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-34 mac:max-lg:[&_header]:pl-34",
-            !shellConfig.sidebar && "mac:[&_header]:pl-34",
-          )}
+          className="min-h-0 min-w-0 overflow-hidden bg-sidebar mac:bg-transparent"
         >
-          <div className={cn(
-            "flex min-h-0 flex-1 max-lg:p-0 lg:py-2 lg:pl-2",
-            !sidebarOpen && "mac:lg:pt-0 mac:lg:pl-0",
-          )}>
-          <ResizablePanelGroup
-            orientation="horizontal"
-            onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
-            className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
+          {sidebarOnlyChrome ? <MobileChatNavigation /> : <header
+            data-session-header
+            data-sidebar-hidden={!shellConfig.sidebar || !sidebarOpen || isMobile}
+            className={cn(
+              "window-titlebar flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
+              props.mainContentHeaderActionsRef ? "min-h-13" : "lg:pr-1",
+              props.primarySurface !== "flat" && "lg:border-b-0",
+              (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
+            )}
           >
-            <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
-              <main data-session-pane className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
-          {/* The pane `<main>` above already carries the macOS vibrancy blur. A
-              second backdrop filter on the header (or on the transcript surface
-              below) is invisible — nothing scrolls beneath either — but each
-              one forces an extra full-pane blur pass every frame the transcript
-              repaints. Keep the pane as the only backdrop surface. */}
-          {sidebarOnlyChrome ? <MobileChatNavigation /> : <header data-session-header className={cn("z-10 flex shrink-0 items-center justify-between border-b border-border mac:titlebar-drag @container/titlebar", props.mainContentHeaderActionsRef ? "h-[52px] px-6" : "h-9 px-3 max-lg:h-12 lg:px-6")}>
             <div className="flex min-w-0 items-center gap-3">
-              {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
+              {shellConfig.sidebar ? <MainSidebarControls onOpenSessionSearch={props.sidebar.onOpenSessionSearch} /> : null}
               {parentSessionLink && !props.primarySlot && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -1490,7 +1462,7 @@ export function SessionPage(props: SessionPageProps) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground mac:titlebar-no-drag"
+                        className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag"
                         data-parent-session-back={parentSessionLink.sessionId}
                         aria-label={`Back to ${parentSessionLink.title || "parent chat"}`}
                         onClick={() => openSessionTab(parentSessionLink.workspaceId, parentSessionLink.sessionId)}
@@ -1505,7 +1477,7 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Back to parent chat</TooltipContent>
                 </Tooltip>
               ) : null}
-              <h1 data-session-header-title className={cn("truncate font-medium text-dls-text", !props.primaryTitle && !props.mainContentTitle && "max-lg:hidden", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
+              <h1 data-session-header-title className={cn("truncate font-medium text-dls-text", !isElectronRuntime() && !props.primaryTitle && !props.mainContentTitle && "max-lg:hidden", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
                 {props.primaryTitle
                   ? props.primaryTitle
                   : props.mainContentTitle
@@ -1538,8 +1510,8 @@ export function SessionPage(props: SessionPageProps) {
             </div>
 
             {props.mainContentHeaderActionsRef ? (
-              <div ref={props.mainContentHeaderActionsRef} className="shrink-0 mac:titlebar-no-drag" />
-            ) : <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+              <div ref={props.mainContentHeaderActionsRef} className="shrink-0 titlebar-no-drag" />
+            ) : <div className="flex shrink-0 items-center gap-1.5 text-gray-10 titlebar-no-drag">
               <DesktopUpdateButton />
               {!props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
                 <Tooltip>
@@ -1556,35 +1528,9 @@ export function SessionPage(props: SessionPageProps) {
                       </Button>
                     }
                   />
-                  <TooltipContent>Find in conversation (⌘F)</TooltipContent>
+                  <TooltipContent>Find in conversation ({isMacPlatform() ? "⌘F" : "Ctrl+F"})</TooltipContent>
                 </Tooltip>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className={cn(
-                        "hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
-                        sidePanelOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                      )}
-                      aria-label={sidePanelOpen ? "Close side panel" : "Open side panel"}
-                      aria-pressed={sidePanelOpen}
-                      onClick={() => {
-                        if (sidePanelOpen) {
-                          closeRightPane();
-                        } else {
-                          openGeneralSidePanel();
-                        }
-                      }}
-                    >
-                      <PanelRight size={16} />
-                    </Button>
-                  }
-                />
-                <TooltipContent>{sidePanelOpen ? "Close side panel" : "Open side panel"}</TooltipContent>
-              </Tooltip>
               {showCloudSignIn ? (
                 <Button
                   variant="secondary"
@@ -1648,9 +1594,43 @@ export function SessionPage(props: SessionPageProps) {
                   Reset notifications
                 </Button>
               ) : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className={cn(
+                        "hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
+                        sidePanelOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                      )}
+                      aria-label={sidePanelOpen ? "Close side panel" : "Open side panel"}
+                      aria-pressed={sidePanelOpen}
+                      onClick={() => {
+                        if (sidePanelOpen) {
+                          closeRightPane();
+                        } else {
+                          openGeneralSidePanel();
+                        }
+                      }}
+                    >
+                      <PanelRight size={16} />
+                    </Button>
+                  }
+                />
+                <TooltipContent>{sidePanelOpen ? "Close side panel" : "Open side panel"}</TooltipContent>
+              </Tooltip>
             </div>}
           </header>}
 
+          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2 lg:pt-2")}>
+          <ResizablePanelGroup
+            orientation="horizontal"
+            onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
+            className={cn("min-h-0 flex-1 max-lg:rounded-none", props.primarySurface !== "flat" && "lg:rounded-[14px]")}
+          >
+            <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
+              <main data-session-pane className={cn("flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface", props.primarySurface !== "flat" && "max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
           {showNarrowPaneSwitcher ? (
             <NarrowPaneSwitcher
               activePane={narrowPane}
@@ -1726,29 +1706,18 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
 
               {!hasMainContentTakeover && showDelayedSessionLoadingState ? (
-                selectedWorkspaceIsRemote ? (
-                  // Cloud workers sync over the network all the time; the full
-                  // loading pane reads as "something is wrong". Keep it to a
-                  // quiet text shimmer.
-                  <div className="px-6 py-16 text-center" role="status" aria-live="polite">
-                    <span className="ow-text-shimmer text-[12px] leading-5">
+                <div className="px-6 py-16">
+                  <div
+                    className="mx-auto flex max-w-[320px] flex-col items-center gap-3 text-center"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <OwDotTicker size="md" />
+                    <div className="text-[12px] leading-5 text-dls-secondary">
                       {t("session.loading_detail")}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="px-6 py-16">
-                    <div
-                      className="mx-auto flex max-w-[320px] flex-col items-center gap-3 text-center"
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <OwDotTicker size="md" />
-                      <div className="text-[12px] leading-5 text-dls-secondary">
-                        {t("session.loading_detail")}
-                      </div>
                     </div>
                   </div>
-                )
+                </div>
               ) : null}
 
               {!props.primarySlot && !hasMainContentTakeover && !showDelayedSessionLoadingState && canRenderReactSurface ? (
@@ -1894,7 +1863,7 @@ export function SessionPage(props: SessionPageProps) {
                                 workspaceTitle={splitPaneRuntime.workspaceTitle}
                                 message={splitPaneRuntime.message}
                                 onRetry={() => void Promise.resolve(
-                                  props.sidebar.onTestWorkspaceConnection(splitPaneRuntime.workspaceId),
+                                  props.sidebar.onRetryWorkspace(splitPaneRuntime.workspaceId),
                                 )}
                                 onClose={closeSecondaryWorkbenchPane}
                               />
@@ -1930,32 +1899,7 @@ export function SessionPage(props: SessionPageProps) {
                     <div className="px-6 py-16">
                       <TaskRecovery title={selectedWorkspaceErrorTitle}
                         technicalDetails={selectedWorkspaceErrorMessage}
-                        onRetry={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
-                        actions={<>
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={() => void Promise.resolve(props.sidebar.onTestWorkspaceConnection(props.selectedWorkspaceId))}
-                          >
-                            {t("workspace_list.test_connection")}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            onClick={() => props.sidebar.onEditWorkspaceConnection(props.selectedWorkspaceId)}
-                          >
-                            {t("workspace_list.edit_connection")}
-                          </Button>
-                          {props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId]?.status === "error" ? (
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() => void Promise.resolve(props.sidebar.onRecoverWorkspace(props.selectedWorkspaceId))}
-                            >
-                              {t("workspace_list.recover")}
-                            </Button>
-                          ) : null}
-                        </>} />
+                        onRetry={() => void Promise.resolve(props.sidebar.onRetryWorkspace(props.selectedWorkspaceId))} />
                     </div>
                   ) : props.selectedSessionId ? (
                     <div className="px-6 py-16 text-center text-sm text-dls-secondary">
@@ -1987,7 +1931,6 @@ export function SessionPage(props: SessionPageProps) {
                 <ResizablePanel defaultSize="280px" minSize="160px" maxSize="55%" className="min-h-0">
                   <TerminalDock
                     workspaceRoot={props.selectedWorkspaceRoot}
-                    isRemoteWorkspace={props.selectedWorkspaceDisplay.workspaceType === "remote"}
                     onClose={() => props.onTerminalOpenChange?.(false)}
                   />
                 </ResizablePanel>
@@ -2015,7 +1958,7 @@ export function SessionPage(props: SessionPageProps) {
               </>
             ) : null}
           </ResizablePanelGroup>
-          <aside className="hidden w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground lg:flex mac:titlebar-no-drag">
+          <aside className={cn("hidden w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.primarySurface !== "flat" && "lg:flex")}>
             {isElectronRuntime() ? (
               <Button
                 variant="ghost"
@@ -2054,7 +1997,6 @@ export function SessionPage(props: SessionPageProps) {
           </aside>
           </div>
         </SidebarInset>
-        {shellConfig.sidebar && !sidebarOnlyChrome ? <SidebarTrigger className="hidden mac:absolute mac:left-[88px] mac:size-8! top-[3px] z-50 mac:flex titlebar-no-drag" /> : null}
       </SidebarProvider>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}
@@ -2125,7 +2067,6 @@ export function SessionPage(props: SessionPageProps) {
         </DialogContent>
       </Dialog>
 
-      {props.shareWorkspaceModal ? <ShareWorkspaceModal {...props.shareWorkspaceModal} /> : null}
 
       {/* Cloud provider notifications are now handled globally by CloudProvidersToast in app-root.tsx */}
     </div>

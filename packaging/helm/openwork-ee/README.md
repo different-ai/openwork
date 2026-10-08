@@ -218,8 +218,6 @@ config:
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: "admin@example.com"
-    # Self-hosted default: every organization gets install downloads.
-    installLinksGatingEnabled: "false"
     authCallbackUrl: "https://openwork.example.com"
   githubConnector:
     appId: ""
@@ -300,6 +298,58 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
   --set image.tag=REPLACE_OPENWORK_VERSION \
   -f values.prod.yaml
 ```
+
+### Features
+
+OpenWork features are declared once, in `packages/features/src/registry.ts`,
+and rolled out along several dimensions: which products a feature exists on,
+on or off for everyone, per-organization overrides, and a kill switch.
+Platform admins change these in `/admin` without a redeploy. As the operator,
+you can also lock a feature for the whole install under `config.features`:
+
+```yaml
+config:
+  features:
+    orgManagedDashboards: "true"   # on for everyone on this install
+    installLinks: "false"          # off for everyone on this install
+```
+
+- `""` (the default) follows `/admin`, which starts from the default listed
+  below.
+- `"true"` or `"false"` locks the feature for everyone. `/admin` shows "Set by
+  deployment config" for it. The `/admin` kill switch still turns it off.
+
+Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
+of self-hosted installs have no key, so they can't be turned on here. A key
+that isn't listed below fails `helm install` through `values.schema.json`.
+
+`config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
+OpenWork Cloud. Don't change it on a customer install.
+
+<!-- BEGIN GENERATED features (pnpm features:sync) -->
+| `config.features.*` | Environment variable | Default | What it does |
+| --- | --- | --- | --- |
+| `installLinks` | `DEN_FEATURE_INSTALL_LINKS` | default on | Workspace admins can create desktop install links for their organization. |
+| `mcpConnections` | `DEN_FEATURE_MCP_CONNECTIONS` | default on | Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. |
+| `implicitCloudSkills` | `DEN_FEATURE_IMPLICIT_CLOUD_SKILLS` | default off | Agents discover organization skills automatically without waiting for Cloud before starting a task. |
+| `dashboardActivity` | `DEN_FEATURE_DASHBOARD_ACTIVITY` | default off | Organization admins see recent additions and skill updates on their dashboard instead of Quick add. |
+| `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
+| `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
+| `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |
+| `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
+| `slackAssistantHeadless` | `DEN_FEATURE_SLACK_ASSISTANT_HEADLESS` | default off | Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. |
+| `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
+| `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
+| `automationCalendar` | `DEN_FEATURE_AUTOMATION_CALENDAR` | default off | Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. |
+| `workbotCalendar` | `DEN_FEATURE_WORKBOT_CALENDAR` | default off | Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot. |
+| `workbotSideChats` | `DEN_FEATURE_WORKBOT_SIDE_CHATS` | default off | Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. |
+| `litellm` | `DEN_FEATURE_LITELLM` | default off | Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person. |
+| `gatewayCloudSignIn` | `DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN` | default off | Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key. |
+| `platformAuditReads` | `DEN_FEATURE_PLATFORM_AUDIT_READS` | default off | Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect. |
+<!-- END GENERATED features -->
+
+The table and the `config.features` block are generated: run `pnpm features:sync`
+after changing the registry.
 
 ### Automations rollout
 
@@ -442,7 +492,7 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 - `BETTER_AUTH_SECRET`
 - `DEN_DB_ENCRYPTION_KEY`
 
-Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
+Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
 Redis cache examples:
 
@@ -465,6 +515,47 @@ secret:
   values:
     databaseRedisUrl: "redis://red-...:6379"
 ```
+
+## Audit usage refresh
+
+Audit writes never update an organization's audit usage totals (retained
+operations, events, logical bytes). That keeps each audit write independent, so
+writes never queue behind each other on a shared row. A daily CronJob recomputes
+the totals instead by calling den-api's `POST /internal/audit/usage/refresh`
+with a maintenance token. The audit usage screen shows when the totals were last
+measured. The CronJob is off by default. Turn it on with a token of 24 or more
+characters, either in the chart Secret:
+
+```yaml
+denApi:
+  auditUsage:
+    enabled: true
+secret:
+  values:
+    maintenanceToken: "<random 32+ character string>"
+```
+
+or from your own Secret:
+
+```yaml
+denApi:
+  auditUsage:
+    enabled: true
+    tokenSecret: den-maintenance
+    tokenKey: token
+```
+
+The same token is passed to den-api as `DEN_MAINTENANCE_TOKEN`; den-api answers
+404 on `/internal/*` when it is unset. `schedule` (default `30 3 * * *`) and
+`timeZone` (default `Etc/UTC`) are configurable. Non-Helm deployments need their
+own scheduled caller, for example:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $DEN_MAINTENANCE_TOKEN" \
+  http://<den-api>/internal/audit/usage/refresh
+```
+
+Render-only verification: `bash packaging/helm/openwork-ee/tests/den-audit-usage.sh`.
 
 ## Custom CA certificates
 

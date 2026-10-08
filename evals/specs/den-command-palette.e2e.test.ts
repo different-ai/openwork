@@ -16,7 +16,7 @@ function stringArray(value: unknown): string[] {
 
 test("the Den command palette searches pages, navigates, and records recents", async ({ world, user, probe, evidence, step }) => {
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
-  await user.see({ text: /Download for this workspace/ }, { timeoutMs: 90_000 });
+  await user.see({ testId: "den-download-openwork", label: "Download OpenWork" }, { timeoutMs: 90_000 });
 
   await step("the Den header shows a search bar and the palette is closed", async () => {
     await user.see({ testId: "den-command-palette-trigger" });
@@ -54,7 +54,7 @@ test("the Den command palette searches pages, navigates, and records recents", a
     });
     await user.notSee(palette);
     expect(path).toBe("/dashboard/mcp-connections");
-    await user.see({ text: /Connectors is where you can add MCP servers/ }, { timeoutMs: 30_000 });
+    await user.see({ role: "heading", label: "Connectors" }, { timeoutMs: 30_000 });
     evidence.recordAssertionEvidence("The mcp alias opens the Connectors page and closes the palette", `path=${path}; palette closed`, path === "/dashboard/mcp-connections");
     await user.screenshot();
   });

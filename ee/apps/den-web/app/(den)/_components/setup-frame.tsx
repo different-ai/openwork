@@ -98,9 +98,14 @@ function WorkPreview({ step }: { step: SetupStep }) {
   );
 }
 
-/** A shared visual rhythm from the first auth screen to the first useful task. */
+/**
+ * A shared visual rhythm from the first auth screen to the first useful task.
+ * Without a `step` the frame is a one-page flow (agent sign-in, device and
+ * claim codes, connection links): no stepper, no eyebrows, and the story column
+ * shows who is asking through `aside` instead of the product preview.
+ */
 export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false }: {
-  step: SetupStep;
+  step?: SetupStep;
   title: string;
   description: string;
   children: ReactNode;
@@ -108,46 +113,51 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
   panelVisual?: ReactNode;
   embedded?: boolean;
 }) {
-  const current = steps.findIndex((item) => item.id === step);
+  const current = step ? steps.findIndex((item) => item.id === step) : -1;
+  const plain = !step;
   return (
-    <section className={`${styles.frame} ${embedded ? styles.embedded : ""}`} data-testid="setup-frame" data-step={step}>
+    <section className={`${styles.frame} ${embedded ? styles.embedded : ""} ${plain ? styles.plain : ""}`} data-testid="setup-frame" data-step={step ?? "none"}>
       <header className={styles.top}>
         <div className={styles.brand}><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>OpenWork<span className={styles.cloud}> / Cloud</span></span></div>
-        <nav className={styles.progress} aria-label="Setup progress">
-          <div className={styles.progressSummary}>
-            <span>{steps[current]?.label}</span>
-            <span>Step {current + 1} of {steps.length}</span>
-          </div>
-          <ol className={styles.steps}>{steps.map((item, index) => (
-            <li
-              key={item.id}
-              aria-current={item.id === step ? "step" : undefined}
-              aria-label={`${item.label}: ${index < current ? "completed" : index === current ? "current step" : "upcoming"}`}
-              className={index < current ? styles.done : ""}
-            >
-              <span className={styles.stepLabel}>{item.label}</span>
-              <span className={styles.progressSegment} aria-hidden="true" />
-            </li>
-          ))}</ol>
-        </nav>
+        {step ? (
+          <nav className={styles.progress} aria-label="Setup progress">
+            <div className={styles.progressSummary}>
+              <span>{steps[current]?.label}</span>
+              <span>Step {current + 1} of {steps.length}</span>
+            </div>
+            <ol className={styles.steps}>{steps.map((item, index) => (
+              <li
+                key={item.id}
+                aria-current={item.id === step ? "step" : undefined}
+                aria-label={`${item.label}: ${index < current ? "completed" : index === current ? "current step" : "upcoming"}`}
+                className={index < current ? styles.done : ""}
+              >
+                <span className={styles.stepLabel}>{item.label}</span>
+                <span className={styles.progressSegment} aria-hidden="true" />
+              </li>
+            ))}</ol>
+          </nav>
+        ) : null}
       </header>
       <div className={styles.grid}>
         <aside className={styles.story}>
           <div className={styles.intro}>
-            <p className={styles.eyebrow}>A LITTLE LESS BUSYWORK</p>
+            {step ? <p className={styles.eyebrow}>A LITTLE LESS BUSYWORK</p> : null}
             <h1>{title}</h1>
             <p className={styles.description}>{description}</p>
-            <div className={styles.modelSupport}>
-              <p>Your choice of model. One place to work.</p>
-              <span>OpenAI</span><i aria-hidden="true">·</i><span>Anthropic</span><i aria-hidden="true">·</i><span>Google</span><i aria-hidden="true">·</i><span>and more</span>
-            </div>
+            {step ? (
+              <div className={styles.modelSupport}>
+                <p>Your choice of model. One place to work.</p>
+                <span>OpenAI</span><i aria-hidden="true">·</i><span>Anthropic</span><i aria-hidden="true">·</i><span>Google</span><i aria-hidden="true">·</i><span>and more</span>
+              </div>
+            ) : null}
           </div>
-          {aside ? <div className={styles.customPreview}>{aside}</div> : <WorkPreview step={step} />}
-          <p className={styles.storyNote}>Switch models while keeping your tools and the work in one place.</p>
+          {aside ? <div className={styles.customPreview}>{aside}</div> : step ? <WorkPreview step={step} /> : null}
+          {step ? <p className={styles.storyNote}>Switch models while keeping your tools and the work in one place.</p> : null}
         </aside>
-        <div className={styles.panel} key={step}>
+        <div className={styles.panel} key={step ?? "plain"}>
           {panelVisual ? <div className={styles.panelVisual}>{panelVisual}</div> : null}
-          <div className={styles.panelEyebrow}><span>0{current + 1}</span><span>{steps[current]?.label}</span><span className={styles.panelRule} /></div>
+          {step ? <div className={styles.panelEyebrow}><span>0{current + 1}</span><span>{steps[current]?.label}</span><span className={styles.panelRule} /></div> : null}
           {children}
         </div>
       </div>

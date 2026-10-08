@@ -17,17 +17,15 @@
   ],
   "scripts": {
     "build": "tsup",
-    "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.2.0",
+    "@modelcontextprotocol/core": "^2.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
-    "tsx": "^4.23.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3"
   }

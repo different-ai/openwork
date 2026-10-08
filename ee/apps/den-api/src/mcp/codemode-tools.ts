@@ -20,6 +20,7 @@ import {
   buildExternalCapabilityName,
   executeExternalCapability,
   EXTERNAL_MCP_SEARCH_CONCURRENCY,
+  providerMarksReadOnly,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
@@ -109,57 +110,15 @@ export function restrictCodemodeToolTree(input: {
   }
 }
 
-export function restrictReadOnlyCodemodeToolTree(input: {
-  built: BuiltCodemodeTools
-  requiredCapabilities: readonly CodemodeManifestEntry[]
-}): { tools: CodemodeToolTree; missing: CodemodeManifestEntry[]; unsafe: CodemodeManifestEntry[] } {
-  const restricted = restrictCodemodeToolTree(input)
-  const missing = new Set(restricted.missing)
-  const unsafe: CodemodeManifestEntry[] = []
-  const permitted: CodemodeManifestEntry[] = []
-  for (const required of input.requiredCapabilities) {
-    if (missing.has(required)) continue
-    const entries = input.built.manifest.filter((entry) =>
-      entry.scriptPath === required.scriptPath && entry.capabilityName === required.capabilityName)
-    if (entries.length === 0 || entries.some((entry) => entry.authority !== "den" || entry.readOnly !== true)) {
-      unsafe.push(required)
-      continue
-    }
-    permitted.push(required)
-  }
-  return {
-    tools: restrictCodemodeToolTree({ built: input.built, requiredCapabilities: permitted }).tools,
-    missing: restricted.missing,
-    unsafe,
-  }
-}
-
-/**
- * Unattended Cloud runs may be retried after a lost lease, so Phase 1 admits
- * only read-only capabilities implemented by Den itself. External MCP tools
- * remain available to interactive saved-Script runs, but provider metadata is
- * not an authority boundary for unattended execution.
- */
-export function firstUnattendedUnsafeCapability(
-  built: BuiltCodemodeTools,
-  requiredCapabilities: readonly CodemodeManifestEntry[],
-): CodemodeManifestEntry | null {
-  const manifest = new Map(built.manifest.map((entry) => [
-    `${entry.scriptPath}\n${entry.capabilityName}`,
-    entry,
-  ]))
-  return requiredCapabilities.find((required) => {
-    const available = manifest.get(`${required.scriptPath}\n${required.capabilityName}`)
-    return available?.authority !== "den" || available.readOnly !== true
-  }) ?? null
-}
-
 function textParts(value: unknown): string[] {
   if (!isRecord(value) || !Array.isArray(value.content)) return []
   return value.content.flatMap((part) => isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : [])
 }
 
 function toolResultValue(value: unknown): unknown {
+  // Den routes attach their untruncated payload for scripts; the model-visible
+  // `content` is capped per string and would silently cut long files.
+  if (isRecord(value) && "payload" in value) return value.payload
   if (isRecord(value) && value.structuredContent !== undefined) return value.structuredContent
   const text = textParts(value)
   if (text.length === 0) return null
@@ -200,6 +159,7 @@ export function buildDenCatalogToolTree(input: {
       env: input.env,
       operation,
       principal: input.principal,
+      includePayload: true,
       toolInput: {
         path: normalizeToolRecord(isRecord(toolInput) ? toolInput.path : undefined),
         query: normalizeToolRecord(isRecord(toolInput) ? toolInput.query : undefined),
@@ -274,6 +234,7 @@ export async function buildNativeProviderToolTree(input: {
         member: memberIdentity,
         catalog: input.catalog,
         principal: input.principal,
+        includePayload: true,
         path: normalizeToolRecord(isRecord(toolInput) ? toolInput.path : undefined),
         query: normalizeToolRecord(isRecord(toolInput) ? toolInput.query : undefined),
         body: normalizeToolBody(isRecord(toolInput) ? toolInput.body : undefined),
@@ -388,7 +349,7 @@ export async function buildExternalMcpToolTree(input: {
           scriptPath: codemodeScriptPath(namespace, tool.name),
           capabilityName: buildExternalCapabilityName(connection.id, tool.name),
           // Descriptive only: external dispatch always requires the caller's write scope.
-          readOnly: tool.annotations?.readOnlyHint === true && tool.annotations?.destructiveHint !== true,
+          readOnly: providerMarksReadOnly(tool.annotations),
           authority: "external" as const,
         }))
     }),

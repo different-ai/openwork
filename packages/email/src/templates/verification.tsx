@@ -1,3 +1,4 @@
+import React from "react"
 import { Body, Container, Head, Heading, Html, Preview, Section, Text } from "@react-email/components"
 
 export type VerificationEmailProps = {

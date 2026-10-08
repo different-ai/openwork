@@ -1,8 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { constants, existsSync, openSync } from "node:fs";
-import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { allocateFreePort, allocateFreePorts, listTargets, waitForCdp } from "@openwork/cdp";
 import type { SurfaceExit } from "@openwork/cdp";
 import {
@@ -14,8 +14,10 @@ import {
   openworkServerDataDir,
 } from "@openwork/paths";
 import { ensureDenStack } from "./den-stack.ts";
+import { selectedAppEnv } from "./app-env.ts";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChildProcess } from "node:child_process";
+import { MOUSE_POINTER_CHROME_ARG } from "./types.ts";
 import type { DisposableHost, SurfaceHandle, ElectronSurfaceOptions, ChromeSurfaceOptions, DenServiceOptions, DenServiceHandle, ShareLinks } from "./types.ts";
 
 type OrgMode = "single_org" | "multi_org";
@@ -97,6 +99,14 @@ interface KillLocalPidOptions {
 
 export interface FreePortOptions {
   log?: (message: string) => void;
+  /**
+   * Only stop listeners in this process group. Surface cleanup passes the
+   * spawned surface's pid (spawnDetached makes it a group leader). Without
+   * it, a port the surface allocated but never bound (a packaged binary's
+   * unused Vite port) can be taken by a concurrently booting app, and
+   * cleanup would kill that unrelated app.
+   */
+  ownerProcessGroup?: number;
 }
 
 const CDP_WAIT_TIMEOUT_MS = 120_000;
@@ -246,14 +256,24 @@ function processGroupId(pid: number): Promise<number | null> {
 }
 
 /** Ensure no process is listening on a local TCP port, killing stale owners. */
-export async function freePort(port: number, { log }: FreePortOptions = {}): Promise<void> {
+export async function freePort(port: number, { log, ownerProcessGroup }: FreePortOptions = {}): Promise<void> {
   if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
     throw new Error(`Port must be an integer from 1 to 65535, got ${port}.`);
   }
   if (process.platform !== "darwin" && process.platform !== "linux") return;
   const deadline = Date.now() + 10_000;
   const currentProcessGroup = await processGroupId(process.pid);
-  let pids = await listeningPids(port);
+  const owned = async (pids: number[]): Promise<number[]> => {
+    if (ownerProcessGroup === undefined) return pids;
+    const kept: number[] = [];
+    for (const pid of pids) {
+      const group = await processGroupId(pid);
+      if (group === ownerProcessGroup) kept.push(pid);
+      else log?.(`Port ${port} is held by pid ${pid} outside process group ${ownerProcessGroup}; leaving it alone.`);
+    }
+    return kept;
+  };
+  let pids = await owned(await listeningPids(port));
   while (pids.length > 0 && Date.now() < deadline) {
     for (const pid of pids) {
       if (pid === process.pid) throw new Error(`Refusing to kill the current process listening on port ${port}.`);
@@ -266,7 +286,7 @@ export async function freePort(port: number, { log }: FreePortOptions = {}): Pro
       await killLocalPid(killPid, { graceMs: 1_000, log });
     }
     await delay(100);
-    pids = await listeningPids(port);
+    pids = await owned(await listeningPids(port));
   }
   if (pids.length > 0) {
     throw new Error(`Port ${port} is still held by listener pid${pids.length === 1 ? "" : "s"} ${pids.join(", ")} after cleanup.`);
@@ -320,7 +340,7 @@ function spawnDetached(command: string, args: string[], { cwd, env, logPath }: S
   return { child, pid: child.pid, exit };
 }
 
-function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean): string[] {
+function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean, mouse: boolean): string[] {
   const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
@@ -328,8 +348,10 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-popup-blocking",
+    ...(process.platform === "darwin" ? ["--use-mock-keychain", "--password-store=basic"] : []),
     // Avoid the Daytona preview h2 stall when ~28 dev chunks multiplex; h1.1 loads them, while plain-http local Den never negotiates h2.
     "--disable-http2",
+    ...(mouse ? [MOUSE_POINTER_CHROME_ARG] : []),
     startUrl,
   ];
   return headless ? ["--headless=new", ...args] : args;
@@ -387,9 +409,8 @@ async function prepareSharedElectronResources(repoRoot: string, log: (message: s
     prepareSharedResourcesPromise = (async () => {
       const desktopRoot = join(repoRoot, "apps", "desktop");
       const scriptsRoot = join(desktopRoot, "scripts");
-      log("Preparing shared Electron sidecars/helpers once for local eval surfaces...");
+      log("Preparing shared Electron sidecars once for local eval surfaces...");
       await runPrepareScript(join(scriptsRoot, "prepare-sidecar.mjs"), join(desktopRoot, "resources", "sidecars"), desktopRoot);
-      await runPrepareScript(join(scriptsRoot, "prepare-computer-use-helper.mjs"), join(desktopRoot, "resources", "helpers"), desktopRoot);
     })();
   }
   await prepareSharedResourcesPromise;
@@ -488,8 +509,16 @@ export function electronSurfaceEnv(
   // Give local eval Electron surfaces isolated app data, config, and identity so
   // they cannot affect the user's real desktop app.
   return {
+    // Explicit `pnpm world up --env KEY` app settings come first so the
+    // isolation keys below always win over a selected value.
+    ...selectedAppEnv(),
     ...(pnpmHome ? { PNPM_HOME: pnpmHome } : {}),
     APPDATA: paths.appDataDir,
+    // Den hands a member's Automation runs and remote-session commands to any
+    // of that member's runners, so an eval desktop signed in to a real account
+    // would take real work. Specs that exercise the runner opt in with
+    // `env: { OPENWORK_AUTOMATION_RUNNER: "on" }`.
+    OPENWORK_AUTOMATION_RUNNER: "off",
     HOME: paths.homeDir,
     LOCALAPPDATA: paths.localAppDataDir,
     OPENWORK_DATA_DIR: paths.dataDir,
@@ -514,6 +543,18 @@ export function electronSurfaceEnv(
     XDG_STATE_HOME: paths.stateHome,
     ...overrides,
   };
+}
+
+/**
+ * Launch env for an isolated Electron surface. The launching shell's OPENCODE_*
+ * never reach the app: an OpenWork agent shell exports the host app's
+ * OPENCODE_DB, which points the eval app's engine at the person's real
+ * database. Values a caller sets on purpose arrive through `isolationEnv`
+ * (electronSurfaceEnv overrides), so they still apply.
+ */
+export function electronLaunchEnv(parent: NodeJS.ProcessEnv, isolationEnv: Record<string, string>): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(Object.entries(parent).filter(([key]) => !key.startsWith("OPENCODE_")));
+  return { ...inherited, ...isolationEnv };
 }
 
 export function liveSharedProductionStateEnv(state: InstalledProductionDesktopState): Record<string, string> {
@@ -658,6 +699,23 @@ export function ownedSurfaceFilePaths(handle: SurfaceHandle): string[] {
     : [];
 }
 
+/**
+ * Copy a surface's process log out of its profile before the profile is removed.
+ * The copy is named after the profile root, which is unique per launch. The
+ * logs directory must sit outside the surfaces root: every launch prunes every
+ * entry there that is not a live profile. Returns the copy's path, or null when
+ * there is no log to keep.
+ */
+export async function preserveSurfaceLog(handle: SurfaceHandle, logsDir: string): Promise<string | null> {
+  const logPath = handle.meta?.log;
+  if (!logPath || !existsSync(logPath)) return null;
+  const source = handle.meta?.profileRoot ?? handle.profileDir ?? dirname(logPath);
+  const target = join(logsDir, `${basename(source)}-${basename(logPath)}`);
+  await mkdir(logsDir, { recursive: true });
+  await copyFile(logPath, target);
+  return target;
+}
+
 export async function removeOwnedSurfaceFiles(handle: SurfaceHandle): Promise<void> {
   for (const path of ownedSurfaceFilePaths(handle)) {
     await rm(path, { recursive: true, force: true });
@@ -750,7 +808,8 @@ export function createLocalHost(options: LocalHostOptions): DisposableHost {
   const denPorts = new Set<number>();
 
   async function disposeKnownPorts(handle: SurfaceHandle): Promise<void> {
-    for (const port of surfacePorts(handle)) await freePort(port, { log });
+    const ownerProcessGroup = handle.pid;
+    for (const port of surfacePorts(handle)) await freePort(port, { log, ownerProcessGroup });
   }
 
   async function disposeDenPorts(): Promise<void> {
@@ -851,7 +910,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const appName = `OpenWork Eval ${name}`;
       const appIdentifier = `com.differentai.openwork.eval.${sanitizeSlug(name)}`;
       const isolationEnv = electronSurfaceEnv(paths, { appName, appIdentifier, port, cdpPort }, opts.env);
-      const env: NodeJS.ProcessEnv = { ...process.env, ...isolationEnv };
+      const env = electronLaunchEnv(process.env, isolationEnv);
       const launchArgs = containerLaunchArgs(env.ELECTRON_EXTRA_LAUNCH_ARGS);
       if (launchArgs !== undefined) env.ELECTRON_EXTRA_LAUNCH_ARGS = launchArgs;
       // appendSwitch() in the main process runs too late for the SUID sandbox
@@ -884,8 +943,8 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       } catch (error) {
         await killLocalPid(spawned.pid, { log });
         await Promise.all([
-          freePort(port, { log }),
-          freePort(cdpPort, { log }),
+          freePort(port, { log, ownerProcessGroup: spawned.pid }),
+          freePort(cdpPort, { log, ownerProcessGroup: spawned.pid }),
         ]).catch((cleanupError: unknown) => log(`Electron port cleanup failed: ${messageText(cleanupError)}`));
         throw error;
       }
@@ -916,13 +975,13 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const env: NodeJS.ProcessEnv = { ...process.env };
       const cdpUrl = `http://127.0.0.1:${cdpPort}`;
       const launch = async (headless: boolean): Promise<SpawnedDetached> => {
-        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless), { cwd: profileRoot, env, logPath });
+        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless, opts.mouse === true), { cwd: profileRoot, env, logPath });
         await writeFile(join(profileDir, "openwork-eval-chrome.pid"), `${spawned.pid}\n`, "utf8");
         try {
           await waitForCdpOrExit("Chrome", cdpUrl, spawned, logPath);
         } catch (error) {
           await killLocalPid(spawned.pid, { log });
-          await freePort(cdpPort, { log })
+          await freePort(cdpPort, { log, ownerProcessGroup: spawned.pid })
             .catch((cleanupError: unknown) => log(`Chrome port cleanup failed: ${messageText(cleanupError)}`));
           throw error;
         }
@@ -979,6 +1038,13 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         await killLocalPid(handle.pid, { log });
       }
       await disposeKnownPorts(handle);
+      // CI uploads these copies; the profile, and the log inside it, is removed next.
+      const logsDir = process.env.OPENWORK_EVAL_SURFACE_LOGS_DIR?.trim();
+      if (logsDir) {
+        await preserveSurfaceLog(handle, logsDir)
+          .then((kept) => { if (kept) log(`Kept ${handle.name} log at ${kept}`); })
+          .catch((error: unknown) => log(`Could not keep ${handle.name} log: ${messageText(error)}`));
+      }
       await removeOwnedSurfaceFiles(handle);
       if (handle.meta?.profileOwner !== "caller" && handle.meta?.profileRoot) unregisterLiveProfileRoot(handle.meta.profileRoot);
       spawnedSurfaces.delete(handle);

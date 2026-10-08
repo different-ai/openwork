@@ -1,6 +1,10 @@
-import { homeFaq } from "../lib/faq";
+import { homeFaq, type FaqEntry } from "../lib/faq";
 
-export function LandingFaq() {
+type LandingFaqProps = {
+  entries?: FaqEntry[];
+};
+
+export function LandingFaq({ entries = homeFaq }: LandingFaqProps) {
   return (
     <section aria-labelledby="faq-heading">
       <h2
@@ -10,7 +14,7 @@ export function LandingFaq() {
         Frequently asked questions
       </h2>
       <dl className="grid md:grid-cols-2 md:gap-x-12">
-        {homeFaq.map((entry) => (
+        {entries.map((entry) => (
           <div key={entry.question} className="border-t border-[var(--lp-border)] py-6">
             <dt className="mb-2 text-[17px] font-medium text-[var(--lp-ink)]">
               {entry.question}

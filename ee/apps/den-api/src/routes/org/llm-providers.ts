@@ -1,4 +1,5 @@
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
+import { MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import {
@@ -20,6 +21,7 @@ import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../
 import { probeEndpoint, verifyModels } from "../../llm/endpoint-probe.js"
 import {
   ProviderCredentialError,
+  bedrockCredentialError,
   decodeProviderCredential,
   listConfiguredEnvKeys,
   readProviderEnvNames,
@@ -355,7 +357,7 @@ function resolveCredentialColumn(input: {
   apiKeys?: Record<string, string>
 }) {
   try {
-    return resolveProviderCredential({
+    const value = resolveProviderCredential({
       envNames: readProviderEnvNames(input.providerConfig),
       existing: input.existingProvider
         ? {
@@ -366,6 +368,11 @@ function resolveCredentialColumn(input: {
       apiKey: input.apiKey,
       apiKeys: input.apiKeys,
     })
+    // Only a credential change is checked, so unrelated edits still save.
+    const credentialChanged = input.apiKey !== undefined || input.apiKeys !== undefined
+    const settingsError = credentialChanged ? bedrockCredentialError(input.providerConfig, value) : null
+    if (settingsError) throw new ProviderCredentialError(settingsError)
+    return value
   } catch (error) {
     if (error instanceof ProviderCredentialError) {
       throw createFailure(400, "invalid_api_keys", error.message)
@@ -512,6 +519,9 @@ async function normalizeLlmProviderInput(
     const provider = await getModelsDevProvider(input.providerId ?? "")
     if (!provider) {
       throw createFailure(404, "provider_not_found", "The selected provider was not found in models.dev.")
+    }
+    if (provider.npm === "@ai-sdk/amazon-bedrock/mantle" || provider.id === MICROSOFT_FOUNDRY_PROVIDER_ID) {
+      throw createFailure(400, "gateway_only_provider", `${provider.name} is available through AI Gateway, not Bring your own keys.`)
     }
 
     const requestedModelIds = [...new Set(input.modelIds ?? [])]
@@ -1145,6 +1155,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       }
       const { externalKey } = c.req.valid("param")
       const input = c.req.valid("json")
+      // A blank scalar credential from a provisioning client is almost always
+      // an unresolved secret, not intent: it would otherwise "succeed" and
+      // leave (or make) the provider unusable. Omit apiKey to keep the stored
+      // value; clear it explicitly with apiKeys. The dashboard's create form
+      // legitimately sends a blank key for keyless providers, so this check
+      // stays on the declarative route only.
+      if (input.apiKey === "") {
+        return c.json({
+          error: "invalid_api_keys",
+          message: "apiKey is blank. Omit apiKey to keep the stored credential, or clear it explicitly with apiKeys.",
+        }, 400)
+      }
       const [existing] = await db.select().from(LlmProviderTable).where(and(
         eq(LlmProviderTable.organizationId, payload.organization.id),
         eq(LlmProviderTable.externalKey, externalKey),

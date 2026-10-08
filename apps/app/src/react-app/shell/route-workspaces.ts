@@ -1,7 +1,6 @@
 // Shared pure helpers for the workspace-scoped routes (session-route,
-// settings-route). These were duplicated in both route files and had drifted:
-// settings-route was missing the remote-workspace clobber fix in
-// mergeRouteWorkspaces and used older session-status logic. One copy now.
+// settings-route). These were duplicated in both route files and had
+// drifted. One copy now.
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
@@ -58,7 +57,7 @@ export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, 
   }).listSessionsPage({ limit, cursor });
 
 /** Resolve the owning server's engine even when this workspace isn't selected. */
-async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
+export async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
   const status = await endpoint.client.getEngineV2PreviewStatus().catch((error: unknown) => {
     // Servers predating the preview endpoint still use v1.
     if (error instanceof OpenworkServerError && error.status === 404) return null;
@@ -149,29 +148,10 @@ export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
 export function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
   return (
     workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     t("session.workspace_fallback")
   );
-}
-
-export function workspaceExportFilename(workspace: OpenworkWorkspaceInfo) {
-  const slug = workspaceLabel(workspace).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${slug || "workspace"}-openwork-export.json`;
-}
-
-export function downloadWorkspaceJson(filename: string, payload: unknown) {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function folderNameFromPath(path: string) {
@@ -408,18 +388,7 @@ export function mergeRouteWorkspaces(
     }),
   );
 
-  // If a server workspace's id matches a desktop workspace marked as remote,
-  // skip the server's view entirely. The local OpenWork server may have stale
-  // registrations from earlier (buggy) activate calls that show up here as
-  // `workspaceType: "local"`, which would otherwise clobber the desktop's
-  // remote routing fields and send workspace-scoped requests back to the
-  // local server.
-  const remoteDesktopIds = new Set(
-    desktopWorkspaces.flatMap((workspace) => workspace.workspaceType === "remote" ? [workspace.id] : []),
-  );
-  const filteredServer = serverWorkspaceList.filter((workspace) => !remoteDesktopIds.has(workspace.id));
-
-  const mergedServer = filteredServer.map((workspace) => {
+  const mergedServer = serverWorkspaceList.map((workspace) => {
     const match =
       desktopById.get(workspace.id) ??
       desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));

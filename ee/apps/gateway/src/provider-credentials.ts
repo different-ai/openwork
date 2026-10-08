@@ -1,17 +1,19 @@
 // Resolve the upstream secret for a gateway provider (plan §4.3, decision #14).
 // `credential_mode = org` → the `subject = "org"` row; `member` → the member's
-// own row, never falling back to the org row. Member `oauth_google` tokens are
-// refreshed under a lock near expiry (§5.5), `gcp_service_account` secrets are
-// minted into a bearer (§5.6) and `aws_keys` are handed to the SigV4 signer.
+// own row, never falling back to the org row. Member sign-in tokens (Google,
+// Entra ID, IAM Identity Center) are refreshed under a lock near expiry (§5.5),
+// `gcp_service_account` secrets are minted into a bearer (§5.6), and `aws_keys`
+// and IAM Identity Center role credentials are handed to the SigV4 signer.
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderCredentialTable, GatewayProviderTable } from "@openwork-ee/den-db"
 import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 export { pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import type { GatewayAwsKeysSecret, GatewayProviderCredentialKind } from "@openwork/types/den/gateway"
+import type { MintAwsRoleCredentials } from "./credentials/aws-sso-role-credentials.js"
 import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
-import { needsGoogleOauthRefresh } from "./credentials/google-oauth-refresh.js"
-import type { RefreshGoogleOauthToken } from "./credentials/google-oauth-refresh.js"
+import { hasRefreshToken, isAdminRepairableKind, isRefreshableCredentialKind, needsOauthRefresh } from "./credentials/oauth-refresh.js"
+import type { RefreshMemberToken } from "./credentials/oauth-refresh.js"
 import { loadGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
 import type { GatewayAccessScope, GatewayGrantSelection } from "./provider-access.js"
 
@@ -23,7 +25,7 @@ export type GatewayProvider = Pick<
 export type GatewayCredential = Pick<
   typeof GatewayProviderCredentialTable.$inferSelect,
   "id" | "kind" | "secret" | "expires_at" | "status"
->
+> & Partial<Pick<typeof GatewayProviderCredentialTable.$inferSelect, "last_error">>
 
 export type GatewayCredentialLookup = {
   scope: GatewayAccessScope
@@ -36,12 +38,15 @@ type CredentialId = GatewayCredential["id"]
 
 type MaterializedCredential =
   | { kind: "secret"; credentialId: CredentialId; credentialKind: GatewayProviderCredentialKind; secret: string }
-  | { kind: "aws_keys"; credentialId: CredentialId; credentialKind: "aws_keys"; awsKeys: GatewayAwsKeysSecret }
+  | { kind: "aws_keys"; credentialId: CredentialId; credentialKind: "aws_keys" | "aws_sso"; awsKeys: GatewayAwsKeysSecret }
   | { kind: "auth_required"; credentialId: CredentialId | null; reason: "missing" | "expired" | "inactive" | "refresh_failed" }
+  | { kind: "configuration_required"; credentialId: CredentialId }
   | { kind: "org_credential_missing" }
   | { kind: "org_credential_expired"; credentialId: CredentialId }
   | { kind: "invalid_secret"; credentialId: CredentialId; message: string }
   | { kind: "token_mint_failed"; credentialId: CredentialId; message: string }
+  /** The upstream refused the member's own identity (e.g. no IAM Identity Center assignment). */
+  | { kind: "access_denied"; credentialId: CredentialId; message: string }
   | { kind: "retry"; credentialId: CredentialId; reason: "refresh_busy" | "refresh_unavailable" | "credential_changed" }
 
 export type ResolvedUpstreamCredential =
@@ -51,7 +56,8 @@ export type ResolvedUpstreamCredential =
 export const ORG_CREDENTIAL_SUBJECT = "org"
 
 function isExpired(credential: GatewayCredential, now: Date) {
-  return credential.expires_at !== null && credential.expires_at.getTime() <= now.getTime()
+  if (credential.expires_at === null) return isRefreshableCredentialKind(credential.kind)
+  return !Number.isFinite(credential.expires_at.getTime()) || credential.expires_at.getTime() <= now.getTime()
 }
 
 function parseSecret(credential: GatewayCredential) {
@@ -67,7 +73,7 @@ type ParsedSecret = Exclude<ReturnType<typeof parseSecret>, { kind: "invalid_sec
 async function materialize(
   credential: GatewayCredential,
   parsed: ParsedSecret,
-  input: { envNames: string[]; now: Date; mintGcpAccessToken?: MintGcpAccessToken },
+  input: { envNames: string[]; now: Date; mintGcpAccessToken?: MintGcpAccessToken; mintAwsRoleCredentials?: MintAwsRoleCredentials; set: GatewayGrantSelection["row"]["credentialSet"] },
 ): Promise<MaterializedCredential> {
   switch (parsed.kind) {
     case "api_key":
@@ -84,6 +90,26 @@ async function materialize(
       return { kind: "secret", credentialId: credential.id, credentialKind: parsed.kind, secret: parsed.token.accessToken }
     case "aws_keys":
       return { kind: "aws_keys", credentialId: credential.id, credentialKind: parsed.kind, awsKeys: parsed.awsKeys }
+    case "aws_sso": {
+      // Only for the account and permission set the member signed in for; Den revokes on change.
+      if (input.set.credential_mode !== "member" || JSON.stringify(input.set.aws_sso) !== JSON.stringify(parsed.awsSso.sso)) {
+        return { kind: "auth_required", credentialId: credential.id, reason: "inactive" }
+      }
+      if (!input.mintAwsRoleCredentials) return { kind: "token_mint_failed", credentialId: credential.id, message: "AWS role credentials are not configured" }
+      const minted = await input.mintAwsRoleCredentials({ credentialId: credential.id, awsSso: parsed.awsSso, now: input.now })
+      switch (minted.kind) {
+        case "credentials":
+          return { kind: "aws_keys", credentialId: credential.id, credentialKind: parsed.kind, awsKeys: minted.awsKeys }
+        case "auth_required":
+          return { kind: "auth_required", credentialId: credential.id, reason: "expired" }
+        case "forbidden":
+          return { kind: "access_denied", credentialId: credential.id, message: minted.message }
+        case "retry":
+          return { kind: "retry", credentialId: credential.id, reason: "refresh_unavailable" }
+        case "error":
+          return { kind: "token_mint_failed", credentialId: credential.id, message: minted.message }
+      }
+    }
     case "gcp_service_account": {
       if (!input.mintGcpAccessToken) {
         return { kind: "token_mint_failed", credentialId: credential.id, message: "service-account token minting is not configured" }
@@ -102,13 +128,15 @@ export async function resolveUpstreamCredential(input: {
   /** From ProviderCatalog, not provider_config.env or member input. */
   envNames: string[]
   loadProviderCredential: LoadProviderCredential
-  refreshGoogleOauthToken?: RefreshGoogleOauthToken
+  refreshMemberToken?: RefreshMemberToken
   mintGcpAccessToken?: MintGcpAccessToken
+  mintAwsRoleCredentials?: MintAwsRoleCredentials
   now?: Date
+  clock?: () => Date
 }): Promise<ResolvedUpstreamCredential> {
-  const now = input.now ?? new Date()
   const started = performance.now()
-  const materializeInput = { envNames: input.envNames, now, mintGcpAccessToken: input.mintGcpAccessToken }
+  const initialTime = input.now?.getTime()
+  const clock = input.clock ?? (() => initialTime === undefined ? new Date() : new Date(initialTime + Math.floor(performance.now() - started)))
   const set = input.selection.row.credentialSet
   const subject = set.credential_mode === "member" ? input.scope.orgMembershipId : ORG_CREDENTIAL_SUBJECT
   const inactive = (credentialId: CredentialId | null): ResolvedUpstreamCredential => set.credential_mode === "member"
@@ -118,6 +146,7 @@ export async function resolveUpstreamCredential(input: {
   let credential = await input.loadProviderCredential(lookup)
   if (!credential) return set.credential_mode === "member" ? { kind: "auth_required", credentialId: null, reason: "missing" } : { kind: "org_credential_missing" }
   if (credential.status !== "active") return inactive(credential.id)
+  if (isAdminRepairableKind(credential.kind) && credential.last_error === "invalid_client") return { kind: "configuration_required", credentialId: credential.id }
   let parsed = parseSecret(credential)
   if (parsed.kind === "invalid_secret") return parsed
 
@@ -125,8 +154,16 @@ export async function resolveUpstreamCredential(input: {
     return { kind: "invalid_secret", credentialId: credential.id, message: "Credential kind is not supported by this provider" }
   }
 
-  if (set.credential_mode === "member" && parsed.kind === "oauth_google" && credential.kind === "oauth_google" && input.refreshGoogleOauthToken && needsGoogleOauthRefresh(credential, parsed.token, now)) {
-    const outcome = await input.refreshGoogleOauthToken({ credential: { ...credential, kind: "oauth_google" }, token: parsed.token, provider: set, authorization: lookup, subject, now })
+  if (isRefreshableCredentialKind(credential.kind) && (credential.expires_at === null || !Number.isFinite(credential.expires_at.getTime()))) {
+    return set.credential_mode === "member"
+      ? { kind: "auth_required", credentialId: credential.id, reason: "expired" }
+      : { kind: "org_credential_expired", credentialId: credential.id }
+  }
+
+  const refreshKind = credential.kind
+  if (set.credential_mode === "member" && isRefreshableCredentialKind(refreshKind) && parsed.kind === refreshKind && input.refreshMemberToken
+    && needsOauthRefresh(credential, hasRefreshToken(parsed), clock())) {
+    const outcome = await input.refreshMemberToken({ credential: { ...credential, kind: refreshKind }, provider: set, authorization: lookup, subject, now: clock(), clock })
     if (outcome.kind === "auth_required") return { kind: "auth_required", credentialId: credential.id, reason: "refresh_failed" }
     if (outcome.kind === "refreshed") {
       credential = outcome.credential
@@ -137,10 +174,10 @@ export async function resolveUpstreamCredential(input: {
     }
   }
 
-  if (isExpired(credential, now)) return set.credential_mode === "member"
+  if (isExpired(credential, clock())) return set.credential_mode === "member"
     ? { kind: "auth_required", credentialId: credential.id, reason: "expired" }
     : { kind: "org_credential_expired", credentialId: credential.id }
-  const result = await materialize(credential, parsed, materializeInput)
+  const result = await materialize(credential, parsed, { envNames: input.envNames, now: clock(), mintGcpAccessToken: input.mintGcpAccessToken, mintAwsRoleCredentials: input.mintAwsRoleCredentials, set })
   // The minter's cache is not authorization. Recheck after mint/refresh/cache
   // awaits so concurrent revocation or replacement never returns that token.
   const snapshot = credential
@@ -148,7 +185,9 @@ export async function resolveUpstreamCredential(input: {
     const current = await input.loadProviderCredential(lookup)
     return current !== null && current.status === "active" && current.id === snapshot.id && current.kind === snapshot.kind
       && current.secret === snapshot.secret && current.expires_at?.getTime() === snapshot.expires_at?.getTime()
-      && !isExpired(current, new Date(now.getTime() + Math.floor(performance.now() - started)))
+      && (current.last_error ?? null) === (snapshot.last_error ?? null)
+      && (!isAdminRepairableKind(current.kind) || current.last_error !== "invalid_client")
+      && !isExpired(current, clock())
   }
   if (!await isCurrent()) {
     return { kind: "retry", credentialId: credential.id, reason: "credential_changed" }
@@ -172,6 +211,7 @@ export const loadProviderCredentialFromDb: LoadProviderCredential = async (input
       secret: table.secret,
       expires_at: table.expires_at,
       status: table.status,
+      last_error: table.last_error,
     })
     .from(table)
     .where(and(

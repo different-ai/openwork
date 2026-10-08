@@ -1,0 +1,38 @@
+{
+  "name": "@openwork-ee/workbot",
+  "private": true,
+  "type": "module",
+  "description": "Workbot on its own address: one ongoing chat per member, signed in with Den, answered on the headless runner.",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "WORKBOT_DEV=1 NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch --ignore 'src/client/**' src/server/main.ts",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && esbuild src/server/main.ts --bundle --platform=node --format=esm --target=node22 --conditions=development --outfile=dist/server.js --external:hono --external:@hono/node-server --external:zod --external:vite",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.0.12",
+    "@openwork-ee/headless-protocol": "workspace:*",
+    "@openwork-ee/workbot-server": "workspace:*",
+    "@openwork-ee/workbot-ui": "workspace:*",
+    "@tanstack/react-query": "^5.96.2",
+    "hono": "4.13.9",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "esbuild": "0.25.12",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4",
+    "vite": "^6.4.3"
+  }
+}

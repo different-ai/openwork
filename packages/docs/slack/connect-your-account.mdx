@@ -1,0 +1,29 @@
+---
+title: "Connect your Slack account to @openwork"
+sidebarTitle: "Connect your account"
+description: "Link your own Slack account to OpenWork once, then DM or mention @openwork and confirm it answers."
+keywords: ["slack", "@openwork", "connect slack", "reconnect slack", "link slack account", "/openwork", "slack dm", "test slack bot"]
+---
+
+<Note>
+**Private alpha.** Your administrator must [set up the Slack app](/slack/set-up-the-slack-app) before this works.
+</Note>
+
+## Connect once
+
+1. Open **Your Connections** in OpenWork and connect your own Slack account.
+2. If you connected before the assistant was installed, disconnect **your personal Slack connection**, then connect it again once. This temporarily interrupts that connection; it does not require signing everyone out or reinstalling the bot.
+3. Authorize using the Slack workspace and account you will use to message `@openwork`.
+
+This links your Slack identity to your OpenWork membership. Before linking, the assistant asks you to connect. `/openwork` returns a connection link; following the link alone does not complete authorization.
+
+## Verify it works
+
+1. Open `openwork` under Slack's agents/apps and send a DM: “Reply with a short hello to confirm my connection works.”
+2. Wait for the finished answer in the thread. “On it” only confirms that a request started.
+3. In an allowed test channel, run `/invite @openwork`, then mention it with the same test request. Confirm it appears in mention autocomplete and replies in the selected reply mode.
+4. Administrators: check the connector's **Last 24 hours** counts for completed, active, need-connection, and failed requests.
+
+Once those checks pass, try a task such as “Summarize this thread” or “Draft a reply.” Connected-service access depends on your own permissions. If the assistant needs a permission decision, continue in OpenWork Web; Slack does not approve it for you.
+
+Something off? See [Troubleshooting](/slack/troubleshooting).

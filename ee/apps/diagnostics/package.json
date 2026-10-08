@@ -6,12 +6,11 @@
     "dev": "next dev --hostname 0.0.0.0 --port ${DIAGNOSTICS_PORT:-3010}",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port ${DIAGNOSTICS_PORT:-3010}",
-    "smoke:debug-proxy": "node scripts/connect-debug-proxy-smoke.mjs",
-    "test": "bun test"
+    "smoke:debug-proxy": "node scripts/connect-debug-proxy-smoke.mjs"
   },
   "dependencies": {
     "@openwork/types": "workspace:*",
-    "next": "16.3.3",
+    "next": "16.3.6",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

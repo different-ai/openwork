@@ -3,6 +3,7 @@ import { AdminAllowlistTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
 import { ensureAdminAllowlistSeeded } from "../admin-allowlist.js"
+import { beginAuditRequest } from "../audit/request-capture.js"
 import { db } from "../db.js"
 import type { AuthContextVariables } from "../session.js"
 
@@ -59,6 +60,13 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
 
   if (!(await isAdminEmailAllowed(email))) {
     return c.json({ error: "forbidden" }, 403) as never
+  }
+
+  // Routes declared `path:<param>` attribute audit evidence to the validated
+  // target organization with this platform admin as actor (origin platform_admin).
+  const auditBlocked = await beginAuditRequest(c, { platformAdminUserId: user.id })
+  if (auditBlocked) {
+    return auditBlocked as never
   }
 
   await next()

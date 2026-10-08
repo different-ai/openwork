@@ -9,3 +9,4 @@ Allow: /
 Content-Signal: ai-train=yes, search=yes, ai-input=yes
 
 Sitemap: https://openworklabs.com/sitemap.xml
+Sitemap: https://openworklabs.com/docs/sitemap.xml

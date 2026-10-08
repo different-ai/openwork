@@ -1,5 +1,12 @@
 # Independent integrated Gateway validation
 
+> Superseded organization opt-in: the `gatewayDashboard` flag and platform-admin
+> grant described below are retired. Gateway is GA for every organization's admins
+> when configured; the old API input is a deprecated no-op and responses return
+> constant `true` for compatibility. Stored `false` is ignored; no migration or
+> backfill is required. Deployment configuration and authorization still apply.
+> The original evidence below is preserved, not current enablement guidance.
+
 Date: 2026-09-10. Worktree: `inference-support-per-org-destinations`.
 HEAD remained `dc297aefe4be74c95ab42ea29f31f2c75e03989a`; verification included
 the integrated uncommitted changes, not just HEAD or another agent's report.

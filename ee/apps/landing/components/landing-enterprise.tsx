@@ -89,8 +89,8 @@ const deployments = [
 
 const compliance = [
   {
-    title: "SOC 2 Type I",
-    body: "Type I audit complete — report available under NDA. Type II audit in progress."
+    title: "SOC 2 Type II",
+    body: "Type II audit complete — report available under NDA."
   },
   {
     title: "SAML SSO + SCIM",
@@ -156,7 +156,7 @@ export function LandingEnterprise(props: Props) {
               <a href="/docs" className="lp-pill-secondary">Read the docs</a>
             </div>
             <div className="mt-7 flex flex-wrap gap-2.5">
-              <span className="lp-pill-secondary lp-pill-sm !h-9 gap-2 !text-[13px]"><span className="h-2 w-2 rounded-full bg-[#10B981]" />SOC 2 Type I</span>
+              <span className="lp-pill-secondary lp-pill-sm !h-9 gap-2 !text-[13px]"><span className="h-2 w-2 rounded-full bg-[#10B981]" />SOC 2 Type II</span>
               <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">SAML SSO + SCIM</span>
               <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">Audit logs</span>
               <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">Self-host or managed</span>

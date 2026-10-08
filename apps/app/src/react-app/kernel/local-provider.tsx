@@ -18,7 +18,7 @@ import {
   isDesktopNotificationPreference,
   type DesktopNotificationPreference,
 } from "./desktop-notification-preferences";
-import { LOCAL_PREFERENCES_KEY } from "./local-preferences-storage";
+import { isLinkOpenDestination, LOCAL_PREFERENCES_KEY, type LinkOpenDestination } from "./local-preferences-storage";
 import {
   readStoredDefaultModel,
   storedDefaultModelChangedEvent,
@@ -47,7 +47,6 @@ export type LocalPreferences = {
    */
   releaseChannel: ReleaseChannel;
   featureFlags: {
-    microsandboxCreateSandbox: boolean;
     workspaceRunMode: boolean;
   };
   /**
@@ -66,6 +65,8 @@ export type LocalPreferences = {
    * users are not surprised by system popups.
    */
   desktopNotifications: DesktopNotificationPreference;
+  linkOpenDestination: LinkOpenDestination;
+  askBeforeOpeningLinks: boolean;
 };
 
 type LocalContextValue = {
@@ -88,10 +89,12 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true, workspaceRunMode: false },
+  featureFlags: { workspaceRunMode: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
+  linkOpenDestination: "openwork",
+  askBeforeOpeningLinks: true,
 };
 
 function readPersisted<T>(key: string, fallback: T): T {
@@ -128,6 +131,10 @@ export function LocalProvider({ children }: LocalProviderProps) {
   );
   const [prefs, setPrefsRaw] = useState<LocalPreferences>(() => {
     const persisted = readPersisted(LOCAL_PREFERENCES_KEY, INITIAL_PREFS);
+    persisted.askBeforeOpeningLinks = persisted.askBeforeOpeningLinks !== false;
+    persisted.linkOpenDestination = isLinkOpenDestination(persisted.linkOpenDestination)
+      ? persisted.linkOpenDestination
+      : "openwork";
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;

@@ -31,7 +31,10 @@ export type BrowserPanelTab = {
   /** Conversation (session) that opened the tab; null for shared/legacy tabs. */
   ownerSessionId: string | null;
   browserApproval?: { id: string; title: string; message: string; detail: string; approveLabel?: string } | null;
-  loadError?: { code: "policy_unavailable" | "organization_policy_denied"; message: string } | null;
+  loadError?:
+    | { code: "policy_unavailable" | "organization_policy_denied"; message: string }
+    | { code: "page_load_failed"; message: string; url: string; errorCode: number; errorDescription: string }
+    | null;
   browserTask?: { status: "idle" | "running" | "paused" | "needs_attention"; operation: string | null };
   siteToolCount: number;
   siteTools: Array<{
@@ -115,7 +118,6 @@ export type BrowserTabRegistry = {
 
 export const SHARED_OWNER_KEY: "*";
 export const BACKGROUND_TAB_VIEWPORT: Readonly<Viewport>;
-export const BACKGROUND_TAB_PRESENCE_BOUNDS: Readonly<Bounds>;
 
 export function backgroundTabEmulationCommands(viewport?: Viewport): CdpCommand[];
 export function foregroundTabEmulationCommands(): CdpCommand[];

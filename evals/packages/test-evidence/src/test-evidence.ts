@@ -6,6 +6,8 @@ import { resolveEvalEngine } from "@openwork/env/eval-engine";
 import type { EvalEngine } from "@openwork/env/eval-engine";
 import { resolveSandboxRef } from "@openwork/env/eval-ref";
 import type { ScreenshotArtifact } from "./screenshot.ts";
+import { layoutFileName, type LayoutSnapshot } from "@openwork/design-review";
+import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
 import { judgeVision } from "./validate.ts";
 import type { ValidateOptions, VisualEvidenceResult, VisualExpectationResult } from "./validate.ts";
 
@@ -31,6 +33,9 @@ export interface TestArtifact {
   ok: boolean | null;
   results: VisualExpectationResult[];
   judgments: EvidenceJudgment[];
+  checkpoint?: ScreenshotArtifact["checkpoint"];
+  checkpointMatch?: ScreenshotArtifact["checkpointMatch"];
+  checkpointError?: string;
 }
 
 export interface JsonArtifact {
@@ -105,6 +110,8 @@ export interface TestRunRecord {
 interface StoredTestArtifact extends TestArtifact {
   sequence: number;
   png: Buffer | null;
+  /** Written beside the PNG as `NN-caption.layout.json` for design checks. */
+  layout: LayoutSnapshot | null;
   validationKey: string | null;
 }
 
@@ -115,13 +122,19 @@ interface StoredJsonArtifact extends JsonArtifact {
 
 export interface TestEvidenceRecorder {
   readonly dir: string;
-  recordScreenshot(screenshotArtifact: ScreenshotArtifact): string;
+  /**
+   * Record a screenshot. `caption` is what a reviewer reads under the image in
+   * the review app; the spec runtime passes the active `step()` name. Without
+   * it the caption falls back to "<test name> artifact N".
+   */
+  recordScreenshot(screenshotArtifact: ScreenshotArtifact, options?: { caption?: string }): string;
   recordVisualValidation(screenshotHash: string, visualEvidence: VisualEvidenceResult): string;
   recordAssertionEvidence(assertion: string, evidence: string, passed: boolean): void;
   recordJsonArtifact(label: string, value: unknown): void;
   recordTrace(entry: TraceEntryInput): TraceEntry;
   recordStep(step: StepRecordInput): StepRecord;
   setOutcome(outcome: TestOutcome, failure?: string): void;
+  setEngine(engine: EvalEngine): void;
   close(): Promise<string>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -209,6 +222,9 @@ function testArtifact(artifact: StoredTestArtifact): TestArtifact {
     ok: artifact.ok,
     results: artifact.results,
     judgments: artifact.judgments,
+    ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
+    ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
+    ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
   };
 }
 
@@ -338,7 +354,17 @@ function parseTestArtifact(value: unknown): TestArtifact | null {
   } else {
     judgments.push(...results.map(judgmentForResult));
   }
+  let checkpoint;
+  if (value.checkpoint !== undefined) {
+    try { checkpoint = parseEvidenceCheckpoint(value.checkpoint); } catch { return null; }
+    if (checkpoint.imageHash !== value.hash) return null;
+  }
+  if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
+  if (value.checkpointMatch !== undefined && (!checkpoint || (value.checkpointMatch !== "exact" && value.checkpointMatch !== "approximate"))) return null;
   return {
+    ...(checkpoint ? { checkpoint } : {}),
+    ...(value.checkpointMatch === "exact" || value.checkpointMatch === "approximate" ? { checkpointMatch: value.checkpointMatch } : {}),
+    ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),
     caption: value.caption,
     fileName: value.fileName,
     hash: value.hash,
@@ -582,7 +608,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
   const createdAt = new Date().toISOString();
   const gitSha = gitValue(["HEAD"]);
   const sandboxRef = resolveSandboxRef();
-  const engine = resolveEvalEngine();
+  let engine = resolveEvalEngine();
   const branch = gitValue(["--abbrev-ref", "HEAD"]);
   let nextSequence = 1;
   let nextTraceSequence = 1;
@@ -601,6 +627,9 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
       await mkdir(dir, { recursive: true });
       for (const artifact of artifacts) {
         if (artifact.png) await writeFile(join(dir, artifact.fileName), artifact.png);
+        if (artifact.png && artifact.layout) {
+          await writeFile(join(dir, layoutFileName(artifact.fileName)), `${JSON.stringify(artifact.layout)}\n`, "utf8");
+        }
       }
       for (const artifact of jsonArtifacts) {
         await writeFile(join(dir, artifact.fileName), `${JSON.stringify(artifact.value, null, 2)}\n`, "utf8");
@@ -640,11 +669,15 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
 
   return {
     dir,
-    recordScreenshot(screenshotArtifact) {
+    setEngine(value) {
+      assertOpen();
+      engine = value;
+    },
+    recordScreenshot(screenshotArtifact, options) {
       assertOpen();
       const sequence = nextSequence;
       nextSequence += 1;
-      const caption = artifactCaption(name, sequence);
+      const caption = options?.caption?.trim() || artifactCaption(name, sequence);
       const screenshotFileName = fileName(sequence, caption);
       artifacts.push({
         caption,
@@ -659,7 +692,11 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         judgments: [],
         sequence,
         png: screenshotArtifact.png,
+        layout: screenshotArtifact.layout ?? null,
         validationKey: null,
+        checkpoint: screenshotArtifact.checkpoint,
+        checkpointMatch: screenshotArtifact.checkpointMatch,
+        checkpointError: screenshotArtifact.checkpointError,
       });
       return join(dir, screenshotFileName);
     },
@@ -713,6 +750,7 @@ export function createTestEvidence(meta: { name: string; specFile?: string; outD
         judgments: [{ expectation: caption, state: passed ? "passed" : "failed", reasoning: evidence }],
         sequence,
         png: null,
+        layout: null,
         validationKey: JSON.stringify([caption]),
       });
     },

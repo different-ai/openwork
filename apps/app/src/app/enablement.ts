@@ -10,14 +10,10 @@ export type EnablementContext = {
   mcpStatuses?: McpStatusMap;
   /** Set of MCP server names that are at least configured (in opencode.json). */
   mcpConfigured?: Set<string>;
-  /** Set of loaded plugin package names or path fragments. */
-  loadedPlugins?: Set<string>;
   /** Set of connected provider IDs. */
   connectedProviders?: Set<string>;
   /** Set of environment variable keys that are configured. */
   configuredEnvKeys?: Set<string>;
-  /** Permission results from the Computer Use --check binary. */
-  permissions?: { accessibility?: boolean; screenRecording?: boolean };
   /** Toggle state reader — returns true if the extension toggle is on. */
   isToggleEnabled?: (ref: string) => boolean;
 };
@@ -31,18 +27,10 @@ function evaluateCondition(condition: EnablementCondition, ctx: EnablementContex
       const status = ctx.mcpStatuses?.[condition.ref];
       return status?.status === "connected";
     }
-    case "plugin-loaded":
-      return ctx.loadedPlugins?.has(condition.ref) === true;
     case "provider-connected":
       return ctx.connectedProviders?.has(condition.ref) === true;
     case "env-set":
       return ctx.configuredEnvKeys?.has(condition.ref) === true;
-    case "permission-granted": {
-      if (!ctx.permissions) return false;
-      if (condition.ref === "accessibility") return ctx.permissions.accessibility === true;
-      if (condition.ref === "screenRecording") return ctx.permissions.screenRecording === true;
-      return false;
-    }
     case "toggle-enabled":
       return ctx.isToggleEnabled?.(condition.ref) === true;
     default:
@@ -69,12 +57,4 @@ export function evaluateEnablement(
     active: results.every((r) => r.met),
     results,
   };
-}
-
-/**
- * For plain MCP entries that don't have an extension manifest,
- * generate a default single-condition enablement: mcp-connected.
- */
-export function defaultMcpEnablement(serverName: string): EnablementCondition[] {
-  return [{ type: "mcp-connected", ref: serverName, label: "MCP server connected" }];
 }

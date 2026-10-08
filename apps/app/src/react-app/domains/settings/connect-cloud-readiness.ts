@@ -52,7 +52,8 @@ export function resolveConnectRowGroup(
   }
 }
 
-export function resolveConnectionRowGroup(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "reconnectActionOwner">): Exclude<ConnectRowGroup, "excluded"> {
+export function resolveConnectionRowGroup(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "reconnectActionOwner">): Exclude<ConnectRowGroup, "excluded"> {
+  if (connection.credentialMode !== "per_member" && !connection.connected) return "needs_admin_setup";
   if (connection.needsReconnect && connection.reconnectActionOwner === "organization_admin") return "needs_admin_setup";
   if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connectionNeedsReconnect(connection))) return "needs_signin";
   return "ready";
@@ -86,10 +87,6 @@ export function formatPluginComponentMeta(componentCounts: Record<string, number
     .filter(([, count]) => count > 0)
     .map(([type, count]) => t("connect.row_component_count", { count, type: componentTypeLabel(type, count) }));
   return labels.length > 0 ? labels.join(t("connect.row_meta_separator")) : t("connect.row_meta_no_components");
-}
-
-export function cloudReadinessConnectableConnectionId(readiness: DenPluginCloudReadiness | null | undefined) {
-  return readiness?.connections.find((connection) => connection.id && connection.credentialMode === "per_member" && connection.connectedForMe === false)?.id ?? null;
 }
 
 export function cloudReadinessMissingConnectionNames(readiness: DenPluginCloudReadiness | null | undefined) {

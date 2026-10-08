@@ -85,6 +85,7 @@ export const ConnectedAccountTable = mysqlTable(
     providerId: varchar("provider_id", { length: 255 }).notNull(),
     externalAccountId: varchar("external_account_id", { length: 255 }),
     scopes: compatJsonColumn<string[]>("scopes"),
+    /** OAuth access token, or an opaque personal MCP API key with tokenType="api_key" (never refreshed as OAuth). */
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
@@ -210,16 +211,18 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * - "shared": one org-level credential (this row's token columns, or
      *   apiKey). Everyone granted access acts as that single account —
      *   right for service-account/bot-style integrations.
-     * - "per_member": the connection (and its dynamically-registered OAuth
-     *   client) is org-level, but each member authorizes their own account;
-     *   tokens live in ConnectedAccountTable keyed by
+      * - "per_member": the connection (and any OAuth client) is org-level,
+      *   but each member authorizes their own account or enrolls their own
+      *   API key. Credentials live in ConnectedAccountTable keyed by
      *   (orgMembershipId, providerId = this row's id). The agent then acts
      *   as the calling member, preserving the provider's own ACLs and audit
      *   trail — right for Notion/Linear-style personal-permission SaaS.
      */
     credentialMode: mysqlEnum("credential_mode", externalMcpCredentialModeValues).notNull().default("shared"),
-    /** Only set when authType = "apikey". Sent as a Bearer token. */
+    /** Only set for authType="apikey", credentialMode="shared". Never a personal-key fallback. Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
+    /** Administrator-selected transport only; the member supplies the raw key. */
+    apiKeyAuthScheme: mysqlEnum("api_key_auth_scheme", ["bearer", "token"]).notNull().default("bearer"),
     /**
      * OAuth tokens for authType = "oauth". Unlike ConnectedAccountTable,
      * this is deliberately org-level, not per-member: an external MCP

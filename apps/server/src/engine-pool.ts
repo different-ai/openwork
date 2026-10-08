@@ -89,21 +89,22 @@ export type EnginePoolHooks = {
 export type RolloverReason = string;
 
 /**
- * What a rollover request did. Only `reloaded_in_place` and `rolled_over`
+ * What a refresh request did. `updated_live`, `reloaded_in_place` and `rolled_over`
  * mean the engine now serves the requested config; `skipped` and `coalesced`
  * leave the caller's change owed, so a caller tracking a pending reload must
  * keep it pending until one of the applied outcomes arrives.
  */
 export type RolloverOutcome =
+  | { action: "updated_live" }
   | { action: "skipped"; reason: "unchanged" | "disposed" }
   | { action: "reloaded_in_place" }
   | { action: "coalesced" }
   | { action: "rolled_over"; generationId: string; drainingSessions: number };
 
-export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "reloaded_in_place" | "rolled_over" }>;
+export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "updated_live" | "reloaded_in_place" | "rolled_over" }>;
 
 export function rolloverOutcomeApplied(outcome: RolloverOutcome): outcome is AppliedRolloverOutcome {
-  return outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
+  return outcome.action === "updated_live" || outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
 }
 
 type RolloverRequest = {
@@ -255,10 +256,6 @@ export function isEngineConnectionFailure(error: unknown): boolean {
     current = current.cause;
   }
   return false;
-}
-
-export function isConnectionRefusedClassError(error: unknown): boolean {
-  return isEngineConnectionFailure(error);
 }
 
 function isRoutableGeneration(
@@ -443,6 +440,11 @@ export class EnginePool {
     this.config = input.config;
     this.template = input.template;
     this.hooks = input.hooks;
+  }
+
+  /** Directory every generation of this engine starts in. */
+  cwd(): string {
+    return this.template.cwd;
   }
 
   /**
@@ -938,7 +940,6 @@ export class EnginePool {
     this.config.opencodeUsername = next.handle.username;
     this.config.opencodePassword = next.handle.password;
     for (const entry of this.config.workspaces) {
-      if (entry.workspaceType === "remote") continue;
       entry.baseUrl = next.handle.url;
       entry.opencodeUsername = next.handle.username;
       entry.opencodePassword = next.handle.password;
@@ -1390,11 +1391,7 @@ export class EnginePool {
   }
 
   private engineProbeDirectories(): Array<string | null> {
-    const directories = new Set(
-      this.config.workspaces
-        .filter((workspace) => workspace.workspaceType !== "remote")
-        .map((workspace) => workspace.path),
-    );
+    const directories = new Set(this.config.workspaces.map((workspace) => workspace.path));
     return directories.size > 0 ? [...directories] : [null];
   }
 

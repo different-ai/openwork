@@ -1,3 +1,4 @@
+import { startMcpAppTiming } from "@openwork/types/mcp-app-timing";
 import { mcpAppResolutionRetryDelayMs } from "./mcp-app-resolution"
 import { OpenworkServerError, type OpenworkMcpAppLaunchReference, type OpenworkMcpAppResource } from "./openwork-server"
 import type { McpAppOrigin } from "../../components/chat/mcp-app-origin"
@@ -50,6 +51,7 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
     // One explicit bypass per exact scope per second, not one per historical frame.
     const bypass = manual && now() >= state.manualAfter && !state.busy
     if (bypass) { state.cached = undefined; state.manualAfter = now() + 1_000 }
+    const queueTiming = startMcpAppTiming("chat.discovery-queue")
     let cancelled = false
     let timer: number | undefined
     let finish: (() => void) | undefined
@@ -60,6 +62,7 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
     }
     const job: Job = { scope: state, start: () => {
       if (state.cached && state.cached.until > now()) { publish(state.cached.outcome); return }
+      queueTiming()
       active++
       state.busy = true
       let finished = false
@@ -71,12 +74,16 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
         queueMicrotask(drain)
       }
       const negative = (outcome: Outcome) => {
-        state.cached = { outcome, until: now() + 30_000 }
+        // Warm-up failures must get a fresh retry budget on the next mount.
+        state.cached = "error" in outcome && mcpAppResolutionRetryDelayMs(outcome.error, 0) !== null
+          ? undefined : { outcome, until: now() + 30_000 }
         publish(outcome)
         finish?.()
       }
       const attempt = (index: number) => {
+        const resolvedTiming = startMcpAppTiming("chat.discovery-resolve")
         void origin.client.resolveMcpApp(origin.workspaceId, toolName, launch ?? undefined, origin).then(({ app }) => {
+          resolvedTiming()
           if (!app) { negative({ app: null }); return }
           // Never retain a successful launch, including when its original view went away.
           if (cancelled) {
@@ -84,6 +91,7 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
           } else receive(app)
           finish?.()
         }, error => {
+          resolvedTiming()
           if (cancelled) { finish?.(); return }
           const auth = error instanceof OpenworkServerError && ["mcp_auth_required", "mcp_access_denied"].includes(error.code)
           const delay = auth ? null : mcpAppResolutionRetryDelayMs(error, index)

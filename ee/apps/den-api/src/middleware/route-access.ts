@@ -1,4 +1,6 @@
 import type { MiddlewareHandler } from "hono"
+import { beginAuditRequest } from "../audit/request-capture.js"
+import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError } from "../agent-error-envelope.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { getMcpResourceContext, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
@@ -41,6 +43,10 @@ const cloudTransportRouteHandler: MiddlewareHandler<{ Variables: OrganizationCon
   }
 
   c.set("organizationContext", organizationContext)
+  const auditBlocked = await beginAuditRequest(c, { origin: "mcp" })
+  if (auditBlocked) {
+    return auditBlocked
+  }
   await next()
 }
 
@@ -59,7 +65,6 @@ const explicitAuthGuardHandlers = new WeakSet<object>([
  * Public routes use `publicRoute`; token, webhook, and delegated proxy routes
  * use their named markers and perform their specialized verification in the
  * handler. Common user/org/admin markers execute the shared guard middleware.
- * `test/route-access-policy.test.ts` fails CI when a route omits a marker.
  */
 
 export function verifyOrgRole(input: { roles: readonly string[]; userContext: OrgRoleContext }) {
@@ -131,7 +136,13 @@ export function orgRoleRoute(roles: readonly string[]): MiddlewareHandler<{ Vari
 
       const allowed = verifyOrgRole({ roles, userContext: payload.currentMember })
       if (!allowed) {
-        roleResponse = c.json({ error: "forbidden" }, 403)
+        c.header("WWW-Authenticate", INSUFFICIENT_SCOPE_CHALLENGE)
+        roleResponse = c.json({
+          error: "forbidden",
+          ...requiresAdminError(roles.includes("admin")
+            ? "Only workspace owners and admins can do this. Ask one of them, or have them change your role."
+            : "Only the workspace owner can do this."),
+        }, 403)
         return
       }
 

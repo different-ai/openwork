@@ -1,9 +1,7 @@
 const { spawnSync } = require("node:child_process");
-const { existsSync, mkdtempSync, rmSync } = require("node:fs");
+const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
-
-const computerUseHelperAppName = "OpenWork Computer Use.app";
 
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: "inherit" });
@@ -35,27 +33,15 @@ function requireEnv(name) {
   return value;
 }
 
-function computerUseHelperPath(appPath) {
-  return path.join(appPath, "Contents", "Resources", "helpers", computerUseHelperAppName);
-}
-
-function verifyComputerUseHelper(appPath, requireDistributionSignature) {
-  const helperPath = computerUseHelperPath(appPath);
-  if (!existsSync(helperPath)) {
-    throw new Error(`Computer Use helper app is missing from packaged app: ${helperPath}`);
-  }
-
-  run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", helperPath]);
-
-  if (!requireDistributionSignature) return;
-  const result = spawnSync("codesign", ["--display", "--verbose=4", helperPath], { encoding: "utf8" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`codesign --display failed for Computer Use helper with status ${result.status}`);
-  }
-  if (result.stderr.includes("Signature=adhoc")) {
-    throw new Error("Computer Use helper app is ad-hoc signed; notarized builds require a Developer ID signature.");
-  }
+// Offline checks on the signed, notarized, stapled bundle. These read the
+// bundle itself, so they never guess the executable name (it follows each
+// flavor's productName) and never launch the app on the build machine.
+// Launch and render coverage belongs to the packaged-app journeys, which run
+// against the built artifacts rather than inside electron-builder.
+function verifySignedApp(appPath, { runCommand = run } = {}) {
+  runCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
+  runCommand("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]);
+  runCommand("xcrun", ["stapler", "validate", appPath]);
 }
 
 async function afterSign(context) {
@@ -68,7 +54,6 @@ async function afterSign(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
-  verifyComputerUseHelper(appPath, process.env.MACOS_NOTARIZE === "true");
 
   const notaryTempDir = mkdtempSync(path.join(tmpdir(), "openwork-electron-notary-"));
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);
@@ -92,7 +77,7 @@ async function afterSign(context) {
     ]);
     // Notarization tickets can take minutes to propagate to Apple's CDN after acceptance; stapler can transiently fail with status 65 ("CloudKit query failed").
     await runWithRetry("xcrun", ["stapler", "staple", appPath], 5);
-    run("xcrun", ["stapler", "validate", appPath]);
+    verifySignedApp(appPath);
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });
   }
@@ -101,3 +86,4 @@ async function afterSign(context) {
 module.exports = afterSign;
 module.exports.default = afterSign;
 module.exports.runWithRetry = runWithRetry;
+module.exports.verifySignedApp = verifySignedApp;

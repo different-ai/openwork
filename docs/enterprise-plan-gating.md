@@ -14,9 +14,12 @@ companies (managed deployment, skill development, MCP consulting).
 
 | Plan | Price | Includes |
 |---|---|---|
-| Solo | $0 | Open-source desktop app, BYO keys |
-| Team Starter | $50/mo | 5 seats, API access, marketplace/plugin management, distributed keys |
-| Enterprise | Custom | Everything in Team, plus: SSO/SAML + SCIM, Desktop policies & version controls, enforced SSO (`requireSso`), managed deployment (self-hosted or hosted by us), custom skill development, MCP consulting, rollout support, custom commercial terms |
+| Free | $0 | Open-source desktop app, BYO keys; first 5 Cloud seats |
+| Team | $10 / seat / month | Unlimited seats, SSO/SAML, API access, marketplace/plugin management, distributed keys |
+| Enterprise | Custom | Everything in Team, plus: SCIM, Desktop policies & version controls, enforced SSO (`requireSso`), analytics, audit log, managed deployment (self-hosted or hosted by us), custom skill development, MCP consulting, rollout support, custom commercial terms |
+
+SSO/SAML is a Team feature: the `sso` entitlement is granted to the `team` and
+`enterprise` tiers. Enforced SSO (`orgControls`) stays Enterprise.
 
 Services (sold with Enterprise, delivered by us):
 
@@ -33,14 +36,14 @@ Principle: **gate management (writes), never delivery (reads) or removal
 (deletes).** An org that loses entitlement keeps working; it just can't add or
 edit enterprise configuration.
 
-Gated (require `enterprise` entitlement, return HTTP 402):
+Gated (return HTTP 402 without the entitlement):
 
-- `POST /v1/sso/saml`, `POST /v1/sso/oidc` — register/replace SSO connection
+- Team or Enterprise: `POST /v1/sso/saml`, `POST /v1/sso/oidc` — register/replace SSO connection
   (`ee/apps/den-api/src/routes/org/sso.ts`)
-- `POST /v1/sso/request-domain-verification`, `POST /v1/sso/verify-domain`
-- `POST /v1/desktop-policies`, `PATCH /v1/desktop-policies/:id` — create/edit
+- Team or Enterprise: `POST /v1/sso/request-domain-verification`, `POST /v1/sso/verify-domain`
+- Enterprise: `POST /v1/desktop-policies`, `PATCH /v1/desktop-policies/:id` — create/edit
   policies and assignments (`routes/org/desktop-policies.ts`)
-- `PATCH /v1/org` **only when the patch touches** `requireSso` or
+- Enterprise: `PATCH /v1/org` **only when the patch touches** `requireSso` or
   `allowedDesktopVersions` (`routes/org/core.ts` → `orgs.ts:updateOrganizationSettings`)
 
 Never gated:
@@ -79,7 +82,7 @@ New module `ee/apps/den-api/src/entitlements.ts`:
 type EntitlementKey = "sso" | "desktopPolicies" | "desktopVersionPinning" | "requireSso"
 
 function getOrganizationEntitlements(org): Record<EntitlementKey, boolean>
-// tier === "enterprise" (any source) => all true; otherwise all false.
+// tier === "enterprise" (any source) => all true; tier === "team" => sso only; otherwise all false.
 
 function requireEntitlement(org, key): void
 // throws HTTPException 402 { error: "enterprise_plan_required", feature: key }
@@ -90,8 +93,7 @@ Reuse the existing 402 pattern from seat gating
 
 ### Kill switch
 
-`DEN_PLAN_GATING_ENABLED` env var (mirrors `POLAR_FEATURE_GATE_ENABLED` in
-`env.ts` / `billing/polar.ts`). Default **off**:
+`DEN_PLAN_GATING_ENABLED` env var (parsed in `env.ts`). Default **off**:
 
 - Hosted Den: we flip it on after the backfill runs.
 - Self-hosted installs: stays off unless the operator opts in, so the
@@ -165,5 +167,5 @@ version controls".
   SSO, since it's part of identity provisioning.)
 - Enterprise self-serve checkout vs. sales-led only (suggested: sales-led
   first; the CTA is already a Cal.com booking).
-- Whether Team Starter should eventually include a single OIDC connection as a
-  mid-tier hook (defer).
+- Stripe billing does not yet set `plan.tier = "team"` for paid Team orgs. Set it
+  before enabling `DEN_PLAN_GATING_ENABLED`, or Team orgs lose SSO management.

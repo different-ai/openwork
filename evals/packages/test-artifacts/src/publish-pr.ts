@@ -40,6 +40,7 @@ export interface PublishPrResult {
   posted: boolean;
   updated: boolean;
   urls: Record<string, string>;
+  evidence?: { gitSha: string; verdict: string; tests: number; passedTests: number; assertions: number; passedAssertions: number };
 }
 
 function commandRunner(command: string, args: string[], opts: CommandOptions = {}): CommandResult {
@@ -243,6 +244,8 @@ export async function publishReviewPr(
     automatic?: boolean;
     /** Replace older automatic evidence selections, while still preserving a human-selected report. */
     replaceAutomatic?: boolean;
+    /** Trusted Actions publishes checks and deployments instead of a comment. */
+    presentation?: "native";
   },
   dependencies: PublishDependencies = {},
 ): Promise<PublishPrResult> {
@@ -319,6 +322,11 @@ export async function publishReviewPr(
   const concurrentSelection = protectedReport(viewed.stdout);
   if (concurrentSelection) return { markdown: concurrentSelection, posted: false, updated: false, urls: {} };
   requireCurrentHead();
+  if (options.presentation === "native") {
+    const { summarizeReview } = await import("@openwork/review");
+    return { markdown, posted: true, updated: false, urls: { report: reportUrl },
+      evidence: { gitSha: report.gitSha, ...summarizeReview(report) } };
+  }
   const commentId = stickyCommentId(viewed.stdout);
   const posted = commentId
     ? exec(

@@ -34,9 +34,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function titlebar(probe: Probe): Promise<TitlebarGeometry> {
   // TODO(primitive): probe.geometry should compare the session title with the painted titlebar toggle.
   const value = await probe.eval(() => {
-    const heading = document.querySelector('[data-session-pane] header h1');
-    const toggle = [...document.querySelectorAll('[data-slot="sidebar-trigger"]')]
-      .find((element) => element.getBoundingClientRect().width > 0);
+    const heading = document.querySelector('[data-session-header] h1');
+     const toggle = [...document.querySelectorAll('[data-slot="sidebar-trigger"]')]
+      .find((element) => !element.closest('[inert]') && element.getBoundingClientRect().width > 0);
     if (!(heading instanceof HTMLElement) || !(toggle instanceof HTMLElement)) return null;
     const inline = document.querySelector('[data-slot="sidebar"][data-state]');
     return {
@@ -142,4 +142,84 @@ test("the macOS session title stays clear of the titlebar controls in every side
   });
 
   await seed.evalIn(world.app, browserScript((classes: string) => { document.documentElement.className = classes; }, [platformClasses]));
+
+  if (platformClasses.includes("openwork-platform-mac")) {
+    await step("native macOS fullscreen removes traffic-light clearance and shortens the titlebar", async () => {
+      await world.clearViewport();
+      await world.fullscreen(true);
+      await probe.eventually(() => probe.dom('html[data-window-fullscreen="true"] [data-sidebar-titlebar]'), {
+        within: 10_000, label: "native fullscreen event reaches the titlebar", until: (value) => value.elements[0]?.rect.height === 40,
+      });
+      await user.see({ text: session.title });
+      expect((await probe.dom('[data-sidebar-titlebar] [data-sidebar-toggle]')).elements[0]?.rect.left).toBe(8);
+      await user.screenshot();
+    });
+    await step("leaving native fullscreen restores the traffic-light clearance", async () => {
+      await world.fullscreen(false);
+      await probe.eventually(() => probe.dom('html[data-window-fullscreen="false"] [data-sidebar-titlebar]'), {
+        within: 10_000, label: "windowed titlebar returns", until: (value) => value.elements[0]?.rect.height === 48,
+      });
+      await user.see({ text: session.title });
+      expect((await probe.dom('[data-sidebar-titlebar] [data-sidebar-toggle]')).elements[0]?.rect.left).toBe(88);
+      await user.screenshot();
+    });
+  }
+});
+
+test("a desktop user sees one boundary below the conversation title in either appearance", async ({ world, user, agent, probe, step, evidence }) => {
+  const [session] = world.sessions;
+  if (!session) throw new Error("The sidebar world did not seed a session.");
+  await user.resizeViewport({ width: 1400, height: 800, deviceScaleFactor: 1 });
+
+  for (const theme of ["dark", "light"]) {
+    await step(`the ${theme} desktop titlebar has no extra divider above the inset chat pane`, async () => {
+      // Select the real setting so Electron's native vibrancy and the renderer
+      // use the same theme; CDP media emulation changes only the renderer.
+      await agent.run("route.settings.appearance");
+      await user.click({ role: "button", label: theme === "dark" ? "Dark" : "Light" });
+      await probe.eventually(() => probe.dom("html"), {
+        within: 5_000, label: `${theme} appearance applied`, until: (value) => value.elements[0]?.style.colorScheme === theme,
+      });
+      await user.click({ role: "button", label: "Back to app" });
+      await user.see({ text: session.title });
+      const [header, pane] = (await probe.dom("[data-session-header], [data-session-pane]")).elements;
+      if (!header || !pane) throw new Error("The session titlebar and pane must be visible");
+      const geometry = {
+        theme: header.style.colorScheme,
+        headerBorder: header.style.borderBottomWidth,
+        paneBorder: pane.style.borderTopWidth,
+        paneRadius: pane.style.borderTopLeftRadius,
+        inset: pane.rect.top - header.rect.bottom,
+      };
+      const cleanBoundary = geometry.theme === theme && geometry.headerBorder === "0px"
+        && geometry.paneBorder === "1px" && geometry.paneRadius === "14px" && geometry.inset === 8;
+      evidence.recordAssertionEvidence(
+        "Only the rounded chat pane defines the boundary below the title",
+        JSON.stringify(geometry), cleanBoundary,
+      );
+      // Renderer evidence only: macOS vibrancy is outside CDP's captured pixels.
+      // Use a native window capture for presentation of the complete desktop.
+      await user.screenshot();
+      expect(cleanBoundary).toBe(true);
+    });
+  }
+
+  await step("a narrow conversation keeps its titlebar separator", async () => {
+    await user.resizeViewport({ width: 900, height: 800, deviceScaleFactor: 1 });
+    await user.see({ text: session.title });
+    const border = (await probe.dom("[data-session-header]")).elements[0]?.style.borderBottomWidth;
+    evidence.recordAssertionEvidence("The narrow titlebar keeps its separator", `Border: ${border}`, border === "1px");
+    await user.screenshot();
+    expect(border).toBe("1px");
+  });
+
+  await step("flat pages keep their titlebar separator", async () => {
+    await user.resizeViewport({ width: 1400, height: 800, deviceScaleFactor: 1 });
+    await user.click({ text: "Dashboard" });
+    await user.see({ role: "heading", label: "Dashboard" });
+    const border = (await probe.dom("[data-session-header]")).elements[0]?.style.borderBottomWidth;
+    evidence.recordAssertionEvidence("The Dashboard keeps its separator", `Border: ${border}`, border === "1px");
+    await user.screenshot();
+    expect(border).toBe("1px");
+  });
 });

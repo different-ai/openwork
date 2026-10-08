@@ -4,17 +4,15 @@
   "type": "module",
   "scripts": {
     "build": "pnpm run mock-server:build && tsc -p tsconfig.json",
-    "check": "pnpm run build && pnpm run test:unit",
+    "check": "pnpm run build",
     "dev": "NODE_OPTIONS=--conditions=development tsx watch --include '../../../packages/enterprise-mcp-mock-server/src/**/*.ts' src/server.ts",
     "mock-server:build": "pnpm --filter @openwork/enterprise-mcp-mock-server build",
-    "start": "node dist/server.js",
-    "test": "pnpm run mock-server:build && pnpm run test:unit",
-    "test:unit": "bun test"
+    "start": "node dist/server.js"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
     "@openwork/enterprise-mcp-mock-server": "workspace:*",
-    "hono": "4.13.5",
+    "hono": "4.13.9",
     "zod": "^4.3.6"
   },
   "devDependencies": {

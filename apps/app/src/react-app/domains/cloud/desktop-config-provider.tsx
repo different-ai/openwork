@@ -12,7 +12,7 @@ import {
 } from "react";
 import { MCP_QUICK_CONNECT } from "../../../app/constants";
 import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../settings/extension-state";
-import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopCapabilityConfig, desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
+import { desktopCapabilityConfig, desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
 
 import {
   checkDesktopAppRestriction,
@@ -215,7 +215,8 @@ type DesktopConfigState = {
  * Fetches the org-scoped desktop policy config
  * (`packages/types/den/desktop-policies.ts` shape) and caches it in
  * localStorage. The runtime projection omits desktop restrictions while
- * enforcement is suspended; Cloud entitlements and branding stay intact.
+ * enforcement is suspended; Cloud entitlements, branding and the
+ * organization's allowed desktop versions stay intact.
  * Re-fetches on Den session / settings events and on a one-hour interval.
  */
 export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) {
@@ -297,7 +298,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
   const desktopConfigHandler = useCallback(async (requireFresh = false): Promise<DenDesktopConfig> => {
     if (import.meta.env.DEV && requireFresh && devRefreshDesktopConfigRef.current) {
-      const nextConfig = devRefreshDesktopConfigRef.current;
+      const nextConfig = desktopCapabilityConfig(devRefreshDesktopConfigRef.current);
       applyDesktopConfigActions(nextConfig);
       setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready" }));
       void reconcileShellBranding(nextConfig).catch(() => undefined);
@@ -379,9 +380,15 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     [desktopConfigHandler],
   );
   const refreshFresh = useCallback(
-    () => DESKTOP_POLICY_ENFORCEMENT_ENABLED
-      ? desktopConfigHandler(true)
-      : Promise.resolve(currentDesktopConfigRef.current),
+    // Callers (updater checks and install re-check, recovery picker, onboarding
+    // branding) need the organization's current allowed desktop versions, so
+    // always fetch. When Den is unreachable or older and the fetch fails, fall
+    // back to the last known config instead of failing the update flow. Return
+    // the same capability projection the provider state uses so suspended
+    // desktop policy keys never reach them.
+    () => desktopConfigHandler(true)
+      .catch(() => currentDesktopConfigRef.current)
+      .then(desktopCapabilityConfig),
     [desktopConfigHandler],
   );
 
@@ -554,10 +561,6 @@ export function useDesktopConfig(): DesktopConfigStore {
  */
 export function useOrgRestrictions(): DenDesktopConfig {
   return useDesktopConfig().config;
-}
-
-export function useConnectEnabled(): boolean | undefined {
-  return useDesktopConfig().config.connectEnabled;
 }
 
 /**

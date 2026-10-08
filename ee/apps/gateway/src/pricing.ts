@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
+import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
 
 export type ModelPrice = {
   input: number
@@ -39,7 +41,8 @@ function readPrice(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-function readModelPrice(model: unknown): ModelPrice | null {
+/** Price from one models.dev-shaped model config (USD per 1M tokens), or null. */
+export function readModelPrice(model: unknown): ModelPrice | null {
   if (!isRecord(model) || !isRecord(model.cost)) return null
   const input = readPrice(model.cost.input)
   const output = readPrice(model.cost.output)
@@ -85,12 +88,20 @@ export function createPricingCatalog(raw: unknown): PricingCatalog {
   }
 }
 
+/**
+ * One model's price, for providers whose prices live on the synced model row
+ * (LiteLLM) rather than in the models.dev snapshot.
+ */
+export function fixedModelPricing(providerId: string, modelId: string, price: ModelPrice): PricingCatalog {
+  return { getModelPrice: (provider, model) => provider === providerId && model === modelId ? price : null }
+}
+
 let fileCatalog: PricingCatalog | null = null
 
 export function loadPricingCatalogFromFile(): PricingCatalog {
   if (!fileCatalog) {
     const parsed: unknown = JSON.parse(readFileSync(baseJsonPath, "utf8"))
-    fileCatalog = createPricingCatalog(parsed)
+    fileCatalog = createPricingCatalog(isRecord(parsed) ? withMicrosoftFoundryProvider(withBedrockMantleProvider(parsed)) : parsed)
   }
   return fileCatalog
 }
@@ -107,7 +118,7 @@ export function estimateCostMicroUsd(input: CostEstimateInput, catalog: PricingC
   if (input.inputTokens === null || input.outputTokens === null
     || Object.values(input).some((value) => typeof value === "number" && (!Number.isFinite(value) || value < 0))) return null
   const disjointCache = input.protocol === "anthropic_messages" || input.protocol === "bedrock_converse"
-    || (!input.protocol && (input.providerId === "anthropic" || input.providerId === "amazon-bedrock" || input.providerId === "google-vertex-anthropic"))
+    || (!input.protocol && (input.providerId === "anthropic" || input.providerId === "amazon-bedrock" || input.providerId === "google-vertex-anthropic" || input.providerId === "microsoft-foundry"))
   const cache = tokens(input.cacheReadTokens) + tokens(input.cacheWriteTokens)
   const contextTokens = input.inputTokens + (disjointCache ? cache : 0)
   const uncachedInput = input.inputTokens - (disjointCache ? 0 : cache)

@@ -47,9 +47,9 @@ function OpenWorkCheck() {
   return (
     <span
       className="inline-flex items-center justify-center text-[var(--lp-ink)]"
-      aria-label="Included"
     >
       <CheckCircle2 className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
+      <span className="sr-only">Included</span>
     </span>
   );
 }
@@ -61,18 +61,18 @@ function CoworkCell({ support }: { support: CoworkSupport }) {
 
   if (support === "none") {
     return (
-      <span className="text-[13px] text-[var(--lp-faint)]" aria-label="Not available">
+      <span className="text-[13px] text-[var(--lp-faint)]">
         <Minus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        <span className="sr-only">Not available</span>
       </span>
     );
   }
 
   return (
-    <Check
-      className="h-5 w-5 text-[var(--lp-faint)]"
-      strokeWidth={1.75}
-      aria-label="Included"
-    />
+    <span className="inline-flex text-[var(--lp-faint)]">
+      <Check className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
+      <span className="sr-only">Included</span>
+    </span>
   );
 }
 
@@ -98,7 +98,7 @@ function Capability({ row }: { row: ParityRow }) {
       <span>{row.capability}</span>
       {row.badge === "alpha" ? <LpAlphaBadge /> : null}
       {row.badge === "openwork" ? (
-        <span className="rounded-full bg-[#dbeafe] px-2 py-0.5 text-[9.5px] font-bold tracking-[0.08em] text-[var(--lp-blue)]">
+        <span className="rounded-full bg-[#dbeafe] px-2 py-0.5 text-[9.5px] font-bold tracking-[0.08em] text-[#1d4ed8]">
           OPENWORK ONLY
         </span>
       ) : null}
@@ -106,7 +106,7 @@ function Capability({ row }: { row: ParityRow }) {
   );
 }
 
-export function LpParityTable() {
+export function LpParityTable({ showMigrationLink = true }: { showMigrationLink?: boolean } = {}) {
   return (
     <div>
       <div className="md:hidden">
@@ -172,17 +172,19 @@ export function LpParityTable() {
 
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-5 text-[13px] text-[var(--lp-faint)] md:px-5">
-        <span>
-          Migrating from Cowork? Your SKILL.md files and MCP servers work as-is.
-        </span>
-        <a
-          href="/docs/start-here/migrate-from-claude-cowork"
-          className="text-[var(--lp-ink)] underline decoration-1 underline-offset-4"
-        >
-          See the migration guide
-        </a>
-      </div>
+      {showMigrationLink ? (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-5 text-[13px] text-[var(--lp-faint)] md:px-5">
+          <span>
+            Migrating from Cowork? One prompt moves your plugins and skills.
+          </span>
+          <a
+            href="/docs/start-here/migrate-from-claude-cowork"
+            className="text-[var(--lp-ink)] underline decoration-1 underline-offset-4"
+          >
+            See the migration guide
+          </a>
+        </div>
+      ) : null}
     </div>
   );
 }

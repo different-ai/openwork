@@ -1,8 +1,8 @@
 import { LandingTrustOverview } from "../../components/landing-trust";
 import { getGithubData } from "../../lib/github";
-import { baseOpenGraph } from "../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "OpenWork — Security & Data Privacy",
   description:
     "How OpenWork handles data, subprocessors, incident response, and compliance for self-hosted enterprise deployments.",
@@ -13,7 +13,7 @@ export const metadata = {
     ...baseOpenGraph,
     url: "https://openworklabs.com/trust"
   }
-};
+});
 
 export default async function TrustPage() {
   const github = await getGithubData();

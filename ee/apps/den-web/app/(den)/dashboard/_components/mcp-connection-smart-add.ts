@@ -41,6 +41,23 @@ export function classifySmartAddInput(rawQuery: string): SmartAddInputKind {
   return NAME_QUERY_PATTERN.test(query) ? "name" : "invalid";
 }
 
+/**
+ * The MCP address a catalog search holds, when it holds one: a full URL or a
+ * bare domain (given https). Names and invalid input return null.
+ */
+export function pastedMcpAddress(rawQuery: string): { host: string; url: string } | null {
+  const kind = classifySmartAddInput(rawQuery);
+  if (kind !== "url" && kind !== "domain") return null;
+  const query = rawQuery.trim();
+  try {
+    const parsed = new URL(kind === "url" ? query : `https://${query}`);
+    if (!parsed.hostname) return null;
+    return { host: parsed.host, url: kind === "url" ? query : `https://${query}` };
+  } catch {
+    return null;
+  }
+}
+
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }

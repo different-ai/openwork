@@ -327,7 +327,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
   };
 }
 
-function renderVideo(href: string, label: string) {
+function renderVideo(href: string, label: string, fallbackHtml: string) {
   if (!/\.(?:mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i.test(href)) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^(?:https?|file):/i.test(href) && !/^[A-Za-z]:[\\/]/.test(href)) return null;
   const remote = /^https?:/i.test(href);
@@ -335,12 +335,19 @@ function renderVideo(href: string, label: string) {
   const fileLink = remote
     ? `href="${escapeAttribute(safeHref(href))}" target="_blank" rel="noopener noreferrer"`
     : `href="#" data-openwork-inline-code-path="${escapeAttribute(href)}"`;
-  return `<span class="my-4 inline-block w-full max-w-lg align-top"><video data-openwork-video-path="${escapeAttribute(href)}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><span data-openwork-video-error="" hidden class="text-sm text-muted-foreground">Video preview unavailable. Open the file to play it.</span><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a></span>`;
+  // A block-level box: inside a sentence, an inline-block video left the rest
+  // of the sentence floating beside its top edge. When the video cannot load
+  // (a bare file name, a deleted file) the box is swapped for the hidden
+  // inline fallback, so the sentence reads as if no player had been tried.
+  return `<span data-openwork-video="" class="my-3 flex w-full max-w-lg flex-col items-start gap-1.5"><video data-openwork-video-path="${escapeAttribute(href)}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a><span data-openwork-video-fallback="" hidden>${fallbackHtml}</span></span>`;
 }
 
 function renderLink(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
-  const video = profile.linkPresentation === "chat" ? renderVideo(href, href) : null;
-  if (video) return video;
+  const html = renderLinkHtml(profile, href, title, text);
+  return (profile.linkPresentation === "chat" ? renderVideo(href, href, html) : null) ?? html;
+}
+
+function renderLinkHtml(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
   const safe = escapeAttribute(safeHref(href));
   const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
@@ -367,7 +374,7 @@ function renderLink(profile: MarkdownProfile, href: string, title: string | null
 }
 
 function renderImage(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
-  const video = profile.linkPresentation === "chat" ? renderVideo(href, href) : null;
+  const video = profile.linkPresentation === "chat" ? renderVideo(href, href, renderLinkHtml(profile, href, title, escapeHtml(text || href))) : null;
   if (video) return video;
   const safe = escapeAttribute(safeHref(href));
   const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
@@ -438,13 +445,12 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         const reference = !suppressReferences && !unsafeReferenceTokens.has(token) ? resolveReference?.(text) : undefined;
         if (reference) return sessionReferenceHtml(reference);
         const path = profile.linkPresentation === "chat" && !suppressReferences ? inlineCodeArtifactPath(text) : null;
-        const video = path ? renderVideo(path, path) : null;
-        if (video) return video;
         const pathAttributes = path
           ? ` data-openwork-inline-code-path="${escapeAttribute(path)}" role="button" tabindex="0" aria-label="Open ${escapeAttribute(path)}"`
           : "";
         const pathClassName = path ? " cursor-pointer transition-colors hover:bg-gray-3/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : "";
-        return `<code${pathAttributes} class="${profile.codeSpanClassName}${pathClassName}">${escapeHtml(text)}</code>`;
+        const html = `<code${pathAttributes} class="${profile.codeSpanClassName}${pathClassName}">${escapeHtml(text)}</code>`;
+        return (path ? renderVideo(path, path, html) : null) ?? html;
       },
       del({ raw, tokens }) {
         if (!raw.startsWith("~~")) {

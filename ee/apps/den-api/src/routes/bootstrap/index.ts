@@ -13,19 +13,36 @@ import {
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
+  AuthUserTable,
   RateLimitTable,
   WorkspaceBootstrapTable,
+  WorkspaceClaimCodeTable,
   WorkspaceClaimTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, parseSkillMarkdown } from "@openwork-ee/utils"
 import { createHash, randomBytes } from "node:crypto"
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../../desktop-policies.js"
 import { env } from "../../env.js"
-import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
+import { jsonValidator, paramValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
+import {
+  JWT_BEARER_GRANT_TYPE,
+  PRECLAIM_SCOPE,
+  agentUserValues,
+  issueClaimCode,
+  lookupClaimCode,
+  preclaimAssertionAudience,
+  readClaimState,
+  retireExpiredPreclaimWorkspaces,
+  retirePreclaimAgent,
+  revokePreclaimCredentials,
+  signPreclaimAssertion,
+  verifyPreclaimAssertion,
+} from "../../workspace-preclaim.js"
 import { DEFAULT_ORGANIZATION_LIMITS } from "../../organization-limits.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { seedDefaultOrganizationRoles, setSessionActiveOrganization } from "../../orgs.js"
@@ -37,7 +54,9 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
 } from "../org/plugin-system/default-marketplaces.js"
 
-const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 24
+// Long enough to come back the next day or after a weekend; the 15-minute
+// pre-claim tokens and claim codes are separate, shorter clocks.
+const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 72
 const BOOTSTRAP_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const BOOTSTRAP_RATE_LIMIT_MAX = 5
 const CLAIM_TOKEN_BYTES = 32
@@ -91,10 +110,20 @@ const bootstrapWorkspaceResponseSchema = z.object({
     output: z.literal(STARTER_SKILL_OUTPUT),
   }),
   claimLinks: z.array(claimLinkSchema),
+  identity: z.object({
+    type: z.literal("anonymous"),
+    assertion: z.string(),
+    assertionType: z.literal("urn:ietf:params:oauth:grant-type:jwt-bearer"),
+    tokenEndpoint: z.string(),
+    scope: z.string(),
+    expiresAt: z.string().datetime(),
+    claimEndpoint: z.string(),
+  }),
 })
 
 const acceptClaimResponseSchema = z.object({
   ok: z.literal(true),
+  teammateEmails: z.array(z.string()).optional().describe("Teammates to invite now that the caller owns the workspace. Only returned to the owner."),
   organization: z.object({
     id: denTypeIdSchema("organization"),
     name: z.string(),
@@ -102,6 +131,72 @@ const acceptClaimResponseSchema = z.object({
     role: z.string(),
   }),
 })
+
+const bootstrapParamsSchema = z.object({
+  bootstrapId: denTypeIdSchema("workspaceBootstrap"),
+})
+
+const userCodeParamsSchema = z.object({
+  userCode: z.string().trim().min(4).max(32),
+})
+
+const acceptClaimCodeSchema = z.object({
+  userCode: z.string().trim().min(4).max(32),
+  // Only "keep as a new organization" exists today.
+  mode: z.literal("new_org").default("new_org"),
+})
+
+const claimCodeResponseSchema = z.object({
+  user_code: z.string(),
+  verification_uri: z.string(),
+  verification_uri_complete: z.string(),
+  expires_in: z.number(),
+  interval: z.number(),
+})
+
+const claimStateResponseSchema = z.object({
+  state: z.enum(["none", "pending", "expired", "accepted", "reconciled"]),
+  reconciled: z.boolean(),
+})
+
+const claimCodeLookupResponseSchema = z.object({
+  organization: z.object({ id: denTypeIdSchema("organization"), name: z.string() }),
+})
+
+const preclaimErrorSchema = z.object({
+  error: z.string(),
+  error_description: z.string(),
+})
+
+function readBearer(headers: Headers): string | null {
+  const match = headers.get("authorization")?.trim().match(/^Bearer\s+(.+)$/i)
+  return match?.[1]?.trim() || null
+}
+
+async function readPreclaimAssertion(headers: Headers, bootstrapId: string) {
+  const token = readBearer(headers)
+  if (!token) {
+    return { ok: false as const, body: { error: "invalid_token", error_description: "Send the pre-claim assertion as a Bearer token." } }
+  }
+  const checked = await verifyPreclaimAssertion(token)
+  if (!checked.ok || checked.bootstrap.id !== bootstrapId) {
+    return { ok: false as const, body: { error: "invalid_token", error_description: "The pre-claim assertion is invalid for this workspace." } }
+  }
+  return { ok: true as const, bootstrap: checked.bootstrap, revoked: checked.revoked }
+}
+
+/**
+ * Audit attribution for a verified bootstrap credential: the provisional
+ * organization it is bound to, actor = the authenticated user (the setup agent
+ * with its setup member for pre-claim assertions; the claiming person, not
+ * yet a member, for claim codes/links).
+ */
+async function attributeBootstrap(c: Context, input: { organizationId: string; userId: string | null; memberId?: string | null }) {
+  const attribution = input.userId ? auditSessionUserAttribution(input.userId, input.memberId) : null
+  if (!attribution) return null
+  const audited = await attributeAuditRequest(c, { organizationId: input.organizationId, ...attribution })
+  return audited.ok ? null : audited.response
+}
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex")
@@ -112,7 +207,19 @@ function requestAddress(headers: Headers) {
   return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
 }
 
-function claimUrl(token: string, options?: { prefillEmail?: string | null; inviteEmails?: readonly string[] | null }) {
+/** Teammates saved at setup, handed to the new owner to invite. */
+async function teammateInvitesFor(bootstrapId: string, role: string): Promise<{ teammateEmails?: string[] }> {
+  if (role !== "owner") return {}
+  const [row] = await db
+    .select({ teammateEmails: WorkspaceBootstrapTable.teammateEmails })
+    .from(WorkspaceBootstrapTable)
+    .where(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", bootstrapId)))
+    .limit(1)
+  const emails = Array.isArray(row?.teammateEmails) ? row.teammateEmails.filter((email) => typeof email === "string" && email.includes("@")) : []
+  return emails.length > 0 ? { teammateEmails: emails } : {}
+}
+
+export function claimUrl(token: string, options?: { prefillEmail?: string | null; inviteEmails?: readonly string[] | null }) {
   let url = `${env.betterAuthUrl}/workspace-claim?token=${encodeURIComponent(token)}`
   if (options?.prefillEmail) {
     url += `&email=${encodeURIComponent(options.prefillEmail)}`
@@ -171,6 +278,76 @@ async function enforceBootstrapRateLimit(headers: Headers) {
   return checkBootstrapRateLimit(`bootstrap:workspace:${requestAddress(headers)}`, now)
 }
 
+type BootstrapTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+/**
+ * Make a signed-in person a member of a provisional workspace (owner for the
+ * claim-code flow) and retire the setup member. Shared by claim links and
+ * claim codes so both end in the same state.
+ */
+async function transferProvisionalWorkspace(tx: BootstrapTransaction, claim: {
+  organizationId: typeof OrganizationTable.$inferSelect.id
+  organization: typeof OrganizationTable.$inferSelect
+  bootstrapId: typeof WorkspaceBootstrapTable.$inferSelect.id
+  setupMemberId: typeof WorkspaceBootstrapTable.$inferSelect.setupMemberId
+  role: string
+  userId: ReturnType<typeof normalizeDenTypeId<"user">>
+  now: Date
+}): Promise<{ status: "membership_removed" } | { status: "ok"; memberId: ReturnType<typeof createDenTypeId<"member">> }> {
+  const { now } = claim
+  const normalizedUserId = claim.userId
+  const [existingMember] = await tx
+    .select({ id: MemberTable.id })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.organizationId, claim.organizationId), eq(MemberTable.userId, normalizedUserId), isNull(MemberTable.removedAt)))
+    .limit(1)
+    .for("update")
+  const [removedMember] = existingMember
+    ? []
+    : await tx
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(eq(MemberTable.organizationId, claim.organizationId), eq(MemberTable.userId, normalizedUserId), isNotNull(MemberTable.removedAt)))
+      .limit(1)
+      .for("update")
+
+  if (removedMember) {
+    return { status: "membership_removed" as const }
+  }
+
+  const memberId = existingMember?.id ?? createDenTypeId("member")
+  if (existingMember) {
+    await tx.update(MemberTable).set({ role: claim.role, joinedAt: now }).where(eq(MemberTable.id, existingMember.id))
+  } else {
+    await tx.insert(MemberTable).values({
+      id: memberId,
+      organizationId: claim.organizationId,
+      userId: normalizedUserId,
+      role: claim.role,
+      joinedAt: now,
+    })
+  }
+
+  await tx.update(MemberTable).set({ removedAt: now }).where(eq(MemberTable.id, claim.setupMemberId))
+  await tx.update(WorkspaceBootstrapTable).set({ status: "claimed", claimedAt: now }).where(eq(WorkspaceBootstrapTable.id, claim.bootstrapId))
+  const metadata = readOrganizationMetadata(claim.organization.metadata)
+  await tx.update(OrganizationTable).set({
+    metadata: {
+      ...metadata,
+      bootstrap: {
+        ...readOrganizationMetadata(metadata.bootstrap),
+        provisional: false,
+        claimedAt: now.toISOString(),
+        // Preserve existing claim attribution: this is the authenticated
+        // account's internal ID stored at runtime, not a customer identity
+        // embedded in public source or fixtures.
+        claimedByUserId: normalizedUserId,
+      },
+    },
+  }).where(eq(OrganizationTable.id, claim.organizationId))
+  return { status: "ok", memberId }
+}
+
 export function registerBootstrapRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.post(
     "/v1/bootstrap/workspace",
@@ -194,6 +371,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       }
 
       const input = c.req.valid("json")
+      // Expiry cleanup rides on new bootstraps: retire a few unclaimed,
+      // expired workspaces' setup agents. Never blocks or fails this request.
+      void retireExpiredPreclaimWorkspaces().catch(() => undefined)
       const expiresAt = new Date(Date.now() + BOOTSTRAP_TTL_MS)
       const skillText = starterSkillText(input.skillName)
       const metadata = skillMetadata(skillText)
@@ -217,11 +397,18 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           },
         })
 
+        // The setup member is a sign-in-less agent user so the pre-claim
+        // assertion can authenticate as a real principal on the MCP gateway.
+        const agentUser = agentUserValues(bootstrapId)
+        const assertionJti = randomBytes(18).toString("base64url")
+        await tx.insert(AuthUserTable).values(agentUser)
+
         await tx.insert(MemberTable).values({
           id: setupMemberId,
           organizationId,
-          userId: null,
+          userId: agentUser.id,
           role: "owner",
+          isSetupAgent: true,
         })
 
         await tx.insert(WorkspaceBootstrapTable).values({
@@ -232,6 +419,10 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           deviceKeyFingerprint,
           status: "provisional",
           expiresAt,
+          agentUserId: agentUser.id,
+          assertionJti,
+          ownerEmail: input.ownerEmail ?? null,
+          teammateEmails: input.teammateEmails && input.teammateEmails.length > 0 ? [...new Set(input.teammateEmails)] : null,
         })
 
         await tx.insert(PluginTable).values({
@@ -389,6 +580,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           organization: { id: organizationId, name: input.workspaceName, slug: organizationId, status: "provisional" as const },
           setup: { id: bootstrapId, expiresAt: expiresAt.toISOString() },
           setupMemberId,
+          agentUserId: agentUser.id,
+          assertionJti,
           skill: { id: configObjectId, title: metadata.title, output: STARTER_SKILL_OUTPUT },
           claimLinks,
         }
@@ -397,7 +590,24 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       await ensureDefaultDesktopPolicyForOrganization({ organizationId: result.organization.id, createdByOrgMemberId: result.setupMemberId })
       await seedDefaultOrganizationRoles(result.organization.id)
 
-      const response = { organization: result.organization, setup: result.setup, skill: result.skill, claimLinks: result.claimLinks }
+      const assertion = await signPreclaimAssertion({
+        bootstrapId: result.setup.id,
+        organizationId: result.organization.id,
+        agentUserId: result.agentUserId,
+        jti: result.assertionJti,
+        expiresAt,
+      })
+      const identity = {
+        type: "anonymous" as const,
+        assertion,
+        assertionType: JWT_BEARER_GRANT_TYPE,
+        tokenEndpoint: preclaimAssertionAudience(),
+        scope: PRECLAIM_SCOPE,
+        expiresAt: expiresAt.toISOString(),
+        claimEndpoint: `${(env.apiPublicUrl ?? env.betterAuthUrl).replace(/\/$/, "")}/v1/bootstrap/workspace/${result.setup.id}/claim`,
+      }
+      const response = { organization: result.organization, setup: result.setup, skill: result.skill, claimLinks: result.claimLinks, identity }
+      c.header("Cache-Control", "no-store")
       return c.json({ ok: true, ...response })
     },
   )
@@ -431,6 +641,18 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       const tokenHash = sha256(input.token)
       const normalizedUserId = normalizeDenTypeId("user", user.id)
 
+      // Resolve the claim's organization (no lock) to record the intent before
+      // the locking transfer transaction below.
+      const [pendingClaim] = await db
+        .select({ organizationId: WorkspaceClaimTable.organizationId })
+        .from(WorkspaceClaimTable)
+        .where(and(eq(WorkspaceClaimTable.tokenHash, tokenHash), eq(WorkspaceClaimTable.status, "pending"), gt(WorkspaceClaimTable.expiresAt, now)))
+        .limit(1)
+      if (pendingClaim) {
+        const auditBlocked = await attributeBootstrap(c, { organizationId: pendingClaim.organizationId, userId: normalizedUserId })
+        if (auditBlocked) return auditBlocked
+      }
+
       const result = await db.transaction(async (tx) => {
         const [claim] = await tx
           .select({
@@ -458,58 +680,24 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           return null
         }
 
-        const [existingMember] = await tx
-          .select({ id: MemberTable.id })
-          .from(MemberTable)
-          .where(and(eq(MemberTable.organizationId, claim.organizationId), eq(MemberTable.userId, normalizedUserId), isNull(MemberTable.removedAt)))
-          .limit(1)
-          .for("update")
-        const [removedMember] = existingMember
-          ? []
-          : await tx
-            .select({ id: MemberTable.id })
-            .from(MemberTable)
-            .where(and(eq(MemberTable.organizationId, claim.organizationId), eq(MemberTable.userId, normalizedUserId), isNotNull(MemberTable.removedAt)))
-            .limit(1)
-            .for("update")
-
-        if (removedMember) {
-          return { status: "membership_removed" as const }
+        const transferred = await transferProvisionalWorkspace(tx, {
+          organizationId: claim.organizationId,
+          organization: claim.organization,
+          bootstrapId: claim.bootstrapId,
+          setupMemberId: claim.setupMemberId,
+          role: claim.role,
+          userId: normalizedUserId,
+          now,
+        })
+        if (transferred.status === "membership_removed") {
+          return transferred
         }
-
-        const memberId = existingMember?.id ?? createDenTypeId("member")
-        if (existingMember) {
-          await tx.update(MemberTable).set({ role: claim.role, joinedAt: now }).where(eq(MemberTable.id, existingMember.id))
-        } else {
-          await tx.insert(MemberTable).values({
-            id: memberId,
-            organizationId: claim.organizationId,
-            userId: normalizedUserId,
-            role: claim.role,
-            joinedAt: now,
-          })
-        }
-
-        await tx.update(MemberTable).set({ removedAt: now }).where(eq(MemberTable.id, claim.setupMemberId))
+        const memberId = transferred.memberId
         await tx.update(WorkspaceClaimTable).set({ status: "claimed", claimedByUserId: normalizedUserId, claimedAt: now }).where(eq(WorkspaceClaimTable.id, claim.id))
-        await tx.update(WorkspaceBootstrapTable).set({ status: "claimed", claimedAt: now }).where(eq(WorkspaceBootstrapTable.id, claim.bootstrapId))
-        const metadata = readOrganizationMetadata(claim.organization.metadata)
-        await tx.update(OrganizationTable).set({
-          metadata: {
-            ...metadata,
-            bootstrap: {
-              ...readOrganizationMetadata(metadata.bootstrap),
-              provisional: false,
-              claimedAt: now.toISOString(),
-              // Preserve existing claim attribution: this is the authenticated
-              // account's internal ID stored at runtime, not a customer identity
-              // embedded in public source or fixtures.
-              claimedByUserId: normalizedUserId,
-            },
-          },
-        }).where(eq(OrganizationTable.id, claim.organizationId))
 
         return {
+          status: "claimed" as const,
+          bootstrapId: claim.bootstrapId,
           memberId,
           organization: {
             id: claim.organization.id,
@@ -523,7 +711,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (!result) {
         return c.json({ error: "claim_not_found", message: "This workspace claim link is missing, expired, or already used." }, 404)
       }
-      if ("status" in result && result.status === "membership_removed") {
+      if (result.status === "membership_removed") {
         return c.json({
           error: "membership_removed",
           message: "Your access to this workspace was removed. Ask a workspace admin for a new invite.",
@@ -534,7 +722,182 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
       await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
-      return c.json({ ok: true, organization: result.organization })
+      // A claim link also ends the agent's pre-claim credentials.
+      await revokePreclaimCredentials(result.bootstrapId)
+      await retirePreclaimAgent(result.bootstrapId)
+      await db.update(WorkspaceClaimCodeTable).set({ state: "cancelled" }).where(and(eq(WorkspaceClaimCodeTable.bootstrapId, result.bootstrapId), eq(WorkspaceClaimCodeTable.state, "pending")))
+      return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(result.bootstrapId, result.organization.role)) })
+    },
+  )
+
+  app.post(
+    "/v1/bootstrap/workspace/:bootstrapId/claim",
+    describeRoute({
+      tags: ["Bootstrap"],
+      security: [{ bearerAuth: [] }],
+      summary: "Create a claim code for a provisional workspace",
+      description: "Authenticated with the workspace's pre-claim identity assertion as a Bearer token. Returns an RFC 8628-style user code and verification URL for a person to claim the workspace. Each call cancels the previous unused code.",
+      responses: {
+        200: jsonResponse("Claim code created.", claimCodeResponseSchema),
+        401: jsonResponse("The pre-claim assertion is missing, invalid, or revoked.", preclaimErrorSchema),
+      },
+    }),
+    publicRoute,
+    paramValidator(bootstrapParamsSchema),
+    async (c) => {
+      const checked = await readPreclaimAssertion(c.req.raw.headers, c.req.valid("param").bootstrapId)
+      if (!checked.ok) return c.json(checked.body, 401)
+      if (checked.revoked) {
+        return c.json({ error: "invalid_token", error_description: "This workspace was already claimed or expired." }, 401)
+      }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: checked.bootstrap.organizationId, userId: checked.bootstrap.agentUserId, memberId: checked.bootstrap.setupMemberId })
+      if (auditBlocked) return auditBlocked
+      c.header("Cache-Control", "no-store")
+      return c.json(await issueClaimCode(checked.bootstrap))
+    },
+  )
+
+  app.get(
+    "/v1/bootstrap/workspace/:bootstrapId/claim",
+    describeRoute({
+      tags: ["Bootstrap"],
+      security: [{ bearerAuth: [] }],
+      summary: "Read the claim state of a provisional workspace",
+      description: "Authenticated with the workspace's pre-claim identity assertion. Works after the claim so the agent can observe `reconciled`; the assertion itself no longer exchanges for tokens by then.",
+      responses: {
+        200: jsonResponse("Current claim state.", claimStateResponseSchema),
+        401: jsonResponse("The pre-claim assertion is missing or invalid.", preclaimErrorSchema),
+      },
+    }),
+    publicRoute,
+    paramValidator(bootstrapParamsSchema),
+    async (c) => {
+      const checked = await readPreclaimAssertion(c.req.raw.headers, c.req.valid("param").bootstrapId)
+      if (!checked.ok) return c.json(checked.body, 401)
+      const auditBlocked = await attributeBootstrap(c, { organizationId: checked.bootstrap.organizationId, userId: checked.bootstrap.agentUserId, memberId: checked.bootstrap.setupMemberId })
+      if (auditBlocked) return auditBlocked
+      c.header("Cache-Control", "no-store")
+      return c.json(await readClaimState(checked.bootstrap))
+    },
+  )
+
+  app.get(
+    "/v1/bootstrap/claim-codes/:userCode",
+    describeRoute({
+      hide: true,
+      tags: ["Bootstrap"],
+      security: [{ bearerAuth: [] }],
+      summary: "Look up a workspace claim code",
+      description: "Returns the workspace a pending claim code belongs to, for the signed-in person on the claim page.",
+      responses: {
+        200: jsonResponse("The code is pending.", claimCodeLookupResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        404: jsonResponse("The code is unknown, used, or expired.", notFoundSchema),
+      },
+    }),
+    userSessionRoute(),
+    paramValidator(userCodeParamsSchema),
+    async (c) => {
+      const lookup = await lookupClaimCode(c.req.valid("param").userCode)
+      if (!lookup.ok) {
+        return c.json({ error: "invalid_user_code", message: "This code is invalid or has expired. Ask your agent for a new one." }, 404)
+      }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: lookup.organizationId, userId: c.get("user").id })
+      if (auditBlocked) return auditBlocked
+      return c.json({ organization: { id: lookup.organizationId, name: lookup.organizationName } })
+    },
+  )
+
+  app.post(
+    "/v1/bootstrap/claim-codes/accept",
+    describeRoute({
+      hide: true,
+      tags: ["Bootstrap"],
+      security: [{ bearerAuth: [] }],
+      summary: "Claim a provisional workspace with a code",
+      description: "The signed-in person becomes the owner of the workspace and keeps it as a new organization. The agent's pre-claim credentials are revoked in the same step, which moves the claim from accepted to reconciled.",
+      responses: {
+        200: jsonResponse("The workspace was claimed.", acceptClaimResponseSchema),
+        400: jsonResponse("The request body was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller's access to this workspace was removed.", forbiddenSchema),
+        404: jsonResponse("The code is unknown, used, or expired.", notFoundSchema),
+      },
+    }),
+    userSessionRoute(),
+    jsonValidator(acceptClaimCodeSchema),
+    async (c) => {
+      const user = c.get("user")
+      const session = c.get("session")
+      if (!user?.id) {
+        return c.json({ error: "unauthorized" }, 401)
+      }
+      const input = c.req.valid("json")
+      const now = new Date()
+      const normalizedUserId = normalizeDenTypeId("user", user.id)
+      const lookup = await lookupClaimCode(input.userCode, now)
+      if (!lookup.ok) {
+        return c.json({ error: "invalid_user_code", message: "This code is invalid or has expired. Ask your agent for a new one." }, 404)
+      }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: lookup.organizationId, userId: normalizedUserId })
+      if (auditBlocked) return auditBlocked
+
+      const result = await db.transaction(async (tx) => {
+        const [code] = await tx
+          .select({ id: WorkspaceClaimCodeTable.id, state: WorkspaceClaimCodeTable.state })
+          .from(WorkspaceClaimCodeTable)
+          .where(eq(WorkspaceClaimCodeTable.id, normalizeDenTypeId("workspaceClaimCode", lookup.codeId)))
+          .limit(1)
+          .for("update")
+        const [organization] = await tx
+          .select()
+          .from(OrganizationTable)
+          .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", lookup.organizationId)))
+          .limit(1)
+        if (!code || code.state !== "pending" || !organization) return null
+        const transferred = await transferProvisionalWorkspace(tx, {
+          organizationId: organization.id,
+          organization,
+          bootstrapId: normalizeDenTypeId("workspaceBootstrap", lookup.bootstrapId),
+          setupMemberId: normalizeDenTypeId("member", lookup.setupMemberId),
+          role: "owner",
+          userId: normalizedUserId,
+          now,
+        })
+        if (transferred.status === "membership_removed") return transferred
+        await tx.update(WorkspaceClaimCodeTable)
+          .set({ state: "accepted", claimedByUserId: normalizedUserId, acceptedAt: now })
+          .where(eq(WorkspaceClaimCodeTable.id, code.id))
+        // Unused claim links stop working once the workspace has an owner.
+        await tx.update(WorkspaceClaimTable)
+          .set({ status: "cancelled" })
+          .where(and(eq(WorkspaceClaimTable.bootstrapId, normalizeDenTypeId("workspaceBootstrap", lookup.bootstrapId)), eq(WorkspaceClaimTable.status, "pending")))
+        return {
+          status: "claimed" as const,
+          codeId: code.id,
+          memberId: transferred.memberId,
+          organization: { id: organization.id, name: organization.name, slug: organization.slug, role: "owner" },
+        }
+      })
+
+      if (!result) {
+        return c.json({ error: "invalid_user_code", message: "This code is invalid or has expired. Ask your agent for a new one." }, 404)
+      }
+      if (result.status === "membership_removed") {
+        return c.json({ error: "membership_removed", message: "Your access to this workspace was removed. Ask a workspace admin for a new invite." }, 403)
+      }
+
+      // Reconcile: revoke the assertion and every pre-claim token, then mark it.
+      await revokePreclaimCredentials(lookup.bootstrapId, now)
+      await retirePreclaimAgent(lookup.bootstrapId, now)
+      await db.update(WorkspaceClaimCodeTable)
+        .set({ state: "reconciled", reconciledAt: new Date() })
+        .where(eq(WorkspaceClaimCodeTable.id, result.codeId))
+      if (session?.id) {
+        await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
+      }
+      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
+      return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(lookup.bootstrapId, result.organization.role)) })
     },
   )
 }

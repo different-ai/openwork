@@ -6,10 +6,13 @@ import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
 import { externalFetch } from "./server-fetch.js";
 import { ApiError } from "./errors.js";
-import { readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
+import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
+/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
+const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork$/i;
+function sessionKey(session: CloudProviderDenSession) { return `${session.baseUrl}\n${session.orgId}`; }
 // The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
 const DEN_READ_DEADLINE_MS = 6_000;
 const DEN_READ_ATTEMPT_TIMEOUT_MS = 3_500;
@@ -66,6 +69,8 @@ class ManagedDesktopPolicy {
   private generation = 0;
   private installed: { generation: number; policy: DesktopConfig | null } | undefined;
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
+  /** The last policy verified for this sign-in, used while a fresh read is in flight or Den is unreachable. */
+  private lastKnown: { key: string; policy: DesktopConfig } | undefined;
   onChange: (() => void) | undefined;
   constructor(private readonly config: ServerConfig) {}
   authenticatesEvaluation(request: Request): boolean {
@@ -84,15 +89,19 @@ class ManagedDesktopPolicy {
       this.installed = undefined;
     }
     this.session = session;
-    await this.current();
+    // Installing an identity never waits on Den while only model access is enforced.
+    if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) await this.current();
+    else void this.current().catch(() => undefined);
   }
   async clearSession(): Promise<void> {
     this.session = null;
     this.generation++;
     this.installed = undefined;
+    this.lastKnown = undefined;
+    const cleared = await clearManagedDesktopPolicy(this.config);
+    if (cleared.changed) this.onChange?.();
   }
   current(): Promise<DesktopConfig | null> {
-    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return Promise.resolve(null);
     if (this.fetching?.generation === this.generation) return this.fetching.promise;
     const generation = this.generation;
     const promise = this.fetchCurrent();
@@ -167,17 +176,28 @@ class ManagedDesktopPolicy {
       policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
     } catch (error) {
       if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
+      if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
+        // Never block on Den: keep the last policy verified for this sign-in, or none.
+        console.warn("[openwork:model-access] Den unreachable; using the last known model access");
+        return this.lastKnown?.key === sessionKey(session) ? this.lastKnown.policy : null;
+      }
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
-    const result = await writeManagedDesktopPolicy(this.config, policy);
+    // While only model access is enforced, cache a policy only when it restricts models, so
+    // organizations without it keep exactly the engine config and reload behaviour they had.
+    const restrictsModelAccess = policy.allowCustomProviders === false;
+    const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess
+      ? await writeManagedDesktopPolicy(this.config, policy)
+      : await clearManagedDesktopPolicy(this.config);
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
     this.installed = { generation, policy };
+    this.lastKnown = { key: sessionKey(session), policy };
     if (result.changed) this.onChange?.();
     return policy;
   }
   async assertRequest(request: Request, path: string, engine = false): Promise<void> {
-    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return;
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return this.assertProviderUse(request, path, engine);
     const generation = this.generation;
     try { await this.assertInstalledRequest(request, path, engine, generation); }
     finally { this.identityChanged(generation); }
@@ -228,8 +248,53 @@ class ManagedDesktopPolicy {
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
     if ("providerID" in model) await assert("model", model);
   }
+  /**
+   * While the rest of desktop policy is suspended, only model access (the AI Gateway's "Who can use models") is enforced, on the two engine
+   * requests that can reach a personal provider: signing in to one and sending with one of its models. Bodies that
+   * are not JSON are left alone, and nothing here waits on Den.
+   */
+  private async assertProviderUse(request: Request, path: string, engine: boolean): Promise<void> {
+    if (!engine || ["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
+    // Without a known restrictive policy there is nothing to check, so sends are never read or delayed.
+    const policy = this.knownPolicy();
+    if (policy?.allowCustomProviders !== false) return;
+    const enginePath = decodeURIComponent(path).replace(/^\/opencode2?/, "").replace(/^\/api/, "");
+    const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
+      ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
+    if (providerID) return this.assert("provider", { providerID });
+    if (!request.body || !/^\/session(?:\/|$)/.test(enginePath)) return;
+    let body: unknown;
+    try { body = JSON.parse(await request.clone().text()); } catch { return; }
+    if (!isRecord(body)) return;
+    const model = isRecord(body.model) ? body.model : body;
+    if (typeof model.providerID === "string") await this.assert("model", { providerID: model.providerID });
+  }
+  /** The policy to enforce now: verified for this sign-in, else the last one verified for it; never waits on Den. */
+  private knownPolicy(): DesktopConfig | null {
+    const session = this.session;
+    if (!session) return null;
+    if (this.installed?.generation === this.generation) return this.installed.policy;
+    if (!this.fetching) void this.current().catch(() => undefined);
+    return this.lastKnown?.key === sessionKey(session) ? this.lastKnown.policy : null;
+  }
+  private assertModelAccess(action: ManagedPolicyAction, input: Record<string, unknown>): void {
+    if (action !== "provider" && action !== "model") return;
+    const policy = this.knownPolicy();
+    if (policy?.allowCustomProviders !== false) return;
+    const ids = Array.isArray(input.providerIDs) ? input.providerIDs.filter((id): id is string => typeof id === "string")
+      : typeof input.providerID === "string" ? [input.providerID] : [];
+    for (const id of ids) {
+      // OpenCode Zen is not part of model access; it stays as it is today.
+      if (id.toLowerCase() === "opencode") continue;
+      if (!MANAGED_PROVIDER.test(id)) {
+        throw action === "model"
+          ? new ApiError(403, "organization_model_denied", "Choose an AI model assigned by your organization.")
+          : new ApiError(403, "organization_policy_denied", "Your organization only allows its assigned AI providers.");
+      }
+    }
+  }
   async assert(action: ManagedPolicyAction, input: Record<string, unknown> = {}): Promise<void> {
-    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return;
+    if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return this.assertModelAccess(action, input);
     const generation = this.generation;
     const policy = await this.installedPolicy(generation);
     this.identityChanged(generation);

@@ -750,6 +750,181 @@
       "when": 1789686477369,
       "tag": "0107_gateway_usage_durable_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "5",
+      "when": 1789739648235,
+      "tag": "0108_gateway_usage_organization_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "5",
+      "when": 1790127413187,
+      "tag": "0109_organization_web_origins",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "5",
+      "when": 1790207299296,
+      "tag": "0110_early_hiroim",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "5",
+      "when": 1790405726705,
+      "tag": "0111_device_authorization",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "5",
+      "when": 1790407468548,
+      "tag": "0112_claimable_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "5",
+      "when": 1790454359250,
+      "tag": "0113_setup_agent_member",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "5",
+      "when": 1790605372888,
+      "tag": "0114_audit_operation_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "5",
+      "when": 1790785674344,
+      "tag": "0115_slack_assistant",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "5",
+      "when": 1790791135950,
+      "tag": "0116_free_auto_and_provider_pins",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1790803693966,
+      "tag": "0117_slack_assistant_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "5",
+      "when": 1790968115525,
+      "tag": "0118_slack_assistant_progress_updates",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "5",
+      "when": 1790975539582,
+      "tag": "0119_remote_session_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "5",
+      "when": 1790977843475,
+      "tag": "0120_remote_session_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "5",
+      "when": 1790980102568,
+      "tag": "0121_slack_desktop_handoff",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "5",
+      "when": 1791004073865,
+      "tag": "0122_remote_session_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "5",
+      "when": 1791054298411,
+      "tag": "0123_lifecycle_emails",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "5",
+      "when": 1791231249951,
+      "tag": "0124_account_provider_id_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "5",
+      "when": 1791234067820,
+      "tag": "0125_gateway_usage_route_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "5",
+      "when": 1791236866859,
+      "tag": "0126_telemetry_event_org_window_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "5",
+      "when": 1791239110693,
+      "tag": "0127_glossy_joystick",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "5",
+      "when": 1791246307322,
+      "tag": "0128_remove_legacy_analytics",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "5",
+      "when": 1791266169752,
+      "tag": "0129_organization_features",
+      "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "5",
+      "when": 1791304695594,
+      "tag": "0130_gateway_litellm_issued_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "5",
+      "when": 1791313243548,
+      "tag": "0131_platform_audit_event",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "5",
+      "when": 1791407326379,
+      "tag": "0132_gateway_cloud_sign_in",
+      "breakpoints": true
     }
   ]
 }

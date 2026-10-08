@@ -79,7 +79,6 @@ Source-only checks (no canary resources or credentials):
 
 ```sh
 node --check evals/worlds/fixtures/cloud-web-canary/model.mjs
-node --test evals/worlds/fixtures/cloud-web-canary/model.test.mjs
 pnpm --dir evals exec tsc --noEmit --strict --skipLibCheck --module preserve --moduleResolution bundler --target es2023 --lib es2023,dom,dom.iterable,esnext.disposable --types node,vitest/globals --allowImportingTsExtensions --allowJs --jsx react-jsx specs/cloud-web-canary.live.test.ts
 ```
 

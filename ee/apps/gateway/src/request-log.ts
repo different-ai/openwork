@@ -42,6 +42,10 @@ export type RequestLogStartInput = {
   startedAt?: Date
   gatewayUsage?: GatewayUsageSnapshot
   signal?: AbortSignal
+  /** Per-request prices that override the models.dev snapshot (synced LiteLLM models). */
+  pricing?: PricingCatalog
+  /** False records tokens without pricing or charging them (per-user LiteLLM keys). */
+  spendTracking?: boolean
 }
 
 export type RequestLogUsageInput = {
@@ -230,7 +234,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
       if (finished || !started || !startedAt || !pending) return Promise.resolve()
       finished = true
       let pricing: PricingCatalog
-      try { pricing = dependencies.pricing ?? loadPricingCatalogFromFile() } catch {
+      try { pricing = started.pricing ?? dependencies.pricing ?? loadPricingCatalogFromFile() } catch {
         report("request_log_pricing_unavailable")
         pricing = { getModelPrice: () => null }
       }
@@ -278,6 +282,11 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
       }
       if (row.cost_micro_usd === null) row.metadata = { ...pending.metadata, cost_source: "unknown" }
       row.metadata = { ...row.metadata, cost_complete: row.outcome === "ok" && row.cost_micro_usd !== null && usage?.complete !== false && (costMicroUsd(usage?.costUsd) !== null || typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number") }
+      if (started.spendTracking === false) {
+        // The upstream (LiteLLM) owns this spend: keep tokens, never price or charge them.
+        row.cost_micro_usd = null
+        row.metadata = { ...pending.metadata, cost_source: "unknown", cost_complete: false, spend_tracking: "disabled" }
+      }
       finishWrite = (async () => {
         try {
           if (!await startWrite) return

@@ -9,7 +9,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getEditLlmProviderRoute,
-    getGatewayProviderRoute,
+    getAiGatewayProviderRoute,
     getLlmProvidersRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -115,7 +115,7 @@ export function LlmProviderDetailScreen({
         try {
             await runReauthableAction("migrate-llm-provider", async () => {
                 const gatewayProvider = await migrateLlmProviderToGateway(provider.id);
-                router.push(getGatewayProviderRoute(orgSlug, gatewayProvider.id));
+                router.push(getAiGatewayProviderRoute(orgSlug, gatewayProvider.id));
                 router.refresh();
             });
         } catch (nextError) {

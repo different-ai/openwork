@@ -64,20 +64,20 @@ function isMissingTable(error) {
   return error && typeof error === "object" && error.code === "ER_NO_SUCH_TABLE";
 }
 
-// --- activity (sign-in session days UNION session.active telemetry days) ---
+// --- activity (sign-in session days UNION Gateway request days) ---
 
 async function activeUserCount(days) {
-  const withTelemetry = `SELECT COUNT(DISTINCT uid) AS count FROM (
+  const withGatewayUsage = `SELECT COUNT(DISTINCT uid) AS count FROM (
       SELECT s.user_id AS uid FROM session s
        WHERE s.updated_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
       UNION
-      SELECT m.user_id FROM telemetry_event t
-        JOIN member m ON m.id = t.member_id
+      SELECT m.user_id FROM gateway_request_logs t
+        JOIN member m ON m.id = t.org_membership_id
        WHERE m.user_id IS NOT NULL
-         AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
+         AND t.started_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)
     ) activity`;
   try {
-    return n((await rows(withTelemetry))[0]?.count);
+    return n((await rows(withGatewayUsage))[0]?.count);
   } catch (error) {
     if (!isMissingTable(error)) throw error;
     const sessionsOnly = `SELECT COUNT(DISTINCT user_id) AS count FROM session
@@ -86,17 +86,14 @@ async function activeUserCount(days) {
   }
 }
 
-// "Real" active users: executed at least one task in a session in the window
-// (task.* telemetry with a session id), vs the looser sign-in/ping activity.
+// "Real" active users have made an AI Gateway request in the window.
 async function taskActiveUserCount(days) {
   try {
     const result = await rows(
-      `SELECT COUNT(DISTINCT m.user_id) AS count FROM telemetry_event t
-         JOIN member m ON m.id = t.member_id
+      `SELECT COUNT(DISTINCT m.user_id) AS count FROM gateway_request_logs t
+         JOIN member m ON m.id = t.org_membership_id
         WHERE m.user_id IS NOT NULL
-          AND t.event_type IN ('task.started', 'task.completed', 'task.failed')
-          AND t.session_id IS NOT NULL
-          AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${days} DAY)`,
+          AND t.started_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)`,
     );
     return n(result[0]?.count);
   } catch (error) {
@@ -106,13 +103,13 @@ async function taskActiveUserCount(days) {
 }
 
 async function activityDays() {
-  const withTelemetry = `SELECT s.user_id AS uid, DATE(s.updated_at) AS day FROM session s
+  const withGatewayUsage = `SELECT s.user_id AS uid, DATE(s.updated_at) AS day FROM session s
       UNION
-      SELECT m.user_id, DATE(t.event_timestamp) FROM telemetry_event t
-        JOIN member m ON m.id = t.member_id
+      SELECT m.user_id, DATE(t.started_at) FROM gateway_request_logs t
+        JOIN member m ON m.id = t.org_membership_id
        WHERE m.user_id IS NOT NULL`;
   try {
-    return await rows(withTelemetry);
+    return await rows(withGatewayUsage);
   } catch (error) {
     if (!isMissingTable(error)) throw error;
     return rows(`SELECT user_id AS uid, DATE(updated_at) AS day FROM session GROUP BY uid, day`);
@@ -133,13 +130,13 @@ async function lastActiveByUser(userIds) {
   );
   for (const row of sessionRows) merge(row.user_id, row.last);
   try {
-    const telemetryRows = await rows(
-      `SELECT m.user_id AS user_id, MAX(t.event_timestamp) AS last FROM telemetry_event t
-         JOIN member m ON m.id = t.member_id
+    const gatewayRows = await rows(
+      `SELECT m.user_id AS user_id, MAX(t.started_at) AS last FROM gateway_request_logs t
+         JOIN member m ON m.id = t.org_membership_id
         WHERE m.user_id IN (?) GROUP BY m.user_id`,
       [userIds],
     );
-    for (const row of telemetryRows) merge(row.user_id, row.last);
+    for (const row of gatewayRows) merge(row.user_id, row.last);
   } catch (error) {
     if (!isMissingTable(error)) throw error;
   }
@@ -255,7 +252,7 @@ server.tool(
           status: row.status,
           count: n(row.count),
         })),
-        note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
+        note: "active = sign-in session day or Gateway request; realActive = made at least one Gateway request",
       };
     }),
 );
@@ -312,7 +309,7 @@ server.tool(
 
 server.tool(
   "den_retention",
-  "Weekly cohort retention: users grouped by ISO signup week, with the percentage active in each week after signup (activity = sign-in session days + session.active telemetry).",
+  "Weekly cohort retention: users grouped by ISO signup week, with the percentage active in each week after signup (activity = sign-in session days + Gateway requests).",
   {
     weeks: z.number().int().min(2).max(26).default(8).describe("How many signup-week cohorts"),
   },
@@ -506,7 +503,7 @@ server.tool(
 
 server.tool(
   "den_query",
-  "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, session, organization, member, invitation, team, org_subscriptions, telemetry_event, worker, audit_event. Avoid encrypted columns (scim_provider.scim_token, sso_provider.*_config, llm_provider.api_key, config_object_version payloads, inference upstream keys).",
+  "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, session, organization, member, invitation, team, org_subscriptions, gateway_request_logs, worker, audit_event. Avoid encrypted columns (scim_provider.scim_token, sso_provider.*_config, llm_provider.api_key, config_object_version payloads, inference upstream keys).",
   {
     sql: z.string().min(1).describe("A single read-only SQL statement"),
     limit: z.number().int().min(1).max(1000).optional().describe("Row limit appended when the query has none"),

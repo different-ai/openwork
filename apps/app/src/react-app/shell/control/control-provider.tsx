@@ -806,7 +806,7 @@ export function OpenworkRouteControlActions() {
           type: "string",
           required: true,
           description:
-            "Settings tab: general | ai | ollama | preferences | permissions | shell | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers",
+            "Settings tab: general | ai | ollama | preferences | permissions | shell | environment | advanced | appearance | updates | recovery | debug | cloud-account | usage | cloud-providers",
         },
       ],
       previewArgs: { panel: "ai" },
@@ -851,7 +851,6 @@ export function OpenworkRouteControlActions() {
           { id: "extensions", label: "Library", description: "Skills, connections, and tools your agent can use." },
           { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
-          { id: "computer-use", label: "Computer use", description: "Control your computer with screenshots and mouse/keyboard actions." },
           { id: "skills", label: "Skills", description: "Install specialized skill packs for specific workflows." },
           { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
           { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },

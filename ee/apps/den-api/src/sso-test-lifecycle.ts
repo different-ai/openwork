@@ -7,6 +7,9 @@ import {
   SsoConnectionTable,
   SsoProviderTable,
 } from "@openwork-ee/den-db/schema"
+import { appendDomainChanges } from "./audit/domain/legacy.js"
+import { ssoConnectionStatusEvent } from "./audit/domain/sso.js"
+import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
@@ -365,7 +368,7 @@ export function createSsoConfigRevision(input: {
   return createHmac("sha256", env.betterAuthSecret).update(JSON.stringify(input)).digest("hex")
 }
 
-export async function enableOrganizationSsoConnection(organizationId: SsoConnection["organizationId"]) {
+export async function enableOrganizationSsoConnection(organizationId: SsoConnection["organizationId"], capture: AuditChangeCapture | null = null) {
   const [connection] = await db
     .select()
     .from(SsoConnectionTable)
@@ -381,30 +384,44 @@ export async function enableOrganizationSsoConnection(organizationId: SsoConnect
     return { ok: false as const, message: "Test the current SSO configuration successfully before enabling SSO." }
   }
 
-  const result = await db
-    .update(SsoConnectionTable)
-    .set({ status: "enabled", lastError: null })
-    .where(and(
-      eq(SsoConnectionTable.id, connection.id),
-      eq(SsoConnectionTable.configRevision, connection.lastTestedRevision),
-      eq(SsoConnectionTable.lastTestedRevision, connection.lastTestedRevision),
-      eq(SsoConnectionTable.testStatus, "succeeded"),
-    ))
-  return affectedRows(result) === 1
-    ? { ok: true as const, connectionId: connection.id, providerId: connection.providerId }
+  const lastTestedRevision = connection.lastTestedRevision
+  // Guarded update and its sso_connection.enabled event commit together; the
+  // organization share fence (when captured) precedes the connection row lock.
+  const auditEventIds = await db.transaction(async (tx) => {
+    const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
+    const result = await tx
+      .update(SsoConnectionTable)
+      .set({ status: "enabled", lastError: null })
+      .where(and(
+        eq(SsoConnectionTable.id, connection.id),
+        eq(SsoConnectionTable.configRevision, lastTestedRevision),
+        eq(SsoConnectionTable.lastTestedRevision, lastTestedRevision),
+        eq(SsoConnectionTable.testStatus, "succeeded"),
+      ))
+    if (affectedRows(result) !== 1) return null
+    return before ? appendDomainChanges(tx, capture, [ssoConnectionStatusEvent(organizationId, { connection: before, provider: current.provider }, { connection: { ...before, status: "enabled" }, provider: current.provider })]) : []
+  })
+  return auditEventIds
+    ? { ok: true as const, connectionId: connection.id, providerId: connection.providerId, auditEventIds }
     : { ok: false as const, message: "The SSO configuration changed before it could be enabled. Test it again." }
 }
 
-export async function disableOrganizationSsoConnection(organizationId: SsoConnection["organizationId"]) {
+export async function disableOrganizationSsoConnection(organizationId: SsoConnection["organizationId"], capture: AuditChangeCapture | null = null) {
   const [connection] = await db
     .select()
     .from(SsoConnectionTable)
     .where(eq(SsoConnectionTable.organizationId, organizationId))
     .limit(1)
   if (!connection) return { ok: false as const, message: "SSO configuration was not found." }
-  await db
-    .update(SsoConnectionTable)
-    .set({ status: "disabled" })
-    .where(eq(SsoConnectionTable.id, connection.id))
-  return { ok: true as const, connectionId: connection.id, providerId: connection.providerId }
+  const auditEventIds = await db.transaction(async (tx) => {
+    const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
+    await tx
+      .update(SsoConnectionTable)
+      .set({ status: "disabled" })
+      .where(eq(SsoConnectionTable.id, connection.id))
+    if (!before) return []
+    const { provider } = await getConnectionWithProvider(before)
+    return appendDomainChanges(tx, capture, [ssoConnectionStatusEvent(organizationId, { connection: before, provider }, { connection: { ...before, status: "disabled" }, provider })])
+  })
+  return { ok: true as const, connectionId: connection.id, providerId: connection.providerId, auditEventIds }
 }

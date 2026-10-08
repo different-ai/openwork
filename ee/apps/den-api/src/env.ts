@@ -8,6 +8,8 @@ import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
+import { readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { parseFeatureEnvironment } from "@openwork/features"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -26,6 +28,12 @@ const EnvSchema = z.object({
   DEN_MCP_RESOURCE_URL: z.string().optional(),
   DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
   DEN_BETTER_AUTH_COOKIE_DOMAIN: z.string().optional(),
+  /**
+   * The prefix of Den's sign-in cookies (default "openwork-den"). Browsers share cookies across every port of one
+   * host, so several Dens on 127.0.0.1 (local worlds, dev stacks) would otherwise read each other's sign-in. Each
+   * local world sets its own ("openwork-den-<id>"); den-web forwards any "openwork-den-" cookie already.
+   */
+  DEN_AUTH_COOKIE_PREFIX: z.string().regex(/^openwork-den(-[a-z0-9]{1,32})?$/).optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   DEN_TRUSTED_PROXIES: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
@@ -69,6 +77,7 @@ const EnvSchema = z.object({
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
+  DEN_MAINTENANCE_TOKEN: z.string().optional(),
   DEN_GATEWAY_KEY: z.string().optional(),
   DEN_GATEWAY_ORIGIN: z.string().optional(),
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
@@ -115,11 +124,17 @@ const EnvSchema = z.object({
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
+  // Default-on deployment kill switches; the per-org auditLogs capability stays opt-in.
+  DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
+  DEN_AUDIT_VISIBILITY_ENABLED: z.enum(["true", "false"]).default("true"),
+  // Explicit installation entitlement, separate from feature availability and capture preference.
+  DEN_AUDIT_SELF_HOSTED_ENABLED: z.enum(["true", "false"]).default("false"),
   DEN_OPENWORK_WEB_ENABLED: z.string().optional(),
   DEN_AUTOMATIONS_RUNTIME_ENABLED: z.string().optional(),
   DEN_AUTOMATIONS_POLL_INTERVAL_MS: z.string().optional(),
   DEN_AUTOMATIONS_BATCH_SIZE: z.string().optional(),
   DEN_AUTOMATIONS_MAX_CONCURRENCY: z.string().optional(),
+  DEN_HEADLESS_AUTOMATIONS_MAX_CONCURRENCY: z.string().optional(),
   DEN_AUTOMATIONS_LEASE_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUN_TIMEOUT_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS: z.string().optional(),
@@ -145,20 +160,14 @@ const EnvSchema = z.object({
   VERCEL_TEAM_SLUG: z.string().optional(),
   VERCEL_DNS_DOMAIN: z.string().optional(),
   DEN_PLAN_GATING_ENABLED: z.string().optional(),
-  DEN_INSTALL_LINKS_GATING_ENABLED: z.string().optional(),
   DEN_CONNECT_LINK_MODE: z.enum(["exchange", "signed"]).optional(),
   DEN_CONNECT_LINK_PRIVATE_KEY: z.string().optional(),
   DEN_CONNECT_LINK_KEY_ID: z.string().max(64).optional(),
-  DEN_MCP_CONNECTIONS_GATING_ENABLED: z.string().optional(),
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
+  DEN_APP_MCP_SERVERS_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
-  POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
-  POLAR_API_BASE: z.string().optional(),
-  POLAR_ACCESS_TOKEN: z.string().optional(),
-  POLAR_PRODUCT_ID: z.string().optional(),
-  POLAR_BENEFIT_ID: z.string().optional(),
-  POLAR_SUCCESS_URL: z.string().optional(),
-  POLAR_RETURN_URL: z.string().optional(),
+  LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
+  LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
@@ -496,18 +505,8 @@ const mcpAdditionalResources = normalizeAbsoluteUrlCsv(
   parsed.DEN_MCP_ADDITIONAL_RESOURCES,
 )
 
-const polarFeatureGateEnabled =
-  (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
-
 const planGatingEnabled =
   (parsed.DEN_PLAN_GATING_ENABLED ?? "false").toLowerCase() === "true"
-
-// Deprecated compatibility knob for organization install links. The environment
-// variable is still parsed so existing deployment configs keep starting, but
-// organizationInstallLinksEnabled ignores this value: install links are
-// default-on unless org metadata explicitly disables them.
-const installLinksGatingEnabled =
-  (parsed.DEN_INSTALL_LINKS_GATING_ENABLED ?? String(planGatingEnabled)).toLowerCase() === "true"
 
 // Exchange mode is the zero-config default. Signed mode is an explicit v2
 // opt-in because its public key must already be trusted by the desktop build.
@@ -525,18 +524,17 @@ const connectLink = connectLinkMode === "signed" && connectLinkPrivateKeyPem && 
   ? { privateKeyPem: connectLinkPrivateKeyPem, kid: connectLinkKid }
   : null
 
-// Deprecated compatibility knob for member-facing org MCP connections. The
-// environment variable is still parsed so existing deployment configs keep
-// starting, but memberFacingMcpConnectionsEnabled ignores this value: Connect is
-// default-on unless org metadata explicitly disables it.
-const mcpConnectionsGatingEnabled =
-  (parsed.DEN_MCP_CONNECTIONS_GATING_ENABLED ?? "false").toLowerCase() === "true"
-
 // Generated custom views require the matching desktop MCP Apps host release.
 // Keep the Den capability fail-closed so a Den deployment cannot advertise
 // bridge-dependent resources to older published desktop builds.
 const generatedArtifactViewsEnabled =
   (parsed.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? "false").trim().toLowerCase() === "true"
+
+// Apps built through Connect are served as their own MCP servers, and older
+// Workflow-bound views become read-only. On by default, including when set
+// empty; false, 0, off, or no (or any other value) restores the previous
+// behavior: no App servers, writable Workflow-bound views.
+const appMcpServersEnabled = parseBooleanFlag(optionalString(parsed.DEN_APP_MCP_SERVERS_ENABLED) ?? "true")
 
 // Desktop availability stays fail-closed, while an entirely unconfigured
 // server preserves the published-client runtime. An explicit availability
@@ -551,6 +549,20 @@ const automationsRuntimeEnabled = parseBooleanFlag(
 const automationsEnabled = automationsRuntimeEnabled
   && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "false")
 const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "false")
+
+// Which product this install is (DEN_DEPLOYMENT, default self_hosted so a
+// misconfigured customer install never picks up cloud-only features) and the
+// operator's feature locks (DEN_FEATURE_*, rendered from Helm config.features).
+// See packages/features/src/registry.ts.
+const featureEnvironment = parseFeatureEnvironment(process.env)
+const fatalFeatureProblems = featureEnvironment.problems.filter((problem) => problem.fatal)
+if (fatalFeatureProblems.length > 0) {
+  throw new Error(fatalFeatureProblems.map((problem) => `${problem.variable} ${problem.message}`).join(" "))
+}
+for (const problem of featureEnvironment.problems) {
+  console.warn(`[features] ${problem.variable} ${problem.message}`)
+}
+
 // An edge that already answers CORS (reflecting the caller's origin) in front
 // of den-api makes den-api's own headers duplicates, which browsers reject.
 // The allowlist still feeds proxy-trust decisions; only header emission stops.
@@ -564,6 +576,11 @@ const diagnosticsOrigin = normalizeDiagnosticsOrigin(parsed.DEN_DIAGNOSTICS_ORIG
 const diagnosticsBearerToken = optionalString(parsed.DEN_DIAGNOSTICS_BEARER_TOKEN)
 if (diagnosticsBearerToken && diagnosticsBearerToken.length < 24) {
   throw new Error("DEN_DIAGNOSTICS_BEARER_TOKEN must contain at least 24 characters.")
+}
+// Bearer token for scheduled maintenance callers (POST /internal/*). Unset hides those routes (404).
+const maintenanceToken = optionalString(parsed.DEN_MAINTENANCE_TOKEN)
+if (maintenanceToken && maintenanceToken.length < 24) {
+  throw new Error("DEN_MAINTENANCE_TOKEN must contain at least 24 characters.")
 }
 const derivedDenApiPublicUrl = configuredDenUrls && devMode && denBaseUrlIsLoopback(configuredDenUrls.web)
   ? `http://127.0.0.1:${port}`
@@ -660,6 +677,7 @@ export const env = {
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl,
   betterAuthCookieDomain,
+  authCookiePrefix: parsed.DEN_AUTH_COOKIE_PREFIX ?? "openwork-den",
   trustedProxies: splitCsv(parsed.DEN_TRUSTED_PROXIES),
   webUrl: normalizePublicWebOrigin(betterAuthUrl),
   // SECURITY: `redis://` carries cached auth-session material in plaintext.
@@ -690,14 +708,20 @@ export const env = {
     origin: diagnosticsOrigin,
     bearerToken: diagnosticsBearerToken,
   },
+  maintenanceToken,
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
   planGatingEnabled,
-  installLinksGatingEnabled,
   connectLink,
-  mcpConnectionsGatingEnabled,
   generatedArtifactViewsEnabled,
+  appMcpServersEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
+  // Lifecycle reminder emails (claim reminder, team nudge). Off unless
+  // LIFECYCLE_EMAILS_ENABLED=1 so self-hosted deployments opt in explicitly.
+  lifecycleEmails: {
+    enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
+    intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
   github: {
@@ -819,6 +843,9 @@ export const env = {
     pollIntervalMs: automationTuning(parsed.DEN_AUTOMATIONS_POLL_INTERVAL_MS, 15_000),
     batchSize: automationTuning(parsed.DEN_AUTOMATIONS_BATCH_SIZE, 25),
     maxConcurrency: automationTuning(parsed.DEN_AUTOMATIONS_MAX_CONCURRENCY, 4),
+    // Headless runs hold no computer, only a turn on the shared runner, so
+    // they get their own, larger pool instead of the OpenWork Web slots.
+    headlessMaxConcurrency: automationTuning(parsed.DEN_HEADLESS_AUTOMATIONS_MAX_CONCURRENCY, 16),
     leaseMs: automationTuning(parsed.DEN_AUTOMATIONS_LEASE_MS, 60_000),
     runTimeoutMs: automationTuning(parsed.DEN_AUTOMATIONS_RUN_TIMEOUT_MS, 900_000),
     // How long a desktop occurrence stays claimable. A desktop is a laptop
@@ -829,8 +856,13 @@ export const env = {
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
   dashboardsEnabled,
+  features: { deployment: featureEnvironment.deployment, locks: featureEnvironment.locks },
+  auditCaptureEnabled: parsed.DEN_AUDIT_CAPTURE_ENABLED === "true",
+  auditVisibilityEnabled: parsed.DEN_AUDIT_VISIBILITY_ENABLED === "true",
+  auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",
   corsHandledByEdge,
   openworkWebEnabled,
+  inferenceFree: readFreeInferenceConfig(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   // Keep known public Models destinations even when Gateway management is off.
   modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
@@ -879,15 +911,6 @@ export const env = {
     teamId: parsed.VERCEL_TEAM_ID,
     teamSlug: parsed.VERCEL_TEAM_SLUG,
     dnsDomain: parsed.VERCEL_DNS_DOMAIN,
-  },
-  polar: {
-    featureGateEnabled: polarFeatureGateEnabled,
-    apiBase: parsed.POLAR_API_BASE ?? "https://api.polar.sh",
-    accessToken: parsed.POLAR_ACCESS_TOKEN,
-    productId: parsed.POLAR_PRODUCT_ID,
-    benefitId: parsed.POLAR_BENEFIT_ID,
-    successUrl: parsed.POLAR_SUCCESS_URL,
-    returnUrl: parsed.POLAR_RETURN_URL,
   },
   daytona: {
     envPath: optionalString(parsed.OPENWORK_DAYTONA_ENV_PATH),

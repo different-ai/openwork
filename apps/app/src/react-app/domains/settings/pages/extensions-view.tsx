@@ -24,9 +24,8 @@ export function filterForSection(section: ExtensionsSection | undefined): Extens
     case "apps":
       return "app";
     case "connections":
-      return "mcp";
     case "mcps":
-      return "mcp";
+      return "connection";
     case "skills":
       return "skill";
     case "commands":
@@ -36,7 +35,7 @@ export function filterForSection(section: ExtensionsSection | undefined): Extens
     case "plugins":
       return "plugin";
     default:
-      return "mcp";
+      return "all";
   }
 }
 
@@ -90,7 +89,6 @@ export type ExtensionsViewProps = {
   /** Hide the view's own description line (the settings shell already shows the tab description in-pane). */
   hideDescription?: boolean;
   selectedWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   canEditPlugins: boolean;
   canUseGlobalScope: boolean;
   accessHint?: string | null;

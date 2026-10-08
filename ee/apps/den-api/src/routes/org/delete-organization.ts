@@ -4,6 +4,12 @@ import {
   AuthApiKeyTable,
   AuthSessionTable,
   AuditEventTable,
+  AuditEventResourceTable,
+  AuditOperationTable,
+  AuditOperationStepTable,
+  AuditPolicyTable,
+  AuditStateTable,
+  AuditUsageFactTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -30,6 +36,7 @@ import {
   InferenceOrgUsageBucketTable,
   GatewayKeyTable,
   GatewayCredentialSetTable,
+  GatewayLiteLlmIssuedKeyTable,
   GatewayModelGroupTable,
   GatewayModelGroupModelTable,
   GatewayProviderAccessTable,
@@ -56,6 +63,7 @@ import {
   OrganizationDiagnosticCredentialTable,
   OrganizationRoleTable,
   OrganizationTable,
+  OrganizationWebOriginTable,
   OrgSubscriptionTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
@@ -70,8 +78,6 @@ import {
   SsoProviderTable,
   TeamMemberTable,
   TeamTable,
-  TelemetryEventTable,
-  TelemetrySessionDimensionTable,
   WorkerBundleTable,
   WorkerInstanceTable,
   WorkerTable,
@@ -84,12 +90,14 @@ import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../linear.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
+import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
 import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
@@ -348,6 +356,10 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       },
     }),
     async (c) => {
+      // The purge removes this organization's tenant audit history, so the
+      // platform record (success or failure) carries it as the target; the id
+      // comes from the verified organizationContext, never request input.
+      addAuditRequestResource(c, { type: "organization", id: c.get("organizationContext").organization.id, relationship: "target" })
       const permission = ensureOwner(c)
       if (!permission.ok) {
         return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -463,6 +475,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           .map((row) => row.id)
         if (gatewayProviderIds.length > 0) {
           await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
+          // Keys OpenWork created in a customer's LiteLLM outlive this record; that proxy is not ours to change.
+          await tx.delete(GatewayLiteLlmIssuedKeyTable).where(inArray(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, gatewayProviderIds))
           const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
           if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
           await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
@@ -506,10 +520,17 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.organizationId, organizationId))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.organizationId, organizationId))
 
+        // Explicit owner-authorized organization erasure, not resource cleanup.
+        // No settlement is active for these pilot facts. Billing evidence needs
+        // a separate retention policy before commercial settlement is enabled.
+        await tx.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId))
         await tx.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId))
+        await tx.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId))
+        await tx.delete(AuditOperationTable).where(eq(AuditOperationTable.organization_id, organizationId))
+        await tx.delete(AuditUsageFactTable).where(eq(AuditUsageFactTable.organization_id, organizationId))
+        await tx.delete(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId))
+        await tx.delete(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId))
         await tx.delete(WorkerTable).where(eq(WorkerTable.org_id, organizationId))
-        await tx.delete(TelemetryEventTable).where(eq(TelemetryEventTable.org_id, organizationId))
-        await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))
         await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
 
         await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))
@@ -526,6 +547,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
+        await tx.delete(OrganizationWebOriginTable).where(eq(OrganizationWebOriginTable.organizationId, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
         await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))
@@ -561,6 +583,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
       // Org deletion removes every member row; clear aggregate and per-user membership cache keys.
       await cache.org.deleteMembers(organizationId)
+      invalidateWebOriginApprovalCache()
       await Promise.all(affectedSessions.flatMap((session) => [
         cache.auth.revokeSession(session.token),
         cache.auth.revokeSessionId(session.id),

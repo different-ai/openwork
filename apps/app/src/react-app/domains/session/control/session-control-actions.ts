@@ -2,9 +2,10 @@
 import { useCallback, useMemo } from "react";
 
 import { createClient, unwrap } from "../../../../app/lib/opencode";
+import { createClientV2, isOpencodeV2BaseUrl } from "../../../../app/lib/opencode-v2-adapter";
 import { openworkCatalogModels, openworkModelsListArgsSchema, type OpenworkCatalogModel } from "@openwork/types/openwork-affordance";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
-import { deleteRouteSession } from "../../../shell/route-workspaces";
+import { deleteRouteSession, routeSessionEndpoint } from "../../../shell/route-workspaces";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
@@ -109,8 +110,13 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const workspaceModels = useCallback(async (workspace: SessionControlWorkspace) => {
     const endpoint = endpointForWorkspace(workspace);
     if (!endpoint) throw new Error("Workspace runtime is not connected");
-    const client = createClient(endpoint.opencodeBaseUrl, workspace.path, { mode: "openwork", token: endpoint.token });
-    return openworkCatalogModels(unwrap(await client.provider.list({ directory: workspace.path })));
+    // Read the catalog from the engine chat runs on, as session creation does:
+    // v2's catalog can differ from v1's while both engines run.
+    const engine = await routeSessionEndpoint(endpoint);
+    const catalog = isOpencodeV2BaseUrl(engine.opencodeBaseUrl)
+      ? await createClientV2(engine.opencodeBaseUrl, workspace.path, { token: engine.token }).provider.list({ directory: workspace.path })
+      : await createClient(engine.opencodeBaseUrl, workspace.path, { mode: "openwork", token: engine.token }).provider.list({ directory: workspace.path });
+    return openworkCatalogModels(unwrap(catalog));
   }, [endpointForWorkspace]);
   useControlAction(useMemo<OpenworkControlAction>(() => ({
     id: "models.list",

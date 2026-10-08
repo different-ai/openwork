@@ -1,0 +1,113 @@
+import { expect } from "vitest";
+import type { Target } from "@openwork/cdp";
+import { spec } from "@openwork/testkit";
+import { sidebarChrome } from "../worlds/sidebar-chrome.ts";
+
+const test = spec.world(sidebarChrome, {
+  resources: { surfaces: ["desktop"], services: ["den"], nativeReason: "The sidebar shares the native Electron titlebar, traffic-light clearance and platform shortcuts." },
+});
+
+test("a member can search sessions and open Activity from either titlebar while session selection follows the destination", async ({ world, user, agent, probe, step, evidence }) => {
+  const search: Target = { role: "button", label: "Search sessions" };
+  const bell: Target = { role: "button", label: /^Activity/ };
+  const hideSidebar: Target = { testId: "sidebar-sidebar-toggle" };
+  const showSidebar: Target = { testId: "main-sidebar-toggle" };
+  const newSession: Target = { role: "button", label: "New session" };
+  const sessionsBefore = await agent.list();
+  const selected = () => probe.dom('[data-sidebar="menu-button"][aria-current="page"]');
+  const openActivity = async () => {
+    await user.click(bell);
+    await probe.eventually(world.presentation, {
+      within: 5_000, label: "Activity finishes opening", until: (value) => value.panelSettled,
+    });
+  };
+  const closeActivity = async () => {
+    await user.press("Escape");
+    await probe.eventually(() => probe.dom('[data-notification-panel]'), {
+      within: 5_000, label: "Activity finishes closing", until: (value) => value.elements.length === 0,
+    });
+  };
+
+  await step("before: Dashboard and New session have separate destinations and only Dashboard is selected", async () => {
+    await user.click({ role: "button", label: "Dashboard" });
+    await user.see({ role: "heading", label: "Dashboard" });
+    await user.see(newSession);
+    await user.see({ role: "button", label: "Automations" });
+    await user.see({ role: "button", label: "Library" });
+    expect((await selected()).elements.map((element) => element.text)).toEqual(["Dashboard"]);
+    expect((await probe.dom('[data-sidebar-actions] button')).elements).toHaveLength(2);
+    expect((await probe.dom('[data-notification-unread]')).elements).toHaveLength(0);
+    await user.looks(["The Dashboard page is open and Dashboard is the only highlighted item in the sidebar navigation."]);
+  });
+
+  await step("after: starting a draft leaves navigation unselected and creates no empty session", async () => {
+    await user.click(newSession);
+    await user.see("composer", { editable: true });
+    await user.hover({ role: "heading", label: "What do you need done?" });
+    expect((await selected()).elements).toHaveLength(0);
+    expect(await agent.list()).toEqual(sessionsBefore);
+    // The regression was a permanent background, despite inactive navigation.
+    expect((await world.presentation()).newSessionBackground).toBe("rgba(0, 0, 0, 0)");
+    await user.looks(["The new-session composer is shown and no item in the sidebar navigation is highlighted."]);
+    await user.click({ role: "button", label: "Dashboard" });
+    await user.press(`${world.modifier}+n`);
+    await user.see("composer", { editable: true });
+    expect((await selected()).elements).toHaveLength(0);
+    expect(await agent.list()).toEqual(sessionsBefore);
+    evidence.recordAssertionEvidence("A draft selects no navigation and creates no session", `New session and ${world.modifier}+N both open an editable composer with no sidebar item selected, and the session list still has ${sessionsBefore.length} session(s).`, true);
+  });
+
+  await step("the search icon opens the existing session search and the result selects its session", async () => {
+    await user.click(search);
+    await user.type({ placeholder: "Search session titles…" }, "Planning");
+    await user.see({ role: "option", label: /Planning notes/ });
+    await user.looks(["A session search dialog lists the Planning notes session under a Sessions group with its workspace name, and shows no message text or message snippets."]);
+    await user.press("Enter");
+    await user.see({ role: "heading", label: "Planning notes" });
+    expect((await probe.dom(`[data-testid="sidebar-session-${world.session.sessionId}"][data-session-tab-active="true"]`)).elements).toHaveLength(1);
+    evidence.recordAssertionEvidence("Session search finds a session by title and opens it", "Typing Planning into Search session titles lists the Planning notes session; Enter opens it and selects its sidebar row.", true);
+    await user.looks(["The Planning notes session is open and highlighted in the sidebar session list."]);
+  });
+
+  await step("the bell opens Activity and returns focus to itself when it closes", async () => {
+    await openActivity();
+    expect((await probe.dom('[data-notification-panel]')).elements).toHaveLength(1);
+    await user.looks(["An Activity panel is open below the bell in the sidebar titlebar."]);
+    await closeActivity();
+    expect((await probe.dom('[data-notification-bell]')).elements[0]?.focused).toBe(true);
+    evidence.recordAssertionEvidence("The bell opens Activity and returns focus", "The sidebar bell opens the Activity panel with no unread dot, and Escape closes it and focuses the bell again.", true);
+  });
+
+  await step("hiding the sidebar keeps search and Activity in the main titlebar", async () => {
+    await user.click(hideSidebar);
+    await probe.eventually(() => probe.dom('[data-slot="sidebar-gap"]'), {
+      within: 5_000, label: "sidebar finishes closing", until: (value) => value.elements[0]?.rect.width === 0,
+    });
+    expect((await probe.dom('[data-session-header] [data-sidebar-actions] button')).elements).toHaveLength(2);
+    await openActivity();
+    await user.looks(["The sidebar is hidden and an Activity panel is open below the bell in the main titlebar."]);
+    await closeActivity();
+    await user.click(search);
+    await user.see({ placeholder: "Search session titles…" });
+    await user.press("Escape");
+    await probe.eventually(() => probe.dom('[placeholder="Search session titles…"]'), {
+      within: 5_000, label: "session search closes", until: (value) => value.elements.length === 0,
+    });
+    await user.looks(["The sidebar is hidden, the main titlebar shows the search and bell buttons, and no dialog or Activity panel is open."]);
+    evidence.recordAssertionEvidence("Search and Activity stay reachable with the sidebar hidden", "With the sidebar collapsed, the main titlebar holds both buttons: the bell opens Activity and the search icon opens session search, and each closes with Escape.", true);
+    await user.click(showSidebar);
+    await user.see(newSession);
+  });
+
+  await step("reduced motion keeps the same controls and disables sidebar movement", async () => {
+    await world.reducedMotion(true);
+    await user.click(hideSidebar);
+    expect((await world.presentation()).sidebarTransitions).toEqual(["none", "none"]);
+    await openActivity();
+    expect((await world.presentation()).panelAnimation).toBe("none");
+    await user.looks(["The sidebar is hidden and an Activity panel is open below the bell in the main titlebar."]);
+    await closeActivity();
+    await user.click(showSidebar);
+    await world.reducedMotion(false);
+  });
+});

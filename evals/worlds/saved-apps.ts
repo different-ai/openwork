@@ -6,6 +6,7 @@ import type { MockMcpTool } from "@openwork/labs";
 import { go, runWorkflow, saveWorkflow, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { configureProvider } from "./chat.ts";
+import { enableOrgManagedDashboards } from "./dashboards.ts";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
 
@@ -388,9 +389,8 @@ export async function cloudDraftRouting(seed: Seed) {
       if (!fault) throw new Error("Slow draft resolve fault lost its document");
       return { ...fault.state };
     }),
-    async [Symbol.asyncDispose]() {
-      await seed.evalIn(app, () => { window.__openworkSlowDraftResolve?.dispose(); });
-    },
+    // The owned app closes with this world, discarding its fetch wrapper.
+    // A seed call during stack disposal would run after the world is disposed.
     async launchDiagnostics(sinceIso: string) {
       const sanitize = (value: string) => [field(credentials, "token"), field(credentials, "appHostToken")]
         .reduce((text, secret) => text.replaceAll(secret, "[redacted]"), value)
@@ -423,12 +423,13 @@ export async function cloudDraftRouting(seed: Seed) {
 
 export async function savedAppCreation(seed: Seed) {
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", DEN_BETTER_AUTH_COOKIE_DOMAIN: "daytonaproxy01.net" },
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true" },
     org: { name: `Saved Apps ${Date.now()}`, members: { colleague: { name: "Colleague" }, browserRecipient: { name: "Browser recipient" } } },
     mocks: {
       tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }),
     },
   });
+  await enableOrgManagedDashboards(seed, den.admin);
   const connection = await seed.orgConnection(den.admin, {
     name: "Issue tracker", url: den.mocks.tracker.mcpUrl,
     authType: "none", credentialMode: "shared", access: { orgWide: true },
@@ -510,7 +511,6 @@ export async function savedAppCreation(seed: Seed) {
   };
   await resetProxy();
   const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, name: "saved-app-creation", model: `${providerId}/${modelId}` });
-  const web = await seed.web({ den, startPath: "/reauth/desktop", headless: true });
   const workspace = await seed.workspace(app, seed.tmpPath("saved-app-creation"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: { [providerId]: {
@@ -522,56 +522,7 @@ export async function savedAppCreation(seed: Seed) {
   });
   const inPreview = async (action: "read" | "details") => (await inAppDocuments(app, action)).join("\n");
   return {
-    app, web, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
-    async ageAdminSession() {
-      if (den.placement?.kind !== "daytona") throw new Error("Session ageing requires the disposable Daytona database");
-      const email = `CONVERT(0x${Buffer.from(den.admin.email).toString("hex")} USING utf8mb4)`;
-      const statement = `UPDATE session SET created_at=DATE_SUB(NOW(3), INTERVAL 20 MINUTE) WHERE user_id IN (SELECT id FROM user WHERE email=${email});`;
-      await execInSandbox(defaultDaytonaExec, den.placement.sandboxId,
-        `echo ${Buffer.from(statement).toString("base64")} | base64 -d | mysql -h127.0.0.1 -uroot -ppassword -N openwork_den`,
-        { timeoutMs: 30_000, context: "Age the synthetic sharing admin's session" });
-    },
-    async refreshFixtureAdmin() {
-      const result = await seed.api(den.admin, "/api/auth/sign-in/email", {
-        method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
-      });
-      if (!result.response.ok) throw new Error(`Fixture admin login failed: ${result.response.status}`);
-      den.admin.token = field(result.body, "token");
-      const selected = await seed.api(den.admin, "/v1/me/active-organization", {
-        method: "POST", body: JSON.stringify({ organizationId: orgId }),
-      });
-      if (!selected.response.ok) throw new Error(`Fixture workspace selection failed: ${selected.response.status}`);
-    },
-    async returnVerification(link: string) {
-      // Containers have no OS protocol registration. Navigate the real returned
-      // link in an Electron browser tab, exercising main-process interception,
-      // native IPC, preload forwarding, and the renderer's startup bridge.
-      // The tab stands in for the person's own browser, so it is created the way
-      // a person opens a new tab; agent browser control (openUrl) belongs to a
-      // requesting conversation and only accepts http(s) destinations.
-      const before = new Set((await listTargets(app.handle.cdpUrl)).map((entry) => entry.id));
-      const opened = await evaluate(app.client, browserScript(() => window.__OPENWORK_ELECTRON__.browser.createTab("about:blank"), []));
-      const tabId = field(opened, "tabId");
-      const newPage = async () => (await listTargets(app.handle.cdpUrl)).find((entry) => entry.type === "page" && !before.has(entry.id));
-      const deadline = Date.now() + 15_000;
-      let target = await newPage();
-      while (!target && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        target = await newPage();
-      }
-      if (!target) throw new Error("The native browser return tab was not created");
-      const browser = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
-      try {
-        await browser.send("Page.navigate", { url: link });
-      } finally {
-        browser.close();
-        await evaluate(app.client, browserScript(async (tabId) => {
-          const closeTab = window.__OPENWORK_ELECTRON__.browser.closeTab;
-          if (typeof closeTab !== "function") throw new Error("The native browser cannot close its return tab");
-          await closeTab(tabId);
-        }, [tabId]));
-      }
-    },
+    app, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
     // `go` only sets the hash; the page being left stays mounted until the router
     // commits, and the dashboard and the app page share control labels and preview
     // text. Return once the destination has rendered its own root so the spec's

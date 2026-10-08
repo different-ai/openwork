@@ -12,7 +12,7 @@ import {
 import {
   test,
 } from "@openwork/testkit";
-import { desktopProductionLive } from "../../worlds/desktop-prod-live.ts";
+import { desktopProductionLive } from "../../worlds/live-desktop.ts";
 
 test("live shared production desktop state requires consent and selects state without mutating it", async ({ evidence }) => {
   let stateAcquisitions = 0;
@@ -95,6 +95,8 @@ test("live shared production desktop state requires consent and selects state wi
     assert.notEqual(launchEnv.OPENWORK_ELECTRON_USERDATA, dataDir);
     assert.equal(launchEnv.OPENWORK_ELECTRON_APP_IDENTIFIER, "com.differentai.openwork.eval.production-live");
     assert.equal(launchEnv.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT, "31002");
+    // Signed in to the real account, so it must never claim that person's Automation or remote-session work.
+    assert.equal(launchEnv.OPENWORK_AUTOMATION_RUNNER, "off");
 
     await removeOwnedSurfaceFiles({
       name: "production-live",
@@ -117,7 +119,7 @@ test("live shared production desktop state requires consent and selects state wi
     );
     evidence.recordAssertionEvidence(
       "Dev Electron points at installed production stores from an isolated profile",
-      "The launch environment selected production OpenWork, OpenCode, workspace, config, and token paths while retaining an isolated Electron userData directory.",
+      "The launch environment selected production OpenWork, OpenCode, workspace, config, and token paths while retaining an isolated Electron userData directory and keeping the Automation runner off.",
       true,
     );
     evidence.recordAssertionEvidence(

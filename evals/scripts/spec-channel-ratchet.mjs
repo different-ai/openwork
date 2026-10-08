@@ -24,7 +24,9 @@ export function compareWorldContracts(file, source, baseSource = "") {
 
 export function checkWorldContracts() {
   const git = args => execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  const base = git(["merge-base", "HEAD", "origin/dev"]);
+  // CI checkouts are shallow: fall back to dev's tip when the merge base is absent.
+  let base;
+  try { base = git(["merge-base", "HEAD", "origin/dev"]); } catch { base = git(["rev-parse", "origin/dev"]); }
   const baseFiles = new Set(git(["ls-tree", "-r", "--name-only", base]).split("\n"));
   return journeyFiles().flatMap(path => {
     const file = relative(repoRoot, path);

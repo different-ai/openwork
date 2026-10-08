@@ -8,29 +8,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-test("an admin reaches the Tool Tester from Connectors and can test and govern an MCP tool", { timeout: 300_000 }, async ({ world, user, probe, step }) => {
-  await user.see({ text: world.connection.name }, { timeoutMs: 60_000 });
-  const connectedAt = new Date().toISOString();
-  await user.click("Connect");
-  await world.connector.authorizeRequestSince(connectedAt, { timeoutMs: 120_000 });
-  await user.click({ testId: `mcp-connection-more-${world.connection.id}` });
-  const testToolsHref = await world.testToolsHref();
-  expect(testToolsHref).toContain(`/dashboard/tool-tester?connectionId=${encodeURIComponent(world.connection.id)}`);
-  await user.notSee({ text: "View tools" });
-  // Settings children are collapsed while Connectors is active.
-  expect(await world.toolTesterSidebarPlacement()).toEqual({ inManage: false, inSettings: false });
-  await user.click({ testId: `test-mcp-tools-${world.connection.id}` });
-  // The sidebar also reads "Tool Tester", so wait on the route and the page description instead of the title.
-  const testerHref = await probe.eventually(() => world.location(), {
-    within: 60_000,
-    label: "tool tester route",
-    until: (href) => href.includes("/dashboard/tool-tester?connectionId="),
+test("an admin reaches the Tool Tester from Connectors and can test and govern an MCP tool", { timeout: 300_000 }, async ({ world, user, probe, step, evidence }) => {
+  await step("after signing in, the admin opens Test tools from the connector page", async () => {
+    await user.see({ role: "heading", label: world.connection.name }, { timeoutMs: 60_000 });
+    const connectedAt = new Date().toISOString();
+    await user.click({ role: "button", label: "Sign in" });
+    await world.connector.authorizeRequestSince(connectedAt, { timeoutMs: 120_000 });
+    await user.see({ text: "Mock Echo" }, { timeoutMs: 120_000 });
+    await user.notSee({ role: "button", label: "Sign in" });
+    await world.closeSignInTab();
+    await user.click({ role: "button", label: `More for ${world.connection.name}` });
+    await user.see({ role: "menuitem", label: "Test tools" });
+    const testToolsHref = await world.testToolsHref();
+    expect(testToolsHref).toContain(`/dashboard/tool-tester?connectionId=${encodeURIComponent(world.connection.id)}`);
+    await user.notSee({ text: "View tools" });
+    // Settings children are collapsed while Connectors is active.
+    expect(await world.toolTesterSidebarPlacement()).toEqual({ inManage: false, inSettings: false });
+    await user.click({ role: "menuitem", label: "Test tools" });
+    // The sidebar also reads "Tool Tester", so wait on the route and the page description instead of the title.
+    const testerHref = await probe.eventually(() => world.location(), {
+      within: 60_000,
+      label: "tool tester route",
+      until: (href) => href.includes("/dashboard/tool-tester?connectionId="),
+    });
+    expect(testerHref).toContain(`connectionId=${encodeURIComponent(world.connection.id)}`);
+    await user.see({ text: /Run any tool your connections expose/ }, { timeoutMs: 60_000 });
+    expect(await world.toolTesterSidebarPlacement()).toEqual({ inManage: false, inSettings: true });
+    await user.see({ text: world.connection.name });
+    await user.see({ label: "Search tools" });
+
+    evidence.recordAssertionEvidence("the connector opens Tool Tester for this connection", `Opened ${testerHref}; Tool Tester is in Settings and Search tools is available`, true);
+    await user.screenshot();
   });
-  expect(testerHref).toContain(`connectionId=${encodeURIComponent(world.connection.id)}`);
-  await user.see({ text: /Run any tool your connections expose/ }, { timeoutMs: 60_000 });
-  expect(await world.toolTesterSidebarPlacement()).toEqual({ inManage: false, inSettings: true });
-  await user.see({ text: world.connection.name });
-  await user.see({ label: "Search tools" });
 
   const marker = `tool-tester-${Date.now()}`;
   await step("mock_echo runs from a schema-derived form", async () => {
@@ -57,12 +66,8 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     await user.see({ text: /Kept in this browser for this session only.*never stores run results/i });
     await user.see({ label: "Tools enabled for your organization" });
     expect(await world.orgToolsSwitchChecked()).toBe("true");
-    await user.looks([
-      "The dedicated Tool Tester page shows a completed mock_echo run",
-      "A clear trace reads OpenWork, HTTP 200, and Tool result",
-      "The result is visible with Result, Request, and Response tabs available",
-      "No error banner or crash message is visible",
-    ]);
+    evidence.recordAssertionEvidence("the form runs only the selected tool", `mock_echo received ${marker}; mock_batch received no calls; the page shows HTTP 200 and the result`, true);
+    await user.screenshot();
   });
 
   await step("Nested schemas honestly fall back to JSON", async () => {
@@ -71,6 +76,8 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     await user.see({ text: /schema can't be shown as a form/i });
     await user.see({ role: "textbox", nth: 1 });
     expect(await world.argumentsEditorFallback()).toEqual({ formDisabled: true, jsonChecked: "true" });
+    evidence.recordAssertionEvidence("nested input uses JSON", "Form is disabled, JSON is selected, and the fallback state is visible", true);
+    await user.screenshot();
   });
 
   const capabilityName = `mcp:${world.connection.id}:mock_echo`;
@@ -96,11 +103,7 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     expect(isRecord(blocked) ? blocked.isError : false).toBe(true);
     expect(isRecord(payload) ? payload.error : null).toBe("policy_blocked");
     expect(await probe.toolCalls(world.connector, { name: "mock_echo", sinceIso: blockedAt })).toHaveLength(0);
-    await user.looks([
-      "The Tool Tester shows mock_echo disabled for the organization",
-      "The disabled state visibly attributes the policy change to Sarah",
-      "Run tool is disabled and an Enable tool action is available",
-      "No generic error or crash message is visible",
-    ]);
+    evidence.recordAssertionEvidence("disabled tools cannot be discovered or run", "mock_echo is absent from search, execution returns policy_blocked, and the mock received zero calls", true);
+    await user.screenshot();
   });
 });

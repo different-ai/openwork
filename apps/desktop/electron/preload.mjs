@@ -10,6 +10,7 @@ const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "openwork:automation-runner:
 const BROWSER_BOUNDS_INVALIDATED_EVENT = "openwork:browser:bounds-invalidated";
 
 let lastBrowserGeometry = null;
+let windowFullscreen = ipcRenderer.sendSync("openwork:window-fullscreen-sync") === true;
 
 async function sendBrowserGeometry(channel, bounds, ...args) {
   // Capture zoom in the same renderer turn as the CSS measurement, not after IPC.
@@ -41,6 +42,7 @@ function applyShellDocumentMarkers() {
     if (!root) return false;
 
     root.dataset.openworkShell = "electron";
+    root.dataset.windowFullscreen = String(windowFullscreen);
     root.classList.add("openwork-electron");
     if (process.platform === "darwin") {
       root.classList.add("openwork-platform-mac");
@@ -71,6 +73,21 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
+function linkOpenPreferences() {
+  // Read at activation so Settings changes and reloads use the same saved
+  // preference as the renderer, without a second main-process preference store.
+  try {
+    const prefs = JSON.parse(window.localStorage.getItem("openwork.preferences"));
+    return { external: prefs?.linkOpenDestination === "external", ask: prefs?.askBeforeOpeningLinks !== false };
+  } catch {
+    return { external: false, ask: true };
+  }
+}
+
+function openLink(url, sessionId) {
+  ipcRenderer.send("openwork:browser:linkClick", { url, sessionId, ...linkOpenPreferences() });
+}
+
 if (process.isMainFrame) {
   installBrowserShortcutFocusTracking(window, (tabId) => {
     ipcRenderer.send("openwork:browser:shortcut-focus", tabId);
@@ -86,10 +103,7 @@ if (process.isMainFrame) {
     if (url.origin === location.origin && url.pathname === location.pathname && url.search === location.search) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    ipcRenderer.send("openwork:browser:linkClick", {
-      url: url.href,
-      sessionId: anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null,
-    });
+    openLink(url.href, anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null);
   }, { capture: true });
 }
 
@@ -169,12 +183,6 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     getArchitectureInfo() {
       return ipcRenderer.invoke("openwork:system:architecture");
     },
-    getMicrophoneStatus() {
-      return ipcRenderer.invoke("openwork:system:microphoneStatus");
-    },
-    askMicrophoneAccess() {
-      return ipcRenderer.invoke("openwork:system:askMicrophoneAccess");
-    },
   },
   migration: {
     readSnapshot() {
@@ -195,14 +203,6 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   dev: {
     evalRelaunch() {
       return ipcRenderer.invoke("openwork:desktop", "__evalRelaunch");
-    },
-  },
-  nuke: {
-    preview(options) {
-      return ipcRenderer.invoke("openwork:desktop", "nukeOpenworkAndOpencodeConfigPreview", options);
-    },
-    execute(options) {
-      return ipcRenderer.invoke("openwork:desktop", "nukeOpenworkAndOpencodeConfigAndExit", options);
     },
   },
   updater: {
@@ -245,6 +245,13 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   browser: {
+    openLink,
+    chooseLinkDestination(id, destination) { return ipcRenderer.invoke("openwork:browser:chooseLinkDestination", id, destination); },
+    onLinkOpenRequest(callback) {
+      const handler = (_event, request) => callback(request);
+      ipcRenderer.on("openwork:browser:link-open-request", handler);
+      return () => ipcRenderer.removeListener("openwork:browser:link-open-request", handler);
+    },
     show(bounds, sessionId) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId); },
     hide(options) {
       lastBrowserGeometry = null;
@@ -263,17 +270,12 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     suspendTab(tabId) { return ipcRenderer.invoke("openwork:browser:suspendTab", tabId); },
     restoreTab(tabId, sessionId) { return ipcRenderer.invoke("openwork:browser:restoreTab", tabId, sessionId); },
     releaseTab(tabId, sessionId) { return ipcRenderer.invoke("openwork:browser:releaseTab", tabId, sessionId); },
-    closeAllTabs() { return ipcRenderer.invoke("openwork:browser:closeAllTabs"); },
     closeSessionTabs(sessionId) { return ipcRenderer.invoke("openwork:browser:closeSessionTabs", sessionId); },
     selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
     reorderTabs(tabIds) { return ipcRenderer.invoke("openwork:browser:reorderTabs", tabIds); },
     approve(tabId, approvalId, allowed) { return ipcRenderer.invoke("openwork:browser:approve", tabId, approvalId, allowed); },
     taskControl(tabId, action) { return ipcRenderer.invoke("openwork:browser:taskControl", tabId, action); },
-    listTabs() { return ipcRenderer.invoke("openwork:browser:listTabs"); },
-    listWebMcpTools(args) { return ipcRenderer.invoke("openwork:browser:webmcpListTools", args); },
-    executeWebMcpTool(args) { return ipcRenderer.invoke("openwork:browser:webmcpExecuteTool", args); },
     setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
-    getProxy() { return ipcRenderer.invoke("openwork:browser:getProxy"); },
     setControlEnabled(enabled) { return ipcRenderer.invoke("openwork:browser:setControlEnabled", enabled); },
     showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
     destroy() {
@@ -295,25 +297,6 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       ipcRenderer.on("openwork:browser:panel-closed", handler);
       return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
     },
-  },
-  browserLogins: {
-    disableForManagedContext() { return ipcRenderer.invoke("openwork:browser-logins:disableForManagedContext"); },
-    sources() { return ipcRenderer.invoke("openwork:browser-logins:sources"); },
-    preview(request) { return ipcRenderer.invoke("openwork:browser-logins:preview", request); },
-    configure(request) { return ipcRenderer.invoke("openwork:browser-logins:configure", request); },
-    state() { return ipcRenderer.invoke("openwork:browser-logins:state"); },
-    syncNow() { return ipcRenderer.invoke("openwork:browser-logins:syncNow"); },
-    pause() { return ipcRenderer.invoke("openwork:browser-logins:pause"); },
-    resume() { return ipcRenderer.invoke("openwork:browser-logins:resume"); },
-    stopSite(site) { return ipcRenderer.invoke("openwork:browser-logins:stopSite", site); },
-    disconnect(request) { return ipcRenderer.invoke("openwork:browser-logins:disconnect", request); },
-    signedInSites() { return ipcRenderer.invoke("openwork:browser-logins:signedIn"); },
-    forgetSite(site) { return ipcRenderer.invoke("openwork:browser-logins:forgetSite", site); },
-    forgetAll() { return ipcRenderer.invoke("openwork:browser-logins:forgetAll"); },
-    ...(process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1" ? {
-      writeTestStore(request) { return ipcRenderer.invoke("openwork:browser-logins:writeTestStore", request); },
-      testWitnessUrl() { return ipcRenderer.invoke("openwork:browser-logins:testWitnessUrl"); },
-    } : {}),
   },
   // Development-only observation of native popup menus; main registers no handler otherwise.
   ...(process.env.OPENWORK_DEV_MODE === "1" ? {
@@ -391,6 +374,11 @@ ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
 ipcRenderer.on(BROWSER_BOUNDS_INVALIDATED_EVENT, () => {
   lastBrowserGeometry = null;
   window.dispatchEvent(new Event(BROWSER_BOUNDS_INVALIDATED_EVENT));
+});
+
+ipcRenderer.on("openwork:window-fullscreen", (_event, fullscreen) => {
+  windowFullscreen = fullscreen === true;
+  applyShellDocumentMarkers();
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {

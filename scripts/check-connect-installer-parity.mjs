@@ -22,10 +22,6 @@ const serverUrlMatch = landingConfig.match(/export const MCP_SERVER_URL = "([^"]
 assert.ok(serverUrlMatch, "Landing installer is missing MCP_SERVER_URL");
 const serverUrl = serverUrlMatch[1];
 assert.equal(serverUrl, "https://api.openworklabs.com/mcp/agent", "OpenWork Connect must use the public /mcp/agent endpoint");
-const codexDeepLinkMatch = landingConfig.match(/export const CODEX_CONNECTIONS_DEEPLINK = "([^"]+)";/);
-assert.ok(codexDeepLinkMatch, "Landing installer is missing CODEX_CONNECTIONS_DEEPLINK");
-const chatGptSettingsMatch = landingConfig.match(/export const CHATGPT_SETTINGS_URL = "([^"]+)";/);
-assert.ok(chatGptSettingsMatch, "Landing installer is missing CHATGPT_SETTINGS_URL");
 
 const clientsMatch = landingConfig.match(/export const CONNECT_CLIENTS[^=]*= \[([^\]]+)\];/);
 assert.ok(clientsMatch, "Landing installer is missing CONNECT_CLIENTS");
@@ -86,10 +82,19 @@ const sharedValueNames = [
 ];
 
 assert.ok(docsInstaller.includes(serverUrl), "Docs installer is using a different MCP server URL");
-assert.ok(docsInstaller.includes(codexDeepLinkMatch[1]), "Docs installer is using a different Codex connections link");
-assert.ok(docsInstaller.includes(chatGptSettingsMatch[1]), "Docs installer is using a different ChatGPT settings link");
-assert.ok(!landingConfig.includes("CURSOR_DEEPLINK") && !docsInstaller.includes("CURSOR_DEEPLINK"), "Cursor desktop install deeplinks must not be exposed");
-assert.ok(!landingConfig.includes("cursor.com/en/install-mcp") && !docsInstaller.includes("cursor.com/en/install-mcp"), "Cursor add-to-desktop install links must not be exposed");
+
+// One-click install links must add exactly the public endpoint, in each
+// client's documented format, in both the installer and the client guide.
+const installLinks = [
+  ["cursor.mdx", `cursor://anysphere.cursor-deeplink/mcp/install?name=openwork&config=${Buffer.from(JSON.stringify({ url: serverUrl })).toString("base64")}`],
+  ["vs-code.mdx", `vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: "openwork", type: "http", url: serverUrl }))}`],
+];
+for (const [guide, link] of installLinks) {
+  const guideText = await readFile(new URL(`../packages/docs/model-context-protocol/${guide}`, import.meta.url), "utf8");
+  assert.ok(docsInstaller.includes(`"${link}"`), `Docs installer is missing the install link ${link}`);
+  assert.ok(guideText.includes(`](${link})`), `${guide} is missing the install link ${link}`);
+}
+
 assert.ok(!landingConfig.includes("~/.cursor/mcp.json") && !docsInstaller.includes("~/.cursor/mcp.json") && !cloudDocs.includes("~/.cursor/mcp.json"), "Cursor desktop mcp.json must not be shown as a working path");
 assert.ok(cloudDocs.includes("cursor://anysphere.cursor-mcp/oauth/callback"), "Cloud MCP docs must name the Cursor Desktop OAuth callback");
 assert.ok(cloudDocs.includes("exact allowlist with PKCE S256 enforced") || cloudDocs.includes("exact private-use allowlist with PKCE S256 enforced"), "Cloud MCP docs must explain how Cursor Desktop's private-use callback is accepted");

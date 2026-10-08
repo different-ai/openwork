@@ -30,6 +30,8 @@ export interface MockCloudSkill {
   body: string;
   /** Defaults to a synthetic `plugin:<...>:<...>` capability. */
   capability?: string;
+  /** Mirrors the default-off Den rollout in discovery metadata. */
+  modelDiscovery?: boolean;
 }
 
 export interface MockCloudSkillsRequest {
@@ -87,6 +89,8 @@ export interface MockCloudSkillsHandle extends MockMcpHandle {
   toolCallNames(query?: MockCloudSkillsLogQuery): string[];
   resourceReads(query?: MockCloudSkillsLogQuery): MockCloudSkillsRequest[];
   clearLog(): void;
+  /** Hold only catalog reads; tools and prompt admission remain live. */
+  holdSkillIndex(): () => void;
 }
 
 interface JsonRpcMessage {
@@ -142,6 +146,7 @@ export function mockCloudSkillIndex(skills: readonly MockCloudSkill[]) {
       type: "skill-md" as const,
       title: skill.title ?? skill.name,
       description: skill.description,
+      modelDiscovery: skill.modelDiscovery ?? false,
       url: mockCloudSkillUri(skill.name),
       capability: skill.capability ?? `plugin:plg_mock_cloud_skills:cob_${skill.name.replaceAll("-", "_")}`,
     })),
@@ -159,6 +164,16 @@ const CONNECT_TOOLS = [
     description: "Call a capability found via search_capabilities, by its exact name.",
     inputSchema: { type: "object", properties: { name: { type: "string" }, body: {} }, required: ["name"] },
   },
+  {
+    name: "list_skills",
+    description: "List every skill available to the signed-in OpenWork member.",
+    inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } } },
+  },
+  {
+    name: "get_skill",
+    description: "Read one skill's authorized SKILL.md by its name or exact capability.",
+    inputSchema: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+  },
 ];
 
 function assertSkillName(name: string): void {
@@ -175,6 +190,8 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
   const skillsByIdentity = new Map<string, Map<string, MockCloudSkill>>();
   const log: MockCloudSkillsRequest[] = [];
   let sessionCounter = 0;
+  let indexGate: Promise<void> | null = null;
+  let releaseIndex: (() => void) | null = null;
 
   const addIdentity = (identity: string): string => {
     const existing = credentials.get(identity);
@@ -224,6 +241,26 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
         const name = typeof params.name === "string" ? params.name : "";
         if (!CONNECT_TOOLS.some((tool) => tool.name === name)) {
           return { error: { code: -32602, message: `Unknown tool ${name}` } };
+        }
+        const args = isRecord(params.arguments) ? params.arguments : {};
+        if (name === "list_skills") {
+          // Same descriptors as the index, minus its discovery-schema envelope.
+          const skills = mockCloudSkillIndex([...requireIdentity(identity).values()]).skills
+            .map(({ type: _type, url, ...skill }) => ({ ...skill, location: url }));
+          const payload = { skills, total: skills.length };
+          return { result: { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload } };
+        }
+        if (name === "get_skill") {
+          const wanted = typeof args.name === "string" ? args.name : "";
+          const index = mockCloudSkillIndex([...requireIdentity(identity).values()]).skills;
+          const entry = index.find((skill) => skill.capability === wanted) ?? index.find((skill) => skill.name === wanted);
+          const skill = entry ? requireIdentity(identity).get(entry.name) : undefined;
+          if (!entry || !skill) {
+            return { result: { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "unknown_skill", name: wanted }) }] } };
+          }
+          const { type: _type, url, ...descriptor } = entry;
+          const payload = { ...descriptor, location: url, content: mockCloudSkillMarkdown(skill) };
+          return { result: { content: [{ type: "text", text: payload.content }], structuredContent: payload } };
         }
         // Served, not rejected: a spec proves the zero-call contract from the log,
         // never from a tool failure the host could have swallowed.
@@ -313,6 +350,7 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
         if (message.method === "resources/read" && typeof params.uri === "string") entry.uri = params.uri;
         if (message.method === "tools/call" && typeof params.name === "string") entry.toolName = params.name;
       }
+      if (entry.uri === MOCK_CLOUD_SKILL_INDEX_URI && indexGate) await indexGate;
       const responses = messages.flatMap((message) => {
         const id = rpcId(message);
         if (id === null) return [];
@@ -362,6 +400,7 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    releaseIndex?.();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   };
@@ -407,6 +446,11 @@ export async function startMockCloudSkills(options: StartMockCloudSkillsOptions 
     toolCallNames: (query) => filterLog(query).flatMap((entry) => entry.toolName ? [entry.toolName] : []),
     resourceReads: (query) => filterLog({ ...query, rpcMethod: "resources/read" }).map((entry) => ({ ...entry })),
     clearLog() { log.length = 0; },
+    holdSkillIndex() {
+      if (indexGate) throw new Error("Skill index is already held");
+      indexGate = new Promise<void>(resolve => { releaseIndex = resolve; });
+      return () => { releaseIndex?.(); releaseIndex = null; indexGate = null; };
+    },
     // MockMcpHandle compatibility so the fixture can ride seed.appWeb({ mocks }).
     async requests() {
       return authorizeRequests(filterLog());

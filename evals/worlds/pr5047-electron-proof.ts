@@ -1,6 +1,7 @@
 import { addInitScript, browserScript, evaluateOnSurface, type Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { evalIn } from "@openwork/behaviors";
+import { enableOrgManagedDashboards } from "./dashboards.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createServer } from "node:http";
@@ -88,6 +89,7 @@ export async function pr5047ElectronProof(seed: Seed) {
   if(!Array.isArray(orgs))throw new Error("No orgs");
   const orgId=text(object(orgs[0]).id);
   const headers={"x-openwork-org-id":orgId};
+  await enableOrgManagedDashboards(seed,den.admin,orgId);
   const connection=await seed.orgConnection(den.admin,{name:"Synthetic local MCP witness",url:den.mocks.proof.mcpUrl,authType:"none",credentialMode:"shared",access:{orgWide:true}});
   const apps=object((await seed.api(den.admin,`/v1/mcp-connections/${connection.id}/mcp-apps`,{headers})).body).apps;
   if(!Array.isArray(apps)||!apps.length)throw new Error("No discovered MCP apps");

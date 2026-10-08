@@ -4,6 +4,13 @@ import type { ExternalMcpConnection, ExternalMcpPreset } from "./mcp-connections
 export const GOOGLE_WORKSPACE_QUICK_ADD_ID = "google-workspace";
 export const MICROSOFT_365_QUICK_ADD_ID = "microsoft-365";
 
+export type NativeProviderKey = typeof GOOGLE_WORKSPACE_QUICK_ADD_ID | typeof MICROSOFT_365_QUICK_ADD_ID;
+
+/** Google Workspace and Microsoft 365 set up with an org OAuth app instead of a server address. */
+export function isNativeProviderCatalogId(id: string): id is NativeProviderKey {
+  return id === GOOGLE_WORKSPACE_QUICK_ADD_ID || id === MICROSOFT_365_QUICK_ADD_ID;
+}
+
 /**
  * Where a popular connector row lands when someone adds it. Gmail, Drive, and
  * Calendar are one Google Workspace connection in Den; Outlook is Microsoft
@@ -111,25 +118,6 @@ export function connectionForPresetUrl(
   const target = comparableMcpUrl(presetUrl);
   if (!target) return undefined;
   return connections.find((connection) => comparableMcpUrl(connection.url) === target);
-}
-
-/** The configured connection a popular row represents, when one exists. */
-export function configuredConnectionForPopular(
-  connector: PopularConnector,
-  connections: readonly ExternalMcpConnection[],
-  presets: readonly ExternalMcpPreset[],
-): ExternalMcpConnection | undefined {
-  switch (connector.target.kind) {
-    case "google-workspace":
-      return connections.find((connection) => connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.nativeProviderKey === "google-workspace");
-    case "microsoft-365":
-      return connections.find((connection) => connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "microsoft-365");
-    case "preset": {
-      const presetId = connector.target.presetId;
-      const preset = presets.find((entry) => entry.presetId === presetId);
-      return preset ? connectionForPresetUrl(connections, preset.url) : undefined;
-    }
-  }
 }
 
 /** Curated presets that are not already represented by a popular row. */

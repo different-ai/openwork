@@ -3,6 +3,7 @@ import type { Surface } from "@openwork/cdp";
 import { configureBrowserFixtureModel, startBrowserFixture } from "@openwork/env";
 import type { Den, Seed } from "@openwork/env";
 import { builtinBrowserWorld } from "./browser-panel.ts";
+import { selectModel } from "@openwork/behaviors";
 
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 

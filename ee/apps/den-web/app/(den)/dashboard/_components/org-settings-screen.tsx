@@ -16,6 +16,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
+import { OrgWebOriginsSection } from "./org-web-origins-section";
 import {
   allPublishedDesktopVersionsAllowed,
   compareDesktopVersions,
@@ -810,6 +811,10 @@ export function OrgSettingsScreen() {
           </DenButton>
         </div>
       </form>
+
+      {access.canViewSettings ? (
+        <OrgWebOriginsSection orgId={organizationId} canManage={canManageSettings} />
+      ) : null}
 
       {canDeleteOrganization ? (
         <DenCard size="spacious" className="mt-6 grid gap-5 !border-red-200 bg-red-50/30">

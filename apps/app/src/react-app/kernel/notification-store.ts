@@ -24,8 +24,7 @@ export type NotificationKind =
 export type NotificationAction =
   | { type: "open-model-picker"; providerIds: string[] }
   | { type: "reload-engine" }
-  | { type: "open-extensions-marketplace"; pluginName?: string }
-  | { type: "install-marketplace-plugin"; pluginName: string };
+  | { type: "open-extensions-marketplace"; pluginName?: string };
 
 export type AppNotification = {
   id: string;
@@ -88,7 +87,6 @@ function isAction(value: unknown): value is NotificationAction {
   const type = Reflect.get(value, "type");
   if (type === "reload-engine") return true;
   if (type === "open-extensions-marketplace") return true;
-  if (type === "install-marketplace-plugin") return true;
   if (type === "open-model-picker") {
     const providerIds = Reflect.get(value, "providerIds");
     return Array.isArray(providerIds) && providerIds.every((id) => typeof id === "string");
@@ -110,7 +108,6 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
     const count = Reflect.get(entry, "count");
     const createdAt = Reflect.get(entry, "createdAt");
     const updatedAt = Reflect.get(entry, "updatedAt");
-    const readAt = Reflect.get(entry, "readAt");
     const dedupeKey = Reflect.get(entry, "dedupeKey");
     const action = Reflect.get(entry, "action");
     const actionLabel = Reflect.get(entry, "actionLabel");
@@ -126,7 +123,7 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
       count: typeof count === "number" && count > 0 ? count : 1,
       createdAt,
       updatedAt,
-      readAt: typeof readAt === "number" ? readAt : null,
+      readAt: null,
       dedupeKey: typeof dedupeKey === "string" ? dedupeKey : undefined,
       action: isAction(action) ? action : undefined,
       actionLabel: typeof actionLabel === "string" ? actionLabel : undefined,
@@ -198,8 +195,19 @@ export const useNotificationStore = create<NotificationStore>()(
     }),
     {
       name: PERSISTED_NOTIFICATION_STORE_KEY,
+      version: 1,
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ notifications: state.notifications }),
+      // Old cloud/provider rows have no member identity and cannot be safely
+      // migrated into a scoped feed. Device/system notices keep their actions.
+      migrate: (persistedState) => ({
+        notifications: sanitizeNotifications(
+          typeof persistedState === "object" && persistedState !== null
+            ? Reflect.get(persistedState, "notifications") : null,
+        ).filter((entry) => entry.kind !== "cloud" && entry.kind !== "providers"),
+      }),
+      partialize: (state) => ({
+        notifications: state.notifications.map(({ readAt: _readAt, ...entry }) => entry),
+      }),
       merge: (persistedState, currentState) => ({
         ...currentState,
         notifications: prune(
@@ -213,12 +221,3 @@ export const useNotificationStore = create<NotificationStore>()(
     },
   ),
 );
-
-export function useUnreadNotificationCount(): number {
-  return useNotificationStore((state) =>
-    state.notifications.reduce(
-      (total, notification) => total + (notification.readAt === null ? 1 : 0),
-      0,
-    ),
-  );
-}

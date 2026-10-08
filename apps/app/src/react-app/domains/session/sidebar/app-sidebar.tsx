@@ -12,9 +12,8 @@ import {
   AlertTriangle,
   Archive,
   ArchiveRestore,
-  ArrowLeft,
-  ArrowRight,
   Blocks,
+  CalendarDays,
   Clock3,
   ChevronRight,
   Columns2,
@@ -25,12 +24,8 @@ import {
   Pin,
   PinOff,
   Plus,
-  Search,
-  Share2,
   Trash2,
-  RefreshCw,
   RotateCcw,
-  Settings,
   FolderOpen,
   SquarePen,
   Tag,
@@ -40,17 +35,14 @@ import { LazyMotion, MotionContext, Reorder, domMax, m, useDragControls } from "
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
-import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
-import { NotificationBell } from "../../../shell/notification-center";
+import { SidebarActions, SidebarTitlebar, type ConversationHistoryControls } from "./sidebar-chrome";
 import { useUiStateStore } from "../../../shell/ui-state-store";
 import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../../../app/types";
 import {
-  isRemoteConnectionErrorMessage,
   getWorkspaceTaskLoadErrorDisplay,
-  isRemoteConnectionWorkspace,
   isMacPlatform,
   isWindowsPlatform,
 } from "../../../../app/utils";
@@ -63,6 +55,7 @@ import {
   Sidebar,
   SidebarGroup,
   SidebarHeader,
+  useSidebar,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuButton,
@@ -89,7 +82,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { TaskRecovery } from "@/components/chat/task-recovery";
 import {
   Dialog,
   DialogClose,
@@ -153,9 +145,11 @@ import {
   sidebarRowPaddingInlineStart,
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
-import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
+import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
+import { getSessionOrder } from "./session-order";
+import { SESSION_DRAG_TYPE, SessionDragScope, SessionReorderList, useDraggedSession, useSessionReorderTarget } from "./session-reorder";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
 const OUTCOME_DOT_UNREAD = "#2FBE54";
@@ -174,7 +168,9 @@ export function SidebarReorderScope({ children }: { children: React.ReactNode })
 
   return (
     <SidebarReorderContext.Provider value={{ isReordering, setIsReordering }}>
-      <LazyMotion features={domMax}>{children}</LazyMotion>
+      <SessionDragScope>
+        <LazyMotion features={domMax}>{children}</LazyMotion>
+      </SessionDragScope>
     </SidebarReorderContext.Provider>
   );
 }
@@ -416,11 +412,10 @@ function useSessionMenuActions({
     type: "item", id: "move-to-group", label: t("session_management.move_to_group"), icon: <Tag className="size-4" />,
     submenu: groupActions, submenuClassName: { dropdown: "w-52" },
   });
-  if (ctx.onArchiveSession) actions.push({
+  if (ctx.onArchiveSession && !ctx.archiveDisabledReason) actions.push({
     type: "item", id: "archive",
     label: isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session"),
     icon: isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />,
-    disabled: Boolean(ctx.archiveDisabledReason), disabledReason: ctx.archiveDisabledReason,
     onSelect: () => ctx.onArchiveSession?.(sessionId, !isArchived),
   });
   if (ctx.onOpenDeleteSession) actions.push({ type: "separator" }, {
@@ -489,15 +484,13 @@ function SessionHoverQuickActions({
       >
         {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
       </Button>
-      {ctx.onArchiveSession ? (
+      {ctx.onArchiveSession && !ctx.archiveDisabledReason ? (
         <Button
           variant="ghost"
           size="icon"
           className="size-5 text-muted-foreground hover:bg-transparent hover:text-foreground"
           aria-label={isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session")}
           data-testid={`session-archive-${sessionId}`}
-          disabled={Boolean(ctx.archiveDisabledReason)}
-          title={ctx.archiveDisabledReason}
           onClick={(event) => {
             event.stopPropagation();
             ctx.onArchiveSession?.(sessionId, !isArchived);
@@ -544,12 +537,10 @@ function SessionContextMenu({
 
 type WorkspaceActionsMenuProps = {
   workspace: WorkspaceInfo;
-  isConnectionActionBusy: boolean;
-  canRecover: boolean;
   className: string;
 };
 
-function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, className }: WorkspaceActionsMenuProps) {
+function WorkspaceActionsMenu({ workspace, className }: WorkspaceActionsMenuProps) {
   const ctx = useSidebarContext();
   const platform = usePlatform();
 
@@ -575,42 +566,11 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
           <Pencil className="size-4" />
           {t("workspace_list.edit_name")}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => ctx.onShareWorkspace(workspace.id)}>
-          <Share2 className="size-4" />
-          {t("workspace_list.share")}
-        </DropdownMenuItem>
         {workspace.workspaceType === "local" && platform.capabilities.revealInFileManager ? (
           <DropdownMenuItem onClick={() => ctx.onRevealWorkspace(workspace.id)}>
             <FolderOpen className="size-4" />
             {isWindowsPlatform() ? t("workspace_list.reveal_explorer") : t("workspace_list.reveal_finder")}
           </DropdownMenuItem>
-        ) : null}
-        {workspace.workspaceType === "remote" ? (
-          <>
-            {canRecover ? (
-              <DropdownMenuItem
-                onClick={() => void Promise.resolve(ctx.onRecoverWorkspace(workspace.id))}
-                disabled={isConnectionActionBusy}
-              >
-                <RefreshCw className="size-4" />
-                {t("workspace_list.recover")}
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem
-              onClick={() => void Promise.resolve(ctx.onTestWorkspaceConnection(workspace.id))}
-              disabled={isConnectionActionBusy}
-            >
-              <RefreshCw className="size-4" />
-              {t("workspace_list.test_connection")}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => ctx.onEditWorkspaceConnection(workspace.id)}
-              disabled={isConnectionActionBusy}
-            >
-              <Settings className="size-4" />
-              {t("workspace_list.edit_connection")}
-            </DropdownMenuItem>
-          </>
         ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => ctx.onOpenCreateGroupModal?.(workspace.id)}>
@@ -627,123 +587,6 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function RemoteConnectionIssueCard(props: {
-  message: string;
-  tone: "error" | "offline";
-  canRecover: boolean;
-  busy: boolean;
-  onRecover: () => void;
-  onTest: () => void;
-  onEdit: () => void;
-}) {
-  return (
-    <SidebarMenuSubItem>
-      <div
-        className="w-full px-3 py-3 text-left text-dls-secondary"
-      >
-        <div className="flex items-start gap-2.5">
-          <div className="min-w-0 flex-1">
-            <TaskRecovery compact title={t("workspace_list.remote_worker_unavailable")}
-              description={t("workspace_list.remote_worker_unavailable_hint")} technicalDetails={props.message} />
-            <OpenWorkDenHelpLink />
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {props.canRecover ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
-                  onClick={props.onRecover}
-                  disabled={props.busy}
-                >
-                  {t("workspace_list.recover")}
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
-                onClick={props.onTest}
-                disabled={props.busy}
-              >
-                {t("workspace_list.test_connection")}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 rounded-lg px-2 text-[11px]"
-                onClick={props.onEdit}
-                disabled={props.busy}
-              >
-                {t("common.edit")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </SidebarMenuSubItem>
-  );
-}
-
-/** The split travels with its owning session, including when that row is pinned. */
-function SessionSideChatControl({ workspaceId, sessionId, title }: {
-  workspaceId: string;
-  sessionId: string;
-  title: string;
-}) {
-  const ctx = useSidebarContext();
-  const sideChat = useWorkbenchStore((state) => state.sideChats[workbenchSessionKey({ workspaceId, sessionId })]);
-  const primary = useWorkbenchStore((state) => state.primary);
-  const focusedPane = useWorkbenchStore((state) => state.focusedPane);
-  const [focusRequested, setFocusRequested] = React.useState(false);
-  const unreadIds = useUnreadSessionIds();
-  const selected = isSameWorkbenchSession(primary, { workspaceId, sessionId });
-  const status = sideChat ? ctx.sessionStatusById?.[sideChat.sessionId] : undefined;
-  const isUnread = Boolean(sideChat && unreadIds.has(sideChat.sessionId) && !selected);
-  const isActiveWork = isActiveWorkSessionStatus(status);
-
-  React.useEffect(() => {
-    if (!focusRequested || !selected || !sideChat) return;
-    useWorkbenchStore.getState().focusPane("secondary");
-    setFocusRequested(false);
-  }, [focusRequested, selected, sideChat]);
-
-  if (!sideChat) return null;
-
-  return (
-    <button
-      type="button"
-      data-session-side-chat={sideChat.sessionId}
-      aria-label={`${t("session_management.split_view")} · ${title}`}
-      aria-pressed={selected && focusedPane === "secondary"}
-      aria-description={isSessionActivityStatus(status) && status !== "idle" ? getSessionActivityStatusLabel(status) : undefined}
-      title={sideChat.title || t("session_management.split_view")}
-      className={cn(
-        "flex h-8 shrink-0 items-center gap-1 rounded-r-md border-l border-sidebar-border/60 px-2 text-[11px] text-sidebar-foreground/60 hover:bg-sidebar-accent disabled:opacity-50",
-        selected && focusedPane === "secondary" && "bg-sidebar-accent text-sidebar-accent-foreground",
-      )}
-      onClick={() => {
-        useSessionManagementStore.getState().clearUnread(sideChat.sessionId);
-        setFocusRequested(true);
-        if (!selected) ctx.onOpenSession(workspaceId, sessionId);
-      }}
-    >
-      {isActiveWork || isNeedsAttentionSessionStatus(status) || isUnread
-        ? <SessionStatusIndicator
-            status={status}
-            isActiveWork={isActiveWork}
-            isUnread={isUnread}
-            attentionLabel={ctx.sessionAttentionLabelById?.[sideChat.sessionId]}
-            attentionSource={ctx.sessionAttentionSourceById?.[sideChat.sessionId]}
-          />
-        : <Columns2 className="size-3" />}
-      <span>{sideChat.draftDestination && !sideChat.pendingConversationId ? "Draft" : t("session_management.split_view")}</span>
-    </button>
   );
 }
 
@@ -772,26 +615,20 @@ export type AppSidebarProps = {
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
-  onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
-  onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
   automationsActive?: boolean;
   automationsNeedAttention?: boolean;
   onOpenAutomations?: () => void;
+  calendarActive?: boolean;
+  onOpenCalendar?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
   /** Back/forward across recently viewed conversations, rendered at the top of the sidebar. */
-  conversationHistory?: {
-    canGoBack: boolean;
-    canGoForward: boolean;
-    onNavigate: (direction: "back" | "forward") => void;
-  };
+  conversationHistory?: ConversationHistoryControls;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
   onOpenAccountSettings?: () => void;
@@ -807,6 +644,7 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
+  const { open, isMobile } = useSidebar();
   // Lives in the UI store (not component state) so the open/closed state of
   // each workspace group survives this sidebar unmounting, e.g. while the
   // user is in Settings.
@@ -889,11 +727,7 @@ export function AppSidebar(props: AppSidebarProps) {
     archiveDisabledReason: props.archiveDisabledReason,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
-    onShareWorkspace: props.onShareWorkspace,
     onRevealWorkspace: props.onRevealWorkspace,
-    onRecoverWorkspace: props.onRecoverWorkspace,
-    onTestWorkspaceConnection: props.onTestWorkspaceConnection,
-    onEditWorkspaceConnection: props.onEditWorkspaceConnection,
     onForgetWorkspace: props.onForgetWorkspace,
     expandWorkspace,
     toggleWorkspaceExpanded,
@@ -920,87 +754,47 @@ export function AppSidebar(props: AppSidebarProps) {
         collapsible="offcanvas"
         className="border-e-0 group-data-[side=left]:border-e-0 mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
-        <div className="hidden h-12 mac:block mac:titlebar-drag"/>
+        <SidebarTitlebar history={props.conversationHistory} />
+        <div className="flex shrink-0 items-center pr-2 titlebar-drag">
         {brandLogoUrl ? (
           <div
             data-testid="brand-logo"
-            className="flex h-14 shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
+            className="flex h-14 min-w-0 flex-1 items-center px-3 pb-3 pt-2 mac:pt-0"
           >
             <img
               src={brandLogoUrl}
               alt="Organization logo"
-              className="max-h-9 w-auto max-w-[140px] object-contain object-left"
+              className="max-h-9 w-auto max-w-[min(140px,100%)] object-contain object-left"
             />
           </div>
         ) : (
-          <div data-sidebar-brand className="flex h-11 shrink-0 items-center gap-1.5 px-4 mac:titlebar-drag">
+          <div data-sidebar-brand className="flex h-11 min-w-0 flex-1 items-center gap-1.5 pl-4 pr-1">
             <img src={resolveExtensionIconSrc("/openwork-sidebar-mark.svg")} alt="" className="size-5 shrink-0 object-contain dark:invert" />
             <span className="truncate text-[15px] font-medium tracking-[-0.4px]" title={brandAppName}>{brandAppName}</span>
           </div>
         )}
-        {props.conversationHistory ? (
-          <div
-            className="flex shrink-0 items-center justify-end gap-0.5 px-2 pb-1 max-lg:hidden mac:absolute mac:right-1.5 mac:top-[7px] mac:z-50 mac:p-0 mac:titlebar-no-drag"
-            role="group"
-            aria-label="Conversation history controls"
-          >
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="rounded-lg text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground disabled:opacity-40"
-              aria-label="Back in conversation history"
-              title="Back in conversation history"
-              data-conversation-history-control="back"
-              disabled={!props.conversationHistory.canGoBack}
-              onClick={() => props.conversationHistory?.onNavigate("back")}
-            >
-              <ArrowLeft size={14} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="rounded-lg text-sidebar-foreground/60 transition-colors hover:text-sidebar-foreground disabled:opacity-40"
-              aria-label="Forward in conversation history"
-              title="Forward in conversation history"
-              data-conversation-history-control="forward"
-              disabled={!props.conversationHistory.canGoForward}
-              onClick={() => props.conversationHistory?.onNavigate("forward")}
-            >
-              <ArrowRight size={14} />
-            </Button>
-          </div>
-        ) : null}
+        {open || isMobile ? <SidebarActions onOpenSessionSearch={props.onOpenSessionSearch} /> : null}
+        </div>
         <SidebarHeader className="mb-0 mt-2">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
                 type="button"
                 data-sidebar-new-chat
-                className="bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                className="text-sidebar-foreground/70"
                 aria-label={t("session.new_task")}
+                aria-keyshortcuts={isMacPlatform() ? "Meta+N" : "Control+N"}
                 tooltip={t("session.new_task")}
                 disabled={props.newTaskDisabled}
                 onClick={() => props.onCreateTaskInWorkspace(props.selectedWorkspaceId)}
               >
                 <SquarePen className="size-4" />
                 <span className="flex-1 truncate">{t("session.new_task")}</span>
+                <kbd className="ml-auto font-sans text-[11px] text-sidebar-foreground/50 max-lg:hidden pointer-coarse:hidden">
+                  {isMacPlatform() ? "⌘N" : "Ctrl+N"}
+                </kbd>
               </SidebarMenuButton>
             </SidebarMenuItem>
-            {props.onOpenSessionSearch ? (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  onClick={props.onOpenSessionSearch}
-                  aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
-                  className="text-sidebar-foreground/70"
-                >
-                  <Search className="size-4" />
-                  <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
-                  <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50 max-lg:hidden pointer-coarse:hidden">
-                    {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
-                  </kbd>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ) : null}
             {props.onOpenDashboard ? (
               <SidebarDestination
                 active={props.dashboardActive === true}
@@ -1029,15 +823,20 @@ export function AppSidebar(props: AppSidebarProps) {
                 onSelect={props.onOpenAutomations}
               />
             ) : null}
+            {props.onOpenCalendar ? (
+              <SidebarDestination
+                active={props.calendarActive === true}
+                icon={CalendarDays}
+                label="Calendar"
+                onSelect={props.onOpenCalendar}
+              />
+            ) : null}
             <SidebarDestination
               active={props.extensionsActive === true}
               icon={LayoutGrid}
               label={t("settings.tab_extensions")}
               onSelect={props.onOpenExtensions}
             />
-            <SidebarMenuItem>
-              <NotificationBell variant="sidebar-row" />
-            </SidebarMenuItem>
             {props.mobileChatActions}
           </SidebarMenu>
         </SidebarHeader>
@@ -1113,6 +912,7 @@ export function AppSidebar(props: AppSidebarProps) {
 }
 
 function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[] }) {
+  const pinnedIds = useSessionManagementStore(state => state.pinnedIds);
   return (
     <SidebarGroup data-global-pinned-sessions className="pb-0 pt-4">
       <SidebarGroupContent>
@@ -1122,15 +922,22 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuSub>
-              {entries.map((entry) => (
-                <SessionMenuItem
-                  key={`${entry.group.workspace.id}:${entry.session.id}`}
-                  session={entry.session}
-                  workspaceId={entry.group.workspace.id}
-                  isPinned
-                  workspaceName={workspaceLabel(entry.group.workspace)}
-                />
-              ))}
+              <SessionReorderList
+                sessionIds={entries.map(entry => entry.session.id)}
+                orderIds={pinnedIds}
+                onReorder={ids => useSessionManagementStore.getState().reorderPins(ids)}
+              >
+                {entries.map((entry) => (
+                  <SessionMenuItem
+                    key={`${entry.group.workspace.id}:${entry.session.id}`}
+                    session={entry.session}
+                    workspaceId={entry.group.workspace.id}
+                    isPinned
+                    draggable
+                    workspaceName={workspaceLabel(entry.group.workspace)}
+                  />
+                ))}
+              </SessionReorderList>
             </SidebarMenuSub>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -1331,33 +1138,23 @@ function WorkspaceSidebarGroup({
     message: null,
   };
   const isConnectionActionBusy = isConnecting || connectionState.status === "connecting";
-  const isRemoteWorkspace = isRemoteConnectionWorkspace(workspace);
-  const canRecover = isRemoteWorkspace && connectionState.status === "error";
-  const taskLoadError = getWorkspaceTaskLoadErrorDisplay(workspace, group.error);
-  const connectionIssueMessage = connectionState.status === "error"
-    ? connectionState.message?.trim() || taskLoadError.message
-    : group.error?.trim() || taskLoadError.message;
-  const showRemoteConnectionIssue =
-    (isRemoteWorkspace || isRemoteConnectionErrorMessage(connectionIssueMessage)) &&
-    Boolean(connectionIssueMessage) &&
-    (connectionState.status === "error" || group.status === "error");
+  const taskLoadError = getWorkspaceTaskLoadErrorDisplay(group.error);
   const isExpanded = ctx.expandedWorkspaceIds.has(workspace.id);
   const isSelected = ctx.selectedWorkspaceId === workspace.id;
 
   const statusLabel = (() => {
-    if (showRemoteConnectionIssue) return t("workspace_list.unavailable");
     if (connectionState.status === "error") return connectionState.message?.trim() || taskLoadError.message;
     if (group.status === "error") return taskLoadError.label;
     if (isConnectionActionBusy) return t("workspace_list.connecting");
-    if (isRemoteWorkspace && connectionState.status === "connected") return connectionState.message?.trim() || t("workspace_list.connected");
     if (!ctx.developerMode) return "";
     if (isSelected) return t("workspace.selected");
-    return workspaceKindLabel(workspace);
+    return workspaceKindLabel();
   })();
 
   const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedIds = React.useMemo(() => new Set(pinnedIdList), [pinnedIdList]);
   const orderIds = useSessionOrder(workspace.id);
+  const fullOrderIds = React.useMemo(() => getSessionOrder(getRootSessions(group.sessions), orderIds), [group.sessions, orderIds]);
   const { groups: wsGroups, assignments } = useWorkspaceGroups(workspace.id);
   const pendingConversations = usePendingConversationStore((state) => state.conversations);
   const wsAssignments = React.useMemo(() => withPendingGroupAssignments(assignments, pendingConversations, ctx.draftScope, workspace.id),
@@ -1428,8 +1225,6 @@ function WorkspaceSidebarGroup({
                 </Button>
                 <WorkspaceActionsMenu
                   workspace={workspace}
-                  isConnectionActionBusy={isConnectionActionBusy}
-                  canRecover={canRecover}
                   className="size-5 text-muted-foreground"
                 />
               </div>
@@ -1450,23 +1245,7 @@ function WorkspaceSidebarGroup({
 
             <CollapsibleContent className="pt-px">
               <SidebarMenuSub>
-                {showRemoteConnectionIssue ? (
-                  <RemoteConnectionIssueCard
-                    message={connectionIssueMessage}
-                    tone={taskLoadError.tone}
-                    canRecover={canRecover}
-                    busy={isConnectionActionBusy}
-                    onRecover={() => {
-                      void Promise.resolve(ctx.onRecoverWorkspace(workspace.id));
-                    }}
-                    onTest={() => {
-                      void Promise.resolve(ctx.onTestWorkspaceConnection(workspace.id));
-                    }}
-                    onEdit={() => {
-                      ctx.onEditWorkspaceConnection(workspace.id);
-                    }}
-                  />
-                ) : group.status === "loading" && group.sessions.length === 0 ? null : activeSessions.length > 0 || ((wsGroups.length > 0 || workspaceDraft.hasDraft) && group.status !== "error") ? (
+                {group.status === "loading" && group.sessions.length === 0 ? null : activeSessions.length > 0 || ((wsGroups.length > 0 || workspaceDraft.hasDraft) && group.status !== "error") ? (
                   <>
                     {wsGroups.length > 0 ? (
                       <GroupedSessionList
@@ -1476,19 +1255,13 @@ function WorkspaceSidebarGroup({
                         pinnedIds={pinnedIds}
                         workspaceId={workspace.id}
                         store={store}
+                        orderIds={fullOrderIds}
                       />
                     ) : (
-                      <Reorder.Group
-                        as="div"
-                        axis="y"
-                        values={visibleRootIds}
-                        onReorder={(ids) => {
-                          const visible = new Set(ids);
-                          const allRootIds = getRootSessions(activeSessions).map((s) => s.id);
-                          const full = [...ids, ...allRootIds.filter((id) => !visible.has(id))];
-                          store.getState().reorderSessions(workspace.id, full);
-                        }}
-                        className="flex flex-col gap-0.5"
+                      <SessionReorderList
+                        sessionIds={visibleRootIds}
+                        orderIds={fullOrderIds}
+                        onReorder={(ids) => store.getState().reorderSessions(workspace.id, ids)}
                       >
                         <NewSessionDraftRow workspaceId={workspace.id} />
                         {sessionRows.map((row) => (
@@ -1500,7 +1273,7 @@ function WorkspaceSidebarGroup({
                             draggable
                           />
                         ))}
-                      </Reorder.Group>
+                      </SessionReorderList>
                     )}
                     {wsGroups.length === 0 && activeRootCount > previewCount ? (
                       <ShowMoreSessionsButton
@@ -1513,7 +1286,7 @@ function WorkspaceSidebarGroup({
                   <SidebarMenuSubItem>
                     <SidebarMenuSubButton
                       aria-disabled
-                      className={cn("text-xs", taskLoadError.tone === "offline" ? "text-amber-600" : "text-destructive")}
+                      className="text-xs text-destructive"
                     >
                       <span className="truncate">{taskLoadError.message}</span>
                     </SidebarMenuSubButton>
@@ -1526,14 +1299,12 @@ function WorkspaceSidebarGroup({
                       aria-disabled={ctx.newTaskDisabled}
                     >
                       <span className="truncate">
-                        {isRemoteWorkspace && connectionState.status === "connected"
-                          ? connectionState.message?.trim() || t("workspace.connected_no_tasks")
-                          : t("workspace.no_tasks")}
+                        {t("workspace.no_tasks")}
                       </span>
                     </SidebarMenuSubButton>
                   </SidebarMenuSubItem>
                 )}
-                {showRemoteConnectionIssue || (group.status === "loading" && group.sessions.length === 0) || (activeSessions.length === 0 && ((wsGroups.length === 0 && !workspaceDraft.hasDraft) || group.status === "error")) ? (
+                {(group.status === "loading" && group.sessions.length === 0) || (activeSessions.length === 0 && ((wsGroups.length === 0 && !workspaceDraft.hasDraft) || group.status === "error")) ? (
                   wsGroups.length > 0 ? <GroupedSessionList
                     sessionRows={[]}
                     groups={wsGroups}
@@ -1551,8 +1322,6 @@ function WorkspaceSidebarGroup({
     </SidebarGroup>
   );
 }
-
-const SESSION_DRAG_TYPE = "application/x-openwork-session-id";
 
 function useNewSessionDraft(workspaceId: string, groupId?: string) {
   const ctx = useSidebarContext();
@@ -1846,6 +1615,11 @@ function GroupDropZone({ groupId, workspaceId, children }: {
 }) {
   const [dragOver, setDragOver] = React.useState(false);
   const store = useSessionManagementStore;
+  const drag = useDraggedSession();
+
+  React.useEffect(() => {
+    if (!drag.session) setDragOver(false);
+  }, [drag.session]);
 
   return (
     <div
@@ -1854,22 +1628,25 @@ function GroupDropZone({ groupId, workspaceId, children }: {
         dragOver && "bg-accent/40 ring-1 ring-accent/60",
       )}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) {
+        if (drag.session?.workspaceId === workspaceId && e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) {
           e.preventDefault();
           setDragOver(true);
         }
       }}
       onDragLeave={(e) => {
         // Only clear when leaving this container, not when entering a child.
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+        if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) {
           setDragOver(false);
         }
       }}
       onDrop={(e) => {
         setDragOver(false);
         const sessionId = e.dataTransfer.getData(SESSION_DRAG_TYPE);
-        if (sessionId) {
+        if (sessionId && drag.session?.workspaceId === workspaceId && drag.session.id === sessionId) {
+          e.preventDefault();
+          e.stopPropagation();
           store.getState().assignGroup(workspaceId, sessionId, groupId);
+          drag.setSession(null);
         }
       }}
     >
@@ -1879,16 +1656,19 @@ function GroupDropZone({ groupId, workspaceId, children }: {
 }
 
 /** Renders sessions partitioned by group. Empty groups always show. Ungrouped sessions render at the end. */
-export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, workspaceId, store }: {
+export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, workspaceId, store, orderIds }: {
   sessionRows: FlattenedSessionRow[];
   groups: SessionGroupDefinition[];
   assignments: Record<string, string>;
   pinnedIds: Set<string>;
   workspaceId: string;
   store: typeof useSessionManagementStore;
+  orderIds?: string[];
 }) {
   const [previewCountByGroup, setPreviewCountByGroup] = React.useState<Record<string, number>>({});
   const ungroupedDraft = useNewSessionDraft(workspaceId);
+  const fullOrderIds = orderIds ?? sessionRows.map(row => row.session.id);
+  const reorderSessions = (ids: string[]) => store.getState().reorderSessions(workspaceId, ids);
 
   const groupPreviewCount = (groupId: string) =>
     previewCountByGroup[groupId] ?? MAX_SESSIONS_PREVIEW;
@@ -1914,6 +1694,7 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
       session={row.session}
       workspaceId={workspaceId}
       isPinned={pinnedIds.has(row.session.id)}
+      draggable
     />
   );
 
@@ -1933,6 +1714,8 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
         renderRow={renderRow}
         previewCount={limit}
         onShowMore={() => showMoreInGroup(group.id, rows.length)}
+        orderIds={fullOrderIds}
+        onReorder={reorderSessions}
       />
     );
   };
@@ -1967,20 +1750,10 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
               onToggle={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
             />
             <CollapsibleContent>
-              <Reorder.Group
-                as="div"
-                axis="y"
-                values={visibleUngroupedRootIds}
-                onReorder={(ids) => {
-                  const allRootIds = sessionRows.map((r) => r.session.id);
-                  const ungroupedSet = new Set(ungroupedRows.map((r) => r.session.id));
-                  const visibleSet = new Set(ids);
-                  const fullUngrouped = [...ids, ...ungroupedRows.map((r) => r.session.id).filter((id) => !visibleSet.has(id))];
-                  let ui = 0;
-                  const full = allRootIds.map((id) => ungroupedSet.has(id) ? fullUngrouped[ui++] : id);
-                  store.getState().reorderSessions(workspaceId, full);
-                }}
-                className="flex flex-col gap-0.5"
+              <SessionReorderList
+                sessionIds={visibleUngroupedRootIds}
+                orderIds={fullOrderIds}
+                onReorder={reorderSessions}
               >
                 <NewSessionDraftRow workspaceId={workspaceId} />
                 {visibleUngroupedRows.map((row) => (
@@ -1992,7 +1765,7 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
                     draggable
                   />
                 ))}
-              </Reorder.Group>
+              </SessionReorderList>
               {ungroupedRemaining > 0 ? (
                 <ShowMoreSessionsButton
                   label={t("workspace_list.show_more", { count: Math.min(MAX_SESSIONS_PREVIEW, ungroupedRemaining) })}
@@ -2007,7 +1780,7 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
   );
 }
 
-function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore }: {
+function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore, orderIds, onReorder }: {
   group: SessionGroupDefinition;
   rows: FlattenedSessionRow[];
   expanded: boolean;
@@ -2016,6 +1789,8 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
   renderRow: (row: FlattenedSessionRow) => React.ReactNode;
   previewCount: number;
   onShowMore: () => void;
+  orderIds: string[];
+  onReorder: (ids: string[]) => void;
 }) {
   const dragControls = useDragControls();
   const draft = useNewSessionDraft(workspaceId, group.id);
@@ -2050,8 +1825,10 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
             {visibleRows.length > 0 || draft.hasDraft
               ? (
                 <>
-                  <NewSessionDraftRow workspaceId={workspaceId} group={group} />
-                  {visibleRows.map(renderRow)}
+                  <SessionReorderList sessionIds={visibleRows.map(row => row.session.id)} orderIds={orderIds} onReorder={onReorder}>
+                    <NewSessionDraftRow workspaceId={workspaceId} group={group} />
+                    {visibleRows.map(renderRow)}
+                  </SessionReorderList>
                   {remaining > 0 ? (
                     <ShowMoreSessionsButton
                       label={t("workspace_list.show_more", { count: Math.min(MAX_SESSIONS_PREVIEW, remaining) })}
@@ -2157,13 +1934,7 @@ export function SessionMenuItem({
 
   const titleIntent = isTitleFocused ? "focus" : isTitleHovered ? "hover" : null;
 
-  const dragProps = {
-    draggable: true,
-    onDragStart: (e: React.DragEvent) => {
-      e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id);
-      e.dataTransfer.effectAllowed = "move";
-    },
-  };
+  const { dragProps, dropPosition } = useSessionReorderTarget(session.id, workspaceId, draggable);
 
   const accessibleState = resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
     ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
@@ -2211,7 +1982,12 @@ export function SessionMenuItem({
   const item = (
     <SidebarMenuSubItem
       {...dragProps}
-      className="flex items-center"
+      className={cn("relative flex items-center",
+        dropPosition && "before:pointer-events-none before:absolute before:inset-x-0 before:h-px before:bg-primary",
+        dropPosition === "before" && "before:top-0",
+        dropPosition === "after" && "before:bottom-0",
+      )}
+      data-session-drop-position={dropPosition ?? undefined}
       data-sidebar-session-id={session.id}
       data-sidebar-session-workspace-id={workspaceId}
     >
@@ -2250,20 +2026,9 @@ export function SessionMenuItem({
           {trailing}
         </div>
       </SessionContextMenu>
-      <SessionSideChatControl workspaceId={workspaceId} sessionId={session.id} title={displayTitle} />
     </SidebarMenuSubItem>
   );
 
   if (attachedAsSideChat && !isSelected) return null;
-  if (!draggable) return item;
-
-  return (
-    <SidebarReorderItem
-      as="div"
-      value={session.id}
-      id={session.id}
-    >
-      {item}
-    </SidebarReorderItem>
-  );
+  return item;
 }

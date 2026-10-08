@@ -15,7 +15,7 @@ import {
   validateCodemodeScriptOutput,
   type CodemodeScriptInputIssue,
 } from "./codemode-script-object.js"
-import { firstUnattendedUnsafeCapability, restrictCodemodeToolTree, restrictReadOnlyCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
+import { restrictCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
 import { runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
 
@@ -117,30 +117,12 @@ export async function executeWorkflow(input: {
     }
   }
 
+  // Like any workflow engine, a Workflow may call every capability its runner
+  // can currently use (Den actions and connection tools, reads and writes),
+  // whether it runs on demand, live in an App, or from an Automation. Each call
+  // is still authorized as the runner at dispatch time.
   const built = await input.buildTools().catch(() => ({ tools: {}, manifest: [] }))
-  const unsafe = input.automationRunId
-    ? firstUnattendedUnsafeCapability(built, parsed.payload.requiredCapabilities)
-    : null
-  if (unsafe) {
-    const message = `Required capability ${unsafe.scriptPath} (${unsafe.capabilityName}) must be read-only and explicitly approved by an organization admin before it can run unattended in OpenWork Cloud.`
-    const receiptId = await recordPreflightFailure("CapabilityUnavailable", message)
-    return {
-      ok: false,
-      error: "capability_unavailable",
-      message,
-      providerCallAttempted: false,
-      missing: [unsafe],
-      receiptId,
-    }
-  }
-  const restricted = input.readOnly
-    ? restrictReadOnlyCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
-    : { ...restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities }), unsafe: [] }
-  if (restricted.unsafe.length > 0) {
-    const message = "Live apps may only call current Den-authorized read-only capabilities."
-    const receiptId = await recordPreflightFailure("CapabilityUnavailable", message)
-    return { ok: false, error: "capability_unavailable", message, providerCallAttempted: false, missing: restricted.unsafe, receiptId }
-  }
+  const restricted = restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
   const firstMissing = restricted.missing[0]
   if (firstMissing) {
     const message = `Required capability ${firstMissing.scriptPath} (${firstMissing.capabilityName}) is unavailable or disabled for this organization.`

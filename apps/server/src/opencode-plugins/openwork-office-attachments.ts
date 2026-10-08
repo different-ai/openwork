@@ -3,37 +3,21 @@ import { lstat, mkdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DOCX_MIME,
   MAX_COMPRESSED_BYTES,
-  columnLetters,
-  formulaSummary,
-  listZipEntries,
-  numberFormatSummary,
-  openXlsxWorkbook,
-  readZipEntryData,
-  renderSheetTable,
-  utf8Text,
-  xmlText,
-  type XlsxSheetData,
-  type ZipEntry,
+  PPTX_MIME,
+  XLSX_MIME,
+  extractOfficeText,
+  officeKindFromMimeOrFilename,
+  type OfficeKind,
 } from "@openwork/workbook";
 import { openWorkspaceFileForReading, openWorkspaceFileForWriting } from "./workspace-file-identity.js";
 
-const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const GENERIC_MIME = "application/octet-stream";
-const MAX_EXTRACTED_TEXT_CHARS = 24_000;
-const MAX_XLSX_PREVIEW_CELLS = 1_200;
-const MAX_XLSX_PREVIEW_ROWS_PER_SHEET = 25;
-const MAX_XLSX_PREVIEW_COLUMNS = 16;
-const MAX_XLSX_PREVIEW_CELL_CHARS = 60;
 const MATERIALIZED_DIR = join(".opencode", "openwork", "inbox", "chat-attachments");
 
 type RuntimeContext = {
   directory?: string;
 };
-
-type OfficeKind = "docx" | "pptx" | "xlsx";
 
 type OfficeFilePart = {
   filename: string;
@@ -81,22 +65,6 @@ function extensionFromFilename(filename: string): string {
   const name = basename(filename).toLowerCase();
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot + 1) : "";
-}
-
-function isGenericMime(mime: string): boolean {
-  return mime === "" || mime === GENERIC_MIME;
-}
-
-function officeKindFromMimeOrFilename(mime: string, filename: string): OfficeKind | null {
-  if (mime === DOCX_MIME) return "docx";
-  if (mime === PPTX_MIME) return "pptx";
-  if (mime === XLSX_MIME) return "xlsx";
-  if (!isGenericMime(mime)) return null;
-  const extension = extensionFromFilename(filename);
-  if (extension === "docx") return "docx";
-  if (extension === "pptx") return "pptx";
-  if (extension === "xlsx") return "xlsx";
-  return null;
 }
 
 function canonicalMime(kind: OfficeKind): string {
@@ -278,108 +246,6 @@ async function materializeAttachment(root: string | null, filename: string, kind
   throw new Error("A different Office attachment already exists at the materialized path.");
 }
 
-function relevantXmlEntry(kind: OfficeKind, name: string): boolean {
-  if (!name.endsWith(".xml")) return false;
-  if (kind === "docx") {
-    return name === "word/document.xml"
-      || /^word\/header\d+\.xml$/.test(name)
-      || /^word\/footer\d+\.xml$/.test(name)
-      || name === "word/footnotes.xml"
-      || name === "word/endnotes.xml"
-      || name === "word/comments.xml";
-  }
-  return /^ppt\/slides\/slide\d+\.xml$/.test(name) || /^ppt\/notesSlides\/notesSlide\d+\.xml$/.test(name);
-}
-
-function compareEntryName(left: ZipEntry, right: ZipEntry): number {
-  return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
-}
-
-function quoted(value: string): string {
-  const encoded = JSON.stringify(value.length > 500 ? `${value.slice(0, 500)}…` : value);
-  return typeof encoded === "string" ? encoded : "\"\"";
-}
-
-function sheetSummaryLine(sheet: XlsxSheetData, total: number): string {
-  const facts = [
-    sheet.dimension ? `dimension ${sheet.dimension}` : "",
-    sheet.cells.length
-      ? `${sheet.cells.length} cells in rows ${sheet.firstRow}-${sheet.lastRow}, columns ${columnLetters(sheet.firstColumn)}-${columnLetters(sheet.lastColumn)}`
-      : "no cell values",
-    sheet.formulaCount ? `${sheet.formulaCount} formula${sheet.formulaCount === 1 ? "" : "s"}` : "",
-    sheet.mergedRanges.length ? `merged ${sheet.mergedRanges.slice(0, 8).join(", ")}${sheet.mergedRanges.length > 8 ? ", …" : ""}` : "",
-    sheet.info.hidden ? "hidden" : "",
-  ].filter(Boolean);
-  return `sheet ${quoted(sheet.info.name)} (${sheet.info.position} of ${total}): ${facts.join("; ")}`;
-}
-
-/**
- * Compact workbook preview for the model: one summary line per sheet plus a
- * Markdown grid with real row numbers and column letters for as many sheets
- * as the cell budget allows. The remainder stays reachable through the
- * spreadsheet tools using the materialized workspace path.
- */
-async function extractXlsxText(bytes: Buffer): Promise<string> {
-  const workbook = await openXlsxWorkbook(bytes);
-  const total = workbook.sheets.length;
-  const lines = [
-    "xlsx_workbook:",
-    `  sheet_count: ${total}`,
-    `  sheet_names: ${workbook.sheets.map((sheet) => quoted(sheet.name)).join(", ")}`,
-    `  shared_string_count: ${workbook.sharedStringCount}`,
-    `  style_count: ${workbook.styleCount}`,
-    ...(workbook.date1904 ? ["  date_system: 1904"] : []),
-    ...(workbook.omittedSheets ? [`  omitted_sheets: ${workbook.omittedSheets} beyond the first ${total} are not shown`] : []),
-  ];
-  let remainingCells = MAX_XLSX_PREVIEW_CELLS;
-  for (const info of workbook.sheets) {
-    let sheet: XlsxSheetData;
-    try {
-      sheet = await workbook.readSheet(info);
-    } catch (cause) {
-      lines.push(`sheet ${quoted(info.name)} (${info.position} of ${total}): error: ${cause instanceof Error ? cause.message : String(cause)}`);
-      continue;
-    }
-    lines.push(sheetSummaryLine(sheet, total));
-    if (sheet.cells.length === 0) continue;
-    if (remainingCells <= 0) {
-      lines.push("  preview omitted: cell budget used by earlier sheets; read it with spreadsheet_read.");
-      continue;
-    }
-    const maxRows = Math.max(1, Math.min(MAX_XLSX_PREVIEW_ROWS_PER_SHEET, Math.floor(remainingCells / Math.min(MAX_XLSX_PREVIEW_COLUMNS, Math.max(1, sheet.lastColumn - sheet.firstColumn + 1)))));
-    const table = renderSheetTable(sheet, { maxRows, maxColumns: MAX_XLSX_PREVIEW_COLUMNS, maxCellChars: MAX_XLSX_PREVIEW_CELL_CHARS });
-    remainingCells -= table.renderedRows * table.columns.length;
-    lines.push(table.text);
-    if (table.truncatedColumns > 0) lines.push(`  more_columns: ${table.truncatedColumns} not shown`);
-    if (table.nextStartRow !== null) lines.push(`  more_rows: continue with spreadsheet_read(sheet: ${quoted(sheet.info.name)}, startRow: ${table.nextStartRow})`);
-    if (sheet.omittedCells > 0) lines.push(`  omitted_cells: ${sheet.omittedCells}`);
-    const formulas = formulaSummary(sheet, 12);
-    if (formulas.length) lines.push(`  formulas: ${formulas.join("; ")}${sheet.formulaCount > formulas.length ? `; … ${sheet.formulaCount - formulas.length} more` : ""}`);
-    const formats = numberFormatSummary(sheet);
-    if (formats.length) lines.push(`  number_formats: ${formats.join("; ")}`);
-  }
-  return lines.join("\n").slice(0, MAX_EXTRACTED_TEXT_CHARS);
-}
-
-async function extractOfficeText(kind: OfficeKind, bytes: Buffer): Promise<string> {
-  if (kind === "xlsx") return await extractXlsxText(bytes);
-  const entries = listZipEntries(bytes).filter((entry) => relevantXmlEntry(kind, entry.name)).sort(compareEntryName);
-  if (entries.length === 0) throw new Error("No supported Office XML text entries were found.");
-  const pieces: string[] = [];
-  let remaining = MAX_EXTRACTED_TEXT_CHARS;
-  for (const entry of entries) {
-    if (remaining <= 0) break;
-    const text = xmlText(utf8Text(await readZipEntryData(bytes, entry)));
-    if (!text) continue;
-    const chunk = text.slice(0, remaining);
-    pieces.push(`[${entry.name}]\n${chunk}`);
-    remaining -= chunk.length;
-  }
-  const combined = pieces.join("\n\n").slice(0, MAX_EXTRACTED_TEXT_CHARS);
-  if (!combined) throw new Error("Office XML text entries contained no extractable text.");
-  return combined;
-}
-
 function basePartIds(part: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const key of ["id", "sessionID", "messageID", "sessionId", "messageId"]) {
@@ -414,7 +280,7 @@ async function normalizeOfficePart(part: OfficeFilePart, root: string | null): P
     const bytes = await bytesFromPart(part, root);
     const materialized = await materializeAttachment(root, part.filename, part.kind, bytes);
     try {
-      const extractedText = await extractOfficeText(part.kind, bytes);
+      const extractedText = await extractOfficeText(part.kind, bytes, { spreadsheetReadTool: "spreadsheet_read" });
       return textPartFrom(part, normalizedText(part, materialized, extractedText));
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);

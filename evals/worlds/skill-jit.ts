@@ -241,6 +241,15 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
       if (result.status !== 200) throw new Error(`Native skill registry unavailable: HTTP ${result.status}`);
       return parseNativeSkills(result.json);
     },
+    async cloudDiscoveryState() {
+      const catalog = await request("/experimental/connect/skills");
+      const plugins = await request(`/workspace/${workspace.workspaceId}/opencode2/api/plugin`);
+      const data = isRecord(plugins.json) && Array.isArray(plugins.json.data) ? plugins.json.data.filter(isRecord) : [];
+      return { catalog: catalog.json, native: await this.nativeSkills(),
+        plugins: data.map(plugin => ({ id: plugin.id, state: plugin.state })),
+        cloudRequests: cloud.log(),
+      };
+    },
     /** Read the same native catalog with a fixture-owned shared-client token. */
     async sharedNativeSkills(scope: "viewer" | "collaborator", encoded = false) {
       const token = sharedTokens.get(scope);
@@ -251,6 +260,17 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
       const result = await request(nativeSkillPath);
       if (result.status !== 200) throw new Error(`Native skill registry unavailable: HTTP ${result.status}`);
       return parseNativeSkills(result.json).filter((skill) => skill.id.startsWith(cloudNativeSkillIdPrefix));
+    },
+    async conversationState() {
+      const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+      const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+      return {
+        users: messages.filter(message => message.type === "user").map(message => {
+          if (typeof message.text !== "string") throw new Error("Native user message is missing its text");
+          return message.text;
+        }),
+        completed: messages.filter(message => message.type === "assistant" && message.finish === "stop").map(message => message.id),
+      };
     },
     /** PID of the running v2 conversation runtime. */
     async runtimeIdentity(): Promise<number> {
@@ -265,8 +285,9 @@ export async function skillJitWeb(seed: Seed, context: { place: Place }) {
       return agentMock.agentRequests({ promptMarker: prompt, ...opts });
     },
     /** Write a raw workspace SKILL.md at a directory the skills route would never choose. */
-    async writeWorkspaceSkillFile(directoryName: string, markdown: string): Promise<string> {
-      const directory = join(workspacePath, ".opencode", "skills", directoryName);
+    /** Write a skill file straight to disk, bypassing OpenWork, in any native skill folder. */
+    async writeWorkspaceSkillFile(directoryName: string, markdown: string, folder: ".opencode" | ".agents" | ".claude" = ".opencode"): Promise<string> {
+      const directory = join(workspacePath, folder, "skills", directoryName);
       await mkdir(directory, { recursive: true });
       const path = join(directory, "SKILL.md");
       await writeFile(path, markdown, "utf8");

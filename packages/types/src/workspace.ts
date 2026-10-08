@@ -12,9 +12,7 @@
  * shape (see apps/server/src/types.ts) so drift fails typecheck instead of
  * surfacing as runtime undefined-field bugs.
  */
-export type WorkspaceKind = "local" | "remote";
-
-export type WorkspaceRemoteKind = "opencode" | "openwork";
+export type WorkspaceKind = "local";
 
 export type WorkspaceWire = {
   id: string;
@@ -22,17 +20,9 @@ export type WorkspaceWire = {
   path: string;
   preset: string;
   workspaceType: WorkspaceKind;
-  remoteType?: WorkspaceRemoteKind | null;
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  /** Desktop IPC only: tokens for desktop-managed remote workspaces. */
-  openworkClientToken?: string | null;
-  openworkHostToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
   /**
    * Vocabulary differs per producer today ("docker" | "microsandbox" on the
    * desktop, "none" | "docker" | "container" in openwork-server), so the wire

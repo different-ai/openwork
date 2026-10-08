@@ -106,10 +106,11 @@ async function withWitness(
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const handle = { baseUrl: `${baseUrl}/local`, token: "synthetic-local" };
     const local = resolveWorkspaceEndpoint({ id: "local workspace", workspaceType: "local" }, handle);
-    const remote = resolveWorkspaceEndpoint({
-      id: "rem_synthetic", workspaceType: "remote", baseUrl: `${baseUrl}/remote`,
-      openworkWorkspaceId: "remote/id", openworkToken: "synthetic-remote",
-    }, handle);
+    // A second OpenWork server: its mount, directory, and credential must stay isolated.
+    const remote = resolveWorkspaceEndpoint(
+      { id: "remote/id", workspaceType: "local" },
+      { baseUrl: `${baseUrl}/remote`, token: "synthetic-remote" },
+    );
     if (!local || !remote) throw new Error("Missing witness endpoints");
     await run({ local, remote, requests });
     for (const request of requests) {
@@ -164,14 +165,18 @@ for (const engine of ["v1", "v2"] satisfies Engine[]) {
       expect(localItems.every((item) => item.directory === LOCAL)).toBe(true);
       expect(remoteItems.every((item) => item.directory === REMOTE)).toBe(true);
       expect(partitionArchivedSessions(localItems).archived.map((item) => item.id)).toEqual(archived.map((item) => item.id));
+      // These fixtures share a creation time. The sidebar breaks that tie by
+      // ID, independently of the transport's descending activity order above.
+      const sidebarIds = active.map((item) => item.id).reverse();
       const preview = flattenSessionRows(localItems, MAX_SESSIONS_PREVIEW);
-      expect(preview.map(({ session }) => session.id)).toEqual(active.slice(0, 6).map((item) => item.id));
+      expect(preview.map(({ session }) => session.id)).toEqual(sidebarIds.slice(0, MAX_SESSIONS_PREVIEW));
       const expanded = flattenSessionRows(localItems, Number.MAX_SAFE_INTEGER);
-      expect(expanded.map(({ session }) => session.id)).toEqual(active.map((item) => item.id));
+      expect(expanded.map(({ session }) => session.id)).toEqual(sidebarIds);
       expect(expanded.some(({ session }) => session.parentID || session.time?.archived)).toBe(false);
       expect(new Set(localItems.map((item) => item.id)).size).toBe(localItems.length);
-      const pinned = new Set([active[250].id]);
-      expect(flattenSessionRows(localItems, 6, pinned)[0].session.id).toBe(active[250].id);
+      // Pin a root that would otherwise be last, so precedence is exercised.
+      const pinned = new Set([active[0].id]);
+      expect(flattenSessionRows(localItems, 6, pinned)[0].session.id).toBe(active[0].id);
       expect(flattenSessionRows(localItems, Number.MAX_SAFE_INTEGER, new Set(), [], { exclude: pinned })).toHaveLength(250);
       // Show more derives rows from the complete loaded list, not another read.
       const requestCount = requests.length;
@@ -190,7 +195,7 @@ for (const engine of ["v1", "v2"] satisfies Engine[]) {
     });
     currentTestEvidence()?.recordAssertionEvidence(
       `${engine} exposes old unarchived roots without leaking archives, children, or other workspaces`,
-      `HTTP witness loaded 251 active roots behind 230 archives and 230 children, including an old root with archived=0. Sidebar preview returned six roots; expansion returned all 251 without another read, and pinning retained the old root. Concurrent remote loading returned only its 401 sessions; directories and credentials stayed isolated. ${engine === "v2" ? "Each workspace traversed seven limit=200 requests, continuing through filtered-empty pages." : "Each workspace used limits 200, 400, 800."}`,
+      `HTTP witness loaded 251 active roots behind 230 archives and 230 children, including an old root with archived=0. Sidebar preview returned six roots in stable creation-time/ID order; expansion returned all 251 without another read, and pinning moved the last root to the top. Concurrent remote loading returned only its 401 sessions; directories and credentials stayed isolated. ${engine === "v2" ? "Each workspace traversed seven limit=200 requests, continuing through filtered-empty pages." : "Each workspace used limits 200, 400, 800."}`,
       true,
     );
   });

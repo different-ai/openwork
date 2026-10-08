@@ -38,6 +38,7 @@ import {
   exchangeHandoffAndSignIn,
 } from "@/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { clearOrgSelectionPending, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
@@ -199,6 +200,7 @@ function useDenClient() {
  */
 type PreparedBootstrapSummary = {
   orgName: string;
+  skillTitle: string;
   claimLinks: Array<{ id: string; role: string; url: string; expiresAt: string }>;
 };
 
@@ -216,6 +218,7 @@ function usePreparedBootstrap() {
     if (!bootstrap.prepared?.skillTitle) return null;
     return {
       orgName: bootstrap.prepared.orgName || "Your workspace",
+      skillTitle: bootstrap.prepared.skillTitle,
       claimLinks: bootstrap.claimLinks ?? [],
     };
   }, [bootstrap]);
@@ -223,6 +226,7 @@ function usePreparedBootstrap() {
 
 function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummary }) {
   const platform = usePlatform();
+  const navigate = useNavigate();
   const ownerClaim = prepared.claimLinks.find((link) => link.role === "owner") ?? null;
   const [showSignInCode, setShowSignInCode] = useState(false);
   const [signInCode, setSignInCode] = useState("");
@@ -230,9 +234,11 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
   const [signInError, setSignInError] = useState<string | null>(null);
 
   const submitSignInCode = useCallback(async () => {
-    const grant = signInCode.trim();
-    if (grant.length < 12 || signInBusy) {
-      if (grant.length < 12) setSignInError("Paste a valid one-time sign-in code.");
+    // The claim page hands over a full `openwork://den-auth?grant=…` link;
+    // accept that as well as a bare code, like the main sign-in page does.
+    const parsed = parseManualAuthInput(signInCode);
+    if (!parsed || signInBusy) {
+      if (!parsed) setSignInError("Paste a valid one-time sign-in code.");
       return;
     }
 
@@ -241,7 +247,7 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
     setSignInError(null);
 
     try {
-      const result = await exchangeHandoffAndSignIn(grant, {
+      const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: settings.baseUrl,
         // A pasted one-time code is a desktop-initiated sign-in.
         desktopInitiated: true,
@@ -268,6 +274,21 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
           </div>
           <PageTitle>{prepared.orgName}</PageTitle>
         </PageHeader>
+
+        <PageContent>
+          <div className="mx-auto grid w-full max-w-md gap-3">
+            <div
+              data-openwork-prepared-skill="true"
+              className="flex min-h-10 items-center justify-between gap-3 border-y border-dls-border py-2 text-sm"
+            >
+              <span className="text-muted-foreground">First skill ready</span>
+              <span className="flex min-w-0 items-center gap-1.5 font-medium text-foreground">
+                <Check className="size-4 shrink-0 text-green-11" />
+                <span className="truncate">{prepared.skillTitle}</span>
+              </span>
+            </div>
+          </div>
+        </PageContent>
 
         {ownerClaim ? (
           <PageContent>
@@ -320,6 +341,17 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
             </div>
           </PageContent>
         ) : null}
+
+        <PageFooter>
+          <Button
+            type="button"
+            variant="link"
+            className="mx-auto"
+            onClick={() => navigate("/signin")}
+          >
+            Sign in with an existing account
+          </Button>
+        </PageFooter>
       </PageContainer>
     </Page>
   );

@@ -39,21 +39,22 @@ export function GeneratedAppPreview({ html, payload, title, revision, presentati
   }
   const frameProps: McpAppSandboxViewProps = {
     origin, app: resource, toolName: title, inputArguments: PREVIEW_ARGUMENTS, result,
-    unavailableNotice: "This app could not open. Try reopening it, or ask OpenWork to fix the preview.",
+    unavailableNotice: "This artifact could not open. Try reopening it, or ask OpenWork to fix the preview.",
     presentation,
   };
   if (presentation === "dashboard" && geometry) {
     return <DashboardGeneratedAppPreview key={JSON.stringify([geometry.scopeKey, geometry.entryId, workspaceId, revision.resourceUri])}
-      frameProps={frameProps} geometry={geometry} workspaceId={workspaceId} generatedAt={payload.artifact.generatedAt} />;
+      frameProps={frameProps} geometry={geometry} workspaceId={workspaceId} generatedAt={payload.artifact.generatedAt} artifactViewId={revision.artifactViewId} />;
   }
   return <McpAppSandboxView {...frameProps} initialHeight={360} />;
 }
 
-function DashboardGeneratedAppPreview({ frameProps, geometry, workspaceId, generatedAt }: {
+function DashboardGeneratedAppPreview({ frameProps, geometry, workspaceId, generatedAt, artifactViewId }: {
   frameProps: McpAppSandboxViewProps;
   geometry: GeneratedAppPreviewGeometry;
   workspaceId: string;
   generatedAt: string;
+  artifactViewId: string;
 }) {
   const { ref, initialHeight, reservedHeight, recordHeight } = useDashboardTileGeometry(geometry.scopeKey, geometry.entryId, workspaceId);
   const [layoutReady, setLayoutReady] = useState(false);
@@ -64,7 +65,7 @@ function DashboardGeneratedAppPreview({ frameProps, geometry, workspaceId, gener
     {layoutReady ? <McpAppSandboxView {...frameProps} initialHeight={initialHeight ?? 360}
       onHeightChange={(height) => { setHasHeight(true); recordHeight(height); }}
       onReady={() => setReady(true)} onError={() => setReady(true)} /> : null}
-    <p className="mt-3 text-xs text-muted-foreground">Updated {new Date(generatedAt).toLocaleString()}</p>
+    <p className="mt-3 text-xs text-muted-foreground" data-testid={`dashboard-artifact-status-${artifactViewId}`}>Updated {new Date(generatedAt).toLocaleString()}</p>
     {!ready ? <div className="absolute inset-0 space-y-2 overflow-hidden bg-background pt-3" role="status" aria-label={`Loading ${frameProps.toolName}`}>
       <Skeleton className="h-4 w-2/3" />
       <Skeleton className="h-24 w-full" />

@@ -13,7 +13,7 @@ import {
 import { getConnectedAccount, getOrgOAuthClient } from "./oauth-credentials.js"
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
-import { memberFacingMcpConnectionsEnabled } from "./external-mcp-rollout.js"
+import { organizationFeatureEnabled } from "../features.js"
 
 /**
  * Native providers (google-workspace, ...) surface in the SAME member-facing
@@ -33,6 +33,8 @@ export type NativeProviderConnectionEntry = {
   credentialMode: "per_member"
   /** Native providers are implemented by Den itself and never have a standard MCP catalog to expose. */
   exposeDirectly: false
+  /** Absent for legacy synthetic entries without a stored connector row. */
+  createdAt?: string
   connected: boolean
   connectedAt: string | null
   connectedForMe: boolean
@@ -78,6 +80,7 @@ export function buildNativeProviderEntry(
     clientConfigured: boolean
     connectedForMe: boolean
     connectedAt?: Date
+    createdAt?: Date
     externalAccountId?: string | null
     grantedScopes?: string[] | null
     reconnect?: NativeProviderReconnectState
@@ -97,6 +100,7 @@ export function buildNativeProviderEntry(
     credentialMode: "per_member",
     exposeDirectly: false,
     nativeProviderKey: provider.providerId,
+    ...(state.createdAt ? { createdAt: state.createdAt.toISOString() } : {}),
     connected: true,
     connectedAt: state.connectedForMe && state.connectedAt ? state.connectedAt.toISOString() : null,
     connectedForMe: state.connectedForMe,
@@ -114,13 +118,11 @@ export type NativeProviderPolicyError = { kind: "policy_blocked"; message: strin
 
 export async function nativeProviderConnectionPolicyError(organizationId: DenTypeId<"organization">): Promise<NativeProviderPolicyError | null> {
   const [organization] = await db
-    .select({ metadata: OrganizationTable.metadata })
+    .select({ id: OrganizationTable.id })
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
     .limit(1)
-  if (organization && memberFacingMcpConnectionsEnabled(organization.metadata, {
-    gatingEnabled: env.mcpConnectionsGatingEnabled,
-  })) return null
+  if (organization && await organizationFeatureEnabled(organization.id, "mcpConnections")) return null
   return {
     kind: "policy_blocked",
     message: organization
@@ -158,6 +160,7 @@ export async function listNativeProviderUsableEntries(input: {
       connectedForMe: Boolean(account?.accessToken),
       connectedAt: account?.connectedAt,
       credentialProviderId: connection.id,
+      createdAt: connection.createdAt,
       name: connection.name,
       ...(account?.externalAccountId ? { externalAccountId: account.externalAccountId } : {}),
       ...(account?.scopes ? { grantedScopes: account.scopes } : {}),

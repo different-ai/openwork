@@ -1,5 +1,3 @@
-import { ComputerUseControls } from "../domains/session/surface/computer-use-controls";
-import { desktopSigninRequired } from "@openwork/types/den/desktop-policies";
 /** @jsxImportSource react */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -22,6 +20,7 @@ import { isDesktopRuntime } from "../../app/lib/runtime-env";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import { useMemberActivitySync } from "../domains/cloud/use-member-activity-sync";
 import { useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import {
   clearCloudInventoryCache,
@@ -39,6 +38,8 @@ import { useVisualViewportInset } from "../../hooks/use-visual-viewport-inset";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
+import { EngineMigrationOverlay } from "./engine-migration";
+import { MemberApiKeyDialog } from "../domains/connections/member-api-key-dialog";
 import { AppMenuProvider } from "./app-menu";
 import {
   OpenworkControlProvider,
@@ -53,7 +54,11 @@ import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
 import { readOrgSelectionPending } from "../../app/lib/den-sign-in-intent";
-import { signedInRoute } from "./den-signin-routing";
+import {
+  resolveDenSigninRedirect,
+  shouldRenderPreparedRedirect,
+  signedInRoute,
+} from "./den-signin-routing";
 import { StartupScreen } from "./startup-screen";
 import { WebStartupScreen } from "./workspace-startup-status";
 import { isOpenworkGatewayRuntime } from "../../app/lib/gateway-runtime";
@@ -76,8 +81,11 @@ const subscribeToDenBootstrap = (onStoreChange: () => void) => {
 /**
  * Forced-signin gate ported from the Solid shell.
  *
- * Desktop policy enforcement is suspended, so persisted bootstrap sign-in
- * requirements cannot hold local work at `/signin`. Web sign-in still applies.
+ * When the desktop bootstrap config has `requireSignin: true` (always the case
+ * for enterprise and cloud builds, and opt-in for public builds through
+ * `desktop-bootstrap.json`), the UI is held at `/signin` until the user
+ * authenticates with Den. This is a build property, not a desktop policy, so
+ * it is independent of DESKTOP_POLICY_ENFORCEMENT_ENABLED.
  * When sign-in is NOT required, we
  * never let users land on `/signin` — redirect them to `/session` instead.
  *
@@ -95,53 +103,46 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readDenBootstrapSnapshot,
     readDenBootstrapSnapshot,
   );
-  const requireSignin = desktopSigninRequired(bootstrap.requireSignin, isDesktopRuntime());
+  // Enterprise and cloud builds always persist requireSignin: true; the
+  // bootstrap file can only raise it (apps/desktop/electron/workspace-store.mjs).
+  const requireSignin = bootstrap.requireSignin;
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
-  const hasPreparedBootstrap = Boolean(bootstrap.prepared) && (!isDesktopRuntime() || requireSignin);
-  const redirectingPreparedWorkspace =
-    denAuth.status !== "checking" &&
-    !requireSignin &&
-    !denAuth.isSignedIn &&
-    hasPreparedBootstrap &&
-    !onOnboarding;
-
-  useEffect(() => {
+  const hasPreparedBootstrap = Boolean(bootstrap.prepared);
+  const routeInput = {
     // Wait for the first auth check so we don't bounce the user between
     // `/session` and `/signin` every navigation while we figure out if
     // their cached token is still valid.
-    if (denAuth.status === "checking") return;
+    authChecking: denAuth.status === "checking",
+    isSignedIn: denAuth.isSignedIn,
+    requireSignin,
+    hasPreparedBootstrap,
+    onSignin,
+    onOnboarding,
+    orgSelectionPending: false,
+  };
+  const redirectingPreparedWorkspace = shouldRenderPreparedRedirect(routeInput);
 
-    if (requireSignin) {
-      if (!denAuth.isSignedIn && !onSignin) {
-        navigate("/signin", { replace: true });
-      } else if (denAuth.isSignedIn && onSignin) {
-        navigate(
-          signedInRoute(readDenSettings().activeOrgId, {
-            orgSelectionPending: readOrgSelectionPending().pending,
-          }),
-          { replace: true },
-        );
-      }
-    } else if (onSignin) {
-      navigate("/session", { replace: true });
-    } else if (!denAuth.isSignedIn && hasPreparedBootstrap && !onOnboarding) {
-      navigate("/onboarding", { replace: true });
-    } else if (
-      denAuth.isSignedIn &&
-      !onOnboarding &&
-      readOrgSelectionPending().pending
-    ) {
-      // A desktop-initiated sign-in is still waiting for the user's explicit
-      // organization choice (including after an app relaunch mid-flow); the
-      // onboarding step owns resolving it.
-      navigate("/onboarding", { replace: true });
-    }
-
-    // If on /onboarding but not signed in, bounce to signin or session
-    if (onOnboarding && !denAuth.isSignedIn && !hasPreparedBootstrap) {
-      navigate(requireSignin ? "/signin" : "/session", { replace: true });
+  useEffect(() => {
+    const redirect = resolveDenSigninRedirect({
+      authChecking: denAuth.status === "checking",
+      isSignedIn: denAuth.isSignedIn,
+      requireSignin,
+      hasPreparedBootstrap,
+      onSignin,
+      onOnboarding,
+      orgSelectionPending: denAuth.isSignedIn && readOrgSelectionPending().pending,
+    });
+    if (redirect === "signed-in-home") {
+      navigate(
+        signedInRoute(readDenSettings().activeOrgId, {
+          orgSelectionPending: readOrgSelectionPending().pending,
+        }),
+        { replace: true },
+      );
+    } else if (redirect) {
+      navigate(redirect, { replace: true });
     }
   }, [
     denAuth.isSignedIn,
@@ -243,14 +244,19 @@ function DenAuthControlActions() {
     args: [
       { name: "grant", type: "string", required: true, description: "The raw handoff grant string." },
       { name: "baseUrl", type: "string", required: false, description: "Optional Den base URL." },
+      { name: "apiBaseUrl", type: "string", required: false, description: "Optional Den API URL for a separately hosted API." },
     ],
     execute: async (args) => {
-      const { grant, baseUrl: argBaseUrl } = (args ?? {}) as { grant?: string; baseUrl?: string };
+      const value = args && typeof args === "object" ? args : {};
+      const grant = "grant" in value && typeof value.grant === "string" ? value.grant : undefined;
+      const argBaseUrl = "baseUrl" in value && typeof value.baseUrl === "string" ? value.baseUrl : undefined;
+      const apiBaseUrl = "apiBaseUrl" in value && typeof value.apiBaseUrl === "string" ? value.apiBaseUrl : undefined;
       if (!grant?.trim()) return { ok: false, error: "grant is required" };
       const settings = readDenSettings();
       const targetBaseUrl = argBaseUrl?.trim() || settings.baseUrl;
       const result = await exchangeHandoffAndSignIn(grant.trim(), {
         baseUrl: targetBaseUrl,
+        apiBaseUrl,
         // Automation surface: commit the exchange-reported org directly; a
         // UI chooser would strand a headless driver.
         desktopInitiated: false,
@@ -402,6 +408,7 @@ export function AppRoot() {
   useDesktopFontZoomBehavior();
   useVisualViewportInset();
   const egressAllowed = useOutboundEgressAllowed();
+  useMemberActivitySync(egressAllowed);
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {
@@ -441,7 +448,6 @@ export function AppRoot() {
             <DenSigninGate>
               <OpenWorkWebAccessGate>
                 <CloudWorkspaceStatusProvider>
-                  <ComputerUseControls />
                   <Routes>
               <Route
                 path="/signin"
@@ -508,6 +514,8 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
+              <Route path="/calendar" element={<DevProfiler id="CalendarRoute"><SessionRoute /></DevProfiler>} />
+              <Route path="/activity" element={<DevProfiler id="ActivityRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/apps" element={<DevProfiler id="AppsRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/dashboard/apps/:appId" element={<DevProfiler id="DashboardAppRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/apps/:appId" element={<DevProfiler id="AppPreviewRoute"><SessionRoute /></DevProfiler>} />
@@ -558,6 +566,8 @@ export function AppRoot() {
                   </Routes>
                   <LoadingOverlay />
                   <CloudWorkspaceOverlay />
+                  <EngineMigrationOverlay />
+                  <MemberApiKeyDialog />
                 </CloudWorkspaceStatusProvider>
               </OpenWorkWebAccessGate>
             </DenSigninGate>

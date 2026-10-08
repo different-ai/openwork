@@ -11,14 +11,14 @@ function getSkillToolTitle(part: SkillToolPart): string | null {
   const name = part.input?.name?.trim() ?? ""
 
   if (part.state === "output-error") {
-    return name ? `Load skill ${name} attempted` : "Load skill attempted"
+    return name ? `Couldn't use your ${name} skill` : "Couldn't use a skill"
   }
 
   if (part.state !== "output-available") {
     return null
   }
 
-  return name ? `Load skill ${name}` : "Load skill"
+  return name ? `Using your ${name} skill` : "Using a skill"
 }
 
 export function SkillTool({ part }: SkillToolProps) {

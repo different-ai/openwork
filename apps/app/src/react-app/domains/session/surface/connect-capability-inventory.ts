@@ -230,11 +230,16 @@ function pluginFromLibraryItem(item: DenMeLibraryPlugin): DenOrgPlugin {
 export async function listAssignedConnectCapabilities(input: {
   client: ConnectCapabilityClient;
   organizationId: string;
+  /** Activity requires a complete answer; partial lists are not removal evidence. */
+  requireComplete?: boolean;
 }): Promise<ConnectCapabilityInventory> {
   const [assigned, libraryPlugins] = await Promise.all([
     input.client.listAssignedMarketplaceCapabilities(input.organizationId),
     input.client.listMeLibraryPlugins
-      ? input.client.listMeLibraryPlugins(input.organizationId).catch(() => [])
+      ? input.client.listMeLibraryPlugins(input.organizationId).catch((error: unknown) => {
+          if (input.requireComplete) throw error;
+          return [];
+        })
       : Promise.resolve([]),
   ]);
 
@@ -249,15 +254,20 @@ export async function listAssignedConnectCapabilities(input: {
       item.marketplaceId ? [`${item.marketplaceId}:${item.pluginId}:${item.configObjectId}`] : []
     )),
   );
-  const marketplaces = assigned.length === 0
+  // The catalog listing is paginated and can include admin-only visibility.
+  // For change detection resolve the complete grant-scoped ID set directly.
+  const marketplaces = input.requireComplete || assigned.length === 0
     ? []
     : (await input.client.listOrgMarketplaces(input.organizationId))
       .filter((marketplace) => marketplace.status === "active")
       .filter((marketplace) => assignedMarketplaceIds.has(marketplace.id))
       .sort((left, right) => left.name.localeCompare(right.name));
+  const marketplaceIds = input.requireComplete
+    ? [...assignedMarketplaceIds]
+    : marketplaces.map((marketplace) => marketplace.id);
   const resolvedMarketplaces = await Promise.all(
-    marketplaces.map((marketplace) =>
-      input.client.getOrgMarketplaceResolved(input.organizationId, marketplace.id)
+    marketplaceIds.map((marketplaceId) =>
+      input.client.getOrgMarketplaceResolved(input.organizationId, marketplaceId)
     ),
   );
 
@@ -354,7 +364,9 @@ export async function listAssignedConnectCapabilities(input: {
   }
 
   const pluginCards = [...pluginsById.values()]
-    .filter((plugin) => plugin.files.length > 0)
+    // Activity also observes plugins whose contents have no desktop file
+    // projection (for example, a cloud-only Workflow).
+    .filter((plugin) => input.requireComplete || plugin.files.length > 0)
     .sort((left, right) => left.name.localeCompare(right.name));
   skills.sort((left, right) => left.name.localeCompare(right.name));
   mcpServers.sort((left, right) => left.name.localeCompare(right.name));

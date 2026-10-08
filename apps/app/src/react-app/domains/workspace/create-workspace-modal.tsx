@@ -3,23 +3,19 @@ import {
   useEffect,
   useMemo,
   useReducer,
-  useRef,
   type SetStateAction,
 } from "react";
-import { ArrowLeft, FolderPlus, Globe, Loader2 } from "lucide-react";
+import { ArrowLeft, FolderPlus, Loader2 } from "lucide-react";
 
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { t } from "../../../i18n";
-import type { WorkspacePreset } from "../../../app/types";
 import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
 import {
   createInitialWorkspaceLocalState,
@@ -33,16 +29,12 @@ import {
   tagClass,
 } from "./modal-styles";
 import { WorkspaceOptionCard } from "./option-card";
-import { RemoteWorkspaceFields } from "./remote-workspace-fields";
 import type {
   CreateWorkspaceModalProps,
   CreateWorkspaceScreen,
-  RemoteWorkspaceInput,
 } from "./types";
 
 export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
-  const remoteUrlRef = useRef<HTMLInputElement | null>(null);
-
   const [localState, dispatchLocal] = useReducer(
     createWorkspaceLocalReducer,
     undefined,
@@ -54,11 +46,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     pickingFolder,
     showProgressDetails,
     now,
-    projectLabel,
-    remoteUrl,
-    remoteToken,
-    remoteDisplayName,
-    remoteTokenVisible,
   } = localState;
   const setLocal = <K extends keyof CreateWorkspaceLocalState>(
     key: K,
@@ -69,20 +56,13 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const setPickingFolder = (value: SetStateAction<boolean>) => setLocal("pickingFolder", value);
   const setShowProgressDetails = (value: SetStateAction<boolean>) => setLocal("showProgressDetails", value);
   const setNow = (value: SetStateAction<number>) => setLocal("now", value);
-  const setProjectLabel = (value: SetStateAction<string>) => setLocal("projectLabel", value);
-  const setRemoteUrl = (value: SetStateAction<string>) => setLocal("remoteUrl", value);
-  const setRemoteToken = (value: SetStateAction<string>) => setLocal("remoteToken", value);
-  const setRemoteDisplayName = (value: SetStateAction<string>) => setLocal("remoteDisplayName", value);
-  const setRemoteTokenVisible = (value: SetStateAction<boolean>) => setLocal("remoteTokenVisible", value);
   const preset = props.defaultPreset ?? "starter";
 
   const showClose = props.showClose ?? true;
   const submitting = props.submitting ?? false;
-  const remoteSubmitting = props.remoteSubmitting ?? false;
   const workerSubmitting = props.workerSubmitting ?? false;
   const progress = props.submittingProgress ?? null;
   const workerDisabled = Boolean(props.workerDisabled);
-  const showProjectLabel = props.showProjectLabel ?? true;
   const workerDisabledReason = (props.workerDisabledReason ?? "").trim();
   const workerDebugLines = useMemo(
     () => (props.workerDebugLines ?? []).flatMap((line) => {
@@ -93,7 +73,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   );
   const hasSelectedFolder = Boolean(selectedFolder?.trim());
   const localError = (props.localError ?? "").trim() || null;
-  const remoteError = (props.remoteError ?? "").trim() || null;
   const elapsedSeconds = useMemo(() => {
     if (!progress?.startedAt) return 0;
     return Math.max(0, Math.floor((now - progress.startedAt) / 1000));
@@ -103,8 +82,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     switch (screen) {
       case "local":
         return t("dashboard.create_local_workspace_title");
-      case "remote":
-        return t("dashboard.create_remote_custom_title");
       default:
         return props.title ?? t("dashboard.create_workspace_title");
     }
@@ -114,8 +91,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     switch (screen) {
       case "local":
         return t("dashboard.create_local_workspace_subtitle");
-      case "remote":
-        return t("dashboard.create_remote_custom_subtitle");
       default:
         return props.subtitle ?? t("dashboard.create_workspace_subtitle");
     }
@@ -144,14 +119,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     return () => window.clearInterval(id);
   }, [progress?.startedAt, props.open, submitting]);
 
-  // Focus the URL field when the remote screen opens.
-  useEffect(() => {
-    if (!props.open) return;
-    if (screen !== "remote") return;
-    const frame = requestAnimationFrame(() => remoteUrlRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [props.open, screen]);
-
   const handlePickFolder = async () => {
     if (pickingFolder) return;
     setPickingFolder(true);
@@ -169,23 +136,8 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     }
   };
 
-  const handleRemoteSubmit = async () => {
-    if (!props.onConfirmRemote) return;
-    await Promise.resolve(
-      props.onConfirmRemote({
-        openworkHostUrl: remoteUrl.trim(),
-        openworkToken: remoteToken.trim() || null,
-        directory: null,
-        displayName: remoteDisplayName.trim() || null,
-        closeModal: true,
-      }),
-    );
-  };
-
   const handleLocalSubmit = async () => {
-    props.onConfirm(preset, selectedFolder, {
-      projectLabel: projectLabel.trim() || null,
-    });
+    props.onConfirm(preset, selectedFolder);
   };
 
   return (
@@ -203,7 +155,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           {screen !== "chooser" ? (
             <Button
               onClick={() => setScreen("chooser")}
-              disabled={submitting || remoteSubmitting}
+              disabled={submitting}
               variant="ghost"
               size="icon"
               aria-label={t("dashboard.modal_back")}
@@ -241,12 +193,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
                   ) : undefined
                 }
               />
-              <WorkspaceOptionCard
-                title={t("dashboard.create_remote_custom_title")}
-                description={t("dashboard.chooser_remote_desc")}
-                icon={Globe}
-                onClick={() => setScreen("remote")}
-              />
               {props.onImportConfig ? (
                 <div className="pt-2">
                   <button
@@ -276,9 +222,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             hasSelectedFolder={hasSelectedFolder}
             pickingFolder={pickingFolder}
             onPickFolder={() => void handlePickFolder()}
-            projectLabel={showProjectLabel ? projectLabel : ""}
-            onProjectLabelInput={setProjectLabel}
-            showProjectLabel={showProjectLabel}
             submitting={submitting}
             localError={localError}
             onClose={props.onClose}
@@ -305,61 +248,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
           />
         ) : null}
 
-        {screen === "remote" ? (
-          <>
-            <div className={modalBodyClass}>
-              <RemoteWorkspaceFields
-                hostUrl={remoteUrl}
-                onHostUrlInput={setRemoteUrl}
-                token={remoteToken}
-                tokenVisible={remoteTokenVisible}
-                onTokenInput={setRemoteToken}
-                onToggleTokenVisible={() =>
-                  setRemoteTokenVisible((prev) => !prev)
-                }
-                displayName={remoteDisplayName}
-                onDisplayNameInput={setRemoteDisplayName}
-                submitting={remoteSubmitting}
-                hostInputRef={remoteUrlRef}
-                title={t("dashboard.remote_server_details_title")}
-                description={t("dashboard.remote_server_details_hint")}
-              />
-            </div>
-            <DialogFooter className="flex-col gap-3">
-              {remoteError ? (
-                <div className="rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11">
-                  {remoteError}
-                </div>
-              ) : null}
-              <div className="flex justify-end gap-3">
-                <DialogClose
-                  disabled={remoteSubmitting}
-                  render={<Button variant="outline" disabled={remoteSubmitting} />}
-                >
-                  {t("common.cancel")}
-                </DialogClose>
-                <Button
-                  type="button"
-                  disabled={!remoteUrl.trim() || remoteSubmitting}
-                  onClick={() => void handleRemoteSubmit()}
-                >
-                  {remoteSubmitting ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 size={16} className="animate-spin" />
-                      {t("dashboard.connecting")}
-                    </span>
-                  ) : (
-                    t("dashboard.connect_remote_button")
-                  )}
-                </Button>
-              </div>
-            </DialogFooter>
-          </>
-        ) : null}
-
       </DialogContent>
     </Dialog>
   );
 }
-
-export type { RemoteWorkspaceInput };

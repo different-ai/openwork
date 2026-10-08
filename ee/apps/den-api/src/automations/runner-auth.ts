@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import {
+  AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT,
   automationDesktopRunnerCapabilitySchema,
   type AutomationDesktopRunnerCapability,
 } from "@openwork/types/automations"
@@ -109,7 +110,7 @@ export class AutomationRunnerAuth {
       const audience = decoded.v === 2 && typeof decoded.a === "string"
         ? normalizeRunnerAudience(decoded.a)
         : null
-      const parsedCapabilities = z.array(automationDesktopRunnerCapabilitySchema).max(2).safeParse(decoded.c ?? [])
+      const parsedCapabilities = z.array(automationDesktopRunnerCapabilitySchema).max(AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT).safeParse(decoded.c ?? [])
       const capabilities = parsedCapabilities.success ? parsedCapabilities.data : null
       if (
         (decoded.v !== 1 && decoded.v !== 2)

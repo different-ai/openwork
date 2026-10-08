@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { OpenCodeLogo } from "./opencode-logo";
-import { SocTypeIBadge } from "./soc-type-i-badge";
+import { SocTypeIIBadge } from "./soc-type-ii-badge";
 
 export function SiteFooter() {
   return (
@@ -18,6 +18,9 @@ export function SiteFooter() {
           </Link>
           <Link href="/download" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Desktop
+          </Link>
+          <Link href="/alternatives/claude-cowork" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Claude Cowork alternative
           </Link>
           <a
             href="https://app.openworklabs.com"
@@ -53,6 +56,7 @@ export function SiteFooter() {
             <span>Powered by</span>
             <a
               href="https://opencode.ai"
+              aria-label="OpenCode"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center text-gray-500 transition-colors hover:text-gray-800"
@@ -62,11 +66,11 @@ export function SiteFooter() {
           </div>
           <Link
             href="/trust"
-            aria-label="SOC 2 Type I. View Trust Center"
+            aria-label="SOC 2 Type II. View Trust Center"
             className="inline-flex shrink-0 items-center text-gray-600 transition-opacity hover:opacity-80"
           >
-            <SocTypeIBadge className="h-12 w-12" />
-            <span className="sr-only">SOC 2 Type I</span>
+            <SocTypeIIBadge className="h-14 w-14" />
+            <span className="sr-only">SOC 2 Type II</span>
           </Link>
         </div>
       </div>

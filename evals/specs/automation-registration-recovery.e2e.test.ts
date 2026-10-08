@@ -23,7 +23,10 @@ test("desktop registration recovers from a transient Den outage without another 
   })
   const registrationPath = "/api/den/v1/automation-runners/token"
   await proxy.faults.status(registrationPath, 503, { times: 100 })
-  await using desktop = await app({ den: { ...den, ref: proxy.ref }, as: "admin", place })
+  // Eval desktops start with no Automation runner; this spec is about it.
+  await using desktop = await app({
+    den: { ...den, ref: proxy.ref }, as: "admin", place, env: { OPENWORK_AUTOMATION_RUNNER: "on" },
+  })
   const presence = async () => {
     const result = await denFetch(den.admin, "/v1/automation-runners/presence", {
       headers: { authorization: `Bearer ${den.admin.token}` },

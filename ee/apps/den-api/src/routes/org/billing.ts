@@ -2,7 +2,6 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
 import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -27,6 +26,16 @@ const openWorkWebUnavailableSchema = z.object({
   error: z.literal("openwork_web_not_available"),
   message: z.string(),
 }).meta({ ref: "OpenWorkWebUnavailableError" })
+
+const retiredPolarBillingStatus = {
+  featureGateEnabled: false,
+  hasActivePlan: true,
+  checkoutRequired: false,
+  portalUrl: null,
+  price: null,
+  subscription: null,
+  invoices: [],
+}
 
 function openWorkWebUnavailableResponse(): { error: "openwork_web_not_available"; message: string } {
   return {
@@ -173,16 +182,10 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         includePortalUrl: canManageBilling,
         returnUrl: billingReturnUrl(c),
       })
-      const polar = email
-        ? await getCloudWorkerBillingStatus({
-            userId: user.id,
-            email,
-            name: user.name ?? email,
-          }, {
-            includePortalUrl: canManageBilling,
-            includeInvoices: false,
-          }).catch(() => null)
-        : null
+      // Den web still reads `billing.polar` as the cloud-worker access summary
+      // (den-flow.ts getBillingSummary). Polar billing is retired, so this is
+      // the constant "no gate, access allowed" shape it always had in practice.
+      const polar = email ? retiredPolarBillingStatus : null
 
       return c.json({ billing: { ...billing, polar } })
     },
@@ -253,6 +256,9 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         if (error instanceof Error && error.message === "stripe_openwork_web_subscription_exists") {
           return "subscription_exists" as const
         }
+        if (error instanceof Error && error.message === "stripe_inference_subscription_exists") {
+          return "inference_subscription_exists" as const
+        }
         throw error
       })
       if (session instanceof ManagedModelsPolicyError) {
@@ -262,6 +268,23 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json({
           error: "stripe_subscription_exists",
           message: "OpenWork Web is already subscribed for this organization. Manage it from Billing.",
+        }, 409)
+      }
+      if (session === "inference_subscription_exists") {
+        // The organization already has an OpenWork Models subscription Stripe
+        // is still collecting on (typically past due after a failed renewal).
+        // A second Checkout would charge them twice, so hand them the billing
+        // portal where the payment method can be fixed instead.
+        const portal = await createInferencePortalSession({
+          organizationId: payload.organization.id,
+          returnUrl: billingReturnUrl(c),
+        }).catch(() => null)
+        if (portal?.url) {
+          return c.json({ url: portal.url })
+        }
+        return c.json({
+          error: "stripe_subscription_exists",
+          message: "OpenWork Models is already subscribed for this organization. Update the payment method from Billing.",
         }, 409)
       }
       return c.json({ url: session.url })

@@ -3,7 +3,9 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { selectedAppEnv } from "./app-env.ts";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
+import { MOUSE_POINTER_CHROME_ARG } from "./types.ts";
 import type { ChromeSurfaceOptions, DenServiceHandle, DenServiceOptions, ElectronSurfaceOptions, Host, RetainedElectronSurface, ShareLinks, SurfaceHandle } from "./types.ts";
 
 export interface DaytonaExecResult {
@@ -643,19 +645,33 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     };
 
     try {
-      await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
+      // `daytona exec` runs no shell of its own: quotes, `|` and `>` in bare
+      // arguments reach the program literally. Anything shell-shaped goes
+      // through one `bash -lc` argument, as the other remote commands here do.
+      await checkedExec(
+        exec,
+        ["exec", sandbox, "--", `bash -lc ${shellQuote(`mkdir -p ${shellQuote(userDataDir)} && test -d ${shellQuote(userDataDir)}`)}`],
+        `mkdir Daytona Electron profile ${userDataDir}`,
+        { timeoutMs: 30_000 },
+      );
       if (opts.bootstrap) {
         const bootstrapJson = `${JSON.stringify(opts.bootstrap, null, 2)}\n`;
         const encoded = Buffer.from(bootstrapJson, "utf8").toString("base64");
         await checkedExec(
           exec,
-          ["exec", sandbox, "--", "echo", encoded, "|", "base64", "-d", ">", shellQuote(bootstrapPath)],
+          ["exec", sandbox, "--", `bash -lc ${shellQuote(`mkdir -p ${shellQuote(profileRoot)} && printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(bootstrapPath)} && test -s ${shellQuote(bootstrapPath)}`)}`],
           `write Daytona Electron bootstrap ${bootstrapPath}`,
           { timeoutMs: 30_000 },
         );
       }
 
       const env = new Map<string, string>();
+      // Explicit `pnpm world up --env KEY` app settings; the launcher keys set
+      // below always win over a selected value.
+      appendExtraEnv(env, selectedAppEnv());
+      // Same default as local surfaces: no Automation runner unless the
+      // caller opts in with OPENWORK_AUTOMATION_RUNNER=on.
+      env.set("OPENWORK_AUTOMATION_RUNNER", "off");
       if (opts.profile !== "blank") {
         if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
         appendExtraEnv(env, opts.env);
@@ -849,7 +865,7 @@ PYEOF`;
       `mkdir -p ${shellQuote(profileDir)}`,
       "CHROME_BIN=\"$(command -v chromium || command -v google-chrome || command -v google-chrome-stable || true)\"",
       "if [ -z \"$CHROME_BIN\" ]; then echo 'No chromium/google-chrome binary found in sandbox.' >&2; exit 127; fi",
-      `DISPLAY=:99 nohup "$CHROME_BIN" --headless=new --window-size=1280,900 --no-sandbox --disable-dev-shm-usage --ignore-gpu-blocklist --use-gl=swiftshader --enable-unsafe-swiftshader --remote-debugging-address=0.0.0.0 --remote-debugging-port=${port} --user-data-dir=${shellQuote(profileDir)} ${shellQuote(startUrl)} >${shellQuote(logPath)} 2>&1 &`,
+      `DISPLAY=:99 nohup "$CHROME_BIN" --headless=new --window-size=1280,900 --no-sandbox --disable-dev-shm-usage --ignore-gpu-blocklist --use-gl=swiftshader --enable-unsafe-swiftshader --remote-debugging-address=0.0.0.0 --remote-debugging-port=${port} --user-data-dir=${shellQuote(profileDir)} ${opts.mouse ? `${shellQuote(MOUSE_POINTER_CHROME_ARG)} ` : ""}${shellQuote(startUrl)} >${shellQuote(logPath)} 2>&1 &`,
     ].join("; ");
 
     try {

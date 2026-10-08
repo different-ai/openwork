@@ -11,7 +11,6 @@ const MAX_MODEL_VISIBLE_BINARY_BYTES = 64 * 1024
 const MAX_MODEL_VISIBLE_TEXT_CHARACTERS = 20_000
 const PRETTY_JSON_MAX_BYTES = 2 * 1024
 const BASE64_FIELD_PATTERN = /^(?:content|data)Base64$/i
-const TRUNCATION_MARKER = "\n[truncated]"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -31,9 +30,21 @@ function base64ByteSize(value: string): number {
   return Buffer.byteLength(value, "base64")
 }
 
+function truncationMarker(shownCharacters: number, totalCharacters: number): string {
+  return `\n[truncated: showing ${shownCharacters} of ${totalCharacters} characters. `
+    + "Call this capability from execute_capability_script to read the full value and return the part you need.]"
+}
+
+/**
+ * Keeps one model-visible string within budget. The cut is always announced
+ * with the real size, because Code Mode scripts receive the untruncated
+ * payload (see invoke.ts `includePayload`) and can read the rest.
+ */
 function truncateModelString(value: string): string {
   if (value.length <= MAX_MODEL_VISIBLE_TEXT_CHARACTERS) return value
-  return `${value.slice(0, MAX_MODEL_VISIBLE_TEXT_CHARACTERS - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`
+  const markerLength = truncationMarker(MAX_MODEL_VISIBLE_TEXT_CHARACTERS, value.length).length
+  const shownCharacters = MAX_MODEL_VISIBLE_TEXT_CHARACTERS - markerLength
+  return `${value.slice(0, shownCharacters)}${truncationMarker(shownCharacters, value.length)}`
 }
 
 function sanitizeModelPayload(value: unknown): unknown {

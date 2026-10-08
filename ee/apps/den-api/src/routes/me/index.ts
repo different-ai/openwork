@@ -6,6 +6,8 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
+import { recordProfileUpdated } from "../../audit/domain/account.js"
+import { recordSessionOrganizationEntered } from "../../audit/domain/sessions.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
@@ -15,8 +17,8 @@ import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
 import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import { organizationFeatureEnabled } from "../../features.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -292,6 +294,8 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         .set({ name, updatedAt })
         .where(eq(AuthUserTable.id, normalizeDenTypeId("user", user.id)))
       await cache.auth.deleteSessionsForUser(normalizeDenTypeId("user", user.id))
+      // account.profile_updated in every membership (direct update: no better-auth hook).
+      await recordProfileUpdated({ userId: user.id, before: user.name, after: name })
 
       return c.json({
         user: {
@@ -346,6 +350,10 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const sessionId = normalizeDenTypeId("session", session.id)
       await setSessionActiveOrganization(sessionId, activeOrg.id)
       c.set("session", { ...session, activeOrganizationId: activeOrg.id })
+      // session.organization_entered in the destination organization only.
+      if (session.activeOrganizationId !== activeOrg.id) {
+        await recordSessionOrganizationEntered({ userId: user.id, organizationId: activeOrg.id, sessionId })
+      }
 
       return c.json({ activeOrgId: activeOrg.id, activeOrgSlug: activeOrg.slug })
     },
@@ -376,9 +384,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         ...desktopPolicy,
         automationsEnabled: env.automations.enabled,
         dashboardEnabled: env.dashboardsEnabled,
-        connectEnabled: memberFacingMcpConnectionsEnabled(organization.metadata, {
-          gatingEnabled: env.mcpConnectionsGatingEnabled,
-        }),
+        connectEnabled: await organizationFeatureEnabled(organization.id, "mcpConnections"),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),

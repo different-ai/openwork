@@ -44,7 +44,7 @@ export type OpenWorkExtensionResource = {
   packageName?: string;
   providerId?: string;
   mcpServerName?: string;
-  localCommandRef?: "openwork.computerUseMcp" | "openwork.uiMcp";
+  localCommandRef?: "openwork.uiMcp";
   required?: boolean;
 };
 
@@ -87,10 +87,8 @@ export type OpenWorkExtensionLifecycle = {
 
 export type EnablementConditionType =
   | "mcp-connected"
-  | "plugin-loaded"
   | "provider-connected"
   | "env-set"
-  | "permission-granted"
   | "toggle-enabled";
 
 export type EnablementCondition = {
@@ -180,56 +178,9 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     enablement: [
       { type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" },
     ],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
+    lifecycle: { reload: ["plugins", "agents"] },
     defaultEnabled: true,
     platform: ["darwin", "linux", "windows"],
-  },
-  {
-    schemaVersion: 1,
-    id: "computer-use",
-    name: "Computer Use",
-    description: "Work in the Mac app and window you approve. Read, use accessible controls, or allow mouse and keyboard control with a small window preview.",
-    preview: true,
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
-    composer: { prompt: "Use Computer Use to " },
-    setup: {
-      instructions: "Enable Computer Use on macOS 14 or later and grant Accessibility and Screen Recording in the helper. For each session, choose an app window and allow reading, app controls, or mouse and keyboard. Choose Allow and start in OpenWork. Your input interrupts control; Stop in the preview ends access.",
-      primaryCta: "Enable Computer Use",
-      secondaryCta: "Check macOS permissions",
-      testActionRef: "openwork.computerUse.healthCheck",
-    },
-    resources: [
-      {
-        type: "mcp",
-        id: "computer-use-mcp",
-        label: "Computer Use MCP",
-        mcpServerName: "computer-use",
-        command: [],
-        localCommandRef: "openwork.computerUseMcp",
-        required: true,
-      },
-      {
-        type: "native-binary",
-        id: "computer-use-native",
-        label: "Computer Use session runtime",
-        packageName: "@openwork/computer-use",
-        required: true,
-      },
-    ],
-    contributions: [
-      { type: "setup-instructions", ref: "openwork.computerUse.setup", location: "settings-detail" },
-      { type: "native-capability", ref: "openwork.computerUse.axPermissions", label: "Accessibility and Screen Recording" },
-      { type: "test-action", ref: "openwork.computerUse.healthCheck", label: "Verify Computer Use MCP" },
-      { type: "composer-prompt", prompt: "Use Computer Use to ", location: "composer" },
-    ],
-    enablement: [
-      { type: "mcp-connected", ref: "computer-use", label: "MCP server connected" },
-      { type: "permission-granted", ref: "accessibility", label: "Accessibility permission" },
-      { type: "permission-granted", ref: "screenRecording", label: "Screen Recording permission" },
-    ],
-    lifecycle: { reload: ["mcp"], detection: ["mcp:computer-use"] },
-    platform: ["darwin"],
   },
   {
     schemaVersion: 1,

@@ -3,11 +3,18 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { withLiteLlmProvider } from "@openwork-ee/utils/litellm-catalog"
+import { MICROSOFT_FOUNDRY_PROVIDER_ID, withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
 
 export type CatalogProvider = {
   npm: string | null
   api: string | null
   env: string[]
+  /** Upstream API path per model id (Bedrock Mantle serves models under /v1 or /openai/v1). */
+  modelApiPaths?: ReadonlyMap<string, string>
+  /** A protocol family the SDK package alone does not identify (Claude on Microsoft Foundry speaks @ai-sdk/anthropic). */
+  family?: "microsoft_foundry"
 }
 
 export type ProviderCatalog = {
@@ -32,9 +39,13 @@ function readCatalogProvider(value: unknown): CatalogProvider | null {
 export function createProviderCatalog(raw: unknown): ProviderCatalog {
   const providers = new Map<string, CatalogProvider>()
   if (isRecord(raw)) {
-    for (const [id, value] of Object.entries(raw)) {
+    // Same derivation as Den's catalog, so both see one amazon-bedrock-mantle and
+    // one microsoft-foundry provider, and one synthetic, modelless litellm provider.
+    for (const [id, value] of Object.entries(withLiteLlmProvider(withMicrosoftFoundryProvider(withBedrockMantleProvider(raw))))) {
       const provider = readCatalogProvider(value)
-      if (provider) providers.set(id, provider)
+      if (!provider) continue
+      providers.set(id, id === BEDROCK_MANTLE_PROVIDER_ID ? { ...provider, modelApiPaths: bedrockMantleApiPathsFromCatalog(raw) }
+        : id === MICROSOFT_FOUNDRY_PROVIDER_ID ? { ...provider, family: "microsoft_foundry" } : provider)
     }
   }
   return {

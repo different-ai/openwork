@@ -3,7 +3,7 @@ import { createHeadlessThreadClient, type HeadlessThreadTranscript } from "@open
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { AutomationAction, AutomationError, AutomationUsage } from "@openwork/types/automations"
+import { isAutomationCloudDefaultModel, type AutomationAction, type AutomationError, type AutomationUsage } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import {
@@ -174,7 +174,7 @@ export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boo
     isNull(MemberTable.removedAt),
   )).limit(1)
   if (!members[0]) return false
-  if (!cloudHostingAvailable({ orgMode: env.orgMode })) return false
+  if (!cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })) return false
   const webAccess = await getOpenWorkWebRuntimeAccess(organizationId)
   if (!webAccess.hasAccess) return false
   const worker = await ownerCloudWorker(scope)
@@ -315,7 +315,19 @@ export type CloudConnectDeps = {
   now: () => number
 }
 
-type CloudConnectResult = { ok: true } | { ok: false; code: "connect_access_unavailable" | "model_access_lost"; message: string }
+type CloudConnectResult =
+  | { ok: true }
+  | { ok: false; code: "connect_access_unavailable" | "model_access_lost" | "provider_unavailable"; message: string }
+
+/**
+ * Den leaves a per-member provider off the owner's worker while the owner has
+ * no active key for it, so its model cannot run there. Say that, instead of
+ * letting the health probe report it as an OpenWork Connect problem.
+ */
+function missingMemberCredentialMessage(providerName: string): string {
+  return `${providerName} uses a separate key for each member, and the Automation owner has no active key for it. `
+    + `Ask an organization admin to issue your key for ${providerName}, then resume this Automation.`
+}
 
 function engineWarmingUp(health: Record<string, unknown> | null): boolean {
   const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
@@ -379,13 +391,19 @@ export async function connectHealth(input: {
   // read phase cannot fail on the same warm-up window.
   if (!engineWarmingUp(health)) {
     try {
-      await deps.materializeProviders({
+      const materialized = await deps.materializeProviders({
         organizationId: normalizeDenTypeId("organization", input.organizationId),
         workerId: normalizeDenTypeId("worker", input.workerId),
         instanceUrl: input.baseUrl,
         hostToken: input.access.hostToken,
         clientToken: input.access.clientToken,
       })
+      const missing = materialized.ok
+        ? materialized.missingMemberCredentials.find((provider) => provider.id === input.action.model.providerId)
+        : undefined
+      if (missing) {
+        return { ok: false, code: "provider_unavailable", message: missingMemberCredentialMessage(missing.name) }
+      }
     } catch (error) {
       logger.warn("automation run provider materialization warning", {
         worker_id: input.workerId,
@@ -488,6 +506,17 @@ async function abortAndObserve(
 }
 
 async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }): Promise<CloudAgentExecution | null> {
+  if (isAutomationCloudDefaultModel(input.action.model)) {
+    // Only the headless runner can run the cloud default; this organization moved off it.
+    return {
+      ok: false,
+      status: "failed",
+      code: "model_access_lost",
+      message: "This Automation uses the cloud default model, which runs only on the headless runtime. Choose a model to run it on OpenWork Web.",
+      retryable: false,
+      needsAttention: true,
+    }
+  }
   const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId)
   if (!webAccess.hasAccess) {
     return {

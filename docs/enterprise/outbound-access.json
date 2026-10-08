@@ -19,15 +19,6 @@
       "override": "provider options.baseURL"
     },
     {
-      "host": "api.github.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "GitHub API calls for importing and previewing GitHub-hosted Claude Code/OpenWork plugins.",
-      "requirement": "opt-in",
-      "blockedEffect": "GitHub plugin import cannot inspect repositories, branches, or plugin manifests.",
-      "override": "OPENWORK_GITHUB_API_BASE"
-    },
-    {
       "host": "api.githubcopilot.com",
       "kind": "fetched",
       "components": ["renderer", "server"],
@@ -87,7 +78,7 @@
       "components": ["desktop", "renderer", "bootstrap"],
       "purpose": "Hosted OpenWork Cloud web origin; the desktop derives Den API and MCP calls from this base URL.",
       "requirement": "required-for-cloud",
-      "blockedEffect": "Hosted Cloud sign-in, org settings, marketplace, and remote workspace flows cannot load.",
+      "blockedEffect": "Hosted Cloud sign-in, org settings, and marketplace cannot load.",
       "override": "desktop base URL (self-hosted Den replaces this host)"
     },
     {
@@ -134,6 +125,15 @@
       "requirement": "required-in-practice",
       "blockedEffect": "Desktop install/update downloads cannot start; GitHub issue and plugin-source links may not open.",
       "override": null
+    },
+    {
+      "host": "inference.openworklabs.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Hosted gateway for desktop Auto free inference, including anonymous and signed-in member free-access sessions, status, model catalog, and chat requests.",
+      "requirement": "optional",
+      "blockedEffect": "Desktop Auto free inference is unavailable; separately configured BYOK and local providers remain usable.",
+      "override": "OPENWORK_FREE_INFERENCE_ORIGIN; OPENWORK_DISABLE_FREE_INFERENCE disables the free route"
     },
     {
       "host": "linear.app",
@@ -278,15 +278,6 @@
       "requirement": "optional",
       "blockedEffect": "Documentation or feedback links do not open; core app networking is unaffected.",
       "override": "VITE_OPENWORK_FEEDBACK_URL for the feedback link only"
-    },
-    {
-      "host": "raw.githubusercontent.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "Raw file downloads for GitHub-hosted plugin manifests, MCP configs, skills, commands, and agents.",
-      "requirement": "opt-in",
-      "blockedEffect": "GitHub plugin import can discover metadata but cannot download component contents.",
-      "override": "OPENWORK_GITHUB_RAW_BASE"
     },
     {
       "host": "registry.npmjs.org",

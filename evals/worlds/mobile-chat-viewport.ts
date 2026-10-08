@@ -43,8 +43,9 @@ export async function mobileChatGeometry(app: Surface) {
       headerWorkspaceVisible: Boolean(visible("[data-session-header-workspace]")),
       headerVisible: Boolean(visible("[data-session-header]")),
       navigation: rect(visible("[data-mobile-chat-navigation]")),
-      navigationCount: [...document.querySelectorAll('[data-session-pane] [data-sidebar="trigger"]')].filter((node) => node.getClientRects().length > 0).length,
-      overflowVisible: Boolean(visible('[data-session-pane] button[aria-label="More actions"]')),
+      // The sidebar toggle and any header actions live in the chat column (sidebar inset), beside the session pane.
+      navigationCount: [...document.querySelectorAll('[data-slot="sidebar-inset"] [data-sidebar="trigger"]')].filter((node) => node.getClientRects().length > 0).length,
+      overflowVisible: Boolean(visible('[data-slot="sidebar-inset"] button[aria-label="More actions"]')),
     };
   });
 }

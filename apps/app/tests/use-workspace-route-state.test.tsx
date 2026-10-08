@@ -23,10 +23,6 @@ Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: tr
 const defaultWorkspaces: RouteWorkspace[] = [
   { id: "ws_1", name: "One", displayNameResolved: "One", workspaceType: "local", path: "/tmp/ws_1" },
   { id: "ws_2", name: "Two", displayNameResolved: "Two", workspaceType: "local", path: "/tmp/ws_2" },
-  {
-    id: "rem_remote", name: "Remote", displayNameResolved: "Remote", workspaceType: "remote",
-    remoteType: "openwork", path: "/tmp/remote", baseUrl: "http://remote.invalid", openworkToken: "remote-token",
-  },
 ];
 let workspaces = defaultWorkspaces;
 let connection = { baseUrl: "http://localhost:4100", token: "token-1" };
@@ -34,7 +30,6 @@ let denAuth: Pick<DenAuthStore, "status" | "isSignedIn" | "verifiedIdentity" | "
   status: "signed_out", isSignedIn: false, verifiedIdentity: null, user: null,
 };
 let localStatus = deferred<{ enabled: boolean; chatRouting: boolean }>();
-const remoteStatuses = new Map<string, ReturnType<typeof deferred<{ enabled: boolean; chatRouting: boolean }>>>();
 let bootReadyCalls = 0;
 const markRouteReady = () => { bootReadyCalls += 1; };
 const requests: Array<{
@@ -88,14 +83,7 @@ mock.module("@/app/lib/openwork-server", () => ({
     ...createServerClient(options),
     listWorkspaces: async () => ({ items: workspaces, activeId: "ws_1" }),
     activateWorkspace: async () => undefined,
-    getEngineV2PreviewStatus: async () => {
-      const remoteStatus = remoteStatuses.get(options.baseUrl);
-      if (remoteStatus) return remoteStatus.promise;
-      if (options.baseUrl === "http://remote.invalid") {
-        throw new serverModule.OpenworkServerError(404, "not_found", "Legacy worker");
-      }
-      return localStatus.promise;
-    },
+    getEngineV2PreviewStatus: async () => localStatus.promise,
   }),
 }));
 const routeWorkspaces = await import("../src/react-app/shell/route-workspaces");
@@ -197,7 +185,6 @@ beforeEach(() => {
   hydrationRequests.length = 0;
   probeMounts = 0;
   probeUnmounts = 0;
-  remoteStatuses.clear();
   bootReadyCalls = 0;
   connection = { baseUrl: "http://localhost:4100", token: "token-1" };
   denAuth = { status: "signed_out", isSignedIn: false, verifiedIdentity: null, user: null };
@@ -210,7 +197,6 @@ afterEach(async () => {
     for (const request of requests) request.response.resolve([]);
     for (const request of hydrationRequests) request.response.resolve(session("ws_1", request.sessionId));
     localStatus.resolve({ enabled: false, chatRouting: false });
-    for (const status of remoteStatuses.values()) status.resolve({ enabled: false, chatRouting: false });
   });
   root = null;
   container?.remove();
@@ -368,6 +354,32 @@ for (const v2 of [false, true]) {
   }
 }
 
+for (const v2 of [false, true]) {
+  const engine = v2 ? "v2" : "v1";
+  test(`${engine} cold deep link keeps an indexed session listed after selecting another one when its direct read lands first`, async () => {
+    workspaces = [defaultWorkspaces[0]];
+    await mount("ws_1", "other");
+    await publishRouting(v2);
+    const inventory = requests.find((request) => request.workspaceId === "ws_1");
+    if (!inventory) throw new Error("Expected an in-flight session inventory");
+    expect(hydrationRequests.map((request) => request.sessionId)).toEqual(["other"]);
+    // The direct session read settles a beat before the inventory that already contains it.
+    await act(async () => {
+      hydrationRequests[0].response.resolve(session("ws_1", "other"));
+      inventory.response.resolve([session("ws_1", "long"), session("ws_1", "other")]);
+    });
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+    expect(route().isSessionReferenceCurrent({ workspaceId: "ws_1", sessionId: "other" })).toBe(true);
+    await navigate("/workspace/ws_1/session/long");
+    expect(route().selectedSessionId).toBe("long");
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+    await navigate("/workspace/ws_1/session/other");
+    expect(route().selectedSessionId).toBe("other");
+    expect(hydrationRequests).toHaveLength(1);
+    expect(route().sessionsByWorkspaceId.ws_1.map((item) => item.id).sort()).toEqual(["long", "other"]);
+  });
+}
+
 test("routing readiness starts the fifth selected local workspace before slow background lists finish", async () => {
   workspaces = Array.from({ length: 5 }, (_, index): RouteWorkspace => ({
     id: `ws_${index + 1}`, name: `Workspace ${index + 1}`, displayNameResolved: `Workspace ${index + 1}`,
@@ -399,14 +411,14 @@ test("routing readiness starts the fifth selected local workspace before slow ba
 for (const staleCompletesFirst of [true, false]) {
   test(`refreshes every local inventory after switching to v2; stale v1 completes ${staleCompletesFirst ? "first" : "last"}`, async () => {
     await mount();
-    // Routing discovery must not gate workspace bootstrap or remote inventory.
+    // Routing discovery must not gate workspace bootstrap.
     expect(route().loading).toBe(false);
     expect(bootReadyCalls).toBeGreaterThan(0);
     expect(route().opencodeClient).toBeNull();
-    expect(requests.map((request) => request.workspaceId)).toEqual(["remote"]);
+    expect(requests).toEqual([]);
 
     await publishRouting(false);
-    const initial = requests.filter((request) => request.workspaceId !== "remote");
+    const initial = [...requests];
     expect(initial.map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
     expect(initial.every((request) => request.engine === "v1")).toBe(true);
     await act(async () => {
@@ -422,7 +434,6 @@ for (const staleCompletesFirst of [true, false]) {
     const fresh = requests.filter((request) => request.engine === "v2");
     // The delayed list cannot block v2, and the already-loaded, unselected inventory refreshes too.
     expect(fresh.map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
-    expect(requests.filter((request) => request.workspaceId === "remote")).toHaveLength(1);
 
     const finishStale = async () => {
       await act(async () => {
@@ -447,11 +458,11 @@ for (const staleCompletesFirst of [true, false]) {
   });
 }
 
-test("offline recovery reloads cleared inventories even when the unselected remote scope is unchanged", async () => {
+test("offline recovery reloads cleared inventories even when the unselected scope is unchanged", async () => {
   await mount();
   await publishRouting(false);
   const initial = [...requests];
-  expect(initial.map((request) => request.workspaceId).sort()).toEqual(["remote", "ws_1", "ws_2"]);
+  expect(initial.map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
   await act(async () => {
     for (const request of initial) request.response.resolve([session(request.workspaceId, "cached")]);
   });
@@ -460,29 +471,27 @@ test("offline recovery reloads cleared inventories even when the unselected remo
   }
   // Healthy refreshes must not reload already-loaded, unselected inventories.
   await act(async () => { await route().refreshRouteState({ supersede: true }); });
-  expect(requests).toHaveLength(3);
+  expect(requests).toHaveLength(2);
 
   // Web disconnect clears inventory; transient desktop gaps retain it instead.
   const onlineConnection = connection;
   connection = { baseUrl: "", token: "" };
   await act(async () => { await route().refreshRouteState({ supersede: true }); });
   expect(route().sessionsByWorkspaceId).toEqual({});
-  expect(requests).toHaveLength(3);
+  expect(requests).toHaveLength(2);
   expect(route().selectedWorkspaceId).toBe("ws_1");
 
   connection = onlineConnection;
   await act(async () => { await route().refreshRouteState({ supersede: true }); });
   const recovered = requests.slice(initial.length);
-  expect(recovered.map((request) => request.workspaceId).sort()).toEqual(["remote", "ws_1", "ws_2"]);
-  const remoteBefore = initial.find((request) => request.workspaceId === "remote");
-  const remoteAfter = recovered.find((request) => request.workspaceId === "remote");
-  if (!remoteBefore || !remoteAfter) throw new Error("Expected remote inventory before and after recovery");
-  expect(remoteAfter.engine).toBe(remoteBefore.engine);
-  expect(remoteAfter.endpoint.baseUrl).toBe(remoteBefore.endpoint.baseUrl);
-  expect(remoteAfter.endpoint.token).toBe(remoteBefore.endpoint.token);
-  expect(remoteAfter.endpoint.workspaceId).toBe(remoteBefore.endpoint.workspaceId);
-  expect(route().sessionsByWorkspaceId.rem_remote).toEqual([]);
-  expect(route().retryingWorkspaceIds).toContain("rem_remote");
+  expect(recovered.map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
+  const unselectedBefore = initial.find((request) => request.workspaceId === "ws_2");
+  const unselectedAfter = recovered.find((request) => request.workspaceId === "ws_2");
+  if (!unselectedBefore || !unselectedAfter) throw new Error("Expected unselected inventory before and after recovery");
+  expect(unselectedAfter.engine).toBe(unselectedBefore.engine);
+  expect(unselectedAfter.endpoint.baseUrl).toBe(unselectedBefore.endpoint.baseUrl);
+  expect(unselectedAfter.endpoint.token).toBe(unselectedBefore.endpoint.token);
+  expect(unselectedAfter.endpoint.workspaceId).toBe(unselectedBefore.endpoint.workspaceId);
   await act(async () => {
     for (const request of recovered) request.response.resolve([session(request.workspaceId, "recovered")]);
   });
@@ -490,13 +499,13 @@ test("offline recovery reloads cleared inventories even when the unselected remo
     expect(route().sessionsByWorkspaceId[workspace.id].map((item) => item.id)).toEqual(["recovered"]);
     expect(route().retryingWorkspaceIds).not.toContain(workspace.id);
   }
-  expect(requests).toHaveLength(6);
+  expect(requests).toHaveLength(4);
 });
 
 test("a rotated endpoint waits for its own routing and rejects the old endpoint's late inventory", async () => {
   await mount();
   await publishRouting(false);
-  const stale = requests.filter((request) => request.workspaceId !== "remote");
+  const stale = [...requests];
   connection = { baseUrl: "http://localhost:4200", token: "token-2" };
   localStatus = deferred();
   await act(async () => { await route().refreshRouteState({ supersede: true }); });
@@ -512,16 +521,6 @@ test("a rotated endpoint waits for its own routing and rejects the old endpoint'
   expect(fresh.every((request) => request.engine === "v2" && request.endpoint.token === "token-2")).toBe(true);
 });
 
-test("selecting a legacy remote worker neither blocks nor selects the engine for local inventories", async () => {
-  await mount("rem_remote");
-  expect(route().loading).toBe(false);
-  expect(route().opencodeClient).not.toBeNull();
-  expect(requests.map((request) => request.workspaceId)).toEqual(["remote"]);
-  await publishRouting(true);
-  expect(route().opencodeBaseUrl).toBe("http://remote.invalid/workspace/remote/opencode");
-  expect(requests.filter((request) => request.engine === "v2").map((request) => request.workspaceId).sort()).toEqual(["ws_1", "ws_2"]);
-});
-
 test("a late routing-status response cannot switch inventories back to the old engine", async () => {
   await mount();
   const staleStatus = localStatus;
@@ -530,62 +529,5 @@ test("a late routing-status response cannot switch inventories back to the old e
   await publishRouting(true);
   await act(async () => { staleStatus.resolve({ enabled: false, chatRouting: false }); });
   expect(route().opencodeBaseUrl.endsWith("/opencode2")).toBe(true);
-  expect(requests.filter((request) => request.workspaceId !== "remote").every((request) => request.engine === "v2")).toBe(true);
-});
-
-test("returning from remote B to remote A waits for fresh routing while retaining local readiness", async () => {
-  const statusA = deferred<{ enabled: boolean; chatRouting: boolean }>();
-  const statusB = deferred<{ enabled: boolean; chatRouting: boolean }>();
-  statusA.resolve({ enabled: false, chatRouting: false });
-  statusB.resolve({ enabled: false, chatRouting: false });
-  remoteStatuses.set("http://remote.invalid", statusA);
-  remoteStatuses.set("http://remote-b.invalid", statusB);
-  await mount("rem_remote");
-  await publishRouting(true);
-  expect(route().opencodeClient).not.toBeNull();
-  expect(route().opencodeBaseUrl).toBe("http://remote.invalid/workspace/remote/opencode");
-  await act(async () => {
-    route().setWorkspaces((current) => [...current, {
-      id: "rem_b", name: "B", displayNameResolved: "B", workspaceType: "remote",
-      remoteType: "openwork", path: "/tmp/b", baseUrl: "http://remote-b.invalid", openworkToken: "remote-b-token",
-    }]);
-  });
-
-  // Keep local revalidation pending: its continuously polled routing must survive navigation.
-  localStatus = deferred();
-  await act(async () => { route().navigateToWorkspaceSession("rem_b"); });
-  expect(route().selectedWorkspaceId).toBe("rem_b");
-  expect(route().opencodeClient).not.toBeNull();
-
-  const freshStatusA = deferred<{ enabled: boolean; chatRouting: boolean }>();
-  remoteStatuses.set("http://remote.invalid", freshStatusA);
-  await act(async () => { route().navigateToWorkspaceSession("rem_remote"); });
-  expect(route().selectedWorkspaceId).toBe("rem_remote");
-  expect(route().opencodeClient).toBeNull();
-  await act(async () => { freshStatusA.resolve({ enabled: true, chatRouting: true }); });
-  expect(route().opencodeClient).not.toBeNull();
-  expect(route().opencodeBaseUrl).toBe("http://remote.invalid/workspace/remote/opencode2");
-
-  await act(async () => { route().navigateToWorkspaceSession("ws_1"); });
-  expect(route().opencodeClient).not.toBeNull();
-  expect(route().opencodeBaseUrl.endsWith("/opencode2")).toBe(true);
-});
-
-test("editing an unselected remote endpoint refreshes it without accepting the old response", async () => {
-  await mount();
-  const stale = requests.find((request) => request.workspaceId === "remote");
-  if (!stale) throw new Error("Expected remote inventory load");
-  await act(async () => {
-    route().setWorkspaces((current) => current.map((workspace) => workspace.id === "rem_remote"
-      ? { ...workspace, baseUrl: "http://remote-new.invalid", openworkToken: "remote-token-2" }
-      : workspace));
-  });
-  const fresh = requests.find((request) => request.endpoint.baseUrl === "http://remote-new.invalid");
-  if (!fresh) throw new Error("Expected fresh remote inventory load");
-  await act(async () => { stale.response.resolve([session("remote", "obsolete")]); });
-  expect(route().sessionsByWorkspaceId.rem_remote).toEqual([]);
-  expect(route().retryingWorkspaceIds).toContain("rem_remote");
-  await act(async () => { fresh.response.resolve([session("remote", "fresh")]); });
-  expect(route().sessionsByWorkspaceId.rem_remote.map((item) => item.id)).toEqual(["fresh"]);
-  expect(route().workspaceConnectionOverrides.rem_remote.status).toBe("connected");
+  expect(requests.every((request) => request.engine === "v2")).toBe(true);
 });

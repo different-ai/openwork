@@ -113,12 +113,25 @@ export function rateLimitFormRequest(request: Request, route: string) {
   });
 }
 
+export const SALES_EMAIL = "sales@openworklabs.com";
+export const TEAM_EMAIL = "team@openworklabs.com";
+export const ENTERPRISE_BOOKING_URL = "https://openworklabs.com/enterprise#book";
+export const GITHUB_ISSUES_URL = "https://github.com/different-ai/openwork/issues";
+
+export type FormAlternatives = Record<string, string>;
+
 export async function verifyFormBotProtection() {
   const result = await checkBotId();
   if (result.isBot) {
     return { ok: false as const, status: 403, error: "Bot traffic is not allowed for this form." };
   }
   return { ok: true as const };
+}
+
+// Agents and API callers cannot run the BotID browser client, so tell them
+// where to go instead of returning a dead-end 403.
+export function formRequiresBrowserBody(message: string, alternatives: FormAlternatives) {
+  return { error: "form_requires_browser", message, alternatives };
 }
 
 export function validateAntiSpamFields(input: { website?: string; startedAt?: number | string }) {

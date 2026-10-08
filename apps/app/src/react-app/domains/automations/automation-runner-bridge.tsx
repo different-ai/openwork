@@ -2,6 +2,7 @@
 import { useEffect } from "react"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
 } from "@openwork/types/automations"
 import type {
@@ -16,21 +17,22 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate"
 import { useAutomationDeploymentEnabled } from "./automation-availability"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
+import { organizationRunnerId } from "./automation-runner-identity"
 
 const RUNNER_TOKEN_REFRESH_MS = 30 * 60_000
 const RUNNER_ID_KEY = "openwork.automations.desktop-runner-id"
 
+/**
+ * One id per desktop install, kept for good. Den scopes runner rows by
+ * organization and member, so the same install is a runner in every
+ * organization it signs in to.
+ */
 function desktopRunnerId() {
   const existing = localStorage.getItem(RUNNER_ID_KEY)?.trim()
   if (existing) return existing
   const created = crypto.randomUUID()
   localStorage.setItem(RUNNER_ID_KEY, created)
   return created
-}
-
-function resetDesktopRunnerId() {
-  localStorage.removeItem(RUNNER_ID_KEY)
-  return desktopRunnerId()
 }
 
 /** Keeps this signed-in desktop registered as the owner's Automation runner when Den allows it. */
@@ -81,21 +83,27 @@ function ActivatedAutomationRunnerBridge() {
               platform,
               concurrency: 1,
             })
-            try {
-              return await client.mintAutomationRunnerToken(organizationId, registration([
+            // Older/self-hosted Den versions reject capabilities they do not
+            // know with a 400. Step down one capability set at a time so
+            // Automation delivery keeps working until that server upgrades.
+            const capabilitySets: AutomationDesktopRunnerCapability[][] = [
+              [
                 AUTOMATION_MODEL_ATTENTION_CAPABILITY,
                 REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
-              ]))
-            } catch (error) {
-              // Older/self-hosted Den versions accept at most the original
-              // capability. Preserve existing Automation delivery until that
-              // server upgrades; it will not advertise remote-session presence.
-              if (!(error instanceof DenApiError) || error.status !== 400) throw error
-              return client.mintAutomationRunnerToken(
-                organizationId,
-                registration([AUTOMATION_MODEL_ATTENTION_CAPABILITY]),
-              )
+                REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+              ],
+              [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
+              [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
+            ]
+            for (const [index, capabilities] of capabilitySets.entries()) {
+              try {
+                return await client.mintAutomationRunnerToken(organizationId, registration(capabilities))
+              } catch (error) {
+                const last = index === capabilitySets.length - 1
+                if (last || !(error instanceof DenApiError) || error.status !== 400) throw error
+              }
             }
+            throw new Error("automation_runner_registration_unreachable")
           }
           let runner: Awaited<ReturnType<typeof client.mintAutomationRunnerToken>>
           try {
@@ -105,7 +113,11 @@ function ActivatedAutomationRunnerBridge() {
               throw error
             }
             if (!isCurrent()) return
-            runnerId = resetDesktopRunnerId()
+            // Only a Den from before runner rows were scoped refuses an install
+            // already registered in another organization. Use an id derived
+            // for this organization rather than replacing the install's id,
+            // which left a stale runner behind on every switch.
+            runnerId = organizationRunnerId(runnerId, organizationId)
             runner = await mintRunner(runnerId)
           }
           if (!isCurrent()) return

@@ -1,0 +1,46 @@
+name: Freestyle cleanup
+
+# Freestyle bills snapshot storage until deletion. This reclaims snapshots that
+# OpenWork CI and the review app created and no longer need: old naming
+# versions, previews nobody launched for a day, superseded cache layers and
+# expired checkpoints. Snapshots with other names (personal worlds) are never
+# touched. The job fails when too many remain, so a new leak is visible.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report what would be deleted."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freestyle-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Scheduled runs use the default branch: reviewed code only.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Install the Freestyle controller only
+        run: pnpm --filter @openwork/freestyle... install --frozen-lockfile --ignore-scripts
+      - name: Delete snapshots OpenWork no longer needs
+        env:
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: node scripts/cleanup-freestyle.ts $DRY_RUN

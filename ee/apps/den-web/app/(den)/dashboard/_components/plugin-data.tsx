@@ -1,12 +1,14 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { mcpAppProjectionSchema } from "@openwork/types/mcp-app";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type ConnectedIntegration,
   integrationQueryKeys,
 } from "./integration-data";
+import { parsePluginAccessGrants, pluginAccessQueryKeys } from "./plugin-access-data";
 
 /**
  * Plugin primitives — mirror OpenCode / Claude Code's plugin surface:
@@ -96,6 +98,13 @@ export type PluginWorkflow = {
   requiredCapabilityCount: number;
 };
 
+export type PluginAuthoredApp = {
+  id: string;
+  name: string;
+  description: string;
+  revisionId: string;
+};
+
 export type PluginRemoteMcpApp = {
   id: string;
   name: string;
@@ -133,6 +142,7 @@ export type DenPlugin = {
   commands: PluginCommand[];
   workflows: PluginWorkflow[];
   apps: PluginRemoteMcpApp[];
+  authoredApps: PluginAuthoredApp[];
   createdAt: string;
   createdByOrgMembershipId: string | null;
   updatedAt: string;
@@ -181,6 +191,7 @@ export function formatPluginTimestamp(value: string | null): string {
 export function getPluginComponentCount(plugin: DenPlugin): number {
   return (
     plugin.apps.length +
+    plugin.authoredApps.length +
     plugin.skills.length +
     plugin.hooks.length +
     plugin.mcps.length +
@@ -192,8 +203,9 @@ export function getPluginComponentCount(plugin: DenPlugin): number {
 
 export function getPluginPartsSummary(plugin: DenPlugin): string {
   const parts: string[] = [];
-  if (plugin.apps.length > 0) {
-    parts.push(`${plugin.apps.length} ${plugin.apps.length === 1 ? "App" : "Apps"}`);
+  const appCount = plugin.apps.length + plugin.authoredApps.length;
+  if (appCount > 0) {
+    parts.push(`${appCount} ${appCount === 1 ? "App" : "Apps"}`);
   }
   if (plugin.skills.length > 0) {
     parts.push(`${plugin.skills.length} ${plugin.skills.length === 1 ? "Skill" : "Skills"}`);
@@ -266,6 +278,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-10T12:00:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-10T12:00:00Z",
@@ -296,6 +309,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-07T09:00:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-07T09:00:00Z",
@@ -334,6 +348,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-03-28T16:45:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-03-28T16:45:00Z",
@@ -371,6 +386,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-02T18:12:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-02T18:12:00Z",
@@ -408,6 +424,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-14T08:30:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-14T08:30:00Z",
@@ -441,6 +458,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-03-20T11:00:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-03-20T11:00:00Z",
@@ -471,6 +489,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-03-12T14:22:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-03-12T14:22:00Z",
@@ -504,6 +523,7 @@ function filterByConnectedProviders(
 export const pluginQueryKeys = {
   all: ["plugins"] as const,
   list: () => [...pluginQueryKeys.all, "list"] as const,
+  summaries: () => [...pluginQueryKeys.list(), "summaries"] as const,
   detail: (id: string) => [...pluginQueryKeys.all, "detail", id] as const,
 };
 
@@ -529,7 +549,20 @@ function pluginMcpTransport(config: Record<string, unknown>): PluginMcpTransport
   return asString(config.url) ? "http" : "stdio";
 }
 
+/**
+ * Marketplace syncs used to title an MCP config object after its file, so a
+ * `.mcp.json` showed up as ".mcp". Such a title says nothing about the server.
+ */
+function isFileDerivedMcpTitle(title: string, currentRelativePath: string | null | undefined) {
+  const normalized = title.trim().toLowerCase();
+  if (normalized === ".mcp" || normalized === "mcp") return true;
+  const fileName = currentRelativePath?.split("/").filter(Boolean).at(-1);
+  if (!fileName) return false;
+  return normalized === fileName.replace(/\.[^.]+$/, "").toLowerCase();
+}
+
 export function pluginMcpEntries(item: {
+  currentRelativePath?: string | null;
   description: string;
   id: string;
   normalizedPayload: Record<string, unknown> | null;
@@ -544,13 +577,16 @@ export function pluginMcpEntries(item: {
   const servers = entries.length > 0
     ? entries
     : [[item.title, payload] satisfies [string, Record<string, unknown>]];
+  const useTitle = servers.length === 1 && !isFileDerivedMcpTitle(item.title, item.currentRelativePath);
+  // Old syncs stored the second line of the JSON file (`"mcpServers": {`) as the description.
+  const description = /^"?(mcpServers|mcp)"?\s*:\s*\{?$/.test(item.description.trim()) ? "" : item.description;
 
   return servers.map(([serverName, config], index) => ({
     configObjectId: item.id,
     connectionId: asString(config.externalMcpConnectionId),
-    description: item.description,
+    description,
     id: servers.length === 1 ? item.id : `${item.id}:${index}`,
-    name: servers.length === 1 ? item.title : serverName,
+    name: useTitle ? item.title : serverName,
     serverName,
     toolCount: typeof config.toolCount === "number" ? config.toolCount : 0,
     transport: pluginMcpTransport(config),
@@ -590,11 +626,27 @@ function parseMembershipConfigObject(entry: unknown) {
   };
 }
 
-function derivePluginCategory(input: { agents: PluginAgent[]; apps: PluginRemoteMcpApp[]; commands: PluginCommand[]; hooks: PluginHook[]; mcps: PluginMcp[]; skills: PluginSkill[]; workflows: PluginWorkflow[] }): PluginCategory {
+export function parsePluginAuthoredApps(payload: unknown): PluginAuthoredApp[] {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
+  return payload.items.flatMap((entry): PluginAuthoredApp[] => {
+    const item = parseMembershipConfigObject(entry);
+    if (!item || item.objectType !== "app") return [];
+    const app = mcpAppProjectionSchema.strip().safeParse(item.normalizedPayload);
+    if (!app.success || app.data.appId !== item.id || app.data.revisionId !== item.latestVersionId) return [];
+    return [{
+      id: app.data.appId,
+      name: app.data.title,
+      description: app.data.description ?? "",
+      revisionId: app.data.revisionId,
+    }];
+  });
+}
+
+function derivePluginCategory(input: { agents: PluginAgent[]; apps: PluginRemoteMcpApp[]; authoredApps: PluginAuthoredApp[]; commands: PluginCommand[]; hooks: PluginHook[]; mcps: PluginMcp[]; skills: PluginSkill[]; workflows: PluginWorkflow[] }): PluginCategory {
   if (input.mcps.length > 0 || input.hooks.length > 0) {
     return "integrations";
   }
-  if (input.agents.length > 0 || input.apps.length > 0 || input.commands.length > 0 || input.workflows.length > 0 || input.skills.length > 0) {
+  if (input.agents.length > 0 || input.apps.length > 0 || input.authoredApps.length > 0 || input.commands.length > 0 || input.workflows.length > 0 || input.skills.length > 0) {
     return "workflows";
   }
   return "output-styles";
@@ -615,32 +667,42 @@ function parsePluginHookEvent(value: string | null): PluginHookEvent {
   }
 }
 
+function requestPluginContents(id: string) {
+  return requestJson(`/v1/plugins/${encodeURIComponent(id)}/resolved`, { method: "GET" }, 15000);
+}
+
+function pluginContentsPayload({ response, payload }: Awaited<ReturnType<typeof requestPluginContents>>) {
+  if (!response.ok) {
+    throw new Error(getErrorMessage(payload, `Failed to load plugin contents (${response.status}).`));
+  }
+  return payload;
+}
+
 async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   const [pluginResult, membershipsResult] = await Promise.all([
     requestJson(`/v1/plugins/${encodeURIComponent(id)}`, { method: "GET" }, 15000),
-    requestJson(`/v1/plugins/${encodeURIComponent(id)}/resolved`, { method: "GET" }, 15000),
+    requestPluginContents(id),
   ]);
 
   if (!pluginResult.response.ok) {
     throw new Error(getErrorMessage(pluginResult.payload, `Failed to load plugin (${pluginResult.response.status}).`));
   }
-  if (!membershipsResult.response.ok) {
-    throw new Error(getErrorMessage(membershipsResult.payload, `Failed to load plugin contents (${membershipsResult.response.status}).`));
-  }
+  const contents = pluginContentsPayload(membershipsResult);
 
   const pluginItem = isRecord(pluginResult.payload) && isRecord(pluginResult.payload.item) ? pluginResult.payload.item : null;
-  if (!pluginItem) {
-    return null;
-  }
+  return pluginItem ? buildDenPlugin(pluginItem, contents) : null;
+}
 
+/** List items and plugin detail share one shape, so either can be combined with `/resolved`. */
+function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown): DenPlugin | null {
   const pluginId = asString(pluginItem.id);
   const name = asString(pluginItem.name);
   if (!pluginId || !name) {
     return null;
   }
 
-  const membershipItems = isRecord(membershipsResult.payload) && Array.isArray(membershipsResult.payload.items)
-    ? membershipsResult.payload.items.map(parseMembershipConfigObject).filter((value): value is NonNullable<typeof value> => Boolean(value))
+  const membershipItems = isRecord(contents) && Array.isArray(contents.items)
+    ? contents.items.map(parseMembershipConfigObject).filter((value): value is NonNullable<typeof value> => Boolean(value))
     : [];
 
   const skills = membershipItems
@@ -668,6 +730,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   // Standalone URL-imported Apps are retained in storage for a future unit of
   // value, but intentionally stay out of the current Plugin and Library UI.
   const apps: PluginRemoteMcpApp[] = [];
+  const authoredApps = parsePluginAuthoredApps(contents);
   const hooks = membershipItems
     .filter((item) => item.objectType === "hook")
     .map((item) => ({
@@ -678,7 +741,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     } satisfies PluginHook));
   const mcps = membershipItems
     .filter((item) => item.objectType === "mcp")
-    .flatMap(pluginMcpEntries);
+    .flatMap((item) => pluginMcpEntries(item));
 
   const marketplaces = Array.isArray(pluginItem.marketplaces)
     ? pluginItem.marketplaces.flatMap((entry) => {
@@ -693,8 +756,9 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   return {
     agents,
     apps,
+    authoredApps,
     author: "Connected repository",
-    category: derivePluginCategory({ agents, apps, commands, hooks, mcps, skills, workflows }),
+    category: derivePluginCategory({ agents, apps, authoredApps, commands, hooks, mcps, skills, workflows }),
     commands,
     createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
     createdByOrgMembershipId: asString(pluginItem.createdByOrgMembershipId),
@@ -718,6 +782,11 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   } satisfies DenPlugin;
 }
 
+function listItems(payload: unknown) {
+  return (isRecord(payload) && Array.isArray(payload.items) ? payload.items : []).filter(isRecord);
+}
+
+/** Every plugin with its contents: one list request plus `/resolved` per plugin. */
 export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     enabled,
@@ -728,24 +797,126 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
         throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
       }
 
-      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : [];
-      const pluginIds = items.flatMap((entry) => {
-        const id = isRecord(entry) ? asString(entry.id) : null;
-        return id ? [id] : [];
-      });
-
-      const plugins = await Promise.all(pluginIds.map((id) => fetchResolvedPlugin(id)));
+      const plugins = await Promise.all(listItems(payload).map(async (item) => {
+        const id = asString(item.id);
+        return id ? buildDenPlugin(item, pluginContentsPayload(await requestPluginContents(id))) : null;
+      }));
       return plugins.filter((plugin): plugin is DenPlugin => Boolean(plugin));
     },
   });
 }
 
-export function usePlugin(id: string) {
-  return useQuery({
+/** What a plugin list row shows, straight from the list response. */
+export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
+  /** False when the server did not include access, so callers load it per plugin. */
+  accessIncluded: boolean;
+  updatedAt?: string;
+};
+
+function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | null {
+  const id = asString(item.id);
+  const name = asString(item.name);
+  if (!id || !name) return null;
+  return {
+    accessIncluded: Array.isArray(item.access),
+    updatedAt: asString(item.updatedAt) ?? undefined,
+    createdByOrgMembershipId: asString(item.createdByOrgMembershipId),
+    description: asString(item.description) ?? "",
+    id,
+    name,
+    slug: slugifyPluginName(name),
+    status: asString(item.status) === "archived" ? "archived" : "active",
+  };
+}
+
+/**
+ * Plugins without their contents, in one request. Access for plugins the
+ * caller manages is written to each plugin's access query.
+ */
+export function pluginSummariesQueryOptions() {
+  return queryOptions({
+    queryKey: pluginQueryKeys.summaries(),
+    queryFn: async ({ client }): Promise<DenPluginSummary[]> => {
+      const { response, payload } = await requestJson("/v1/plugins?status=active&limit=100&includeAccess=true", { method: "GET" }, 20000);
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+      }
+
+      return listItems(payload).flatMap((item) => {
+        const summary = parsePluginSummary(item);
+        if (!summary) return [];
+        if (summary.accessIncluded) {
+          client.setQueryData(pluginAccessQueryKeys.detail(summary.id), parsePluginAccessGrants(item.access));
+        }
+        return [summary];
+      });
+    },
+  });
+}
+
+export function usePluginSummaries({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({ ...pluginSummariesQueryOptions(), enabled });
+}
+
+export function pluginDirectoryParams(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }, cursor: string) {
+  const params = new URLSearchParams({ status: "active", limit: "50", includeAccess: "true" });
+  if (!cursor) { params.set("includeTotal", "true"); params.set("includeFacets", "true"); }
+  if (filters.q) params.set("name", filters.q);
+  if (filters.teamId) params.set("teamId", filters.teamId);
+  if (filters.memberId) params.set("memberId", filters.memberId);
+  if (filters.ownerId) params.set("ownerId", filters.ownerId);
+  if (cursor) params.set("cursor", cursor);
+  return params;
+}
+
+export function pluginDirectoryQueryKey(orgId: string | null, viewerId: string | null, filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
+  return [...pluginQueryKeys.summaries(), "directory", orgId, viewerId, filters.q, filters.teamId, filters.memberId, filters.ownerId ?? null];
+}
+
+function parseDirectoryCounts(value: unknown): Record<string, number> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return Object.fromEntries(value.flatMap((entry) => isRecord(entry) && typeof entry.id === "string" && typeof entry.count === "number" ? [[entry.id, entry.count]] : []));
+}
+
+export function usePluginDirectory(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
+  const client = useQueryClient();
+  const { orgId, orgContext } = useOrgDashboard();
+  return useInfiniteQuery({
+    queryKey: pluginDirectoryQueryKey(orgId, orgContext?.currentMember.id ?? null, filters),
+    enabled: Boolean(orgId && orgContext?.organization.id === orgId),
+    initialPageParam: "",
+    queryFn: async ({ pageParam }) => {
+      const params = pluginDirectoryParams(filters, pageParam);
+      const { response, payload } = await requestJson(`/v1/plugins?${params}`, { method: "GET" }, 20000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Failed to load plugins (${response.status}).`));
+      const items = listItems(payload).flatMap((item) => {
+        const summary = parsePluginSummary(item);
+        if (!summary) return [];
+        if (summary.accessIncluded) client.setQueryData(pluginAccessQueryKeys.detail(summary.id), parsePluginAccessGrants(item.access));
+        return [summary];
+      });
+      return {
+        items,
+        nextCursor: isRecord(payload) ? asString(payload.nextCursor) : null,
+        total: isRecord(payload) && typeof payload.total === "number" ? payload.total : null,
+        teamCounts: parseDirectoryCounts(isRecord(payload) ? payload.teamCounts : null),
+        ownerCounts: parseDirectoryCounts(isRecord(payload) ? payload.ownerCounts : null),
+      };
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  });
+}
+
+export function pluginDetailQueryOptions(id: string) {
+  return queryOptions({
     queryKey: pluginQueryKeys.detail(id),
     queryFn: async () => fetchResolvedPlugin(id),
     enabled: Boolean(id),
   });
+}
+
+export function usePlugin(id: string) {
+  return useQuery(pluginDetailQueryOptions(id));
 }
 
 export function useUpdatePlugin() {

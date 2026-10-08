@@ -1,0 +1,20 @@
+{
+  "providers": {
+    "openai": {
+      "models": [
+        {
+          "id": "gpt-6-luna",
+          "name": "GPT-6 Luna",
+          "api": "openai-responses",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "cost": { "input": 0.1, "output": 0.5, "cacheRead": 0.01, "cacheWrite": 0.125 },
+          "contextWindow": 272000,
+          "maxTokens": 128000,
+          "thinkingLevelMap": { "off": "none", "xhigh": "xhigh", "max": "max" },
+          "compat": { "supportsToolSearch": true }
+        }
+      ]
+    }
+  }
+}

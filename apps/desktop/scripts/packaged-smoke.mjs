@@ -12,6 +12,25 @@ mkdirSync(output, { recursive: true });
 const report = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), phases: [], passed: false };
 const started = performance.now();
 
+// `--journey <name>` (repeatable) runs only the checks for those journeys
+// against the same packaged artifacts. PR proof uses it for packaged specs,
+// which need a packaged binary and cannot run against a dev build.
+const journeys = new Set(process.argv.flatMap((arg, index, all) => arg === "--journey" && all[index + 1] ? [all[index + 1]] : []));
+const selected = (journey) => journeys.size === 0 || journeys.has(journey);
+
+// The update path existing enterprise customers take: a profile the previous
+// public release created and signed in must still boot in this build. It needs
+// a local Den and that earlier release, so the fast gate never runs it; the
+// nightly names it with --journey (#4848). Without the baseline its update case
+// skips, the verdict reads incomplete and the command still exits 0, so refuse
+// to start instead of reporting a check that proved nothing.
+const UPGRADE_JOURNEY = "released-enterprise-activated";
+const baselineBinary = process.env.OPENWORK_EVAL_RELEASED_BASELINE_BINARY?.trim() || "";
+if (journeys.has(UPGRADE_JOURNEY)) {
+  if (!baselineBinary) throw new Error(`${UPGRADE_JOURNEY} needs OPENWORK_EVAL_RELEASED_BASELINE_BINARY: the executable of an earlier public enterprise release, whose profile this build must open.`);
+  accessSync(baselineBinary, constants.X_OK);
+}
+
 function run(name, command, args, timeout, extraEnv = {}, cwd = repo) {
   const phaseStarted = performance.now();
   const result = spawnSync(command, args, {
@@ -51,6 +70,9 @@ async function bootPackagedDesktop(name, journey, binary, timeout, display) {
       OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
       OPENWORK_EVAL_ENGINE: "v1",
       OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", name),
+      // Profiles are removed when a journey ends; keep each main-process log
+      // outside them so CI can upload it.
+      OPENWORK_EVAL_SURFACE_LOGS_DIR: join(output, "logs", name),
       ELECTRON_RUN_AS_NODE: "",
       NODE_PATH: "", NODE_OPTIONS: "",
     },
@@ -83,7 +105,10 @@ try {
     `const server = await import(${JSON.stringify(embedded)}); if (typeof server.startEmbeddedServer !== "function") throw new Error("Missing embedded server export");`],
   15_000, { ELECTRON_RUN_AS_NODE: "1", NODE_PATH: "", NODE_OPTIONS: "" }, output);
   const checks = [];
+  const matched = new Set();
   const check = (name, journey, executable, timeout) => {
+    if (!selected(journey)) return;
+    matched.add(journey);
     // Distinct starting displays avoid xvfb-run's concurrent auto-number race.
     const display = 100 + checks.length * 10;
     checks.push(() => bootPackagedDesktop(name, journey, executable, timeout, display));
@@ -101,14 +126,20 @@ try {
     }
   }
   // The same enterprise artifact, booted as an already-activated install (the update path for existing customers).
-  check("desktop-boot-enterprise-activated", "packaged-activated-launch", join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"), 150_000);
+  const enterpriseBinary = join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise");
+  check("desktop-boot-enterprise-activated", "packaged-activated-launch", enterpriseBinary, 150_000);
+  // Opt-in only (see UPGRADE_JOURNEY): boots a local Den, then the baseline and this build on one profile.
+  if (journeys.has(UPGRADE_JOURNEY)) check("desktop-upgrade-enterprise", UPGRADE_JOURNEY, enterpriseBinary, 900_000);
+  if (selected("desktop-quit-path")) matched.add("desktop-quit-path");
+  const unknown = [...journeys].filter((journey) => !matched.has(journey));
+  if (unknown.length) throw new Error(`No packaged smoke check runs journey ${unknown.join(", ")}.`);
   await runConcurrent(checks);
   // Browser.close is intentionally isolated from the other packaged Electron
   // instances. Running the quit contract beside the long egress observation can
   // make an unrelated attached surface disappear before its quiet window ends.
   // Linux has no crash reports to read, so the journey names that half skipped
-  // and the exit signal is the witness.
-  await bootPackagedDesktop(
+  // and the exit signal is the witness; packaged-smoke-macos.mjs asserts it.
+  if (selected("desktop-quit-path")) await bootPackagedDesktop(
     "desktop-quit-enterprise",
     "desktop-quit-path",
     join(flavorOutput("enterprise"), "linux-unpacked", "openwork-enterprise"),

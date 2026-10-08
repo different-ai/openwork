@@ -1,7 +1,7 @@
 # github-actions[bot] pushes the snapshot and authors the pull request.
 # The diff-warden GitHub App approves as a distinct identity for last-push approval.
-# GITHUB_TOKEN-created PRs do not trigger the downstream Warden Clearance workflow_run,
-# so this workflow mints the App token and grants the narrowly scoped approval directly.
+# This workflow mints the App token and grants its narrowly scoped approval
+# directly; the Warden security-report workflow does not grant approvals.
 name: Update Models
 
 on:
@@ -32,6 +32,8 @@ jobs:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: warden-clearance
+    env:
+      HAS_AUTOMATION_APP: ${{ secrets.AUTOMATION_PRIVATE_KEY != '' }}
 
     steps:
       - name: Checkout
@@ -181,16 +183,32 @@ jobs:
           git add "$MODELS_PATH"
           git commit -S -m "chore: update models snapshot"
 
+      # Opened by the automation App once it is configured (AUTOMATION_APP_ID
+      # and AUTOMATION_PRIVATE_KEY in the warden-clearance environment), so the
+      # repository can turn off "Allow GitHub Actions to create and approve
+      # pull requests". Not diff-warden: it approves this PR, and an App can't
+      # approve its own. Falls back to GITHUB_TOKEN until then.
+      - name: Mint PR token
+        id: automation
+        if: steps.changes.outputs.changed == 'true' && env.HAS_AUTOMATION_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: read
+
       - name: Open pull request
         if: steps.changes.outputs.changed == 'true'
         id: pr
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PR_TOKEN: ${{ steps.automation.outputs.token || github.token }}
         run: |
           set -euo pipefail
 
           git push --set-upstream origin "$BRANCH_NAME"
-          pr_url="$(gh pr create \
+          pr_url="$(GH_TOKEN="$PR_TOKEN" gh pr create \
             --base "$BASE_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "chore: update models snapshot" \

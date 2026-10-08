@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { formatRelativeTime } from "@/app/utils";
 import type { CloudImportedPlugin, CloudImportedProvider } from "../../../../app/cloud/import-state";
 import type {
   DenOrgMarketplaceResolved,
@@ -36,6 +37,8 @@ import {
 } from "../settings-list";
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
+import { ArrowUpRight, RefreshCcw, Users } from "lucide-react";
+import { OrganizationMark, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "../pages/provider-rows";
 
 export type CloudProviderRowStatus =
   | "connected"
@@ -55,6 +58,12 @@ export type CloudProviderRow = {
   status: CloudProviderRowStatus;
   name: string;
   detail: string;
+  /** Monospace id at the start of the meta line, e.g. Den's provider id. */
+  metaId?: string;
+  /** Who Den grants it to: "Everyone", team names, or a member count. */
+  access?: string | null;
+  /** The provider has a credential this member can use. */
+  credentialReady?: boolean;
 };
 
 export type CloudPluginRow = {
@@ -87,23 +96,6 @@ function resourceStatusTone(status: string) {
       return "warning" as const;
     case "removed_from_cloud":
       return "error" as const;
-    default:
-      return "neutral" as const;
-  }
-}
-
-function cloudProviderStatusTone(status: CloudProviderRowStatus) {
-  switch (status) {
-    case "connected":
-      return "ready" as const;
-    case "error":
-    case "conflict":
-      return "error" as const;
-    case "blocked":
-    case "needs_credential":
-    case "needs_server":
-    case "unavailable":
-      return "warning" as const;
     default:
       return "neutral" as const;
   }
@@ -203,179 +195,45 @@ interface CloudProviderListItemProps {
   onRetry: (cloudProviderId: string) => void | Promise<void>;
 }
 
+function cloudProviderRowStatus(status: CloudProviderRowStatus) {
+  switch (status) {
+    case "connected":
+      return <ProviderStatus tone="ready">Ready to use</ProviderStatus>;
+    case "error":
+    case "conflict":
+      return <ProviderStatus tone="error">{cloudProviderStatusLabel(status)}</ProviderStatus>;
+    case "needs_credential":
+    case "needs_server":
+      return <ProviderStatus tone="attention">{cloudProviderStatusLabel(status)}</ProviderStatus>;
+    default:
+      return <ProviderStatus tone="neutral">{cloudProviderStatusLabel(status)}</ProviderStatus>;
+  }
+}
+
 function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItemProps) {
   const actionBusy = actionId === row.cloudProviderId;
   const status = actionBusy ? "syncing" : row.status;
+  const providerId = row.imported?.sourceProviderId ?? row.provider?.providerId ?? "";
 
   return (
-    <SettingsListItem>
-      <SettingsListItemContent>
-        <SettingsListTitle>
-          <SettingsListItemTitle>{row.name}</SettingsListItemTitle>
-          <SettingsPill className={statusBadgeVariants({ tone: cloudProviderStatusTone(status) })}>
-            {cloudProviderStatusLabel(status)}
-          </SettingsPill>
-        </SettingsListTitle>
-        <SettingsListItemDescription>
-          {[
-            row.provider?.providerId ?? row.imported?.providerId,
-            row.provider?.hasApiKey ? t("den.credentials_ready_badge") : null,
-            row.detail,
-          ].filter(Boolean).join(" · ")}
-        </SettingsListItemDescription>
-      </SettingsListItemContent>
-      {row.status === "error" && row.provider ? (
-        <SettingsListItemActions>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void onRetry(row.cloudProviderId)}
-            disabled={actionId !== null}
-          >
-            {actionBusy ? t("den.cloud_provider_syncing") : t("den.cloud_provider_retry")}
-          </Button>
-        </SettingsListItemActions>
-      ) : null}
-    </SettingsListItem>
-  );
-}
-
-export interface MarketplacePluginsSectionProps {
-  actionError: string | null;
-  actionId: string | null;
-  activeMarketplaceId: string | null;
-  busy: boolean;
-  marketplaces: DenOrgMarketplaceResolved[];
-  rowsByMarketplace: Record<string, CloudPluginRow[]>;
-  statusError: string | null;
-  onImportPlugin: (marketplaceId: string | null, plugin: DenOrgPlugin) => void | Promise<void>;
-  onRefresh: () => void | Promise<void>;
-  onSelectMarketplace: (marketplaceId: string) => void;
-}
-
-export function MarketplacePluginsSection({
-  actionError,
-  actionId,
-  activeMarketplaceId,
-  busy,
-  marketplaces,
-  rowsByMarketplace,
-  statusError,
-  onImportPlugin,
-  onRefresh,
-  onSelectMarketplace,
-}: MarketplacePluginsSectionProps) {
-  const { hasActiveOrg } = useCloudSession();
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const selectedMarketplace =
-    marketplaces.find((entry) => entry.marketplace.id === activeMarketplaceId) ?? marketplaces[0] ?? null;
-  const selectedRows = selectedMarketplace ? rowsByMarketplace[selectedMarketplace.marketplace.id] ?? [] : [];
-  const visibleRows = useSearch({ items: selectedRows, keys: pluginSearchKeys, query: searchQuery });
-  const pluginGroups = [
-    { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
-    { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
-    { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
-  ].filter((group) => group.rows.length > 0);
-
-  return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>
-            Collections & Plugins
-          </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>
-            Browse organization collections and import plugin files into this workspace.
-          </SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-        <SettingsSectionHeaderActions>
-          <RefreshButton
-            busy={busy}
-            disabled={[busy, !hasActiveOrg].some(Boolean)}
-            onRefresh={onRefresh}
-          >
-            {t("den.refresh")}
-          </RefreshButton>
-        </SettingsSectionHeaderActions>
-      </SettingsSectionHeader>
-
-      {actionError ?? statusError ? (
-        <SettingsNotice tone="error">{actionError ?? statusError}</SettingsNotice>
-      ) : null}
-
-      {!busy && marketplaces.length === 0 ? (
-        <SettingsListEmptyState>
-          {hasActiveOrg ? "No collections are available yet." : "Choose an organization to view collections."}
-        </SettingsListEmptyState>
-      ) : null}
-
-      {marketplaces.length > 0 ? (
-        <Tabs
-          value={selectedMarketplace?.marketplace.id}
-          onValueChange={onSelectMarketplace}
-          className="gap-y-3"
+    <ProviderRow
+      scope="organization"
+      tile={<ProviderTile providerId={providerId} name={row.name} />}
+      name={row.name}
+      status={cloudProviderRowStatus(status)}
+      meta={<ProviderMeta id={row.metaId} parts={[row.detail]} />}
+      aside={row.access ? <><Users className="size-3.5" aria-hidden />{row.access}</> : null}
+      actions={row.status === "error" && row.provider ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void onRetry(row.cloudProviderId)}
+          disabled={actionId !== null}
         >
-          <TabsList className="max-w-full justify-start overflow-x-auto">
-            {marketplaces.map((entry) => (
-              <TabsTrigger
-                key={entry.marketplace.id}
-                value={entry.marketplace.id}
-                className="flex-none"
-              >
-                {entry.marketplace.name}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          <Field>
-            <FieldLabel className="sr-only" htmlFor="marketplace-plugin-search">
-              Search
-            </FieldLabel>
-            <SettingsListSearchInput
-              id="marketplace-plugin-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.currentTarget.value)}
-            />
-            <FieldDescription className="sr-only">Search for a plugin.</FieldDescription>
-          </Field>
-
-          <TabsContent value={selectedMarketplace?.marketplace.id}>
-            {visibleRows.length > 0 ? (
-              <Accordion multiple defaultValue={["available", "out_of_sync"]}>
-                {pluginGroups.map((group) => (
-                  <AccordionItem key={group.value} value={group.value}>
-                    <AccordionTrigger className="items-center hover:no-underline group gap-x-3">
-                      <span className="group-hover:underline">{group.label}</span>
-                      <SettingsPill>{group.rows.length}</SettingsPill>
-                    </AccordionTrigger>
-                    <AccordionContent className="px-1.5 pb-1.5">
-                      <SettingsList>
-                        {group.rows.map((row) => (
-                          <MarketplacePluginListItem
-                            key={row.plugin.id}
-                            actionId={actionId}
-                            row={row}
-                            onImportPlugin={onImportPlugin}
-                          />
-                        ))}
-                      </SettingsList>
-                    </AccordionContent>
-                  </AccordionItem>
-                ))}
-              </Accordion>
-            ) : null}
-
-            {selectedRows.length > 0 && visibleRows.length === 0 ? (
-              <SettingsListEmptyState>No plugins match your search.</SettingsListEmptyState>
-            ) : null}
-
-            {selectedMarketplace && selectedRows.length === 0 ? (
-              <SettingsListEmptyState>This collection does not have plugins yet.</SettingsListEmptyState>
-            ) : null}
-          </TabsContent>
-        </Tabs>
+          {actionBusy ? t("den.cloud_provider_syncing") : t("den.cloud_provider_retry")}
+        </Button>
       ) : null}
-    </SettingsSection>
+    />
   );
 }
 
@@ -386,108 +244,45 @@ export interface CloudProvidersSectionProps {
   rows: CloudProviderRow[];
   onRefresh: () => void | Promise<void>;
   onRetry: (cloudProviderId: string) => void | Promise<void>;
+  onOpenDen?: () => void;
+  onOpenModelConnections?: () => void;
+  lastVerifiedAt?: string | number | null;
+  additionalRows?: React.ReactNode;
+  additionalCount?: number;
 }
 
-export function CloudProvidersSection({
-  actionError,
-  actionId,
-  busy,
-  rows,
-  onRefresh,
-  onRetry,
-}: CloudProvidersSectionProps) {
-  const { hasActiveOrg } = useCloudSession();
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
-  const statuses: CloudProviderRowStatus[] = [
-    "connected",
-    "syncing",
-    "error",
-    "conflict",
-    "blocked",
-    "needs_credential",
-    "needs_server",
-    "unavailable",
-  ];
-  const providerGroups = statuses
-    .map((status) => ({
-      value: status,
-      label: cloudProviderStatusLabel(status),
-      rows: visibleRows.filter((row) => row.status === status),
-    }))
-    .filter((group) => group.rows.length > 0);
-
-  return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>
-            {t("den.cloud_providers_title")}
-          </SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>{t("den.cloud_providers_hint")}</SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-        <SettingsSectionHeaderActions>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={[busy, !hasActiveOrg].some(Boolean)}
-            onClick={() => void onRefresh()}
-          >
-            {busy ? t("den.cloud_provider_syncing") : t("den.sync_now")}
-          </Button>
-        </SettingsSectionHeaderActions>
-      </SettingsSectionHeader>
-
-      {actionError ? <SettingsNotice tone="error">{actionError}</SettingsNotice> : null}
-
-      {!busy && rows.length === 0 ? (
-        <SettingsListEmptyState>
-          {hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}
-        </SettingsListEmptyState>
-      ) : null}
-
-      {rows.length > 0 ? (
-        <>
-          <Field>
-            <FieldLabel className="sr-only" htmlFor="cloud-provider-search">
-              Search
-            </FieldLabel>
-            <SettingsListSearchInput
-              id="cloud-provider-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.currentTarget.value)}
-            />
-            <FieldDescription className="sr-only">Search for a provider.</FieldDescription>
-          </Field>
-
-          {visibleRows.length > 0 ? (
-            <Accordion multiple defaultValue={statuses}>
-              {providerGroups.map((group) => (
-                <AccordionItem key={group.value} value={group.value}>
-                  <AccordionTrigger className="items-center hover:no-underline group gap-x-3">
-                    <span className="group-hover:underline">{group.label}</span>
-                    <SettingsPill>{group.rows.length}</SettingsPill>
-                  </AccordionTrigger>
-                  <AccordionContent className="px-1.5 pb-1.5">
-                    <SettingsList>
-                      {group.rows.map((row) => (
-                        <CloudProviderListItem
-                          key={row.key}
-                          actionId={actionId}
-                          row={row}
-                          onRetry={onRetry}
-                        />
-                      ))}
-                    </SettingsList>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          ) : (
-            <SettingsListEmptyState>No providers match your search.</SettingsListEmptyState>
-          )}
-        </>
-      ) : null}
-    </SettingsSection>
-  );
+export function CloudProvidersSection({ actionError, actionId, busy, rows, onRefresh, onRetry, onOpenDen, onOpenModelConnections, lastVerifiedAt, additionalRows, additionalCount = 0 }: CloudProvidersSectionProps) {
+  const { hasActiveOrg, activeOrgName } = useCloudSession();
+  const organizationName = activeOrgName || "your organization";
+  const verified = lastVerifiedAt ? new Date(lastVerifiedAt) : null;
+  const timestamp = verified && Number.isFinite(verified.getTime()) ? formatRelativeTime(verified.getTime()) : null;
+  const providerCount = rows.length + additionalCount;
+  const credentialCount = rows.filter((row) => row.credentialReady).length;
+  return <section className="flex flex-col gap-3" aria-labelledby="ai-providers-organization">
+    <div className="space-y-1">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+          {activeOrgName ? <OrganizationMark name={activeOrgName} /> : null}
+          <h2 id="ai-providers-organization" className="min-w-0 truncate text-base font-medium text-dls-text">From {organizationName}</h2>
+          <span className="shrink-0 rounded-full bg-blue-3 px-2 py-0.5 text-xs font-medium text-blue-11">Managed in Den</span>
+        </div>
+        <div className="-mr-2 flex shrink-0 items-center gap-1">
+          {onOpenModelConnections ? <Button variant="ghost" size="sm" onClick={onOpenModelConnections}>My model connections</Button> : null}
+          {onOpenDen ? <Button variant="ghost" size="sm" onClick={onOpenDen}>Open in Den<ArrowUpRight className="size-3.5" aria-hidden /></Button> : null}
+        </div>
+      </div>
+      <p className="text-sm text-muted-foreground">Your organization pays for and manages these. Members call them through the OpenWork Gateway; upstream credentials never reach this device.</p>
+    </div>
+    {actionError ? <SettingsNotice tone="error">{actionError}</SettingsNotice> : null}
+    {busy && !providerCount ? <div role="status" aria-label="Loading organization providers" className="grid gap-2">{[0, 1].map((key) => <div key={key} className="h-16 animate-pulse rounded-2xl bg-muted" />)}</div> : null}
+    {!busy && !providerCount ? <SettingsListEmptyState>{hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}</SettingsListEmptyState> : null}
+    {providerCount ? <ProviderList>
+      {rows.map((row) => <CloudProviderListItem key={row.key} actionId={actionId} row={row} onRetry={onRetry} />)}
+      {additionalRows}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-dls-surface-muted px-4 py-2.5 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-2"><RefreshCcw className="size-3.5" aria-hidden />{timestamp ? `Synced with Den ${timestamp}` : "Not synced with Den yet"} · {providerCount === 1 ? "1 provider" : `${providerCount} providers`}, {credentialCount === 1 ? "1 credential" : `${credentialCount} credentials`}</span>
+        <Button variant="ghost" size="sm" disabled={busy || !hasActiveOrg} onClick={() => void onRefresh()}>{busy ? "Syncing…" : "Sync now"}</Button>
+      </div>
+    </ProviderList> : null}
+  </section>;
 }

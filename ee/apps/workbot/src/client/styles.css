@@ -1,0 +1,48 @@
+@import "tailwindcss" source(none);
+@import "@openwork-ee/workbot-ui/styles.css";
+
+@source "./**/*.{ts,tsx}";
+@source "../../../../packages/workbot-ui/src/**/*.{ts,tsx}";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* The same quiet defaults Den's pages have, so Workbot looks the same on its own address. */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+
+  :disabled {
+    cursor: default;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: #fbfcfd;
+  -webkit-font-smoothing: antialiased;
+}

@@ -2,6 +2,37 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import type { PromptMode } from "../../../../app/types";
+import { z } from "zod";
+import { autoAccessWallSchema } from "@/app/lib/inference-access";
+
+export const rejectedTurnSchema = z.object({
+  id: z.string().min(1), text: z.string(), created: z.number().finite(), afterMessageId: z.string().nullable(),
+  wall: autoAccessWallSchema,
+  attachments: z.array(z.object({ name: z.string(), mime: z.string(), url: z.string().startsWith("file://").optional() })),
+});
+export type RejectedTurn = z.infer<typeof rejectedTurnSchema>;
+export const rejectedTurnOwnerSchema = z.object({ scopeId: z.string().nullable(), denBaseUrl: z.string().min(1), runtime: z.string().min(1), workspaceId: z.string().min(1), sessionId: z.string().min(1) });
+export type RejectedTurnOwner = z.infer<typeof rejectedTurnOwnerSchema>;
+const recoverySchema = z.object({ from: z.string(), id: z.string(), denBaseUrl: z.string(), expiresAt: z.number().finite() });
+export function rejectedTurnOwner(input: { draftScope: string | null; denBaseUrl: string; opencodeBaseUrl: string; workspaceId: string; sessionId: string; localRuntime: boolean }): RejectedTurnOwner {
+  let runtime = "";
+  let denBaseUrl = "";
+  try {
+    const url = new URL(input.opencodeBaseUrl);
+    const den = new URL(input.denBaseUrl);
+    runtime = input.localRuntime ? `desktop:${url.pathname}` : `${url.origin}${url.pathname}`;
+    denBaseUrl = `${den.origin}${den.pathname}`.replace(/\/+$/, "");
+  } catch {}
+  return { scopeId: input.draftScope, denBaseUrl, runtime, workspaceId: input.workspaceId, sessionId: input.sessionId };
+}
+export function rejectedTurnOwnerKey(owner: RejectedTurnOwner) {
+  return owner.scopeId && owner.denBaseUrl && owner.runtime && owner.workspaceId && owner.sessionId
+    ? JSON.stringify([owner.scopeId, owner.denBaseUrl, owner.runtime, owner.workspaceId, owner.sessionId]) : "";
+}
+const rejectedOwnerKeySchema = z.tuple([z.string(), z.string(), z.string(), z.string(), z.string()]);
+function rejectedOwnerParts(key: string) {
+  try { return rejectedOwnerKeySchema.parse(JSON.parse(key)); } catch { return null; }
+}
 
 export type SessionDraftSnapshot = {
   text: string;
@@ -36,6 +67,9 @@ type DraftDocument = {
   version: 2;
   nextRevision: number;
   drafts: Record<string, StoredDraft>;
+  rejected: Record<string, RejectedTurn[]>;
+  recovery: z.infer<typeof recoverySchema> | null;
+  moved: Record<string, string>;
 };
 
 type DraftStorage = {
@@ -69,6 +103,9 @@ const EMPTY_DOCUMENT: DraftDocument = {
   version: 2,
   nextRevision: 1,
   drafts: {},
+  rejected: {},
+  recovery: null,
+  moved: {},
 };
 
 const isPromptMode = (value: unknown): value is PromptMode =>
@@ -139,10 +176,21 @@ function parseDocument(raw: string | null): DraftDocument {
       ? parsed.nextRevision
       : 1;
 
+    const rejected: Record<string, RejectedTurn[]> = {};
+    if (isRecord(parsed.rejected)) for (const [key, rows] of Object.entries(parsed.rejected)) {
+      if (!rejectedOwnerParts(key) || !Array.isArray(rows)) continue;
+      const turns = rows.flatMap((row) => { const result = rejectedTurnSchema.safeParse(row); return result.success ? [result.data] : []; });
+      if (turns.length) rejected[key] = [...new Map(turns.map((turn) => [turn.id, turn])).values()];
+    }
+    const recovery = recoverySchema.safeParse(parsed.recovery);
+    const moved: Record<string, string> = {};
+    if (isRecord(parsed.moved)) for (const [key, destination] of Object.entries(parsed.moved)) {
+      if (typeof destination === "string" && rejectedOwnerParts(destination)) moved[key] = destination;
+    }
     return {
       version: 2,
       nextRevision: Math.max(declaredNextRevision, highestRevision + 1),
-      drafts,
+      drafts, rejected, recovery: recovery.success ? recovery.data : null, moved,
     };
   } catch {
     return EMPTY_DOCUMENT;
@@ -279,6 +327,7 @@ export function createSessionDraftStore(options: DraftStoreOptions) {
     for (const [oldestKey] of oldest) delete drafts[oldestKey];
 
     const nextDocument: DraftDocument = {
+      ...latestDocument,
       version: 2,
       nextRevision: entry === null ? latestDocument.nextRevision : entry.revision + 1,
       drafts,
@@ -337,11 +386,60 @@ export function createSessionDraftStore(options: DraftStoreOptions) {
     });
   };
 
+  const getRejected = (owner: RejectedTurnOwner): readonly RejectedTurn[] => loadCache().rejected[rejectedTurnOwnerKey(owner)] ?? [];
+  const saveRejected = (owner: RejectedTurnOwner, turn: RejectedTurn, queue?: { remaining: string[] }): "saved" | "unavailable" => {
+    const key = rejectedTurnOwnerKey(owner);
+    const parsed = rejectedTurnSchema.safeParse(turn);
+    if (!key || !parsed.success) return "unavailable";
+    const latest = parseDocument(readRaw());
+    const movedKey = JSON.stringify([key, turn.id]);
+    const destination = latest.moved[movedKey] ?? key;
+    const rows = latest.rejected[destination] ?? [];
+    const existing = rows.find((row) => row.id === turn.id);
+    const entry = existing ? { ...existing, attachments: parsed.data.attachments.some((file) => file.url) ? parsed.data.attachments : existing.attachments } : parsed.data;
+    const rejected = { ...latest.rejected, [destination]: existing ? rows.map((row) => row.id === turn.id ? entry : row) : [...rows, entry] };
+    const drafts = { ...latest.drafts };
+    if (queue) {
+      const draftKey = sessionDraftScopeKey(owner.scopeId, owner.workspaceId, owner.sessionId);
+      const previous = drafts[draftKey];
+      const next = { text: previous?.text ?? "", mode: previous?.mode ?? "prompt", queued: queue.remaining, revision: latest.nextRevision } satisfies StoredDraft;
+      if (isEmptyStoredDraft(next)) delete drafts[draftKey]; else drafts[draftKey] = next;
+    }
+    return write({ ...latest, nextRevision: latest.nextRevision + 1, rejected, drafts }) ? "saved" : "unavailable";
+  };
+  const beginRejectedRecovery = (owner: RejectedTurnOwner, id: string, now = Date.now()) => {
+    const from = rejectedTurnOwnerKey(owner);
+    const latest = parseDocument(readRaw());
+    if (owner.scopeId !== LOCAL_SESSION_DRAFT_SCOPE || !latest.rejected[from]?.some((turn) => turn.id === id)) return false;
+    return write({ ...latest, recovery: { from, id, denBaseUrl: owner.denBaseUrl, expiresAt: now + 30 * 60_000 } });
+  };
+  const claimRejectedRecovery = (denBaseUrl: string, identity: SessionDraftIdentity, now = Date.now()) => {
+    const latest = parseDocument(readRaw());
+    const recovery = latest.recovery;
+    const scope = cloudSessionDraftScope(identity);
+    if (!scope || !recovery || recovery.denBaseUrl !== denBaseUrl.replace(/\/+$/, "") || recovery.expiresAt < now) return false;
+    const parts = rejectedOwnerParts(recovery.from);
+    const turn = latest.rejected[recovery.from]?.find((row) => row.id === recovery.id);
+    if (!parts || parts[0] !== LOCAL_SESSION_DRAFT_SCOPE || parts[1] !== recovery.denBaseUrl || !turn) return false;
+    const destination = JSON.stringify([scope, ...parts.slice(1)]);
+    const rejected = { ...latest.rejected,
+      [recovery.from]: latest.rejected[recovery.from].filter((row) => row.id !== turn.id),
+      [destination]: [...(latest.rejected[destination] ?? []).filter((row) => row.id !== turn.id), turn],
+    };
+    if (!rejected[recovery.from].length) delete rejected[recovery.from];
+    return write({ ...latest, rejected, recovery: null, moved: { ...latest.moved, [JSON.stringify([recovery.from, turn.id])]: destination } });
+  };
+
   return {
     get,
     save,
     saveQueued,
     clear,
+    getRejected,
+    hasMovedRejected: (owner: RejectedTurnOwner, id: string) => Boolean(loadCache().moved[JSON.stringify([rejectedTurnOwnerKey(owner), id])]),
+    saveRejected,
+    beginRejectedRecovery,
+    claimRejectedRecovery,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -409,6 +507,17 @@ export const clearSessionDraft = (
 /** `scopeKey` is a composed `sessionDraftScopeKey`, the form the composer store records per session. */
 export const saveSessionQueuedDrafts = (scopeKey: string, queued: readonly string[]) =>
   getBrowserStore()?.saveQueued(scopeKey, queued) ?? { status: "unavailable", snapshot: null };
+
+export const saveRejectedTurn = (owner: RejectedTurnOwner, turn: RejectedTurn, queue?: { remaining: string[] }) =>
+  getBrowserStore()?.saveRejected(owner, turn, queue) ?? "unavailable";
+export const beginRejectedTurnRecovery = (owner: RejectedTurnOwner, id: string) => getBrowserStore()?.beginRejectedRecovery(owner, id) ?? false;
+export const claimRejectedTurnRecovery = (denBaseUrl: string, identity: SessionDraftIdentity) => getBrowserStore()?.claimRejectedRecovery(denBaseUrl, identity) ?? false;
+export const getRejectedTurns = (owner: RejectedTurnOwner) => getBrowserStore()?.getRejected(owner) ?? [];
+export const hasMovedRejectedTurn = (owner: RejectedTurnOwner, id: string) => getBrowserStore()?.hasMovedRejected(owner, id) ?? false;
+export function useRejectedTurns(owner: RejectedTurnOwner) {
+  const serialized = useSyncExternalStore(subscribeBrowserDraftStore, () => JSON.stringify(getRejectedTurns(owner)), () => "[]");
+  return useMemo(() => z.array(rejectedTurnSchema).parse(JSON.parse(serialized)), [serialized]);
+}
 
 export function useSessionDraftState(
   scopeId: string | null | undefined,

@@ -74,9 +74,3 @@ export function applyFontZoom(rootStyle: Pick<CSSStyleDeclaration, "setProperty"
   rootStyle.setProperty("--openwork-font-size", `${px}px`);
   return normalized;
 }
-
-export async function applyWebviewZoom(target: FontZoomTarget, value: number): Promise<number> {
-  const normalized = normalizeFontZoom(value);
-  await target.setZoom(normalized);
-  return normalized;
-}

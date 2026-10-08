@@ -1,8 +1,6 @@
 import { randomBytes } from "node:crypto"
-import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
-  AuditEventTable,
-  AuthUserTable,
   CloudRuntimeInstanceTable,
   DaytonaSandboxTable,
   MemberTable,
@@ -13,7 +11,6 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { requireCloudWorkerAccess } from "../../billing/polar.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { keysetCursorQuerySchema } from "../../list-pagination.js"
@@ -30,32 +27,14 @@ import {
   createCloudStartupFailure,
   type CloudStartupFailure,
 } from "../../workers/cloud-failure.js"
-import { customDomainForWorker } from "../../workers/vanity-domain.js"
-import { resolveCloudRuntimeAccess } from "../../workers/worker-access.js"
-import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
-import { cloudRuntimeConfigured, endpointKindForProvider, isCloudRuntimeProviderId } from "../../workers/cloud-runtime.js"
-import { fetchPreviewNoRedirect } from "../../workers/preview-fetch.js"
+import { endpointKindForProvider, isCloudRuntimeProviderId } from "../../workers/cloud-runtime.js"
 import {
   getOpenWorkWebRuntimeAccess,
-  openWorkWebAccessRequiredPayload,
   requireOpenWorkWebRuntimeAccess,
   type OpenWorkWebRuntimeAccessResolver,
 } from "../../openwork-web-runtime-access.js"
 
 const logger = appLogger.child({ component: "worker_routes" })
-
-export const createWorkerSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  destination: z.enum(["local", "cloud"]),
-  workspacePath: z.string().optional(),
-  sandboxBackend: z.string().optional(),
-  imageVersion: z.string().optional(),
-})
-
-export const updateWorkerSchema = z.object({
-  name: z.string().trim().min(1).max(255),
-})
 
 export const listWorkersQuerySchema = z.object({
   cursor: keysetCursorQuerySchema.optional(),
@@ -80,14 +59,8 @@ type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
 type WorkerStatus = WorkerRow["status"]
 export type WorkerId = WorkerRow["id"]
 type OrgId = typeof MemberTable.$inferSelect.organizationId
-type UserId = typeof AuthUserTable.$inferSelect.id
 type ProvisionWorker = typeof provisionWorker
 type ProvisionedWorker = Awaited<ReturnType<ProvisionWorker>>
-type ResolveCloudRuntimeAccess = typeof resolveCloudRuntimeAccess
-type LoadActiveWorkerTokens = (workerId: WorkerId) => Promise<Array<{
-  scope: typeof WorkerTokenTable.$inferSelect.scope
-  token: string
-}>>
 type CloudProvisioningStore = {
   updateWorkerStatus: (input: {
     workerId: WorkerId
@@ -156,100 +129,8 @@ export function persistedWorkerInstanceUrl(provisioned: Pick<ProvisionedWorker, 
     : provisioned.url
 }
 
-export function workerSandboxBackend(input: Pick<z.infer<typeof createWorkerSchema>, "destination" | "sandboxBackend">) {
-  if (input.destination === "cloud" && cloudRuntimeConfigured()) return CLOUD_INSTANCE_BACKEND
-  return input.sandboxBackend ?? null
-}
-
 export function parseWorkerIdParam(value: string): WorkerId {
   return normalizeDenTypeId("worker", value)
-}
-
-export function parseUserId(value: string): UserId {
-  return normalizeDenTypeId("user", value)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
-}
-
-function normalizeUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "")
-}
-
-function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openworkUrl: string } | null {
-  if (!isRecord(payload) || !Array.isArray(payload.items)) {
-    return null
-  }
-
-  const activeId = typeof payload.activeId === "string" && payload.activeId.trim() ? payload.activeId.trim() : null
-  let workspaceId = activeId
-
-  if (!workspaceId) {
-    for (const item of payload.items) {
-      if (isRecord(item) && typeof item.id === "string" && item.id.trim()) {
-        workspaceId = item.id.trim()
-        break
-      }
-    }
-  }
-
-  const baseUrl = typeof payload.baseUrl === "string" ? normalizeUrl(payload.baseUrl) : ""
-  if (!workspaceId || !baseUrl) {
-    return null
-  }
-
-  return {
-    workspaceId,
-    openworkUrl: `${baseUrl}/w/${encodeURIComponent(workspaceId)}`,
-  }
-}
-
-async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string, fetchImpl: typeof fetch = fetch) {
-  const baseUrl = normalizeUrl(instanceUrl)
-  if (!baseUrl || !clientToken.trim()) {
-    return null
-  }
-
-  try {
-    const response = await fetchPreviewNoRedirect(fetchImpl, `${baseUrl}/workspaces`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${clientToken.trim()}`,
-      },
-    })
-
-    if (!response.ok) {
-      return null
-    }
-
-    const payload = (await response.json()) as unknown
-    const selected = parseWorkspaceSelection({
-      ...(isRecord(payload) ? payload : {}),
-      baseUrl,
-    })
-    return selected
-  } catch {
-    return null
-  }
-}
-
-function getConnectUrlCandidates(workerId: WorkerId, instanceUrl: string | null) {
-  const candidates: string[] = []
-  const vanityHostname = customDomainForWorker(workerId, env.render.workerPublicDomainSuffix)
-  if (vanityHostname) {
-    candidates.push(`https://${vanityHostname}`)
-  }
-
-  if (instanceUrl) {
-    const normalized = normalizeUrl(instanceUrl)
-    if (normalized && !candidates.includes(normalized)) {
-      candidates.push(normalized)
-    }
-  }
-
-  return candidates
 }
 
 export function readBearerToken(value: string | undefined) {
@@ -259,14 +140,6 @@ export function readBearerToken(value: string | undefined) {
   }
   const tokenValue = trimmed.slice(7).trim()
   return tokenValue ? tokenValue : null
-}
-
-export function cloudWorkerCompatibilityUrl(workerId: WorkerId, apiPublicUrl: string | undefined, workspaceId?: string | null) {
-  if (!apiPublicUrl) return null
-  const base = apiPublicUrl.replace(/\/+$/, "")
-  const route = `${base}/v1/cloud/workers/${encodeURIComponent(workerId)}`
-  const workspace = workspaceId?.trim()
-  return workspace ? `${route}/w/${encodeURIComponent(workspace)}` : route
 }
 
 export function parseHeartbeatTimestamp(value: string | null | undefined) {
@@ -290,122 +163,6 @@ export function newerDate(current: Date | null | undefined, candidate: Date | nu
   return candidate.getTime() > current.getTime() ? candidate : current
 }
 
-async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: string | null, clientToken: string) {
-  const candidates = getConnectUrlCandidates(workerId, instanceUrl)
-  for (const candidate of candidates) {
-    const resolved = await resolveConnectUrlFromWorker(candidate, clientToken)
-    if (resolved) {
-      return resolved
-    }
-  }
-  return null
-}
-
-async function getWorkerRuntimeAccess(worker: WorkerRow, resolveCloudAccess: ResolveCloudRuntimeAccess) {
-  if (worker.destination === "cloud" && worker.sandbox_backend === CLOUD_INSTANCE_BACKEND) {
-    const resolved = await resolveCloudAccess({ organizationId: worker.org_id, workerId: worker.id })
-    if (resolved.status !== "ready") return null
-    return { hostToken: resolved.hostToken, candidates: [resolved.url] }
-  }
-
-  const instance = await getLatestWorkerInstance(worker.id)
-  const tokenRows = await db
-    .select()
-    .from(WorkerTokenTable)
-    .where(and(eq(WorkerTokenTable.worker_id, worker.id), isNull(WorkerTokenTable.revoked_at)))
-    .orderBy(asc(WorkerTokenTable.created_at))
-
-  const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
-  if (!instance?.url || !hostToken) {
-    return null
-  }
-
-  return {
-    instance,
-    hostToken,
-    candidates: getConnectUrlCandidates(worker.id, instance.url),
-  }
-}
-
-export async function fetchWorkerRuntimeJson(input: {
-  worker: WorkerRow
-  path: string
-  method?: "GET" | "POST"
-  body?: unknown
-}, options: {
-  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
-  resolveCloudAccess?: ResolveCloudRuntimeAccess
-  fetchImpl?: typeof fetch
-} = {}) {
-  // Published desktops hold cloud worker tokens only after OpenWorkWebAccessGate
-  // (v0.18.42+) granted Web access; this recheck covers lapsed entitlement and
-  // callers that bypass the gate. See openwork-web-runtime-access.ts.
-  if (input.worker.destination === "cloud") {
-    const webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(input.worker.org_id)
-    if (!webAccess.hasAccess) {
-      return {
-        ok: false as const,
-        status: 403,
-        payload: openWorkWebAccessRequiredPayload(),
-      }
-    }
-  }
-  const access = await getWorkerRuntimeAccess(input.worker, options.resolveCloudAccess ?? resolveCloudRuntimeAccess)
-  if (!access) {
-    return {
-      ok: false as const,
-      status: 409,
-      payload: {
-        error: "worker_runtime_unavailable",
-        message: "Worker runtime access is not ready yet. Wait for provisioning to finish and try again.",
-      },
-    }
-  }
-
-  let lastPayload: unknown = null
-  let lastStatus = 502
-
-  for (const candidate of access.candidates) {
-    try {
-      const response = await fetchPreviewNoRedirect(options.fetchImpl ?? fetch, `${normalizeUrl(candidate)}${input.path}`, {
-        method: input.method ?? "GET",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "X-OpenWork-Host-Token": access.hostToken,
-        },
-        body: input.body === undefined ? undefined : JSON.stringify(input.body),
-      })
-
-      const text = await response.text()
-      lastStatus = response.status
-      try {
-        lastPayload = text ? JSON.parse(text) : null
-      } catch {
-        lastPayload = text ? { message: text } : null
-      }
-
-      if (response.ok) {
-        return { ok: true as const, status: response.status, payload: lastPayload }
-      }
-    } catch (error) {
-      lastPayload = { message: error instanceof Error ? error.message : "worker_request_failed" }
-    }
-  }
-
-  return { ok: false as const, status: lastStatus, payload: lastPayload }
-}
-
-export async function countUserCloudWorkers(userId: UserId) {
-  const rows = await db
-    .select({ id: WorkerTable.id })
-    .from(WorkerTable)
-    .where(and(eq(WorkerTable.created_by_user_id, userId), eq(WorkerTable.destination, "cloud")))
-    .limit(2)
-
-  return rows.length
-}
-
 export async function getLatestWorkerInstance(workerId: WorkerId) {
   const rows = await db
     .select()
@@ -415,14 +172,6 @@ export async function getLatestWorkerInstance(workerId: WorkerId) {
     .limit(1)
 
   return rows[0] ?? null
-}
-
-async function loadActiveWorkerTokens(workerId: WorkerId) {
-  return db
-    .select({ scope: WorkerTokenTable.scope, token: WorkerTokenTable.token })
-    .from(WorkerTokenTable)
-    .where(and(eq(WorkerTokenTable.worker_id, workerId), isNull(WorkerTokenTable.revoked_at)))
-    .orderBy(asc(WorkerTokenTable.created_at))
 }
 
 export function toInstanceResponse(instance: WorkerInstanceRow | null) {
@@ -440,6 +189,14 @@ export function toInstanceResponse(instance: WorkerInstanceRow | null) {
     createdAt: instance.created_at,
     updatedAt: instance.updated_at,
   }
+}
+
+export function canControlWorker(worker: Pick<WorkerRow, "destination" | "created_by_user_id">, userId: string | undefined) {
+  return worker.destination === "local" || Boolean(userId && worker.created_by_user_id === userId)
+}
+
+export function workerControlForbiddenPayload() {
+  return { error: "forbidden", message: "Only the worker owner can access or control this cloud worker." }
 }
 
 export function toWorkerResponse(row: WorkerRow, userId: string) {
@@ -575,119 +332,6 @@ export async function continueCloudProvisioning(input: {
   return promise
 }
 
-export async function requireCloudAccessOrPayment(input: {
-  userId: UserId
-  email: string
-  name: string
-}) {
-  return requireCloudWorkerAccess(input)
-}
-
-export async function getWorkerTokensAndConnect(worker: WorkerRow, options: {
-  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
-  resolveCloudAccess?: ResolveCloudRuntimeAccess
-  loadActiveTokens?: LoadActiveWorkerTokens
-  fetchImpl?: typeof fetch
-  includeExpiringOpenworkUrl?: boolean
-  apiPublicUrl?: string
-} = {}) {
-  // Same rollout note as fetchWorkerRuntimeJson: the desktop gate already ran
-  // before a published client asks for cloud worker tokens.
-  if (worker.destination === "cloud") {
-    const webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(worker.org_id)
-    if (!webAccess.hasAccess) {
-      return {
-        error: {
-          status: 403,
-          body: openWorkWebAccessRequiredPayload(),
-        },
-      }
-    }
-  }
-  if (worker.destination === "cloud" && worker.sandbox_backend === CLOUD_INSTANCE_BACKEND) {
-    const tokenRows = await (options.loadActiveTokens ?? loadActiveWorkerTokens)(worker.id)
-    const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
-    const clientToken = tokenRows.find((entry) => entry.scope === "client")?.token ?? null
-    if (!hostToken || !clientToken) {
-      return {
-        error: {
-          status: 409,
-          body: {
-            error: "worker_tokens_unavailable",
-            message: "Worker tokens are missing for this worker. Launch a new worker and try again.",
-          },
-        },
-      }
-    }
-
-    const stableRootUrl = cloudWorkerCompatibilityUrl(worker.id, options.apiPublicUrl ?? env.apiPublicUrl)
-    if (!options.includeExpiringOpenworkUrl) {
-      return {
-        tokens: { owner: hostToken, host: hostToken, client: clientToken },
-        connect: stableRootUrl ? { openworkUrl: stableRootUrl, workspaceId: null } : null,
-      }
-    }
-
-    const resolved = await (options.resolveCloudAccess ?? resolveCloudRuntimeAccess)({ organizationId: worker.org_id, workerId: worker.id })
-      .catch(() => null)
-    const previewConnect = resolved?.status === "ready"
-      ? await resolveConnectUrlFromWorker(resolved.url, clientToken, options.fetchImpl)
-      : null
-    const stableOpenworkUrl = cloudWorkerCompatibilityUrl(
-      worker.id,
-      options.apiPublicUrl ?? env.apiPublicUrl,
-      previewConnect?.workspaceId,
-    )
-    return {
-      tokens: { owner: hostToken, host: hostToken, client: clientToken },
-      connect: stableOpenworkUrl
-        ? { openworkUrl: stableOpenworkUrl, workspaceId: previewConnect?.workspaceId ?? null }
-        : null,
-      directPreview: resolved?.status === "ready" && previewConnect
-        ? {
-            version: 1 as const,
-            openworkUrl: previewConnect.openworkUrl,
-            workspaceId: previewConnect.workspaceId,
-            expiresAt: resolved.expiresAt.toISOString(),
-          }
-        : null,
-    }
-  }
-
-  const tokenRows = await db
-    .select()
-    .from(WorkerTokenTable)
-    .where(and(eq(WorkerTokenTable.worker_id, worker.id), isNull(WorkerTokenTable.revoked_at)))
-    .orderBy(asc(WorkerTokenTable.created_at))
-
-  const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
-  const clientToken = tokenRows.find((entry) => entry.scope === "client")?.token ?? null
-
-  if (!hostToken || !clientToken) {
-    return {
-      error: {
-        status: 409,
-        body: {
-          error: "worker_tokens_unavailable",
-          message: "Worker tokens are missing for this worker. Launch a new worker and try again.",
-        },
-      },
-    }
-  }
-
-  const instance = await getLatestWorkerInstance(worker.id)
-  const connect = await resolveConnectUrlFromCandidates(worker.id, instance?.url ?? null, clientToken)
-
-  return {
-    tokens: {
-      owner: hostToken,
-      host: hostToken,
-      client: clientToken,
-    },
-    connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
-  }
-}
-
 export async function deleteWorkerCascade(worker: WorkerRow) {
   const instance = await getLatestWorkerInstance(worker.id)
 
@@ -708,7 +352,8 @@ export async function deleteWorkerCascade(worker: WorkerRow) {
     await tx.delete(DaytonaSandboxTable).where(eq(DaytonaSandboxTable.worker_id, worker.id))
     await tx.delete(WorkerInstanceTable).where(eq(WorkerInstanceTable.worker_id, worker.id))
     await tx.delete(WorkerBundleTable).where(eq(WorkerBundleTable.worker_id, worker.id))
-    await tx.delete(AuditEventTable).where(eq(AuditEventTable.worker_id, worker.id))
+    // Audit references outlive the resource. Organization erasure owns purging;
+    // deleting a worker must not remove either legacy or operation history.
     await tx.delete(WorkerTable).where(eq(WorkerTable.id, worker.id))
   })
 }

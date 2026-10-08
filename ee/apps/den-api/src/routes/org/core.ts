@@ -7,11 +7,10 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { verifyBotProtection } from "../../bot-protection.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
 import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
-import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
@@ -20,8 +19,10 @@ import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodF
 import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
-import { organizationHasCapability } from "../../organization-capabilities.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
+import { getOrganizationFeatures } from "../../features.js"
+import { appMcpServersEnabled } from "../../mcp-app-rollout.js"
+import { workbotOrigin } from "../../workbot/config.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
@@ -172,8 +173,21 @@ const organizationContextResponseSchema = z.object({
   }).passthrough(),
   currentMember: z.object({}).passthrough(),
   currentMemberTeams: z.array(z.object({}).passthrough()),
-  capabilities: z.object({ gatewayDashboard: z.boolean() }).passthrough(),
+  capabilities: z.object({
+    auditLogs: z.boolean(),
+    gatewayDashboard: z.literal(true).meta({
+      deprecated: true,
+      description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
+    }),
+  }).passthrough(),
+  /**
+   * Effective on/off for every registry feature (packages/features/src/registry.ts).
+   * New clients read this; `capabilities` is frozen for published clients.
+   * A key missing here means an older server: treat it as off.
+   */
+  features: z.record(z.string(), z.boolean()).meta({ description: "Effective on/off for every OpenWork feature in this organization. Treat a missing key as off." }),
   deploymentCapabilities: deploymentCapabilitiesSchema,
+  entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), auditLogs: z.boolean() }),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
 const userEmailRequiredSchema = z.object({
@@ -354,6 +368,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
+    // The invitation token proves its organization: served evidence there
+    // (category read), actor unknown; the token itself is never recorded.
+    await attributeAuditRequest(c, { organizationId: invitation.organization.id, actor: { type: "unknown", id: null }, principalKey: "unknown:invitation_token" })
+
     return c.json(invitation)
     },
   )
@@ -395,11 +413,22 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     }
 
     let accepted: AcceptInvitationForUserResult | null = null
+    let auditBlocked: Response | null = null
     try {
       accepted = await acceptInvitationForUser({
         userId: normalizeDenTypeId("user", user.id),
         email,
         invitationId: input.id,
+        // The invitation matched the verified session user's email: its
+        // organization is the tenant; the invitee has no member id yet.
+        beforeEffect: async (invitation) => {
+          const attribution = auditSessionUserAttribution(user.id)
+          if (!attribution) return true
+          const audited = await attributeAuditRequest(c, { organizationId: invitation.organizationId, ...attribution })
+          if (audited.ok) return true
+          auditBlocked = audited.response
+          return false
+        },
       })
     } catch (error) {
       if (error instanceof OrganizationEmailDomainRestrictionError) {
@@ -415,6 +444,10 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     if (!accepted) {
       return c.json({ error: "invitation_not_found" }, 404)
+    }
+
+    if (accepted.status === "blocked") {
+      return auditBlocked ?? c.json({ error: "audit_unavailable" }, 503)
     }
 
     if (accepted.status === "membership_removed") {
@@ -671,11 +704,14 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         c.set("organizationContext", payload)
       }
 
+      const [currentOrganization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, payload.organization.id)).limit(1)
+      if (!currentOrganization) return c.json({ error: "organization_not_found" }, 404)
+      const features = await getOrganizationFeatures(payload.organization.id)
       const owner = payload.members.find((member: typeof payload.members[number]) => member.isOwner) ?? null
       // Cloud is entitled by OpenWork Web access (paid subscription or the
       // platform-admin complimentary grant) on hosted deployments; there is no
       // separate per-organization Cloud rollout flag.
-      const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode })
+      const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })
         && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
       const [ssoRows, scimRows] = await Promise.all([
         db
@@ -707,31 +743,35 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
         deploymentCapabilities: deploymentCapabilities(),
-        plan: parseOrganizationPlan(payload.organization.metadata),
-        entitlements: getOrganizationEntitlements(payload.organization.metadata),
+        plan: parseOrganizationPlan(currentOrganization.metadata),
+        entitlements: getOrganizationEntitlements(currentOrganization.metadata),
+        features,
+        // Frozen for published clients; new clients read `features`.
         capabilities: {
-          // Dashboard exposure only; inference and provider synchronization are unaffected.
-          gatewayDashboard: organizationHasCapability(payload.organization.metadata, "gatewayDashboard"),
+          auditLogs: features.auditLogs && env.auditVisibilityEnabled,
+          gatewayDashboard: true,
           // Protocol capability: clients must see this explicit signal before
           // calling the dashboard routes. Older Den versions omit the field,
           // allowing newer Desktop builds to fail closed during a staggered
           // rollout instead of calling an endpoint that does not exist yet.
-          orgManagedDashboards: true,
+          // Per-organization and default-off: platform admins enable it in /admin.
+          orgManagedDashboards: features.orgManagedDashboards,
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
-          mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {
-            gatingEnabled: env.mcpConnectionsGatingEnabled,
-          }),
+          mcpConnections: features.mcpConnections,
+          // Building your own Apps is on for every organization unless the
+          // deployment or the org's member-facing MCP connections turn it off.
+          appMcpServers: appMcpServersEnabled(features),
           // Workflows/Code Mode are enabled for every organization; the field
           // remains for published clients that still read it.
           workflows: true,
-          installLinks: organizationInstallLinksEnabled(payload.organization.metadata, {
-            gatingEnabled: env.installLinksGatingEnabled,
-          }),
+          installLinks: features.installLinks,
           // Effective offer: the deployment switch enables Web generally,
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.
           openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
+          // Workbot is its own app (DEN_WORKBOT_URL), per-organization and default-off.
+          workbot: features.workbot && workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),
         },
         authMethods: {

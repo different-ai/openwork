@@ -45,7 +45,12 @@ const partSchema = z
     text: z.string().optional(),
     tool: z.string().optional(),
     callID: z.string().optional(),
-    state: z.object({ status: z.string().optional() }).passthrough().optional(),
+    state: z.object({
+      status: z.string().optional(),
+      input: z.unknown().optional(),
+      output: z.unknown().optional(),
+      error: z.unknown().optional(),
+    }).passthrough().optional(),
     synthetic: z.boolean().optional(),
     ignored: z.boolean().optional(),
   })
@@ -96,8 +101,8 @@ export const threadSnapshotSchema = z.object({
   status: threadStatusSchema,
 });
 
-type SessionWire = z.infer<typeof sessionSchema>;
-type MessageWire = z.infer<typeof messageSchema>;
+export type SessionWire = z.infer<typeof sessionSchema>;
+export type MessageWire = z.infer<typeof messageSchema>;
 type PartWire = z.infer<typeof partSchema>;
 type TodoWire = z.infer<typeof todoSchema>;
 
@@ -112,6 +117,9 @@ function toPart(part: PartWire): HeadlessThreadMessagePart {
   if (part.tool !== undefined) mapped.tool = part.tool;
   if (part.callID !== undefined) mapped.callId = part.callID;
   if (part.state?.status !== undefined) mapped.toolStatus = part.state.status;
+  if (part.state?.input !== undefined) mapped.toolInput = part.state.input;
+  if (typeof part.state?.output === "string") mapped.toolOutput = part.state.output;
+  if (typeof part.state?.error === "string") mapped.toolError = part.state.error;
   if (part.synthetic !== undefined) mapped.synthetic = part.synthetic;
   if (part.ignored !== undefined) mapped.ignored = part.ignored;
   return mapped;

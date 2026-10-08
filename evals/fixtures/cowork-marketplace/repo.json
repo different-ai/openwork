@@ -1,0 +1,28 @@
+{
+  "repo": {
+    "owner": "acme-labs",
+    "repo": "cowork-plugins",
+    "ref": "main"
+  },
+  "files": {
+    "README.md": "# Cowork plugins\n",
+    ".claude-plugin/marketplace.json": "{\n  \"name\": \"cowork-plugins\",\n  \"owner\": {\n    \"name\": \"Acme Labs\"\n  },\n  \"plugins\": [\n    {\n      \"name\": \"productivity\",\n      \"displayName\": \"Productivity\",\n      \"source\": \"./productivity\",\n      \"description\": \"Plan your day and track tasks.\"\n    },\n    {\n      \"name\": \"sales\",\n      \"displayName\": \"Sales\",\n      \"source\": \"./sales\",\n      \"description\": \"Prep calls and review pipeline.\"\n    },\n    {\n      \"name\": \"brand-voice\",\n      \"displayName\": \"Brand Voice\",\n      \"source\": \"./partner-built/brand-voice\",\n      \"description\": \"Keep writing on brand.\"\n    },\n    {\n      \"name\": \"remote-partner\",\n      \"source\": {\n        \"source\": \"git-subdir\",\n        \"url\": \"https://github.com/acme-partner/plugin.git\",\n        \"path\": \"src\",\n        \"ref\": \"main\"\n      },\n      \"description\": \"Lives in another repository.\"\n    }\n  ]\n}\n",
+    "productivity/.claude-plugin/plugin.json": "{\n  \"name\": \"productivity\",\n  \"version\": \"1.2.0\",\n  \"description\": \"Plan your day and track tasks.\"\n}\n",
+    "productivity/.mcp.json": "{\n  \"mcpServers\": {\n    \"slack\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.slack.com/mcp\",\n      \"oauth\": {\n        \"clientId\": \"cowork-registered-client\",\n        \"callbackPort\": 3118\n      }\n    },\n    \"notion\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.notion.com/mcp\"\n    },\n    \"gmail\": {\n      \"type\": \"http\",\n      \"url\": \"\"\n    },\n    \"google calendar\": {\n      \"type\": \"http\",\n      \"url\": \"\"\n    }\n  }\n}\n",
+    "productivity/skills/start/SKILL.md": "---\nname: start\ndescription: Set up the task dashboard for this folder.\nargument-hint: \"[topic]\"\nallowed-tools: Read, Grep\n---\n\nIf `dashboard.html` is missing, copy it from `${CLAUDE_PLUGIN_ROOT}/skills/dashboard.html` to the current folder.\n",
+    "productivity/skills/task-management/SKILL.md": "---\nname: task-management\ndescription: Track tasks in TASKS.md.\nargument-hint: \"[topic]\"\nallowed-tools: Read, Grep\n---\n\nKeep TASKS.md up to date.\n",
+    "productivity/skills/dashboard.html": "<!doctype html><title>Tasks</title>\n",
+    "sales/.claude-plugin/plugin.json": "{\n  \"name\": \"sales\",\n  \"version\": \"2.0.1\",\n  \"description\": \"Prep calls and review pipeline.\"\n}\n",
+    "sales/.mcp.json": "{\n  \"mcpServers\": {\n    \"slack\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.slack.com/mcp\",\n      \"oauth\": {\n        \"clientId\": \"cowork-registered-client\",\n        \"callbackPort\": 3118\n      }\n    },\n    \"notion\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.notion.com/mcp\"\n    },\n    \"hubspot\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.hubspot.com/anthropic\"\n    },\n    \"microsoft-365\": {\n      \"type\": \"http\",\n      \"url\": \"https://microsoft365.mcp.claude.com/mcp\"\n    },\n    \"salesforce\": {\n      \"type\": \"http\",\n      \"url\": \"https://api.salesforce.com/platform/mcp/v1/platform/headless-360\"\n    },\n    \"close\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.close.com/mcp\"\n    },\n    \"gong\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.gong.io/mcp\"\n    },\n    \"zoominfo\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.zoominfo.com/mcp\"\n    },\n    \"gmail\": {\n      \"type\": \"http\",\n      \"url\": \"\"\n    }\n  }\n}\n",
+    "sales/CONNECTORS.md": "# Connectors\nConnect one CRM: ~~CRM.\n",
+    "sales/skills/call-prep/SKILL.md": "---\nname: call-prep\ndescription: Brief me before a customer call.\nargument-hint: \"[topic]\"\nallowed-tools: Read, Grep\n---\n\nPull account history from ~~CRM.\n",
+    "sales/skills/forecast/SKILL.md": "---\nname: forecast\ndescription: Write the weekly forecast.\nargument-hint: \"[topic]\"\nallowed-tools: Read, Grep\n---\n\nUse the template in references/forecast-template.md.\n",
+    "sales/skills/forecast/references/forecast-template.md": "# Forecast\n| Deal | Stage |\n",
+    "sales/skills/deal-review/SKILL.md": "---\nname: deal-review\ndescription: Review one deal.\nargument-hint: \"[topic]\"\nallowed-tools: Read, Grep\n---\n\nSummarize risks.\n",
+    "partner-built/brand-voice/.claude-plugin/plugin.json": "{\n  \"name\": \"brand-voice\",\n  \"version\": \"1.0.0\",\n  \"description\": \"Keep writing on brand.\"\n}\n",
+    "partner-built/brand-voice/.mcp.json": "{\n  \"mcpServers\": {\n    \"notion\": {\n      \"type\": \"http\",\n      \"url\": \"https://mcp.notion.com/mcp\"\n    }\n  }\n}\n",
+    "partner-built/brand-voice/skills/brand-voice-enforcement/SKILL.md": "---\nname: brand-voice-enforcement\ndescription: Rewrite text in the brand voice.\nargument-hint: \"[topic]\"\nallowed-tools: Read, Grep\n---\n\nApply the guidelines.\n",
+    "partner-built/brand-voice/commands/enforce-voice.md": "---\nname: enforce-voice\ndescription: Rewrite the selection in the brand voice\n---\n\nRewrite $ARGUMENTS in the brand voice.\n",
+    "partner-built/brand-voice/agents/content-generation.md": "---\nname: content-generation\ndescription: Generates long-form on-brand content when a skill delegates to it.\nmodel: inherit\ntools: Read, Write\n---\n\nYou write long-form content that follows the brand guidelines.\n"
+  }
+}

@@ -1,5 +1,5 @@
 import type { RuntimeInstanceRecord, RuntimeInstanceStore } from "@openwork-ee/cloud-runtime/orchestrator"
-import type { ProviderEndpointKind } from "@openwork-ee/cloud-runtime/contract"
+import type { ProviderEndpointKind } from "@openwork/sandbox"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { CloudRuntimeInstanceTable, DaytonaSandboxTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"

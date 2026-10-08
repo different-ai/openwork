@@ -128,17 +128,26 @@ export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<
  * provider, explicit `null` deletes it (so clients can remove runtime-managed
  * providers, e.g. cloud imports, without racing a read-modify-write of the
  * whole map). Returns undefined when the resulting map is empty.
+ *
+ * Providers named in `mergeModelsFor` keep the models they already have: the
+ * update's models are added or replace same-ID entries, and the rest of the
+ * provider is replaced as usual. Adding one more local model (e.g. Ollama)
+ * must not drop the ones added before it.
  */
 export function mergeRuntimeProviderUpdate(
   current: unknown,
   update: Record<string, unknown>,
+  mergeModelsFor: ReadonlySet<string> = new Set(),
 ): Record<string, unknown> | undefined {
   const next: Record<string, unknown> = { ...(isRecord(current) ? current : {}) };
   for (const [providerId, value] of Object.entries(update)) {
     if (value === null) {
       delete next[providerId];
     } else if (isRecord(value)) {
-      next[providerId] = value;
+      const existing = next[providerId];
+      next[providerId] = mergeModelsFor.has(providerId) && isRecord(existing) && isRecord(existing.models)
+        ? { ...value, models: { ...existing.models, ...(isRecord(value.models) ? value.models : {}) } }
+        : value;
     }
   }
   return Object.keys(next).length ? next : undefined;
@@ -369,7 +378,7 @@ export async function migrateWorkspaceRuntimeConfigToEngineGlobal(
 }
 
 export type RuntimeOpencodeConfigInspection = {
-  status: "available" | "database-missing" | "row-missing" | "table-missing" | "unreadable" | "invalid-row" | "remote-workspace";
+  status: "available" | "database-missing" | "row-missing" | "table-missing" | "unreadable" | "invalid-row";
   config: RuntimeOpencodeConfig;
 };
 
@@ -576,6 +585,14 @@ export function writeRuntimeOpencodeConfig(
   return updateRuntimeConfig(config, workspaceId, (current) => {
     const { managedPolicy, ...editable } = current;
     return { ...updater(editable), managedPolicy };
+  });
+}
+
+/** Signing out ends enforcement: a cached policy is not device enrollment (#5131). */
+export function clearManagedDesktopPolicy(config: ServerConfig) {
+  return updateRuntimeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, (current) => {
+    const { managedPolicy: _cleared, ...rest } = current;
+    return rest;
   });
 }
 

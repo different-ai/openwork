@@ -117,7 +117,7 @@ function createInteractionHydration(client: Client, workspaceId: string, session
   const directory = workspaceRoot || undefined;
   const children = new Map<string, PermissionHydration>();
   const queued = new Map<string, PermissionHydration>();
-  const native = isOpencodeV2Client(client);
+  const native = isOpencodeV2Client(client) ? client : null;
   let disposed = false;
   let activeReads = 0;
   let legacy: { controller: AbortController; pending: boolean; failed?: boolean; snapshot?: PermissionSnapshot } | undefined;
@@ -176,7 +176,7 @@ function createInteractionHydration(client: Client, workspaceId: string, session
         }
       })();
     }
-    if (!questions?.pending && (!failedOnly || questions?.failed)) {
+    if (!native && !questions?.pending && (!failedOnly || questions?.failed)) {
       const startedAt = Date.now();
       const read: NonNullable<typeof questions> = { controller: new AbortController(), pending: true, snapshot: questions?.snapshot };
       questions = read;
@@ -213,10 +213,19 @@ function createInteractionHydration(client: Client, workspaceId: string, session
       };
       void (async () => {
         try {
-          const items = unwrap(await client.v2.session.permission.list({ sessionID: id }, { signal: child.controller.signal })).data;
-          if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
-          child.snapshot.items = items;
-          publishPermission(id, child);
+          await Promise.allSettled([
+            (async () => {
+              const items = unwrap(await client.v2.session.permission.list({ sessionID: id }, { signal: child.controller.signal })).data;
+              if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
+              child.snapshot.items = items;
+              publishPermission(id, child);
+            })(),
+            ...(native ? [(async () => {
+              const items = unwrap(await native.listSessionQuestions({ sessionID: id }, { signal: child.controller.signal }));
+              if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
+              seedQuestionState(workspaceId, id, items, { snapshotStartedAt: child.snapshot.startedAt });
+            })()] : []),
+          ]);
         } catch {
         } finally {
           child.done = true;
@@ -343,7 +352,10 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     return observeActivityRead(client, statusKey(workspaceId, sessionId), workspaceRoot, async (signal, snapshotStartedAt) => {
       const statuses = unwrap(await client.session.status({ directory: workspaceRoot || undefined }, { signal }));
       signal.throwIfAborted();
-      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, { snapshotStartedAt });
+      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, {
+        snapshotStartedAt,
+        engine: isOpencodeV2Client(client) ? "v2" : "v1",
+      });
     }, true);
   }, [client, workspaceId, sessionId, workspaceRoot]);
 
@@ -416,26 +428,24 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const activeQuestion = pendingQuestions[0] ?? null;
   const respondQuestion = useCallback(
     async (requestID: string, answers: string[][]) => {
-      if (!client || !workspaceId || !sessionId) return;
-      if (questionReplyBusyRef.current) return;
+      if (!client || !workspaceId || !sessionId) throw new Error("The conversation is no longer available.");
+      if (questionReplyBusyRef.current) throw new Error("A question reply is already in progress.");
+      const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
+      if (!pendingQuestion) throw new Error("This question is no longer pending.");
       questionReplyBusyRef.current = true;
       setQuestionReplyBusy(true);
       try {
-        const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
         unwrap(
-          await client.question.reply({
-            requestID,
-            answers,
-            directory: workspaceRoot || undefined,
-          }),
+          await (isOpencodeV2Client(client)
+            ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
+            : client.question.reply({ requestID, answers, directory: workspaceRoot || undefined })),
         );
-        if (pendingQuestion) {
-          settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
-        }
+        settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {
         toast.error(t("app.error_request_failed"), {
           description: describeRouteError(error),
         });
+        throw error;
       } finally {
         questionReplyBusyRef.current = false;
         setQuestionReplyBusy(false);

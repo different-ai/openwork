@@ -163,7 +163,7 @@ export function LoadingOverlay() {
             {actionState ? <div className="text-dls-secondary">{actionState}</div> : null}
             <details className="text-left text-dls-secondary">
               <summary className="cursor-pointer">Technical details</summary>
-              <div className="mt-2 break-words">{error}</div>
+              <div className="mt-2 break-words" data-testid="boot-error-detail">{error}</div>
             </details>
           </div>
         ) : (

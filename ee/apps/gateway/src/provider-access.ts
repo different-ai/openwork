@@ -17,17 +17,33 @@ export type GatewayAccessRow = {
   model: typeof GatewayProviderModelTable.$inferSelect | null
 }
 export type LoadGatewayAccess = (scope: GatewayAccessScope) => Promise<GatewayAccessRow[]>
+export type GatewayAccessProvider = Pick<typeof GatewayProviderTable.$inferSelect, "id" | "provider_id" | "name">
+/** An access row across every provider the member can reach, tagged with its provider. */
+export type GatewayMemberAccessRow = GatewayAccessRow & { provider: GatewayAccessProvider }
+export type LoadMemberGatewayAccess = (scope: GatewayContext) => Promise<GatewayMemberAccessRow[]>
 type AccessDb = Pick<typeof import("./db.js").db, "select">
 
 // All relations are application-enforced, so every ownership/status edge is
-// checked here. The optional locking read also fences OAuth's local mutations.
-export async function loadGatewayAccess(scope: GatewayAccessScope, executor: AccessDb, lock = false): Promise<GatewayAccessRow[]> {
+// checked here. Plain read: callers re-check in their flow rather than locking.
+export async function loadGatewayAccess(scope: GatewayAccessScope, executor: AccessDb): Promise<GatewayAccessRow[]> {
+  return gatewayAccessQuery(scope, executor)
+}
+
+/** Same authorization as loadGatewayAccess, for every active provider in the member's organization. */
+export async function loadMemberGatewayAccess(scope: GatewayContext, executor: AccessDb): Promise<GatewayMemberAccessRow[]> {
+  return gatewayAccessQuery({ ...scope, gatewayProviderId: undefined }, executor)
+}
+
+export const loadMemberGatewayAccessFromDb: LoadMemberGatewayAccess = async (scope) => loadMemberGatewayAccess(scope, (await import("./db.js")).db)
+
+function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: GatewayAccessScope["gatewayProviderId"] | undefined }, executor: AccessDb) {
   const grants = GatewayProviderAccessTable
   const groups = GatewayModelGroupTable
   const sets = GatewayCredentialSetTable
   const models = GatewayProviderModelTable
   const links = GatewayModelGroupModelTable
-  const query = executor.select({ grant: grants, group: groups, credentialSet: sets, model: models })
+  const provider = { id: GatewayProviderTable.id, provider_id: GatewayProviderTable.provider_id, name: GatewayProviderTable.name }
+  return executor.select({ grant: grants, group: groups, credentialSet: sets, model: models, provider })
     .from(MemberTable)
     .innerJoin(GatewayKeyTable, and(eq(GatewayKeyTable.org_membership_id, MemberTable.id), eq(GatewayKeyTable.organization_id, MemberTable.organizationId)))
     .innerJoin(GatewayProviderTable, eq(GatewayProviderTable.organization_id, MemberTable.organizationId))
@@ -41,7 +57,9 @@ export async function loadGatewayAccess(scope: GatewayAccessScope, executor: Acc
     .where(and(
       eq(MemberTable.id, scope.orgMembershipId), eq(MemberTable.organizationId, scope.organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId),
       eq(GatewayKeyTable.id, scope.gatewayKeyId), eq(GatewayKeyTable.status, "active"), isNull(GatewayKeyTable.revoked_at),
-      eq(GatewayProviderTable.id, scope.gatewayProviderId), eq(GatewayProviderTable.status, "active"), eq(groups.status, "active"), eq(sets.status, "active"),
+      // Omitted only by loadMemberGatewayAccess; the org boundary still comes from the member join.
+      scope.gatewayProviderId === undefined ? undefined : eq(GatewayProviderTable.id, scope.gatewayProviderId),
+      eq(GatewayProviderTable.status, "active"), eq(groups.status, "active"), eq(sets.status, "active"),
       or(
         and(eq(grants.org_membership_id, MemberTable.id), isNull(grants.team_id), eq(grants.audience_key, sql`concat('member:', ${MemberTable.id})`)),
         and(isNull(grants.org_membership_id), isNull(grants.team_id), eq(grants.audience_key, "organization")),
@@ -51,7 +69,6 @@ export async function loadGatewayAccess(scope: GatewayAccessScope, executor: Acc
             and ${TeamTable.organizationId} = ${MemberTable.organizationId})`),
       ),
     ))
-  return lock ? query.for("update") : query
 }
 
 export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope) => loadGatewayAccess(scope, (await import("./db.js")).db)
@@ -76,6 +93,8 @@ export function sameGatewaySelection(expected: GatewayGrantSelection, current: G
     && a.credentialSet.credential_mode === b.credentialSet.credential_mode
     && a.credentialSet.oauth_client_id === b.credentialSet.oauth_client_id
     && a.credentialSet.oauth_client_secret === b.credentialSet.oauth_client_secret
+    && (a.credentialSet.oauth_tenant_id ?? null) === (b.credentialSet.oauth_tenant_id ?? null)
+    && JSON.stringify(a.credentialSet.aws_sso ?? null) === JSON.stringify(b.credentialSet.aws_sso ?? null)
     && a.credentialSet.updated_at.getTime() === b.credentialSet.updated_at.getTime()
 }
 
@@ -121,4 +140,41 @@ export function accessibleGatewayModels(rows: GatewayAccessRow[]) {
       modelGroupId: row.group.id, modelGroupName: row.group.name, credentialSetId: row.credentialSet.id, credentialSetName: row.credentialSet.name })
   }
   return [...models.values()].sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** One entry of the OpenAI List Models response, plus the fields a client needs to call it. */
+export type GatewayListedModel = {
+  id: string
+  object: "model"
+  /** Unix seconds when the model was added to the provider. */
+  created: number
+  /** The upstream provider type, such as "anthropic" or "openai". */
+  owned_by: string
+  name: string
+  openwork: {
+    /** The ipr_ id that goes in /api/v1/providers/{provider_id}/... to call this model. */
+    provider_id: string
+    provider_name: string
+    upstream_model_id: string
+  }
+}
+
+/** Every model the member's grants allow, across providers, in the OpenAI list shape. */
+export function listGatewayModels(rows: GatewayMemberAccessRow[]): { object: "list"; data: GatewayListedModel[] } {
+  const models = new Map<string, GatewayListedModel>()
+  for (const row of rows) {
+    if (!row.model || row.model.gateway_provider_id !== row.provider.id) continue
+    const id = createGatewayModelAlias({ modelGroupId: row.group.id, credentialSetId: row.credentialSet.id, gatewayProviderModelId: row.model.id })
+    models.set(id, {
+      id,
+      object: "model",
+      created: Math.floor(row.model.created_at.getTime() / 1000),
+      owned_by: row.provider.provider_id,
+      name: `${row.model.name} (${row.group.name} / ${row.credentialSet.name})`,
+      openwork: { provider_id: row.provider.id, provider_name: row.provider.name, upstream_model_id: row.model.model_id },
+    })
+  }
+  const data = [...models.values()].sort((a, b) =>
+    a.openwork.provider_name.localeCompare(b.openwork.provider_name) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+  return { object: "list", data }
 }

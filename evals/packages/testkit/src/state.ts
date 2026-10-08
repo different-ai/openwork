@@ -78,7 +78,7 @@ export async function readConnectState(app: Surface): Promise<ConnectState> {
       if (invokeDesktop) {
         const info = await invokeDesktop("openworkServerInfo");
         if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\/+$/, "");
+          baseUrl = String(info.baseUrl ?? "").trim().replace(/\/+$/, "");
           token = String(info.ownerToken ?? info.clientToken ?? "").trim();
         }
       }
@@ -146,7 +146,7 @@ export async function readCloudMcpHealth(
       if (invokeDesktop) {
         const info = await invokeDesktop("openworkServerInfo");
         if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\/+$/, "");
+          baseUrl = String(info.baseUrl ?? "").trim().replace(/\/+$/, "");
           token = String(info.ownerToken ?? info.clientToken ?? "").trim();
         }
       }

@@ -16,7 +16,7 @@ export function startAutomationSchedulerLoop(options: {
   const pollIntervalMs = Math.max(1_000, options.pollIntervalMs ?? env.automations.pollIntervalMs)
   const batchSize = Math.max(1, Math.min(
     options.batchSize ?? env.automations.batchSize,
-    options.maxConcurrency ?? env.automations.maxConcurrency,
+    options.maxConcurrency ?? env.automations.maxConcurrency + env.automations.headlessMaxConcurrency,
   ))
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | null = null

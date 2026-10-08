@@ -1,5 +1,5 @@
 import type { DenSession, DenFetchResult, FieldTypingOptions } from "@openwork/behaviors";
-import type { BrowserEvaluation, Surface, Target } from "@openwork/cdp";
+import type { BrowserEvaluation, Surface, Target, Viewport } from "@openwork/cdp";
 import type {
   MockHandle,
   Place,
@@ -44,8 +44,15 @@ export interface User {
   see(target: Target, options?: SeeOptions): Promise<void>;
   notSee(target: Target, options?: { timeoutMs?: number }): Promise<void>;
   reload(): Promise<void>;
+  resizeViewport(viewport: Viewport): Promise<void>;
   navigate(url: string): Promise<void>;
   screenshot(): Promise<ScreenshotArtifact>;
+  /**
+   * Save a reopenable checkpoint of this moment and record its image. Only when the
+   * run asked for checkpoints (`--checkpoints`) and the world can capture this
+   * surface; otherwise a one-line warning is printed and nothing is saved.
+   */
+  checkpoint(caption?: string): Promise<ScreenshotArtifact | undefined>;
   looks(expectations: string[]): Promise<void>;
   on(surface: Surface): User;
 }
@@ -62,7 +69,23 @@ export interface Agent {
   on(surface: Surface): Agent;
 }
 
+export interface CredentialInputState {
+  dialogPresent: boolean;
+  dialogExcludedFromCapture: boolean;
+  inputExcludedFromCapture: boolean;
+  inputType: string | null;
+  autoComplete: string | null;
+  empty: boolean;
+  inputContainsSecret: boolean;
+  bodyContainsSecret: boolean;
+  urlContainsSecret: boolean;
+  historyContainsSecret: boolean;
+  storageContainsSecret: boolean;
+  consoleContainsSecret: boolean;
+}
+
 export interface Probe {
+  credentialInputState(selector: string, candidate?: string): Promise<CredentialInputState>;
   /** Applied CSS-to-DIP page zoom from Chromium, not the stored zoom preference. */
   zoom(): Promise<number>;
   browserState(): Promise<import("@openwork/behaviors").BrowserState>;
@@ -88,7 +111,13 @@ export interface Probe {
   on(surface: Surface): Probe;
 }
 
-export type Step = <T>(name: string, fn: () => Promise<T> | T) => Promise<T>;
+export interface StepOptions {
+  /** Save a reopenable checkpoint of the world when this step passes (see `User.checkpoint`). */
+  checkpoint?: boolean;
+}
+
+/** Options come last so every existing `(name, fn)` step implementation still fits. */
+export type Step = <T>(name: string, fn: () => Promise<T> | T, options?: StepOptions) => Promise<T>;
 
 export type WorldFn<W> = (seed: Seed, ctx: { place: Place }) => Promise<W>;
 

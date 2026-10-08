@@ -38,7 +38,7 @@ export const DenSearchBar = forwardRef<DenSearchBarHandle, DenSearchBarProps>(
 
     useImperativeHandle(ref, () => ({
       focus() {
-        const desktop = window.matchMedia("(min-width: 768px)").matches;
+        const desktop = window.matchMedia("(min-width: 1024px)").matches;
         (desktop ? desktopTriggerRef.current : mobileTriggerRef.current)?.focus();
       },
     }), []);
@@ -52,7 +52,7 @@ export const DenSearchBar = forwardRef<DenSearchBarHandle, DenSearchBarProps>(
           aria-label="Search or jump to"
           aria-keyshortcuts="Meta+K Control+K"
           onClick={onOpen}
-          className="hidden h-9 w-[min(420px,100%)] items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] text-gray-400 shadow-xs transition-colors hover:border-gray-300 hover:text-gray-500 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/5 md:flex"
+          className="hidden h-9 w-[min(420px,100%)] items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] text-gray-400 shadow-xs transition-colors hover:border-gray-300 hover:text-gray-500 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/5 lg:flex"
         >
           <Search className="h-4 w-4 shrink-0" strokeWidth={1.8} />
           <span className="truncate">Search or jump to…</span>
@@ -67,7 +67,7 @@ export const DenSearchBar = forwardRef<DenSearchBarHandle, DenSearchBarProps>(
           aria-label="Search or jump to"
           aria-keyshortcuts="Meta+K Control+K"
           onClick={onOpen}
-          className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/5 md:hidden"
+          className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/5 lg:hidden"
         >
           <Search className="h-5 w-5" strokeWidth={1.8} />
         </button>

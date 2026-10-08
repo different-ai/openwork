@@ -9,15 +9,39 @@ import { readdir, readFile } from 'node:fs/promises';
 // reason; declaring it here would silently drop the runnable cases. The planner
 // reports a journey whose needs the lane cannot meet as "skipped: lane cannot
 // satisfy prerequisites" instead of scheduling a guaranteed skip.
-// journey-ci.test.mjs checks these against what each spec and world guards.
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
+  'opencode-v2-context-activity.e2e.test.ts': {
+    cases: [{ id: 'V2-CONTEXT-ACTIVITY', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'edit-running-message.e2e.test.ts': {
+    name: 'Replace a running message without queueing the edit', placement: 'local',
+    cases: [{ id: 'EDIT-BUSY', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'opencode-v2-session-home.e2e.test.ts': {
+    cases: ['HOME-01', 'HOME-02', 'HOME-03', 'HOME-04'].map(id => ({ id, engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } })),
+  },
   'gateway-usage-policy.e2e.test.ts': { name: 'Request and approve a Gateway usage extension', placement: 'local' },
   'composer-model-picker-no-subscribe-promo.e2e.test.ts': {
     cases: [{ id: 'MODEL-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
   // Its registered OAuth callback and synthetic client exchange run on owned loopback services.
   'mcp-connection-consent.e2e.test.ts': { name: 'Authorize a connected client once', placement: 'local' },
+  'agent-background-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-03', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'agent-connection-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-04', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+  },
+  'agent-connection-sign-in-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-06', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'agent-visibility-journey.e2e.test.ts': {
+    cases: [
+      { id: 'AGENT-VIS-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+      { id: 'AGENT-VIS-02', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+    ],
+  },
   'task-activity-shimmer.e2e.test.ts': {
     cases: [{ id: 'ACT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
@@ -32,23 +56,21 @@ const definitions = {
   'packaged-preactivation-egress.e2e.test.ts': { name: 'Keep an unactivated enterprise install off the network', placement: 'local', needs: PACKAGED_BINARY },
   'packaged-activated-launch.e2e.test.ts': { name: 'Open an already-activated enterprise install', placement: 'local', needs: PACKAGED_BINARY },
   // Boots the packaged enterprise artifact and asks it to quit (SIGTERM and Browser.close); only packaged-smoke provides that binary.
+  // Its crash-report half is asserted on macOS, where packaged-smoke-macos runs it; Linux records that half as skipped.
   'desktop-quit-path.e2e.test.ts': { name: 'Quit an enterprise install cleanly', placement: 'local', needs: PACKAGED_BINARY },
-  // Boots a RELEASED enterprise binary already activated against a real Den. Only its update case also needs
-  // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own and the lane that runs
-  // this journey must provide both binaries for it to pass (#4848).
-  'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local', needs: PACKAGED_BINARY },
-  // Drives a real AppKit window through the native Computer Use helper; only a local macOS host can run it.
-  'computer-use-window-scope.e2e.test.ts': { placement: 'local', needs: { platform: 'darwin' } },
-  'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
-  'desktop-policy-restricted-mode.e2e.test.ts': {
-    // The rollback case severs local child IPC and faults its loopback transport.
-    name: 'Apply organization and team permissions', critical: true, placement: 'local',
-    cases: [{ id: 'POLICY-ROLLBACK', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+  // Installs a newer signed build from a loopback feed through Squirrel.Mac; only packaged-smoke-macos provides both builds.
+  'packaged-update-install.e2e.test.ts': {
+    name: 'Update an activated enterprise install in place', placement: 'local',
+    needs: { platform: 'darwin', env: ['OPENWORK_EVAL_ELECTRON_BINARY', 'OPENWORK_EVAL_UPDATE_FEED_DIR'] },
   },
+  // Boots an enterprise binary already activated against a real Den. Only its update case also needs
+  // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own. The nightly
+  // packaged-upgrade-path job (ci-tests.yml) provides both: this commit's enterprise package and the latest
+  // public release as the baseline; release validation runs it against the release itself (#4848).
+  'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local', needs: PACKAGED_BINARY },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   // Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
   'scim-okta-lifecycle.e2e.test.ts': { name: 'Provision members from an Okta-shaped SCIM client', placement: 'local' },
-  'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
   // Drives the real error boundary and web error monitor in a standalone Chrome; needs no Den or Electron.
   'crash-recovery.e2e.test.ts': { name: 'Recover from a render crash without leaking secrets' },
   // Serves the model mock from the spec process's 127.0.0.1; only the local lane can reach it.
@@ -62,8 +84,13 @@ const definitions = {
   'streamed-markdown-answer.e2e.test.ts': {
     cases: [{ id: 'CONT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
-  'live-tool-visible-after-session-switch.e2e.test.ts': {
-    cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1' } }],
+  'live-stream-continuity.e2e.test.ts': {
+    name: 'Keep a real OpenAI answer streaming across conversation switches', placement: 'local', model: 'live',
+    needs: { env: ['OPENAI_API_KEY'], optIn: ['OPENWORK_EVAL_LIVE_OPENAI'] },
+    cases: [
+      { id: 'CONT-01-live', engines: ['v1'], optIns: ['OPENWORK_EVAL_E2E_TESTS', 'OPENWORK_EVAL_LIVE_OPENAI'], example: { placement: '--local', engine: 'v1' } },
+      { id: 'CONT-01-live-history', engines: ['v1'], optIns: ['OPENWORK_EVAL_E2E_TESTS', 'OPENWORK_EVAL_LIVE_OPENAI'], example: { placement: '--local', engine: 'v1' } },
+    ],
   },
   'unfinished-tool-lifecycle.e2e.test.ts': {
     cases: [{ id: 'STOP-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
@@ -74,16 +101,19 @@ const definitions = {
       { id: 'APP-DRAFT-ROUTING', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
     ],
   },
-  // Its Cloud endpoint is an in-process loopback MCP fixture reachable only from the spec process.
+  // Native workspace skill tests use local watcher and loopback model fixtures.
   'opencode-v2-skill-jit.e2e.test.ts': {
-    name: 'Use Cloud and workspace skills just in time', placement: 'local',
+    name: 'Use workspace skills just in time', placement: 'local',
     cases: [
       { id: 'SKILL-ATTACH', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-MISSING', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
-      { id: 'SKILL-CLOUD-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
-      { id: 'SKILL-CLOUD-02', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
       { id: 'SKILL-NATIVE-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
+      { id: 'SKILL-CLOUD-DISCOVERY', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } },
     ],
+  },
+  'opencode-v2-reads-during-mcp-startup.e2e.test.ts': {
+    name: 'Keep the conversation responsive while a connection starts', placement: 'local',
+    cases: [{ id: 'UPKEEP-01', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
 };
 
@@ -120,12 +150,12 @@ export function selectJourneys(entries, { critical = false, only = '', changed =
 }
 
 // What the CI lane provides to every job: Linux runners and no packaged desktop binary.
-// Keep in step with the e2e and local-journey jobs in .github/workflows/daytona-e2e.yml.
 export const ciLane = Object.freeze({ platform: 'linux', env: Object.freeze([]) });
 
 // Needs the lane cannot meet, phrased as the action that would meet them; empty when the journey is applicable.
 export function unmetLaneNeeds(entry, lane = ciLane) {
   const missing = (entry.needs?.env ?? []).filter(name => !lane.env.includes(name)).map(name => `set ${name}`);
+  missing.push(...(entry.needs?.optIn ?? []).filter(name => !lane.optIns?.includes(name)).map(name => `set ${name}=1`));
   if (entry.needs?.platform && entry.needs.platform !== lane.platform) missing.push(`run on ${entry.needs.platform}`);
   return missing;
 }

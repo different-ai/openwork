@@ -24,13 +24,8 @@ export const inputHintClass = "text-[12px] leading-5 text-dls-secondary";
 export const inputClass =
   "w-full rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-[14px] text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.12)] disabled:cursor-not-allowed disabled:opacity-60";
 
-export const subtleInputClass =
-  "w-full rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-[14px] text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.12)] disabled:cursor-not-allowed disabled:opacity-60";
-
 const pillButtonBaseClass =
   "inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.18)] disabled:cursor-not-allowed disabled:opacity-60";
-
-export const pillPrimaryClass = `${pillButtonBaseClass} bg-dls-accent text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]`;
 
 export const pillSecondaryClass = `${pillButtonBaseClass} border border-dls-border bg-dls-surface text-dls-text hover:bg-dls-hover`;
 
@@ -39,23 +34,8 @@ export const pillGhostClass = `${pillButtonBaseClass} border border-dls-border b
 export const tagClass =
   "inline-flex items-center rounded-md border border-dls-border bg-dls-hover px-2 py-1 text-[11px] text-dls-secondary";
 
-export const infoBannerClass =
-  "rounded-[20px] border border-dls-border bg-dls-hover px-4 py-3 text-[13px] text-dls-secondary";
-
 export const warningBannerClass =
   "rounded-[20px] border border-dls-border bg-dls-hover px-4 py-3 text-[13px] text-dls-text";
 
 export const errorBannerClass =
   "rounded-[20px] border border-red-7/20 bg-red-1/40 px-4 py-3 text-[13px] text-red-11";
-
-export const successBannerClass =
-  "rounded-[20px] border border-emerald-7/20 bg-emerald-3/30 px-4 py-3 text-[13px] text-emerald-11";
-
-export const modalNoticeNeutralClass =
-  "rounded-xl border border-dls-border bg-dls-hover px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
-
-export const modalNoticeSuccessClass =
-  "rounded-xl border border-dls-border bg-emerald-2/25 px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";
-
-export const modalNoticeErrorClass =
-  "rounded-xl border border-dls-border bg-red-2/20 px-3 py-2.5 text-[13px] leading-relaxed text-dls-text";

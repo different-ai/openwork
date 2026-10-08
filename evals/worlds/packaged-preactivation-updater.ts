@@ -27,6 +27,8 @@ export interface UpdaterActivity {
   checks: number;
   /** Update downloads electron-updater started. */
   downloads: number;
+  /** Downloads the desktop staged for install on quit (Squirrel.Mac accepted the bundle on macOS). */
+  staged: number;
   /** The matching log lines, for evidence. */
   lines: string[];
 }
@@ -39,6 +41,7 @@ export function updaterActivityFromLog(log: string): UpdaterActivity {
   return {
     checks: lines.filter((line) => CHECK_ATTEMPT.test(line)).length,
     downloads: lines.filter((line) => line.startsWith("Downloading update from")).length,
+    staged: lines.filter((line) => /^\[updater\] update \S+ is staged/.test(line)).length,
     lines,
   };
 }

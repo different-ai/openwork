@@ -1,8 +1,8 @@
 import type { Seed } from "@openwork/env";
 import { SkipError } from "@openwork/env";
 
-/** Curated API-key preset whose hosted server also answers unauthenticated MCP requests with an OAuth challenge. */
-export const API_KEY_PRESET_ID = "render";
+/** Render uses OpenWork's public pre-registered OAuth app. */
+export const OAUTH_PRESET_ID = "render";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -27,17 +27,13 @@ export async function connectorQuickAddPresetAuth(seed: Seed) {
   const presets = await seed.api(den.admin, "/v1/mcp-connections/presets");
   const presetList = isRecord(presets.body) && Array.isArray(presets.body.presets) ? presets.body.presets.filter(isRecord) : null;
   if (!presetList) throw new Error("Den did not return its connector presets.");
-  const preset = presetList.find((entry) => entry.presetId === API_KEY_PRESET_ID);
-  if (!preset) throw new Error(`Den has no ${API_KEY_PRESET_ID} preset.`);
+  const preset = presetList.find((entry) => entry.presetId === OAUTH_PRESET_ID);
+  if (!preset) throw new Error(`Den has no ${OAUTH_PRESET_ID} preset.`);
   const presetUrl = preset.url;
   const presetName = preset.displayName;
-  if (typeof presetUrl !== "string" || typeof presetName !== "string" || preset.authType !== "apikey") throw new Error(`The ${API_KEY_PRESET_ID} preset is not an API-key preset.`);
+  if (typeof presetUrl !== "string" || typeof presetName !== "string" || preset.authType !== "oauth" || preset.defaultOAuthClientId !== "openwork") throw new Error(`The ${OAUTH_PRESET_ID} preset does not supply OpenWork's OAuth app.`);
 
-  // The preset's hosted server is a third party. Ask the same Den discovery
-  // the dialog uses how it classifies that URL right now: the journey only
-  // proves anything when Den sees a conflicting OAuth requirement, so any
-  // other classification skips loudly instead of passing on a probe that
-  // never disagreed with the preset.
+  // Read the real hosted server metadata without signing in to a Render account.
   const discover = await seed.api(den.admin, "/v1/mcp-connections/discover", {
     method: "POST",
     headers: { "x-openwork-org-id": orgId },
@@ -49,12 +45,22 @@ export async function connectorQuickAddPresetAuth(seed: Seed) {
   if (!discover.response.ok || typeof discoveredKind !== "string" || typeof discoveredRegistration !== "string") {
     throw new SkipError(`Den could not discover ${presetUrl} (HTTP ${discover.response.status})`);
   }
-  if (discoveredKind !== "oauth") throw new SkipError(`Den classified ${presetUrl} as ${discoveredKind}, not the conflicting oauth requirement this journey needs`);
+  if (discoveredKind !== "oauth") throw new SkipError(`Den classified ${presetUrl} as ${discoveredKind}, not the OAuth requirement this journey needs`);
 
-  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/mcp-connections", headless: true, viewport: { width: 1440, height: 1400 } });
+  const created = await seed.orgConnection(den.admin, {
+    name: "Render preset verification", url: presetUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true },
+  });
+  const started = await seed.api(den.admin, `/v1/mcp-connections/${created.id}/connect/start`);
+  if (!started.response.ok || !isRecord(started.body) || typeof started.body.authorizeUrl !== "string") {
+    throw new Error(`Render did not produce an authorization URL: HTTP ${started.response.status}`);
+  }
+  const authorizeUrl = started.body.authorizeUrl;
+  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/mcp-connections/new", headless: true, viewport: { width: 1440, height: 1400 } });
   return {
     den,
     web,
+    authorizeUrl,
+    presetConnectionId: created.id,
     presetUrl,
     presetName,
     /** How Den's own requirements discovery classified the preset URL just before the dialog opened. */

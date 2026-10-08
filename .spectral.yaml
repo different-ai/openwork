@@ -182,6 +182,15 @@ rules:
 # responses). Pointers are JSON-pointer escaped (`/` -> `~1`) and, as Spectral
 # does, percent-encode path parameter braces (`{` -> `%7B`, `}` -> `%7D`).
 overrides:
+  # Audit export is a bounded NDJSON/CSV attachment, not a JSON list envelope.
+  # It accepts cursor + limit and returns X-Audit-Next-Cursor until exhausted;
+  # X-Audit-Snapshot-Sequence pins the committed snapshot. Route/schema and
+  # transport tests verify these headers survive the API and browser proxy.
+  - files:
+      - "**/*.json#/paths/~1v1~1audit~1export"
+    rules:
+      ow-list-pagination: "off"
+
   # SCIM 2.0 (RFC 7643/7644): PascalCase resources, startIndex/count paging,
   # `meta.lastModified` timestamps.
   - files:
@@ -246,3 +255,16 @@ overrides:
       - "**/*.json#/paths/~1v1~1memory~1%7Bid%7D"
     rules:
       operation-success-response: "off"
+
+  # Where a member's Automations can run: their own desktops, capped by
+  # DESKTOP_TARGET_LIST_LIMIT, plus the cloud flag. A bounded snapshot, not a
+  # paged collection. lastSeenAt is epoch milliseconds like every other
+  # Automation timestamp (AutomationRun, Automation, AutomationRevision).
+  - files:
+      - "**/*.json#/paths/~1v1~1automation-runners"
+    rules:
+      ow-list-pagination: "off"
+  - files:
+      - "**/*.json#/components/schemas/AutomationDesktopTarget/properties/lastSeenAt"
+    rules:
+      ow-timestamps-date-time: "off"

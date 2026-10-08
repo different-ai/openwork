@@ -16,6 +16,34 @@ config:
   openworkDevMode: "0"
   # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
   denApiNodeOptions: ""
+  # Which product this install is. Only OpenWork Cloud sets "cloud"; features
+  # declared unavailable for self-hosted cannot be turned on here. Renders DEN_DEPLOYMENT.
+  deployment: self_hosted
+  # BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/registry.ts)
+  # Operator locks for this install. Each key renders DEN_FEATURE_<KEY>.
+  #   ""      follow /admin: on or off for everyone, plus per-organization overrides
+  #   "true"  on for everyone; /admin shows "Set by deployment config"
+  #   "false" off for everyone; /admin shows "Set by deployment config"
+  # The /admin kill switch still turns a feature off, even when locked on.
+  features:
+    installLinks: ""           # default on · Workspace admins can create desktop install links for their organization.
+    mcpConnections: ""         # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
+    implicitCloudSkills: ""    # default off · Agents discover organization skills automatically without waiting for Cloud before starting a task.
+    dashboardActivity: ""      # default off · Organization admins see recent additions and skill updates on their dashboard instead of Quick add.
+    modelsAnalytics: ""        # default off · Organization admins can opt in to task analytics for OpenWork Models.
+    auditLogs: ""              # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
+    orgManagedDashboards: ""   # default off · Organization admins publish dashboards to members in Den and the desktop app.
+    slackAssistant: ""         # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
+    slackAssistantHeadless: "" # default off · Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.
+    headlessAutomations: ""    # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
+    workbot: ""                # default off · Members can use Workbot. Needs the deployment's Workbot app.
+    automationCalendar: ""     # default off · Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.
+    workbotCalendar: ""        # default off · Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot.
+    workbotSideChats: ""       # default off · Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot.
+    litellm: ""                # default off · Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.
+    gatewayCloudSignIn: ""     # default off · Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.
+    platformAuditReads: ""     # default off · Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.
+  # END GENERATED features
   tenancy:
     mode: single_org
     singleOrgName: OpenWork
@@ -23,6 +51,16 @@ config:
     ownerEmails: ""
     allowPublicSignup: "false"
     requireEmailVerification: "false"
+  audit:
+    # Grant availability without a Cloud plan. Never turns org capture on by itself.
+    selfHostedEnabled: "false"
+    # Rollout gates; org admins separately control capture on their initialized policy.
+    # Default-on deployment switches; explicit false disables globally.
+    # Also requires the auditLogs feature per org (/admin or config.features) plus entitlement.
+    # Ready orgs auto-provision 6M retained operations, capture ON, no cap enforcement.
+    # Existing policy values and explicit capture OFF choices are preserved.
+    captureEnabled: "true"
+    visibilityEnabled: "true"
   auth:
     passwordBreachScreeningEnabled: "false"
   githubConnector:
@@ -49,7 +87,6 @@ config:
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: ""
-    installLinksGatingEnabled: "false"
     # Self-hosted Automations are opt-in. Hosted OpenWork Cloud enables them.
     automationsEnabled: "false"
     # Self-hosted Dashboards are opt-in. Hosted environments use the same Den flag.
@@ -61,9 +98,9 @@ config:
     automationsRuntimeEnabled: "true"
     # Enable only after compatible Desktop MCP Apps hosts are deployed.
     generatedArtifactViewsEnabled: "false"
+    appMcpServersEnabled: "true"
     connectLinkMode: exchange
     connectLinkKeyId: ""
-    openworkAppConnectUrl: ""
     openworkWebUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""
@@ -106,13 +143,6 @@ config:
     createTimeoutSeconds: ""
     deleteTimeoutSeconds: ""
     healthcheckTimeoutMs: ""
-  polar:
-    featureGateEnabled: "false"
-    apiBase: ""
-    productId: ""
-    benefitId: ""
-    successUrl: ""
-    returnUrl: ""
   inference:
     openRouterWorkspaceId: ""
     stripeInferencePriceId: ""
@@ -176,7 +206,6 @@ secret:
     betterAuthSecret: BETTER_AUTH_SECRET
     denDbEncryptionKey: DEN_DB_ENCRYPTION_KEY
     daytonaApiKey: DAYTONA_API_KEY
-    polarAccessToken: POLAR_ACCESS_TOKEN
     openRouterManagementApiKey: OPENROUTER_MANAGEMENT_API_KEY
     inferenceAdminToken: INFERENCE_ADMIN_TOKEN
     inferenceWebhookSecret: INFERENCE_WEBHOOK_SECRET
@@ -191,6 +220,7 @@ secret:
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
     connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
+    maintenanceToken: DEN_MAINTENANCE_TOKEN
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     databaseHost: ""
@@ -200,7 +230,6 @@ secret:
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
     denDbEncryptionKey: CHANGE_ME_32_CHARS_MINIMUM_DB_ENCRYPTION
     daytonaApiKey: ""
-    polarAccessToken: ""
     openRouterManagementApiKey: ""
     inferenceAdminToken: ""
     inferenceWebhookSecret: ""
@@ -215,6 +244,8 @@ secret:
     githubConnectorAppWebhookSecret: ""
     connectLinkPrivateKey: ""
     initialAdminBootstrapCode: ""
+    # 24+ characters. Only rendered when set; used by denApi.auditUsage.
+    maintenanceToken: ""
 
 installerArtifacts:
   enabled: false
@@ -234,6 +265,18 @@ denApi:
     loadBalancerClass: ""
     loadBalancerSourceRanges: []
   containerPort: 8788
+  # Daily audit usage refresh. Audit writes never update an organization's usage
+  # totals (retained operations, events, bytes); this CronJob recomputes them by
+  # calling den-api POST /internal/audit/usage/refresh. Same pattern as
+  # inference.retention. Needs a maintenance token: set secret.values.maintenanceToken,
+  # or tokenSecret/tokenKey to read it from your own Secret. The token is also given
+  # to den-api as DEN_MAINTENANCE_TOKEN. Without it, audit usage keeps its last totals.
+  auditUsage:
+    enabled: false
+    schedule: "30 3 * * *"
+    timeZone: "Etc/UTC"
+    tokenSecret: ""
+    tokenKey: DEN_MAINTENANCE_TOKEN
   env: {}
   podAnnotations: {}
   podLabels: {}

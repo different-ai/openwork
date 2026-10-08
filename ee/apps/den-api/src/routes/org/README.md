@@ -11,6 +11,7 @@ This folder owns organization-facing Den API routes.
 - `roles.ts`: dynamic role CRUD
 - `scim.ts`: active-organization SCIM connector metadata and token rotation
 - `templates.ts`: shared template CRUD
+- `web-origins.ts`: approved exact HTTPS web origins for sign-in handoff and Den API CORS
 - `shared.ts`: shared route-local helpers, param schemas, and guard helpers
 
 ## Active organization model

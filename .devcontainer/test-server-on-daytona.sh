@@ -143,6 +143,19 @@ fi
 DEN_WEB_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_WEB_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
 DEN_API_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_API_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
 
+# Caller Den env may turn on the AI Gateway. The gateway service then runs in
+# this sandbox next to Den, and desktops reach it through its own preview URL.
+GATEWAY_URL=""
+GATEWAY_PORT="${GATEWAY_PORT:-8791}"
+if [ -n "${OPENWORK_DEN_EXTRA_ENV_B64:-}" ]; then
+  extra_env="$(printf %s "$OPENWORK_DEN_EXTRA_ENV_B64" | base64 -d 2>/dev/null || true)"
+  if printf '%s\n' "$extra_env" | grep -qx 'GATEWAY_ENABLED=true'; then
+    extra_port="$(printf '%s\n' "$extra_env" | sed -n 's/^GATEWAY_PORT=\([0-9]\{1,5\}\)$/\1/p' | head -n1)"
+    [ -n "$extra_port" ] && GATEWAY_PORT="$extra_port"
+    GATEWAY_URL="$(daytona preview-url "$SANDBOX" -p "$GATEWAY_PORT" --expires 86400 2>/dev/null | grep -v "^time=")"
+  fi
+fi
+
 # These exact URLs become the Den's public identity (OAuth issuer + MCP
 # resource). Every `daytona preview-url` call signs a fresh hostname, so a
 # caller that re-derives them later gets a *different* host and RFC 9728
@@ -153,6 +166,7 @@ DEN_API_URL="$(daytona preview-url "$SANDBOX" -p "$DEN_API_PORT" --expires 86400
 if [ -n "${OPENWORK_DEN_URLS_FILE:-}" ]; then
   printf 'DEN_WEB_URL=%s\nDEN_API_URL=%s\n' \
     "$DEN_WEB_URL" "$DEN_API_URL" > "$OPENWORK_DEN_URLS_FILE"
+  [ -n "$GATEWAY_URL" ] && printf 'GATEWAY_URL=%s\n' "$GATEWAY_URL" >> "$OPENWORK_DEN_URLS_FILE"
 fi
 
 echo "==> Checking out $REF..."
@@ -170,7 +184,7 @@ BOOTSTRAP_ADMIN_EMAILS_B64="$(printf %s "${DEN_BOOTSTRAP_ADMIN_EMAILS:-}" | base
 case "${OPENWORK_DEN_EXTRA_ENV_B64:-}" in
   *[!A-Za-z0-9+/=]*) echo "ERROR: OPENWORK_DEN_EXTRA_ENV_B64 must be base64." >&2; exit 1 ;;
 esac
-daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; OPENWORK_DEN_EXTRA_ENV_B64=\"${OPENWORK_DEN_EXTRA_ENV_B64:-}\" DEN_BOOTSTRAP_ADMIN_EMAILS=\"\$(printf %s $BOOTSTRAP_ADMIN_EMAILS_B64 | base64 -d)\" DEN_GENERATED_ARTIFACT_VIEWS_ENABLED=\"$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED\" DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT RUN_SEED=$RUN_SEED bash .devcontainer/start-daytona-server.sh'"
+daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; OPENWORK_DEN_EXTRA_ENV_B64=\"${OPENWORK_DEN_EXTRA_ENV_B64:-}\" DEN_BOOTSTRAP_ADMIN_EMAILS=\"\$(printf %s $BOOTSTRAP_ADMIN_EMAILS_B64 | base64 -d)\" DEN_GENERATED_ARTIFACT_VIEWS_ENABLED=\"$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED\" DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" GATEWAY_PUBLIC_URL=\"$GATEWAY_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT RUN_SEED=$RUN_SEED bash .devcontainer/start-daytona-server.sh'"
 
 echo "==> Waiting for public Den Web health (up to ${MAX_WAIT}s)..."
 elapsed=0
@@ -199,6 +213,7 @@ echo "  Server sandbox ready: $SANDBOX"
 echo ""
 echo "  Den Web:       $DEN_WEB_URL"
 echo "  Den API:       $DEN_API_URL"
+[ -n "$GATEWAY_URL" ] && echo "  AI Gateway:    $GATEWAY_URL"
 echo ""
 echo "  Start Electron against this server:"
 echo "    bash .devcontainer/test-on-daytona.sh $REF --den-base-url $DEN_WEB_URL --den-api-base-url $DEN_API_URL"

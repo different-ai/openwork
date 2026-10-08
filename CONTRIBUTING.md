@@ -1,46 +1,66 @@
 # Contributing to OpenWork
 
-Thanks for contributing. Two things keep this project's licensing clean —
-please read them before opening a pull request.
+## Contributor License Agreement and Developer Certificate of Origin
 
-## 1. Developer Certificate of Origin (DCO)
+Contributions to this repository are subject to the
+[Developer Certificate of Origin](https://developercertificate.org/), or the
+[Individual](./legal/individual-contributor-license-agreement.md) or
+[Corporate](./legal/corporate-contributor-license-agreement.md) Contributor
+License Agreement, depending on where the contribution is made and on whose
+behalf, unless otherwise agreed with Different AI, Inc. in writing:
 
-Every commit must be signed off, certifying the
-[Developer Certificate of Origin v1.1](https://developercertificate.org/):
+- By submitting code contributions as an individual to the
+  [`ee/` directory](./ee) of this repository, you agree to the
+  [Individual Contributor License Agreement](./legal/individual-contributor-license-agreement.md).
+- By submitting code contributions on behalf of a corporation to the
+  [`ee/` directory](./ee) of this repository, you agree to the
+  [Corporate Contributor License Agreement](./legal/corporate-contributor-license-agreement.md).
+- By submitting code contributions as an individual or on behalf of a
+  corporation to any directory in this repository outside of the
+  [`ee/` directory](./ee), you agree to the
+  [Developer Certificate of Origin](https://developercertificate.org/), and
+  your contribution is licensed under the [MIT license](./LICENSE).
 
-```
-git commit -s -m "your message"
-```
+By contributing, you are deemed to have accepted the agreement that applies
+to your contribution. There is nothing separate to sign. You keep ownership
+of your contribution; you grant Different AI, Inc. the permissions in the
+applicable agreement, and those permissions cannot be withdrawn.
 
-This adds a `Signed-off-by: Your Name <your@email>` trailer asserting that
-you wrote the change (or otherwise have the right to submit it) and that you
-may submit it under this repository's licenses. Pull requests with unsigned
-commits cannot be merged.
+`ee/` needs a CLA rather than the DCO because the code there is distributed
+under the [OpenWork EE License](./ee/LICENSE), not an open source license,
+and each released version later converts to MIT. The CLA grants a license
+broad enough to do both.
 
-## 2. How your contribution is licensed
+To put an overarching Corporate CLA in place for everyone contributing on
+behalf of your organization, email team@openworklabs.com.
 
-This repository is open core, and the paperwork depends on where you
-contribute (the same structure GitLab uses for its `ee/` directory):
+_This notice should stay as the first item in this file._
 
-- Contributions to code **outside `ee/`** are accepted under the
-  [MIT license](./LICENSE) (inbound = outbound), certified by your DCO
-  sign-off.
-- Contributions to code **under `ee/`** additionally require a Contributor
-  License Agreement, because the EE-licensed software is sold under
-  subscriptions and each release later converts to MIT — we need a license
-  from you broad enough to do both:
-  - as an individual, the
-    [Individual Contributor License Agreement](./legal/individual-contributor-license-agreement.md);
-  - on behalf of a company, the
-    [Corporate Contributor License Agreement](./legal/corporate-contributor-license-agreement.md).
+## How CI runs on a pull request from a fork
 
-  You keep ownership of your contribution; the CLA grants Different AI, Inc.
-  a perpetual, irrevocable license (including sublicensing) that covers
-  subscription distribution and the EE License's scheduled MIT conversion.
+1. **Automatic checks, on every push.** Before any of your code runs, a
+   screen reads your changes. It blocks hidden or malformed characters
+   (invisible Unicode, bidirectional overrides, look-alike letters, invalid
+   UTF-8), which you must remove. It flags for a maintainer: dependency or
+   lockfile changes, database schema or migration changes, binary files,
+   code that looks encoded or obfuscated, and text that tries to give
+   instructions to an AI reviewer. A comment on the pull request lists what
+   it found. Nothing else runs yet.
+2. **Maintainer review and `/test`.** A maintainer reviews your changes and
+   comments `/test`. That marks the commit they reviewed and starts an AI
+   screen for hidden behavior and supply-chain risk.
+3. **Tests and security review.** If the AI screen is clear (or the
+   maintainer decides to proceed), the tests and the Warden security review
+   run, without access to any secrets. `contributor-pr-required` passes once
+   they pass on the reviewed commit. If you push again, the automatic checks
+   run again and a maintainer reviews the new commits before `/test`.
 
-By submitting a pull request you agree your contribution is provided under
-the terms above for the directories it modifies. Maintainers will not merge
-`ee/` contributions until the applicable CLA is in place.
+Changes to CI or agent configuration (`.github/`, `.opencode/`,
+`opencode.json`, `warden.toml`, `.warden/`, agent skills) can't be tested
+from a fork. A maintainer moves those commits to a branch in this
+repository, keeping you as the author.
+
+## Paid work
 
 If you are contributing as part of paid work, a work trial, or on behalf of
 an employer, make sure a signed agreement covering intellectual property

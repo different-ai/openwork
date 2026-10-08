@@ -154,12 +154,13 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume before continuing.");
     if (!enabled()) fail("browser_disabled", "Browser control was disabled while navigation was pending.");
   }
-  async function authorizeNavigation(scope, value, waitForVisible = false) {
+  async function authorizeNavigation(scope, value, waitForVisible = false, armOperationTimeout = () => {}) {
     const url = browserTaskUrl(value);
     checkNavigation(scope);
     if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
     checkNavigation(scope);
     await access(scope, url, waitForVisible);
+    armOperationTimeout();
     checkNavigation(scope);
     if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
     checkNavigation(scope);
@@ -305,11 +306,18 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       requestSignal.throwIfAborted();
       const canceled = new Promise((_, reject) => requestSignal.addEventListener("abort", () => reject(requestSignal.reason), { once: true }));
       void canceled.catch(() => {});
-      timer = setTimeout(() => {
-        const reason = new BrowserTaskError("timeout", "Browser operation timed out. Observe the page before deciding what remains.");
-        revokeControl(sessionId, control, reason);
-        controller.abort(reason);
-      }, MAX_OPERATION_MS);
+      const armOperationTimeout = () => {
+        if (timer) return;
+        timer = setTimeout(() => {
+          const reason = new BrowserTaskError("timeout", "Browser operation timed out. Observe the page before deciding what remains.");
+          revokeControl(sessionId, control, reason);
+          controller.abort(reason);
+        }, MAX_OPERATION_MS);
+      };
+      // Human review of the initial thread grant is not browser operation time.
+      // Existing grants retain the original request-wide deadline; a new grant
+      // starts its deadline only after the person approves it.
+      if (control.approved) armOperationTimeout();
       for (const item of tabsFor(sessionId)) {
         if (!navigations.has(item.tabId)) trackNavigation(sessionId, item);
       }
@@ -331,7 +339,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (!tab) {
           tab = await Promise.race([
             openTab(url.href, sessionId, requestSignal, async (created) => {
-              const validate = await authorizeNavigation(trackNavigation(sessionId, created, requestSignal), url.href, true);
+              const validate = await authorizeNavigation(trackNavigation(sessionId, created, requestSignal), url.href, true, armOperationTimeout);
               validate();
               dispatched = true;
             }),
@@ -342,7 +350,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         else if (tab.view.webContents.getURL() !== url.href) fail("different_page", "Use navigate to change the selected tab's page.");
         else {
           if (stateFor(tab.tabId).controller) fail("busy", "A browser operation is already running in this tab.");
-          const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, requestSignal), url.href), canceled]);
+          const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, requestSignal), url.href, false, armOperationTimeout), canceled]);
           validate();
         }
         publish(tab.tabId, "idle");
@@ -361,7 +369,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         requestSignal.throwIfAborted();
         if (operation !== "navigate") {
           const url = tab.view.webContents.getURL();
-          const validate = await authorizeNavigation(navigationScope, url);
+          const validate = await authorizeNavigation(navigationScope, url, false, armOperationTimeout);
           validate();
           if (url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking access. Observe again.");
         }
@@ -379,7 +387,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         }
         if (operation === "navigate") {
           const url = browserTaskUrl(args.url);
-          const validate = await authorizeNavigation(navigationScope, url.href);
+          const validate = await authorizeNavigation(navigationScope, url.href, false, armOperationTimeout);
           validate();
           state.observation = null; dispatched = true;
           const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };

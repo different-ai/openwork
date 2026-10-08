@@ -1,6 +1,7 @@
 .frame {
   --dls-text-primary: #171717; --dls-text-secondary: #686868; --dls-border: #e4e4e4;
   --dls-hover: #f5f5f5; --dls-accent: #171717;
+  --setup-hairline: #ededed; --setup-ink-soft: #444; --setup-placeholder: #9a9a9a;
   min-height: 100dvh; background: #fcfcfc; color: #171717; padding: 28px clamp(20px, 5vw, 80px) 20px;
 }
 .top, .grid { max-width: 1130px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); gap: clamp(40px, 7vw, 100px); }
@@ -39,6 +40,8 @@
 .panel :global(.den-button-primary):hover:not(:disabled) { background: #333; }
 .panel :global(.den-label) { padding-left: 0; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: #444; }
 .panel :global(.den-input) { font-size: 13px; border-radius: 12px; padding: 13px 14px; }
+.panel :global(.den-divider) { font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: #8a8a8a; }
+.panel :global(.den-divider)::before, .panel :global(.den-divider)::after { background: var(--setup-hairline); }
 .panel button { transition: background-color .16s, border-color .16s, transform .16s; }
 .panel button:active:not(:disabled) { transform: translateY(1px); }
 .panel button:focus-visible, .panel input:focus-visible, .panel a:focus-visible { outline: 2px solid #444; outline-offset: 3px; }
@@ -113,6 +116,12 @@
 .preview figcaption { font-size: 10px; line-height: 1.7; color: #777; margin-top: 12px; }
 .storyNote { max-width: 330px; font-size: 11px; line-height: 1.8; color: #888; margin: 19px 0 0; }
 .footer { display: flex; justify-content: space-between; gap: 20px; max-width: 1130px; margin: auto; padding-top: 18px; border-top: 1px solid #e9e9e9; color: #888; font-size: 10px; }
+/* One-page flows: the header is only the brand, so the story starts closer to it. */
+.plain .top { grid-template-columns: 1fr; }
+.plain .grid { margin-top: 24px; }
+.plain .customPreview { margin-top: 56px; }
+/* One-page flows change state in place; the panel does not re-enter (P11, V6). */
+.plain .panel { animation: none; }
 .embedded { min-height: auto; border-radius: 18px; padding: 30px clamp(18px, 3vw, 42px); }
 .embedded .top, .embedded .grid { gap: 35px; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); }
 .embedded .grid { margin: 48px auto; }
@@ -143,6 +152,7 @@
   .description { margin-top: 12px; font-size: 14px; line-height: 1.6; max-width: 440px; overflow-wrap: anywhere; }
   .modelSupport { margin-top: 15px; font-size: 12px; gap: 3px 7px; }
   .preview, .customPreview, .storyNote { display: none; }
+  .plain .grid { margin-top: 20px; }
   .panel { --panel-padding: 20px; --panel-radius: 18px; }
   .panelVisual { height: 58px; margin-bottom: 21px; }
   .panelEyebrow { display: none; }

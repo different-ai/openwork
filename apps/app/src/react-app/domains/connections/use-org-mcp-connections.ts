@@ -10,6 +10,7 @@ import {
   readCloudInventoryScope,
 } from "./cloud-inventory-cache";
 import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
+import { openMemberApiKeyDialog } from "./member-api-key-dialog";
 
 // Mirrors the poll-until-connected pattern used for local MCP OAuth
 // (mcp-auth-modal.tsx) — the external server's redirect completes on a
@@ -92,7 +93,8 @@ export function isOrgMcpPollScopeCurrent(
  * `connectedForMe` rather than the connection-wide `connected` flag.
  */
 export function resolveOrgMcpConnectionCardState(
-  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">,
+  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">
+    & Partial<Pick<DenExternalMcpConnection, "authType" | "credentialHealth">>,
 ): OrgMcpConnectionCardState {
   if (connection.credentialMode === "shared") {
     return {
@@ -225,6 +227,12 @@ export function useOrgMcpConnections() {
 
     const previous = connectionsRef.current.find((entry) => entry.id === connectionId);
     const previousConnectedAt = previous?.connectedAt ?? null;
+
+    if (previous?.authType === "apikey" && previous.credentialMode === "per_member") {
+      await openMemberApiKeyDialog(connectionId, { connectionName: previous.name, replacing: previous.connectedForMe === true });
+      await refresh();
+      return;
+    }
 
     stopPolling();
     const pollScope: OrgMcpPollScope = {

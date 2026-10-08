@@ -67,6 +67,7 @@ type SessionManagementState = {
 
 type SessionManagementActions = {
   togglePin: (sessionId: string) => void;
+  reorderPins: (sessionIds: string[]) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
@@ -220,6 +221,12 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
                 ? state.pinnedIds.filter((id) => id !== sessionId)
                 : [...state.pinnedIds, sessionId],
           };
+        }),
+
+      reorderPins: (sessionIds) =>
+        set((state) => {
+          const pinnedIds = [...new Set([...sessionIds.filter(id => state.pinnedIds.includes(id)), ...state.pinnedIds])];
+          return sameStrings(state.pinnedIds, pinnedIds) ? state : { pinnedIds };
         }),
 
       markUnread: (sessionId) =>

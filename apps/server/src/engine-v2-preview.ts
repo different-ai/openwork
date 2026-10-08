@@ -1,17 +1,15 @@
+import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
+import { ApiError } from "./errors.js";
+import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
+import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import constants from "../../../constants.json" with { type: "json" };
-import {
-  CloudNativeSkillSyncError,
-  createCloudNativeSkillSync,
-  EMPTY_CLOUD_NATIVE_SKILL_STATE,
-  type CloudNativeSkillState,
-  type CloudNativeSkillSyncCode,
-} from "./cloud-native-skills.js";
 import {
   createManagedOpencodeV2Server,
   installOpencodeV2Binary,
@@ -23,9 +21,9 @@ import { runtimeStorageDir } from "./runtime-db.js";
 import {
   isEngineGlobalRuntimeConfigId,
   onRuntimeOpencodeConfigWrite,
-  readGlobalRuntimeMcpConfig,
   readGlobalRuntimeOpencodeConfig,
   readEffectiveRuntimeOpencodeConfig,
+  runtimeDisabledProviderList,
   runtimeMcpMap,
   runtimeProviderMap,
 } from "./runtime-opencode-config-store.js";
@@ -33,13 +31,47 @@ import type { EnvService } from "./env-file.js";
 import { selectPrimaryCredentialEnvName } from "./managed-provider-auth.js";
 import type { ServerConfig } from "./types.js";
 
+/**
+ * A stable id for this OpenWork app's engine config. Each desktop app gives
+ * its server its own state path, so an installed build, a dev build and a
+ * test world sharing one engine state directory stop overwriting each other's
+ * engine config. A server without one keeps the shared layout.
+ */
+export function engineInstanceId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const key = env.OPENWORK_SERVER_STATE_PATH?.trim() || env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim();
+  return key ? createHash("sha256").update(key).digest("hex").slice(0, 12) : undefined;
+}
+import { findManagedEngineWorkspace } from "./workspaces.js";
+import { localProviderDefinitions, readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
+
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
 const PREVIEW_STATE_FILE = "engine-v2-preview.json";
 const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
-/** Reserved Connect MCP name; kept in sync with OPENWORK_CLOUD_MCP_NAME in cloud-mcp-health.ts. */
-const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 // A cold sidecar can return HTTP 503 while its model catalog initializes for 17–20 seconds.
 const CATALOG_MIRROR_TIMEOUT_MS = 60_000;
+// Upkeep waits are bounded and never fail a request, as in v1: the engine
+// serves what it has, and OpenWork only improves the next turn's odds.
+// MCP upkeep never holds a request. A registration the engine rejected, or a
+// connection that failed to start, is retried after `mcpRetryMs`, or at once
+// when its configuration changes. Every `mcpHealthMs` known folders are
+// checked for connections that failed or went missing.
+export const ENGINE_V2_UPKEEP_WAITS: Readonly<Record<"providerPushJoinMs" | "workspaceProviderReadyMs" | "mcpRetryMs" | "mcpHealthMs", number>> = Object.freeze({
+  providerPushJoinMs: 10_000,
+  workspaceProviderReadyMs: 8_000,
+  mcpRetryMs: 60_000,
+  mcpHealthMs: 60_000,
+});
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Wait for `promise` at most `ms`, without leaving the timer behind. */
+async function joinBounded(promise: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([promise.catch(() => undefined), new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); })]);
+  clearTimeout(timer);
+}
 
 export interface EngineV2PreviewStatus {
   enabled: boolean;
@@ -53,6 +85,9 @@ export interface EngineV2PreviewStatus {
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
+  /** Most recent upkeep step that did not finish in time or was rejected; requests proceeded. */
+  lastWarning?: string;
+  migration: EngineV2MigrationStatus;
 }
 
 export interface RuntimeProviderRecordLike {
@@ -72,9 +107,20 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
-  syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
-  /** Fresh materialization of authorized Cloud skills as native skills. `failure` is set when they failed closed (cleared) for this admission. */
-  syncCloudSkills(): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }>;
+  refreshProviders(): Promise<void>;
+  /**
+   * Reconcile a folder's MCP connections with the engine: register new or
+   * changed ones, remove revoked ones, and restart failed ones after a back-off.
+   * Healthy and starting connections are left alone. `reconnect` names are
+   * restarted now, without the back-off, when they are not healthy.
+   * Background upkeep: prompts never wait on it.
+   */
+  syncWorkspaceMcp(workspaceId: string, directory: string, options?: { reconnect?: string[] }): Promise<void>;
+  /** Start a folder's upkeep in the background the first time it is seen. Never waits or throws. */
+  warmWorkspace(workspaceId: string, directory: string): void;
+  /** After OpenWork writes workspace skills, briefly wait for the engine to reflect them. Never throws. */
+  settleWorkspaceSkills(directory: string): Promise<void>;
+  migrateHistory(): EngineV2PreviewStatus;
   stop(): Promise<void>;
 }
 
@@ -168,6 +214,7 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
 export function mapRuntimeProvidersToV2Specs(
   providerMap: Record<string, unknown>,
   storedCredentials: ReadonlyMap<string, string> = new Map(),
+  localApiKeys: ReadonlyMap<string, string> = new Map(),
 ): { specs: OpencodeV2ProviderSpec[]; skippedProviderIds: string[] } {
   const specs: OpencodeV2ProviderSpec[] = [];
   const skippedProviderIds: string[] = [];
@@ -220,7 +267,7 @@ export function mapRuntimeProvidersToV2Specs(
     // Resolve only this provider's declared credential, never inherit the
     // server environment or copy unrelated secrets into the sidecar.
     const explicitKey = typeof apiKey === "string" && apiKey.trim() !== "" && !apiKey.includes("{env:") ? apiKey : undefined;
-    const resolvedKey = explicitKey ?? storedKey;
+    const resolvedKey = explicitKey ?? storedKey ?? localApiKeys.get(id);
     if (envNames.length > 0 && !resolvedKey) {
       skippedProviderIds.push(id);
       continue;
@@ -242,6 +289,8 @@ export function mapRuntimeProvidersToV2Specs(
       ...(Object.keys(settings).length ? { settings } : {}),
       ...(isRecord(headers) ? { headers } : {}),
       apiKey: resolvedKey ?? UNSET_API_KEY,
+      ...(Array.isArray(value.whitelist) ? { whitelist: value.whitelist.filter((id): id is string => typeof id === "string") } : {}),
+      ...(Array.isArray(value.blacklist) ? { blacklist: value.blacklist.filter((id): id is string => typeof id === "string") } : {}),
       models,
     });
   }
@@ -307,11 +356,48 @@ export function mapRuntimeMcpToV2(value: unknown): Record<string, unknown> | und
     ...(oauth === undefined ? {} : { oauth }), ...shared };
 }
 
-export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange">; deferStart?: boolean }): EngineV2Preview {
+interface McpLocation {
+  workspaceId: string;
+  /** Config fingerprint of each registration this mirror owns. */
+  applied: Map<string, string>;
+  /** Last rejected registration or restart per name, for the back-off. */
+  attempts: Map<string, { fingerprint: string; at: number }>;
+  /** The latest run; the next one starts after it. */
+  tail?: Promise<void>;
+  /** A run that has not started yet; later triggers join it. */
+  queued?: { promise: Promise<void>; reconnect: Set<string> };
+}
+
+/** Live MCP status per name for one location, or undefined when unknown. */
+async function readLiveMcpStatus(
+  active: Pick<ManagedOpencodeV2Server, "fetchJson">,
+  directory: string,
+): Promise<Map<string, string> | undefined> {
+  const result = await active.fetchJson("/api/mcp", { directory, timeoutMs: 5_000 }).catch(() => undefined);
+  const entries = isRecord(result?.json) ? result.json.data : undefined;
+  if (result?.status !== 200 || !Array.isArray(entries)) return undefined;
+  const statuses = new Map<string, string>();
+  for (const entry of entries) {
+    if (!isRecord(entry) || typeof entry.name !== "string") continue;
+    statuses.set(entry.name, isRecord(entry.status) && typeof entry.status.status === "string" ? entry.status.status : "unknown");
+  }
+  return statuses;
+}
+
+export function createEngineV2Preview(options: {
+  config: ServerConfig;
+  env?: Pick<EnvService, "list" | "onChange">;
+  deferStart?: boolean;
+  hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
+  waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
+}): EngineV2Preview {
   const { config } = options;
+  const waits = { ...ENGINE_V2_UPKEEP_WAITS, ...options.waits };
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
   const initialState = resolveInitialEngineV2PreviewState(process.env, readEngineV2PreviewState(config));
+  let migration: EngineV2MigrationStatus = { state: "idle", imported: 0, skipped: 0, total: 0 };
+  let migrationJob: Promise<void> | undefined;
   let enabled = initialState.enabled;
   let chatRouting = initialState.chatRouting === true;
   let allowRunning = true;
@@ -324,116 +410,146 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   let currentCatalogModelIds: string[] = [];
   let lastMirroredAt: string | undefined;
   let lastError: string | undefined;
+  let lastWarning: string | undefined;
+  const warn = (message: string) => { lastWarning = `${new Date().toISOString()} ${message}`; };
   let sidecar: ManagedOpencodeV2Server | undefined;
+  let contextBridge: Awaited<ReturnType<typeof createV2ContextBridge>> | undefined;
   let unsubscribe: (() => void) | undefined;
   let startPromise: Promise<void> | undefined;
   let mirrorInFlight: Promise<void> | undefined;
+  // Settles once a mirror has pushed providers to the engine, before its
+  // catalog confirmation; readiness joins this, never the whole mirror.
+  let providerPush: Promise<void> | undefined;
   let mirrorDirty = false;
   const workspaceReadiness = new Map<string, Promise<void>>();
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
-  const workspaceMcp = new Map<string, Map<string, string>>();
-  const mcpInFlight = new Map<string, Promise<void>>();
-  const mcpWorkspaces = new Map<string, string>();
-  const cloudSkillsRoot = join(rootDir, "cloud-skills");
-  const cloudSkills = createCloudNativeSkillSync({
-    root: cloudSkillsRoot,
-    readCloudConfig: () => readGlobalRuntimeMcpConfig(config, OPENWORK_CLOUD_MCP_NAME),
-    register: async (directory) => {
-      const active = sidecar;
-      if (!active) throw new CloudNativeSkillSyncError("cloud_skill_engine_unavailable", "OpenCode v2 is not running");
-      await active.setSkills(directory ? [directory] : []);
-    },
-  });
-
-  async function syncCloudSkills(): Promise<{ root: string; state: CloudNativeSkillState; failure?: CloudNativeSkillSyncCode }> {
-    if (!sidecar) throw new CloudNativeSkillSyncError("cloud_skill_engine_unavailable", "OpenCode v2 is not running");
-    try {
-      return { root: cloudSkillsRoot, state: await cloudSkills.sync() };
-    } catch (error) {
-      if (!(error instanceof CloudNativeSkillSyncError)) throw error;
-      // Skills fail closed, the conversation does not: sync() already cleared
-      // and unregistered the root, so the caller admits without Cloud skills.
-      return { root: cloudSkillsRoot, state: EMPTY_CLOUD_NATIVE_SKILL_STATE, failure: error.code };
-    }
+  // One MCP reconciler per folder, keyed by directory.
+  const mcpLocations = new Map<string, McpLocation>();
+  let mcpHealthTimer: ReturnType<typeof setInterval> | undefined;
+  async function settleWorkspaceSkills(directory: string): Promise<void> {
+    const active = sidecar;
+    if (!active || !chatRouting) return;
+    await waitForEngineSkillChanges(directory, async () => {
+      const response = await active.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
+      if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
+      return response.json;
+    });
   }
 
-  async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
-    mcpWorkspaces.set(directory, workspaceId);
-    // Serialize each location, then re-read authoritative state. A queued call
-    // must not reuse a snapshot taken before a removal or credential update.
-    const previous = mcpInFlight.get(directory);
-    const pending = (async () => {
-      if (previous) await previous.catch(() => undefined);
-      const active = sidecar;
-      if (!active) throw new Error("OpenCode v2 is not running");
-      const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspaceId));
-      const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
-        const mapped = mapRuntimeMcpToV2(value);
-        return mapped ? [[name, mapped] as const] : [];
-      }));
-      const applied = workspaceMcp.get(directory) ?? new Map<string, string>();
-      workspaceMcp.set(directory, applied);
-      let changed = false;
-      // Remove first so a failed replacement cannot leave an old credential or
-      // revoked tool active. Only touch registrations owned by this mirror.
-      for (const [name, fingerprint] of applied) {
-        if (desired.has(name) && JSON.stringify(desired.get(name)) === fingerprint) continue;
-        const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
-          method: "DELETE", directory, timeoutMs: 15_000,
-        });
-        if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
-        applied.delete(name);
-        changed = true;
-      }
-      for (const [name, mcpConfig] of desired) {
-        const fingerprint = JSON.stringify(mcpConfig);
-        if (applied.get(name) === fingerprint) continue;
-        const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
-          method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
-        });
-        if (result.status !== 204) throw new Error(`OpenCode v2 MCP registration failed (${result.status})`);
-        applied.set(name, fingerprint);
-        changed = true;
-      }
-      if (changed) {
-        const deadline = Date.now() + 30_000;
-        while (true) {
-          const result = await active.fetchJson("/api/mcp", { directory, timeoutMs: 5_000 });
-          const entries = isRecord(result.json) ? result.json.data : undefined;
-          if (result.status !== 200 || !Array.isArray(entries)) throw new Error("OpenCode v2 MCP status is unavailable");
-          const pending = [...desired.keys()].some((name) => {
-            const entry = entries.find((entry) => isRecord(entry) && entry.name === name);
-            return !isRecord(entry) || !isRecord(entry.status) || entry.status.status === "pending";
-          });
-          if (!pending) break;
-          if (Date.now() >= deadline) {
-            // Retry readiness on the next request rather than cache an
-            // acknowledged registration as usable before its tools exist.
-            throw new Error("OpenCode v2 MCP connections did not settle");
-          }
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        // The pinned beta batches MCP ToolsChanged events for 100ms after
-        // connection startup. Admission must follow that registry refresh,
-        // not merely the PUT acknowledgement or connected status.
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    })();
-    mcpInFlight.set(directory, pending);
-    try { await pending; }
-    catch (error) {
-      // Retain ownership for removals, but never cache a failed readiness
-      // attempt as an applied configuration.
-      const applied = workspaceMcp.get(directory);
-      if (applied) for (const name of applied.keys()) applied.set(name, "");
-      throw error;
+  function syncWorkspaceMcp(workspaceId: string, directory: string, options: { reconnect?: string[] } = {}): Promise<void> {
+    let location = mcpLocations.get(directory);
+    if (!location) {
+      location = { workspaceId, applied: new Map(), attempts: new Map() };
+      mcpLocations.set(directory, location);
     }
-    finally { if (mcpInFlight.get(directory) === pending) mcpInFlight.delete(directory); }
+    location.workspaceId = workspaceId;
+    // Serialize each folder. Triggers that arrive while a run is in flight
+    // share one follow-up run, which re-reads config and live status, so a
+    // burst coalesces and never reuses a snapshot taken before a change.
+    if (location.queued) {
+      for (const name of options.reconnect ?? []) location.queued.reconnect.add(name);
+      return location.queued.promise;
+    }
+    const owner = location;
+    const reconnect = new Set(options.reconnect);
+    const promise = (owner.tail ?? Promise.resolve()).catch(() => undefined).then(() => {
+      if (owner.queued?.promise === promise) owner.queued = undefined;
+      return reconcileWorkspaceMcp(directory, owner, reconnect);
+    });
+    owner.queued = { promise, reconnect };
+    owner.tail = promise;
+    return promise;
+  }
+
+  async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<void> {
+    const active = sidecar;
+    if (!active) throw new Error("OpenCode v2 is not running");
+    const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId));
+    const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
+      const mapped = mapRuntimeMcpToV2(value);
+      return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
+    }));
+    const { applied, attempts } = location;
+    // The engine's live status, not our record of what we sent, decides
+    // whether a connection is healthy. A 204 only means the engine accepted
+    // the config; the connection starts afterwards and can fail (a local app
+    // that was closed), and the engine never retries it on its own.
+    const live = await readLiveMcpStatus(active, directory);
+    const backedOff = (name: string, fingerprint: string) => {
+      const attempt = attempts.get(name);
+      return !reconnect.has(name) && attempt?.fingerprint === fingerprint && Date.now() - attempt.at < waits.mcpRetryMs;
+    };
+    const failures: string[] = [];
+    const remove = async (name: string) => {
+      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE", directory, timeoutMs: 15_000 });
+      if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
+      applied.delete(name);
+    };
+    const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
+      // The engine connects before it answers (up to the startup timeout).
+      const status = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+        method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
+      }).then((result) => result.status, (error) => { warn(`MCP ${name}: ${errorMessage(error)}`); return 0; });
+      if (status !== 204) {
+        attempts.set(name, { fingerprint, at: Date.now() });
+        if (status !== 0) warn(`MCP ${name}: registration failed (${status})`);
+        return;
+      }
+      attempts.delete(name);
+      applied.set(name, fingerprint);
+    };
+    const restart = async (name: string, fingerprint: string) => {
+      // The engine ignores a PUT identical to the config it has, so a failed
+      // connection is restarted with /connect. On a healthy client /connect
+      // closes and reopens it, which is why only unhealthy ones get here.
+      attempts.set(name, { fingerprint, at: Date.now() });
+      warn(`MCP ${name}: connection ${live?.get(name) ?? "missing"}; reconnecting`);
+      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
+      if (result.status !== 204) warn(`MCP ${name}: reconnect failed (${result.status})`);
+    };
+    const tasks: Array<Promise<void>> = [];
+    // Only registrations owned by this mirror are removed. A changed config is
+    // removed before it is registered again, so a failed replacement cannot
+    // leave an old credential or revoked tool active.
+    for (const name of applied.keys()) {
+      const wanted = desired.get(name);
+      if (!wanted) tasks.push(remove(name));
+      else if (wanted.fingerprint !== applied.get(name) && !backedOff(name, wanted.fingerprint)) {
+        tasks.push(remove(name).then(() => register(name, wanted.config, wanted.fingerprint)));
+      }
+    }
+    for (const [name, { config: mcpConfig, fingerprint }] of desired) {
+      const status = live?.get(name);
+      if (applied.has(name) && applied.get(name) !== fingerprint) continue;
+      if (!applied.has(name) || (live && status === undefined)) {
+        // New, or the engine lost it (an identical PUT to a live entry is a no-op).
+        if (!backedOff(name, fingerprint)) tasks.push(register(name, mcpConfig, fingerprint));
+        continue;
+      }
+      // Connected and starting connections are left alone. `disabled` is only
+      // ever set by an OpenWork repair, and needs_auth is retried only on request.
+      const unhealthy = status === "failed" || status === "disabled" || (status === "needs_auth" && reconnect.has(name));
+      if (status === "connected") attempts.delete(name);
+      else if (unhealthy && !backedOff(name, fingerprint)) tasks.push(restart(name, fingerprint));
+    }
+    for (const result of await Promise.allSettled(tasks)) {
+      if (result.status === "rejected") failures.push(errorMessage(result.reason));
+    }
+    // A failed run keeps its record as is: only successful registrations are
+    // recorded, and the live status check catches anything unhealthy.
+    if (failures.length) throw new Error(failures.join("; "));
+  }
+
+  function checkMcpHealth(): void {
+    for (const [directory, location] of mcpLocations) {
+      void syncWorkspaceMcp(location.workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
+    }
   }
 
   function status(): EngineV2PreviewStatus {
     return {
       enabled,
+      migration: { ...migration },
       chatRouting,
       running,
       ...(version === undefined ? {} : { version }),
@@ -444,23 +560,49 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       catalogModelIds: [...currentCatalogModelIds],
       ...(lastMirroredAt === undefined ? {} : { lastMirroredAt }),
       ...(lastError === undefined ? {} : { lastError }),
+      ...(lastWarning === undefined ? {} : { lastWarning }),
     };
   }
 
   async function mirrorProviders(): Promise<void> {
     const active = sidecar;
     if (!active) return;
-    const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    let pushed = () => {};
+    const push = new Promise<void>((resolve) => { pushed = resolve; });
+    providerPush = push;
+    try {
+      await pushAndConfirmProviders(active, pushed);
+    } finally {
+      pushed();
+      if (providerPush === push) providerPush = undefined;
+    }
+  }
+
+  async function pushAndConfirmProviders(active: ManagedOpencodeV2Server, pushed: () => void): Promise<void> {
+    const globalRuntime = await readGlobalRuntimeOpencodeConfig(config);
+    const configured = runtimeProviderMap(globalRuntime);
+    // Same list v1 receives as `disabled_providers` (e.g. a disconnected
+    // OpenCode Zen). Re-enabling removes the entry and this mirror restores it.
+    const disabledProviderIds = runtimeDisabledProviderList(globalRuntime);
+    const disabled = new Set(disabledProviderIds);
+    const localKeys = await readLocalProviderApiKeys();
+    const providerMap = { ...await localProviderDefinitions(config, localKeys, configured), ...configured };
     const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
-    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials);
-    const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
-    await active.setProviders(mapped.specs);
-    mirroredSpecs = mapped.specs;
+    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, localKeys);
+    const specs = mapped.specs.filter((spec) => !disabled.has(spec.id));
+    const nextMirroredProviderIds = specs.map((spec) => spec.id);
+    await active.setProviders(specs, disabledProviderIds);
+    mirroredSpecs = specs;
     workspaceReadiness.clear();
     mirroredProviderIds = nextMirroredProviderIds;
     skippedProviderIds = [...mapped.skippedProviderIds];
     lastMirroredAt = new Date().toISOString();
-    const expectedModelIds = mapped.specs.flatMap((spec) => spec.models.map((model) => model.id));
+    pushed();
+    // Re-check folders already in use now, so their next prompt pays nothing.
+    for (const directory of mcpLocations.keys()) void ensureWorkspaceReady(directory).catch(() => undefined);
+    const expectedModelIds = specs.flatMap((spec) => spec.models
+      .filter(model => (spec.whitelist === undefined || spec.whitelist.includes(model.id)) && !spec.blacklist?.includes(model.id))
+      .map((model) => model.id));
     const deadline = Date.now() + CATALOG_MIRROR_TIMEOUT_MS;
     let catalog = await active.fetchJson("/api/model", { directory: workspaceDir });
     let nextCatalogModelIds = catalogModelIds(catalog.json, nextMirroredProviderIds);
@@ -500,18 +642,27 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     void mirrorInFlight;
   }
 
+  async function refreshProviders(): Promise<void> {
+    if (!running || !sidecar) throw new Error("OpenCode v2 is not running");
+    scheduleMirror();
+    await mirrorInFlight;
+    if (lastError) throw new Error(lastError);
+  }
+
   async function closeSidecar(): Promise<void> {
     const active = sidecar;
     workspaceReadiness.clear();
     sidecar = undefined;
-    workspaceMcp.clear();
-    mcpWorkspaces.clear();
+    mcpLocations.clear();
+    if (mcpHealthTimer) clearInterval(mcpHealthTimer);
+    mcpHealthTimer = undefined;
     running = false;
     version = undefined;
     pid = undefined;
-    if (!active) return;
+    const bridge = contextBridge;
+    contextBridge = undefined;
     try {
-      await active.close();
+      await Promise.all([bridge?.close(), active?.close()]);
     } catch (error) {
       lastError = errorMessage(error);
     }
@@ -522,13 +673,16 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     binSource = resolved.source;
     if (!enabled || !allowRunning) return;
     await mkdir(workspaceDir, { recursive: true });
-    // A previous process may have left materialized cloud skills behind. The
-    // fresh engine config registers none until the first sync succeeds.
-    await cloudSkills.reset();
+    // Remove copies left by the former v2-only Cloud materializer. Cloud
+    // skills now use the same metadata/on-demand Connect path as v1.
+    await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest) : undefined;
     const managed = await createManagedOpencodeV2Server({
+      contextTools: contextBridge,
       bin: resolved.bin,
       rootDir,
+      instanceId: engineInstanceId(),
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
@@ -548,23 +702,22 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
         const global = isEngineGlobalRuntimeConfigId(workspaceId);
         if (global) scheduleMirror();
-        // A replaced or removed openwork-cloud config invalidates the
-        // materialized skills before the next prompt can register a new scope.
-        if (global) void cloudSkills.reconcileScope().catch((error) => {
-          if (sidecar) lastError = `Cloud skills: ${errorMessage(error)}`;
-        });
         // Connections installed through OpenWork also update already-open
-        // locations while a conversation is active. Request admission joins
-        // the same serialized reconciliation rather than racing it.
-        for (const [directory, id] of mcpWorkspaces) {
-          if (global || id === workspaceId) void syncWorkspaceMcp(id, directory).catch((error) => {
+        // locations while a conversation is active.
+        for (const [directory, location] of mcpLocations) {
+          if (global || location.workspaceId === workspaceId) void syncWorkspaceMcp(location.workspaceId, directory).catch((error) => {
             if (sidecar) lastError = `MCP: ${errorMessage(error)}`;
           });
         }
       });
+      mcpHealthTimer = setInterval(checkMcpHealth, waits.mcpHealthMs);
+      mcpHealthTimer.unref?.();
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
+      // Readiness joins the provider push itself; it must not wait for the
+      // mirror's slower catalog confirmation.
+      warmActiveWorkspace();
       if (mirrorInFlight) await mirrorInFlight;
       if (!enabled || !allowRunning) {
         await closeSidecar();
@@ -582,7 +735,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       await startPromise;
       return;
     }
-    const pending = startSidecar();
+    const pending = startSidecar().catch(async error => { await closeSidecar(); throw error; });
     startPromise = pending;
     try {
       await pending;
@@ -606,7 +759,14 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     await closeSidecar();
   }
 
+  function requireNoMigration(): void {
+    if (migration.state === "running") {
+      throw new ApiError(409, "engine_migration_running", "Wait for chat migration to finish before switching engines.");
+    }
+  }
+
   async function setEnabled(nextEnabled: boolean): Promise<EngineV2PreviewStatus> {
+    requireNoMigration();
     if (nextEnabled && enabled && running) return status();
     await writeEngineV2PreviewState(config, { enabled: nextEnabled, chatRouting });
     enabled = nextEnabled;
@@ -624,8 +784,10 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   }
 
   async function setChatRouting(nextChatRouting: boolean): Promise<EngineV2PreviewStatus> {
+    requireNoMigration();
     await writeEngineV2PreviewState(config, { enabled, chatRouting: nextChatRouting });
     chatRouting = nextChatRouting;
+    warmActiveWorkspace();
     return status();
   }
 
@@ -635,34 +797,72 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   }
 
   async function ensureWorkspaceReady(directory: string): Promise<void> {
-    if (mirrorInFlight) await mirrorInFlight;
+    // Join a mirror only until its providers are pushed; its catalog
+    // confirmation can take a minute and is status, not readiness.
+    if (providerPush) await joinBounded(providerPush, waits.providerPushJoinMs);
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
     const existing = workspaceReadiness.get(directory);
     if (existing) return existing;
-    // V2 discovers configuration asynchronously for each new location. Its
-    // initial catalog can be empty even after the preview location is ready.
+    // V2 loads each new location's configuration asynchronously: for about
+    // 200 ms its catalog omits configured providers. v1's engine waits for its
+    // own folder setup instead. This wait is bounded, never fails the request,
+    // and its result is reused until the next provider mirror.
     const pending = (async () => {
-      const deadline = Date.now() + 8_000;
+      const deadline = Date.now() + waits.workspaceProviderReadyMs;
       do {
-        const response = await active.fetchJson("/api/provider", { directory, timeoutMs: 5_000 });
-        const payload = isRecord(response.json) ? response.json.data : undefined;
-        if (response.status === 200 && Array.isArray(payload) && mirroredSpecs.every((spec) =>
+        const response = await active.fetchJson("/api/provider", { directory, timeoutMs: 5_000 }).catch(() => undefined);
+        const payload = isRecord(response?.json) ? response.json.data : undefined;
+        if (response?.status === 200 && Array.isArray(payload) && mirroredSpecs.every((spec) =>
           payload.some((provider) => isRecord(provider) && provider.id === spec.id
             && isRecord(provider.settings) && provider.settings.apiKey === spec.apiKey)
         )) return;
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await delay(100);
       } while (Date.now() < deadline);
-      throw new Error("OpenCode v2 workspace provider configuration did not become ready");
+      warn(`Providers: ${directory} did not list every mirrored provider in time; serving the engine's catalog`);
     })();
     workspaceReadiness.set(directory, pending);
-    try { await pending; } catch (error) {
-      if (workspaceReadiness.get(directory) === pending) workspaceReadiness.delete(directory);
-      throw error;
-    }
+    await pending;
+  }
+
+  function warmWorkspace(workspaceId: string, directory: string): void {
+    if (!sidecar || mcpLocations.has(directory)) return;
+    void ensureWorkspaceReady(directory).catch(() => undefined);
+    void syncWorkspaceMcp(workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
+  }
+
+  // When v2 serves chats, open the active workspace as soon as the sidecar is
+  // up, so the window's first model read does not wait on the location's setup.
+  function warmActiveWorkspace(): void {
+    if (!chatRouting || !sidecar) return;
+    const workspace = findManagedEngineWorkspace(config.workspaces);
+    if (workspace?.path) warmWorkspace(workspace.id, workspace.path);
+  }
+
+  function migrateHistory(): EngineV2PreviewStatus {
+    if (migration.state === "running") return status();
+    const startedAt = new Date().toISOString();
+    migration = { state: "running", phase: "starting", imported: 0, skipped: 0, total: 0, startedAt };
+    migrationJob = (async () => {
+      try {
+        const source = opencodeV1DatabasePath();
+        const resolved = await resolveBinary(config);
+        enabled = true;
+        allowRunning = true;
+        await writeEngineV2PreviewState(config, { enabled, chatRouting });
+        await start();
+        if (!sidecar) throw new Error("OpenCode v2 could not start. Retry migration.");
+        await migrateOpencodeV1History({ source, storageDir: join(runtimeStorageDir(config), "opencode-v2"),
+          bin: resolved.bin, target: sidecar, progress: (next) => { migration = { ...next, startedAt }; } });
+      } catch (error) {
+        migration = { ...migration, state: "error", error: errorMessage(error) };
+      }
+    })();
+    return status();
   }
 
   async function stop(): Promise<void> {
+    await migrationJob;
     await stopRuntime();
   }
 
@@ -670,5 +870,5 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, syncCloudSkills, stop };
+  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

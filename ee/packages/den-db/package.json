@@ -61,10 +61,20 @@
       "development": "./src/schema/system.ts",
       "default": "./dist/schema/system.js"
     },
-    "./schema/telemetry": {
-      "types": "./src/schema/telemetry.ts",
-      "development": "./src/schema/telemetry.ts",
-      "default": "./dist/schema/telemetry.js"
+    "./audit-accounting": {
+      "types": "./src/audit-accounting.ts",
+      "development": "./src/audit-accounting.ts",
+      "default": "./dist/audit-accounting.js"
+    },
+    "./organization-features": {
+      "types": "./src/organization-features.ts",
+      "development": "./src/organization-features.ts",
+      "default": "./dist/organization-features.js"
+    },
+    "./audit-log": {
+      "types": "./src/audit-log.ts",
+      "development": "./src/audit-log.ts",
+      "default": "./dist/audit-log.js"
     },
     "./gateway-usage-limits": {
       "types": "./src/gateway-usage-limits.ts",
@@ -86,16 +96,13 @@
     "db:generate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts",
     "db:migrate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
     "db:push": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts",
-    "test": "NODE_OPTIONS=--conditions=development tsx --test test/*.test.ts",
-    "test:usage-limits": "NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway-usage-limits.test.ts test/gateway-usage-migration.test.ts",
-    "test:usage-limits:db": "DEN_USAGE_TEST_DATABASE_URL=${DEN_USAGE_TEST_DATABASE_URL:?Set an isolated loopback usage_limits_test database URL} NODE_OPTIONS=--conditions=development tsx --test --test-concurrency=1 test/gateway-usage-limits-db.test.ts",
-    "typecheck:usage-limits": "tsc -p tsconfig.usage-limits-test.json --pretty false",
     "db:verify-memory": "pnpm run build && node --import tsx scripts/verify-memory-schema.ts",
     "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
   },
   "dependencies": {
-    "@openwork/types": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
+    "@openwork/features": "workspace:*",
+    "@openwork/types": "workspace:*",
     "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.2",
     "mysql2": "^3.23.1"

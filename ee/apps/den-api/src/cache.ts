@@ -1,3 +1,4 @@
+import { peopleMemberCondition } from "./setup-agent-members.js"
 import { asc, and, eq, gt, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable, InvitationTable, MemberTable, OAuthConsentTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
@@ -417,7 +418,7 @@ async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]>
     .from(MemberTable)
     .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
     .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
-    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
+    .where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition()))
     .orderBy(asc(MemberTable.createdAt))
 
   return members.map((member) => {
@@ -837,44 +838,3 @@ export const cache = {
   },
 }
 
-export function setCacheDependenciesForTest(input: {
-  redis?: CacheRedisClient | null
-  orgMembersLoader?: (organizationId: OrgId) => Promise<CachedOrgMember[]>
-  authSessionLoader?: (token: string, now: Date) => Promise<CachedAuthSession | null>
-  authSessionIdLoader?: (sessionId: DenTypeId<"session">, now: Date) => Promise<{ id: DenTypeId<"session">; expiresAt: Date } | null>
-  authGrantLoader?: (grantId: OAuthConsentId) => Promise<{ id: OAuthConsentId } | null>
-  orgMembershipLoader?: (input: { organizationId: OrgId; userId: UserId }) => Promise<CachedOrgMembership | null>
-}) {
-  const previousRedis = activeRedisClient
-  const previousOrgMembersLoader = activeOrgMembersLoader
-  const previousAuthSessionLoader = activeAuthSessionLoader
-  const previousAuthSessionIdLoader = activeAuthSessionIdLoader
-  const previousAuthGrantLoader = activeAuthGrantLoader
-  const previousOrgMembershipLoader = activeOrgMembershipLoader
-  if ("redis" in input) {
-    activeRedisClient = input.redis ?? null
-  }
-  if (input.orgMembersLoader) {
-    activeOrgMembersLoader = input.orgMembersLoader
-  }
-  if (input.authSessionLoader) {
-    activeAuthSessionLoader = input.authSessionLoader
-  }
-  if (input.authSessionIdLoader) {
-    activeAuthSessionIdLoader = input.authSessionIdLoader
-  }
-  if (input.authGrantLoader) {
-    activeAuthGrantLoader = input.authGrantLoader
-  }
-  if (input.orgMembershipLoader) {
-    activeOrgMembershipLoader = input.orgMembershipLoader
-  }
-  return () => {
-    activeRedisClient = previousRedis
-    activeOrgMembersLoader = previousOrgMembersLoader
-    activeAuthSessionLoader = previousAuthSessionLoader
-    activeAuthSessionIdLoader = previousAuthSessionIdLoader
-    activeAuthGrantLoader = previousAuthGrantLoader
-    activeOrgMembershipLoader = previousOrgMembershipLoader
-  }
-}

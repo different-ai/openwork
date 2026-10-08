@@ -119,6 +119,39 @@ test("mobile send reserves answer space and keeps the new turn through keyboard 
   expect(state().mode).toBe("stickyBottom");
 });
 
+test("mobile send reserves answer space when the engine gives the sent message its own ID (OpenCode v2)", async () => {
+  const media = window.matchMedia("(max-width: 1023px)");
+  Object.defineProperty(media, "matches", { value: true });
+  spyOn(window, "matchMedia").mockReturnValue(media);
+  const view = fixture(undefined, {}, true);
+  view.layout.messages = [{ id: "first", top: 0, height: 300, role: "user" }];
+  view.layout.height = 300;
+  await view.render("a", true, "client-draft-id");
+  // The older turn is never mistaken for the one just sent.
+  expect(view.container.scrollHeight).toBe(300);
+  view.layout.messages.push({ id: "msg_server", top: 300, height: 48, role: "user" });
+  view.layout.height = 348;
+  await view.render("a", true, "client-draft-id");
+  expect(view.container.scrollTop).toBe(300);
+  expect(view.container.scrollHeight).toBe(500);
+  expect(view.container.textContent).not.toContain("Jump to latest");
+});
+
+test("mobile send keeps its reserved space when the engine replaces the optimistic row with its own ID", async () => {
+  const media = window.matchMedia("(max-width: 1023px)");
+  Object.defineProperty(media, "matches", { value: true });
+  spyOn(window, "matchMedia").mockReturnValue(media);
+  const view = fixture(undefined, {}, true);
+  view.layout.messages = [{ id: "first", top: 0, height: 300, role: "user" }, { id: "client-draft-id", top: 300, height: 48, role: "user" }];
+  view.layout.height = 348;
+  await view.render("a", true, "client-draft-id");
+  expect(view.container.scrollTop).toBe(300);
+  view.layout.messages = [{ id: "first", top: 0, height: 300, role: "user" }, { id: "msg_server", top: 300, height: 48, role: "user" }];
+  await view.render("a", true, "client-draft-id");
+  expect(view.container.scrollTop).toBe(300);
+  expect(view.container.scrollHeight).toBe(500);
+});
+
 test("manual navigation restores jump to latest even when the short mobile turn still fits", async () => {
   const media = window.matchMedia("(max-width: 1023px)");
   Object.defineProperty(media, "matches", { value: true });
@@ -197,7 +230,7 @@ function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useS
       { id: "first", top: 0, height: 300 },
       { id: "reading", top: 300, height: 300 },
       { id: "latest", top: 600, height: 400 },
-    ],
+    ] as { id: string; top: number; height: number; role?: string }[],
   };
   let scrollTop = 0;
   const scrollWrites: number[] = [];
@@ -238,7 +271,7 @@ function fixture(geometryOwner?: string, pagination: Pick<Parameters<typeof useS
               if (node) node.getBoundingClientRect = () => new DOMRect(0, 40 + placeholder.top - scrollTop, 500, placeholder.height);
             }} />)}
           <div data-thread-group={layout.virtualized ? message.id : undefined}>
-            <div data-message-id={message.id} ref={(node) => {
+            <div data-message-id={message.id} data-message-role={message.role} ref={(node) => {
               if (node) node.getBoundingClientRect = () => new DOMRect(0, 40 + message.top - scrollTop, 500, message.height);
             }}>{message.id}</div>
           </div>

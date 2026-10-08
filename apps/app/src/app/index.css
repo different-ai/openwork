@@ -48,6 +48,40 @@
   app-region: no-drag;
 }
 
+/* Native chrome is measured in CSS pixels, independent of the UI font scale. */
+:root {
+  --window-titlebar-height: 40px;
+  --window-controls-left: 0px;
+}
+
+html.openwork-electron.openwork-platform-mac:not([data-window-fullscreen="true"]) {
+  --window-titlebar-height: 48px;
+  --window-controls-left: 88px;
+}
+
+@utility window-titlebar {
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
+}
+
+@utility mac-window-controls-inset {
+  padding-left: max(--spacing(2), var(--window-controls-left));
+}
+
+/* The overlay may be on either side, according to the native desktop settings. */
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-session-header],
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-settings-titlebar] {
+  padding-right: max(--spacing(3), calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
+}
+
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-sidebar-titlebar] {
+  padding-left: max(--spacing(2), env(titlebar-area-x, 0px));
+}
+
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-session-header][data-sidebar-hidden="true"] {
+  padding-left: max(--spacing(3), env(titlebar-area-x, 0px));
+}
+
 @keyframes accordion-down {
   from {
     height: 0;
@@ -251,13 +285,6 @@ body {
   color: var(--color-red-11, inherit);
 }
 
-.ow-soft-shell {
-  border: 1px solid var(--dls-border);
-  background: var(--dls-surface);
-  border-radius: 2rem;
-  box-shadow: var(--dls-shell-shadow);
-}
-
 /* Arc-style overflow: long labels fade out instead of showing an ellipsis. */
 .ow-fade-truncate {
   overflow: hidden;
@@ -297,122 +324,6 @@ body {
   border-radius: 1.5rem;
 }
 
-.ow-button-primary {
-  display: inline-flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background: var(--dls-accent);
-  color: white;
-  box-shadow: 0 8px 20px -16px rgba(var(--dls-accent-rgb), 0.45);
-}
-
-.ow-button-primary:hover:not(:disabled) {
-  background: var(--dls-accent-hover);
-}
-
-.ow-button-secondary {
-  display: inline-flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  border: 1px solid var(--dls-border);
-  background: var(--dls-surface);
-  color: var(--dls-text-primary);
-  box-shadow: var(--dls-card-shadow);
-}
-
-.ow-button-secondary:hover:not(:disabled) {
-  background: var(--dls-hover);
-}
-
-.ow-button-primary,
-.ow-button-secondary {
-  padding: 0.75rem 1.25rem;
-  font-size: 13px;
-  font-weight: 500;
-  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease, opacity 150ms ease;
-}
-
-.ow-button-primary:active:not(:disabled),
-.ow-button-secondary:active:not(:disabled) {
-  transform: scale(0.99);
-}
-
-.ow-button-primary:disabled,
-.ow-button-secondary:disabled {
-  opacity: 0.5;
-}
-
-.ow-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  padding: 0.25rem 0.625rem;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.ow-status-pill-positive {
-  border: 1px solid var(--green-a6);
-  background: var(--green-3);
-  color: var(--green-11);
-}
-
-.ow-status-pill-warning {
-  border: 1px solid var(--amber-a6);
-  background: var(--amber-3);
-  color: var(--amber-11);
-}
-
-.ow-status-pill-neutral {
-  border: 1px solid var(--slate-6);
-  background: var(--slate-2);
-  color: var(--slate-11);
-}
-
-.ow-icon-tile {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.85rem;
-  background: var(--slate-3);
-  color: var(--slate-12);
-}
-
-.ow-icon-tile-muted {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.85rem;
-  background: var(--slate-3);
-  color: var(--slate-11);
-}
-
-.ow-input {
-  appearance: none;
-  width: 100%;
-  border: 0;
-  border-radius: 0.9rem;
-  background: var(--slate-1);
-  box-shadow: inset 0 0 0 1px var(--slate-6);
-  color: var(--dls-text-primary);
-}
-
-.ow-input::placeholder {
-  color: var(--slate-11);
-}
-
-.ow-input:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1px rgba(var(--dls-accent-rgb), 0.28), 0 0 0 3px rgba(var(--dls-accent-rgb), 0.08);
-}
-
 /* Global clickable elements pointer */
 button,
 [role="button"],
@@ -430,47 +341,6 @@ button:disabled,
 input:disabled,
 select:disabled {
   cursor: not-allowed;
-}
-
-@utility animate-spin-slow {
-  animation: spin 3s linear infinite;
-}
-
-@keyframes soft-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.4;
-  }
-  50% {
-    transform: scale(1.15);
-    opacity: 1;
-  }
-}
-
-@utility animate-soft-pulse {
-  animation: soft-pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-/* Highlight animation for just-saved command */
-@keyframes command-highlight {
-  0% {
-    box-shadow: 0 0 0 0 var(--indigo-a9);
-    border-color: var(--indigo-a9);
-  }
-  50% {
-    box-shadow: 0 0 0 8px var(--indigo-a1);
-    border-color: var(--indigo-a7);
-  }
-  100% {
-    box-shadow: 0 0 0 0 var(--indigo-a1);
-    border-color: var(--slate-a3);
-  }
-}
-
-.command-just-saved {
-  animation: command-highlight 2s ease-out;
-  border-color: var(--indigo-a9);
 }
 
 @keyframes progress-shimmer {
@@ -692,28 +562,6 @@ select:disabled {
 
   .ow-dot-matrix-dot {
     animation: none;
-  }
-}
-
-/* Sweep under the active boot checkpoint. Stays in CSS so the gateway can poll
-   without an endless JS animation competing for the main thread. */
-@keyframes ow-stage-shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(400%);
-  }
-}
-
-.ow-stage-shimmer {
-  animation: ow-stage-shimmer 1.6s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ow-stage-shimmer {
-    animation: none;
-    transform: translateX(0);
   }
 }
 

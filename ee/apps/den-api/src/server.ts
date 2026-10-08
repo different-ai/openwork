@@ -1,9 +1,12 @@
 import { DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS, serveDenHttp } from "./http-server.js"
 import app from "./app.js"
+import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
+import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handoff.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
+import { startLifecycleEmailLoop } from "./lifecycle-emails/index.js"
 import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
 import { startGithubSyncWorker } from "./workers/github-sync.js"
@@ -11,7 +14,10 @@ import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 
+const stopSlackAssistantWorker = startSlackAssistantWorker()
+const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
+const stopLifecycleEmailLoop = startLifecycleEmailLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopGithubSyncWorker = startGithubSyncWorker()
@@ -77,6 +83,9 @@ async function stopBackgroundLoops() {
   stopModelsAnalyticsExportLoop()
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
+    stopLifecycleEmailLoop(),
+    stopSlackAssistantWorker(),
+    stopSlackDesktopHandoffWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),

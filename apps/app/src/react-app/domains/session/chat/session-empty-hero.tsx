@@ -4,7 +4,7 @@ import { ArrowRight, X, Zap } from "lucide-react";
 
 import { DEFAULT_MODEL } from "@/app/constants";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Button } from "@/components/ui/button";
+import { DescriptiveButton, DescriptiveButtonTitle } from "@/components/descriptive-button";
 import type { ComposerAttachment } from "@/app/types";
 import { resolveOrganizationPromptCardContent } from "@/components/chat/task-suggestions";
 import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -261,18 +261,16 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
         </button>
       ) : null}
 
-      <div data-empty-suggestions hidden={hideIntroduction} className={hideIntroduction ? "hidden" : "grid gap-2 text-muted-foreground sm:grid-cols-2"}>
+      <div data-empty-suggestions hidden={hideIntroduction} className={hideIntroduction ? "hidden" : "grid gap-2 sm:grid-cols-2"}>
         {suggestions.map((suggestion) => (
-          <Button
+          <DescriptiveButton
             key={suggestion.title}
-            variant="ghost"
-            size="sm"
-            className="min-w-0 justify-start"
-            title={suggestion.description}
+            className="min-h-10 items-center rounded-xl bg-background px-3 py-2 text-foreground hover:border-foreground/20 hover:bg-muted/60 max-lg:min-h-11"
+            aria-label={`${suggestion.title}: ${suggestion.description}`}
             onClick={() => fillPrompt(suggestion.prompt)}
           >
-            <span className="truncate">{suggestion.title}</span>
-          </Button>
+            <DescriptiveButtonTitle>{suggestion.title}</DescriptiveButtonTitle>
+          </DescriptiveButton>
         ))}
       </div>
     </div>

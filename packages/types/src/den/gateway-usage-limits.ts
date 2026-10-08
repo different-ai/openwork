@@ -80,11 +80,19 @@ export type GatewayUsageLimitPolicy = {
   allowRequestReset: boolean
   revision: number
   limits: { timeframe: GatewayUsageTimeframe; costLimitMicroUsd: number }[]
-  assignments: { id: string; memberId: string | null; teamId: string | null }[]
+  assignments: { id: string; memberId: string | null; teamId: string | null; organization: boolean }[]
   archivedAt?: string | null
 }
 export type GatewayUsageResetStatus = "pending" | "approved" | "denied" | "expired"
 export const gatewayUsageProvenanceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("organization"),
+      assignmentId: z.string(),
+      memberId: z.null(),
+      teamId: z.null(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("direct"),
@@ -177,7 +185,12 @@ export const gatewayUsageLimitPolicySchema: z.ZodType<GatewayUsageLimitPolicy> =
     z.object({ timeframe: gatewayUsageTimeframeSchema, costLimitMicroUsd: moneySchema }),
   ),
   assignments: z.array(
-    z.object({ id: z.string(), memberId: z.string().nullable(), teamId: z.string().nullable() }),
+    z.object({
+      id: z.string(),
+      memberId: z.string().nullable(),
+      teamId: z.string().nullable(),
+      organization: z.boolean().default(false),
+    }),
   ),
   archivedAt: z.iso.datetime().nullable().optional(),
 })

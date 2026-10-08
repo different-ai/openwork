@@ -1,7 +1,7 @@
 /**
  * Product analytics for the OpenWork desktop app (PostHog, zero-dependency).
  *
- * Principles (mirrors `den-telemetry.ts`):
+ * Product instrumentation principles:
  * - Never send message content, file paths, code, or prompts. Only event
  *   names, counts, lengths, durations, and coarse context (workspace type,
  *   provider/model id). Sole exception: answers the user types directly
@@ -42,8 +42,7 @@ type QueuedEvent = {
   timestamp: string;
 };
 
-let queue: QueuedEvent[] = [];
-let flushTimer: ReturnType<typeof setInterval> | null = null;
+const queue: QueuedEvent[] = [];
 let initialized = false;
 
 export function isAnalyticsEnabled(): boolean {
@@ -174,7 +173,7 @@ export function initAnalytics() {
   if (initialized || typeof window === "undefined") return;
   initialized = true;
 
-  flushTimer = setInterval(() => void flushAnalytics(), FLUSH_INTERVAL_MS);
+  setInterval(() => void flushAnalytics(), FLUSH_INTERVAL_MS);
 
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") void flushAnalytics();
@@ -186,13 +185,4 @@ export function initAnalytics() {
     if (userId) identify(userId);
     captureAnalyticsEvent("cloud_signed_in", {});
   }) as EventListener);
-}
-
-export function disposeAnalytics() {
-  if (flushTimer) {
-    clearInterval(flushTimer);
-    flushTimer = null;
-  }
-  initialized = false;
-  queue = [];
 }

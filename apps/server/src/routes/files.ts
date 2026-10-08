@@ -47,6 +47,8 @@ interface RegisterFileRoutesOptions {
   resolveOutboxEnabled: () => boolean;
   resolveInboxMaxBytes: () => number;
   scopeRank: (scope: TokenScope) => number;
+  /** The folder a conversation of this workspace runs in, or null when unknown. */
+  resolveSessionDirectory?: (workspace: WorkspaceInfo, sessionId: string) => Promise<string | null>;
 }
 
 function resolveInboxDir(workspaceRoot: string): string {
@@ -546,6 +548,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     resolveOutboxEnabled,
     resolveInboxMaxBytes,
     scopeRank,
+    resolveSessionDirectory,
   } = options;
   const fileSessions = new FileSessionStore();
 
@@ -923,9 +926,21 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = ctx.url.searchParams.get("path") ?? "";
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    let absPath = resolveSafeChildPath(workspace.path, relativePath);
     if (!(await exists(absPath))) {
-      throw new ApiError(404, "file_not_found", "File not found");
+      // A conversation that moved into a worktree writes its files there, and
+      // its replies name them relative to that folder.
+      const sessionId = ctx.url.searchParams.get("session")?.trim();
+      const sessionDirectory = sessionId && resolveSessionDirectory
+        ? await resolveSessionDirectory(workspace, sessionId)
+        : null;
+      const sessionPath = sessionDirectory && resolve(sessionDirectory) !== resolve(workspace.path)
+        ? resolveSafeChildPath(sessionDirectory, relativePath)
+        : null;
+      if (!sessionPath || !(await exists(sessionPath))) {
+        throw new ApiError(404, "file_not_found", "File not found");
+      }
+      absPath = sessionPath;
     }
     const info = await stat(absPath);
     if (!info.isFile()) {

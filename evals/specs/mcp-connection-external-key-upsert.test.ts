@@ -89,6 +89,9 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   });
   const firstResponse = requireRecord(first.body, "First PUT response");
   const id1 = stringField(firstResponse, "id");
+  const createdAt = stringField(firstResponse, "createdAt");
+  expect(Number.isFinite(Date.parse(createdAt))).toBe(true);
+  expect(Date.parse(createdAt)).toBeGreaterThanOrEqual(stamp);
   expect(first.response.status, first.text).toBe(201);
   expect(first.response.status).not.toBe(200);
   expect(firstResponse.externalKey).toBe(key);
@@ -117,6 +120,13 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   const namedAfterReplace = afterReplace.filter((row) => row.name === firstName || row.name === replacedName);
   expect(keyedAfterReplace).toHaveLength(1);
   expect(namedAfterReplace).toHaveLength(1);
+  expect(secondResponse.createdAt).toBe(createdAt);
+  expect(keyedAfterReplace[0]?.createdAt).toBe(createdAt);
+  evidence.recordAssertionEvidence(
+    "The connection keeps its original creation time after an update",
+    `Created at ${createdAt}; replacing its name and reading the manageable list returned the same creation time.`,
+    secondResponse.createdAt === createdAt && keyedAfterReplace[0]?.createdAt === createdAt,
+  );
   evidence.recordAssertionEvidence(
     "2. A second PUT replaces the keyed connection without duplicating it",
     `Second PUT returned status=${second.response.status}, id=${String(secondResponse.id)}, name=${String(secondResponse.name)}, externalKey=${String(secondResponse.externalKey)}; manageable counts were key=${keyedAfterReplace.length}, either-name=${namedAfterReplace.length}, not create status 201 or the old name.`,
@@ -279,6 +289,23 @@ test.skipIf(!mysqlOpen || !redisOpen)("an API-key client reapplies and changes a
   const policyInput = { policyName: "Managed desktop", policy: { allowZenModel: false }, teamIds: [teamId], priority: 10, isEnabled: true };
   const marketInput = { name: "Internal catalog", description: "First revision" };
   const provider1 = item(await put("llm-providers", providerInput, 201), "llmProvider");
+  const blankProviderCredential = await request(base("llm-providers"), "PUT", { ...providerInput, apiKey: " " });
+  expect(blankProviderCredential.response.status, blankProviderCredential.text).toBe(400);
+  expect(requireRecord(blankProviderCredential.body, "blank credential").error).toBe("invalid_api_keys");
+  const providerAfterBlankCredential = item(requireRecord((await request(base("llm-providers"))).body, "provider after blank credential"), "llmProvider");
+  expect(providerAfterBlankCredential.hasApiKey).toBe(true);
+  // The dashboard create form sends a blank key for keyless providers (per-member
+  // credentials, unauthenticated internal endpoints); that ordinary route must keep working.
+  const keylessInput = { ...providerInput, name: "Keyless", apiKey: "", teamIds: [], customConfig: { ...providerInput.customConfig, id: "keyless", name: "Keyless" } };
+  const keyless = await request("/v1/llm-providers", "POST", keylessInput);
+  expect(keyless.response.status, keyless.text).toBe(201);
+  const keylessProvider = item(requireRecord(keyless.body, "keyless provider"), "llmProvider");
+  expect(keylessProvider.hasApiKey).toBe(false);
+  evidence.recordAssertionEvidence(
+    "Blank declarative provider credentials fail before they can clear a saved credential, while keyless dashboard creates still succeed",
+    `Declarative PUT with a blank apiKey returned status=${blankProviderCredential.response.status} error=${String(requireRecord(blankProviderCredential.body, "blank").error)}; the keyed provider still reported hasApiKey=${String(providerAfterBlankCredential.hasApiKey)}; POST /v1/llm-providers with a blank apiKey returned status=${keyless.response.status} hasApiKey=${String(keylessProvider.hasApiKey)}.`,
+    blankProviderCredential.response.status === 400 && providerAfterBlankCredential.hasApiKey === true && keyless.response.status === 201 && keylessProvider.hasApiKey === false,
+  );
   const policy1 = item(await put("desktop-policies", policyInput, 201), "desktopPolicy");
   const marketplace1 = item(await put("marketplaces", marketInput, 201), "item");
   const resources = [

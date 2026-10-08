@@ -1,14 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { liveOpenAiEnabled } from "@openwork/behaviors";
-import { observeTranscript, readTranscriptMessages, spec, type Probe, type User } from "@openwork/testkit";
+import { browserScript, observeTranscript, readTranscriptMessages, spec, type Probe, type User } from "@openwork/testkit";
 import { skillLifecycle } from "../worlds/chat.ts";
 import { selectedSkillsWeb } from "../worlds/selected-skills.ts";
 import {
   cloudNativeSkillIdPrefix,
-  skillJitAccounts,
   skillJitWeb,
-  type NativeSkillEntry,
   type SkillJitTurnTarget,
 } from "../worlds/skill-jit.ts";
 
@@ -19,7 +17,7 @@ const test = spec.world(skillLifecycle, {
 
 // The engine is selected by the world. The journey does not inspect injected
 // instructions, catalog formatting, native tool names, or engine message shapes.
-test("workspace skills change during an ongoing conversation", async ({ world, user, agent, probe, step }) => {
+test("workspace skills change during an ongoing conversation", async ({ world, user, agent, probe, step, evidence }) => {
   const runtime = await world.runtimeIdentity();
   const sessionRoute = await probe.hash();
   const skillRoute = `/workspace/${world.workspace.workspaceId}/skills`;
@@ -28,7 +26,9 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
   const submitted: string[] = [];
   const answer = async () => {
     const messages = await readTranscriptMessages(probe, "assistant");
-    return { count: messages.length, text: messages.at(-1) ?? "" };
+    const id = await probe.eval(browserScript(() => [...document.querySelectorAll('[data-message-role="assistant"]')].at(-1)?.getAttribute("data-message-id") ?? "", []));
+    const state = await world.conversationState();
+    return { id, text: messages.at(-1) ?? "", messages, completed: state.completed.includes(id) };
   };
   const ask = async (expected: string | null) => {
     const before = await answer();
@@ -40,19 +40,26 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     for (const code of [...previousCodes, ...(expected ? [expected] : [])]) expect(prompt).not.toContain(code);
     await world.prepareTurn(prompt);
     await using transcript = await observeTranscript(probe, [{ role: "user", text: prompt }]);
-    await user.type({ placeholder: "Describe your task..." }, prompt, { verify: true });
+    await user.see("composer", { editable: true });
+    await user.type("composer", prompt, { verify: true }).catch(async (error: unknown) => {
+      evidence.recordJsonArtifact("Skill conversation draft failure", { composer: await probe.composer(), screen: await probe.text() });
+      await user.screenshot();
+      throw error;
+    });
     await user.press("Enter");
     await user.see({ text: prompt }, { timeoutMs: 15_000 });
     const response = await probe.eventually(answer, {
       within: 150_000, label: "the conversation answers using the currently installed instructions",
-      until: (value) => record(value) && record(before) && Number(value.count) > Number(before.count)
+      until: (value) => record(value) && record(before) && value.id !== before.id && value.completed === true
         && typeof value.text === "string" && value.text.includes(expected ?? "UNAVAILABLE"),
     });
     await user.see("Run task", { timeoutMs: 60_000 });
     submitted.push(prompt);
-    const visibleUserMessages = await readTranscriptMessages(probe, "user");
-    expect(visibleUserMessages).toHaveLength(submitted.length);
-    visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
+    // Older groups leave the DOM as the conversation grows. Verify stored
+    // history in full and keep the current turn's visible-message observer.
+    const history = (await world.conversationState()).users;
+    expect(history).toHaveLength(submitted.length);
+    for (const sent of submitted) expect(history.filter(text => text.includes(sent))).toHaveLength(1);
     expect(await readTranscriptMessages(probe, "system")).toEqual([]);
     // A silent swap to an organization model must fail here, not as a text mismatch.
     expect(await world.usedConfiguredModel()).toBe(true);
@@ -102,6 +109,8 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     await remove();
     await ask(null);
   });
+  evidence.recordAssertionEvidence("Workspace skill changes reach the next turn",
+    `Installing, editing, removing and reinstalling a workspace skill through OpenWork changed the very next answer in one conversation, with every sent message kept once and the same engine process throughout.`, true);
 });
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -113,9 +122,9 @@ const selectedTest = spec.world(selectedSkillsWeb, {
 });
 
 const openSkillMenu = async (user: User, name: string) => {
-  await user.click({ role: "button", label: "Agents, commands, skills, plugins, and connections" });
-  await user.click({ role: "button", label: "Skills" });
-  await user.click({ role: "button", label: new RegExp(name) });
+  await user.click({ role: "button", label: "Add files, skills, connectors, and more" });
+  await user.type({ placeholder: "Search files, skills, connectors" }, name);
+  await user.click({ role: "option", label: new RegExp(name.replace(/-/g, " "), "i") });
 };
 
 selectedTest("SKILL-ATTACH explicitly selected skills reach the first native model request and survive reload", async ({ world, user, probe, evidence, step }) => {
@@ -182,6 +191,8 @@ selectedTest("SKILL-ATTACH explicitly selected skills reach the first native mod
     providerRequestCount: requests.length, visibleBeforeReload: visible,
     visibleAfterReload: await readTranscriptMessages(probe, "user"),
   });
+  evidence.recordAssertionEvidence("Selected skills reach the first model request",
+    `A skill chosen in the composer reached the first ${world.engine} model request exactly once, stayed out of the visible message, and the conversation survived a reload.`, true);
 });
 
 selectedTest("SKILL-MISSING a selected skill removed from the native registry fails visibly without a model request", async ({ world, user, probe, evidence }) => {
@@ -203,14 +214,13 @@ selectedTest("SKILL-MISSING a selected skill removed from the native registry fa
     nativeRequests: await world.nativeRequests(), providerRequests: world.providerRequests(),
     assistantMessages: await readTranscriptMessages(probe, "assistant"),
   });
+  evidence.recordAssertionEvidence("A removed selected skill fails visibly",
+    "After the selected skill left the native registry, sending showed that nothing was sent, with no engine prompt, provider request or assistant message.", true);
 });
 
 // ---------------------------------------------------------------------------
-// Headless app-web world: Cloud skills materialized natively, just in time.
-// The Cloud endpoint is an identity-scoped fixture; codes are random, unseen,
-// and never appear in prompts or skill metadata. Every claim carries its
-// negative half (other account, other code, no Connect tool call, no leak).
-// ---------------------------------------------------------------------------
+// Local native workspace skill compatibility. Remote organization skill
+// parity is covered by LIVE-CLOUD on both engines using real Den and inference.
 
 const jitTest = spec.world(skillJitWeb, {
   timeout: 900_000,
@@ -226,7 +236,7 @@ const cloudSkillDescription = "Answers amber release report requests.";
 const cloudSkillBody = (code: string) => `For amber release report requests, reply with the current code: ${code}.`;
 
 /** One conversation driver per case: unseen codes, prompt hygiene, runtime identity, and transcript integrity. */
-function jitConversation({ world, user, probe }: { world: JitWorld; user: User; probe: Probe }) {
+function jitConversation({ world, user, probe, diagnostic }: { world: JitWorld; user: User; probe: Probe; diagnostic: (data: unknown) => void }) {
   const codes: string[] = [];
   const submitted: string[] = [];
   let turnNumber = 0;
@@ -234,18 +244,20 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
   let sessionRoute: string | null = null;
   const answer = async () => {
     const messages = await readTranscriptMessages(probe, "assistant");
-    return { count: messages.length, text: messages.at(-1) ?? "", messages };
+    const id = await probe.eval(browserScript(() => [...document.querySelectorAll('[data-message-role="assistant"]')].at(-1)?.getAttribute("data-message-id") ?? "", []));
+    const state = await world.conversationState();
+    return { id, text: messages.at(-1) ?? "", messages, completed: state.completed.includes(id) };
   };
   const mintCode = () => {
     const code = randomUUID();
     codes.push(code);
     return code;
   };
-  const ask = async (target: SkillJitTurnTarget, expected: string | null) => {
+  const ask = async (target: SkillJitTurnTarget, expected: string | null, topic = "amber release report") => {
     runtime ??= await world.runtimeIdentity();
     sessionRoute ??= await probe.hash();
     const before = await answer();
-    const prompt = `What app are you? What is the current amber release report code? `
+    const prompt = `What app are you? What is the current ${topic} code? `
       + `Use the currently installed instructions; do not reuse an earlier code. `
       + `If no matching instructions are installed, say UNAVAILABLE. Request ${++turnNumber}.`;
     // The user-facing request never smuggles the answer, the skill, or the connector.
@@ -263,22 +275,27 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
     if (expected !== null) {
       await probe.eventually(answer, {
         within: 150_000, label: `the conversation answers with ${expected === "UNAVAILABLE" ? "UNAVAILABLE" : "the current code"}`,
-        until: (value) => value.count > before.count && value.text.includes(expected),
+        until: (value) => value.id !== before.id && value.completed && value.text.includes(expected),
+      }).catch(async error => {
+        diagnostic({ state: await world.cloudDiscoveryState(), model: await world.modelRequests(prompt) });
+        throw error;
       });
     }
     await user.see("Run task", { timeoutMs: 150_000 });
     const response = await answer();
     submitted.push(prompt);
-    const visibleUserMessages = await readTranscriptMessages(probe, "user");
-    expect(visibleUserMessages).toHaveLength(submitted.length);
-    visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
+    // Older groups leave the DOM as the conversation grows. Verify stored
+    // history in full and keep the current turn's visible-message observer.
+    const history = (await world.conversationState()).users;
+    expect(history).toHaveLength(submitted.length);
+    for (const sent of submitted) expect(history.filter(text => text.includes(sent))).toHaveLength(1);
     expect(await readTranscriptMessages(probe, "system")).toEqual([]);
     expect(await transcript.finish()).toMatchObject({ seen: [true], violations: [], stopped: false });
     expect(await probe.hash()).toBe(sessionRoute);
     expect(await world.runtimeIdentity()).toBe(runtime);
     await user.screenshot();
     // Only what this turn added: earlier answers legitimately still show earlier codes.
-    const fresh = response.messages.slice(before.count).join("\n");
+    const fresh = response.text;
     return { prompt, startedAt, text: response.text, fresh };
   };
   /** Which native skill ids the model asked the `skill` tool for in one turn, in order. */
@@ -300,241 +317,79 @@ function jitConversation({ world, user, probe }: { world: JitWorld; user: User; 
   return { ask, mintCode, skillToolIds, firstModelRequestAt, expectNoCodes, codes, runtime: () => runtime };
 }
 
-function expectCloudNativeEntry(entry: NativeSkillEntry | undefined, world: JitWorld, code: string): NativeSkillEntry {
-  if (!entry) throw new Error("The native registry has no Cloud skill entry");
-  expect(entry.id).toMatch(nativeSkillIdPattern);
-  expect(entry.name).toBe(world.cloudSkillName);
-  expect(entry.content.trim()).toContain(cloudSkillBody(code));
-  expect(entry.location).not.toBe("");
-  expect(world.locationLeaks(entry.location)).toEqual({ workspace: false, home: false });
-  return entry;
-}
-
-jitTest("SKILL-CLOUD-01 a Cloud skill is native before the first prompt, updates by body, and disappears on revoke", async ({ world, user, probe, step, evidence }) => {
-  const talk = jitConversation({ world, user, probe });
-  const account = skillJitAccounts.a;
-  const catalogTurn: SkillJitTurnTarget = { kind: "catalog", skill: world.cloudSkillName };
-  const indexUri = "skill://index.json";
-  const skillUri = world.cloud.skillUri(world.cloudSkillName);
-  let skillId = "";
-
-  await step("without a Cloud connection the conversation knows OpenWork and no Cloud skill exists", async () => {
-    expect(await world.cloudNativeSkills()).toEqual([]);
-    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
-    expect(turn.text).toMatch(/OpenWork/i);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
-    expect(world.cloud.log()).toEqual([]);
-    evidence.recordAssertionEvidence(
-      "No Cloud config means no Cloud skill and no contact with the Cloud endpoint",
-      `registry cloud entries=0; fixture requests=${world.cloud.log().length}; answer=${JSON.stringify(turn.text.slice(0, 80))}`,
-      true,
-    );
+jitTest("SKILL-CLOUD-DISCOVERY a member discovers Cloud skills without delaying the first conversation and loses access immediately on removal", async ({ world, user, probe, step, evidence }) => {
+  const talk = jitConversation({ world, user, probe, diagnostic: data => evidence.recordJsonArtifact("Skill turn diagnostic", data) });
+  const target: SkillJitTurnTarget = { kind: "catalog", skill: world.cloudSkillName };
+  const account = "account-a";
+  const code = talk.mintCode();
+  const publish = (enabled: boolean) => world.cloud.publishSkill(account, {
+    name: world.cloudSkillName, description: cloudSkillDescription,
+    body: cloudSkillBody(code), modelDiscovery: enabled,
   });
-
-  await step("authorizing account A makes the unseen skill body answer the very first prompt through the native skill tool", async () => {
-    const code = talk.mintCode();
-    world.cloud.publishSkill(account, { name: world.cloudSkillName, description: cloudSkillDescription, body: cloudSkillBody(code) });
-    const receipt = await world.authorizeCloud(account);
-    expect(receipt.status).toBe(200);
-    expect(receipt.desiredPresent).toBe(true);
-    const turn = await talk.ask(catalogTurn, code);
-    talk.expectNoCodes(turn.text, code);
-    const registry = await world.cloudNativeSkills();
-    expect(registry).toHaveLength(1);
-    const entry = expectCloudNativeEntry(registry[0], world, code);
-    skillId = entry.id;
-    await step("shared clients can select Cloud skills but cannot bulk-read their bodies or private locations", async () => {
-      const cloudReads = world.cloud.resourceReads().length;
-      for (const scope of ["viewer", "collaborator"] as const) {
-        for (const encoded of [false, true]) {
-          const shared = await world.sharedNativeSkills(scope, encoded);
-          expect(shared.status).toBe(200);
-          const data = record(shared.json) && Array.isArray(shared.json.data) ? shared.json.data : [];
-          const skill = data.find((value) => record(value) && value.id === skillId);
-          expect(skill).toMatchObject({ id: skillId, name: world.cloudSkillName, description: cloudSkillDescription });
-          expect(skill).not.toHaveProperty("content");
-          expect(skill).not.toHaveProperty("location");
-          expect(shared.text).not.toContain(code);
-          expect(shared.text).not.toContain(entry.location);
-        }
-      }
-      expect(world.cloud.resourceReads()).toHaveLength(cloudReads);
-      expectCloudNativeEntry((await world.cloudNativeSkills())[0], world, code);
-      evidence.recordAssertionEvidence(
-        "Viewer and collaborator catalog reads expose metadata only while owner and internal native loading retain the complete skill",
-        "normal and encoded catalog routes: 200; Cloud body/path absent for both shared scopes; no extra Cloud fetch; owner body preserved",
-        true,
-      );
+  publish(false);
+  const release = world.cloud.holdSkillIndex();
+  try {
+    await step("before: the first conversation answers while Cloud discovery is still held", async () => {
+      expect((await world.authorizeCloud(account)).status).toBe(200);
+      await probe.eventually(() => world.cloud.resourceReads({ uri: "skill://index.json" }), {
+        within: 45_000, until: reads => reads.some(read => read.status === 0), label: "Cloud catalog request is held",
+      });
+      const turn = await talk.ask(target, "UNAVAILABLE");
+      const pending = world.cloud.resourceReads({ uri: "skill://index.json" }).some(read => read.status === 0);
+      expect(pending).toBe(true);
+      evidence.recordAssertionEvidence("Cold Cloud discovery never holds the first answer", `The conversation completed while the catalog HTTP request was still unanswered; answer: ${turn.text}`, pending);
     });
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([skillId]);
-    const reads = world.cloud.resourceReads({ sinceIso: turn.startedAt });
-    expect(reads.every((read) => read.identity === account && read.authorized)).toBe(true);
-    const indexRead = reads.find((read) => read.uri === indexUri);
-    const bodyRead = reads.find((read) => read.uri === skillUri);
-    if (!indexRead || !bodyRead) throw new Error(`Expected index and body reads, saw ${JSON.stringify(reads.map((read) => read.uri))}`);
-    const modelAt = await talk.firstModelRequestAt(turn.prompt);
-    expect(indexRead.at <= modelAt).toBe(true);
-    expect(bodyRead.at <= modelAt).toBe(true);
-    expect(world.cloud.toolCallNames()).toEqual([]);
-    evidence.recordAssertionEvidence(
-      "The host read skill://index.json and the SKILL.md body before the first model request, registered the skill natively, and made zero Connect tool calls",
-      `id=${skillId}; indexRead=${indexRead.at}; bodyRead=${bodyRead.at}; firstModelRequest=${modelAt}; toolsCall=${world.cloud.toolCallNames().length}; location outside workspace/home=${JSON.stringify(world.locationLeaks(entry.location))}`,
-      true,
-    );
+  } finally { release(); }
+
+  await step("the default-off rollout leaves organization skills on the existing Connect path", async () => {
+    const turn = await talk.ask(target, "UNAVAILABLE");
+    expect(await world.cloudNativeSkills()).toEqual([]);
+    evidence.recordAssertionEvidence("Rollout off leaves native discovery unchanged", turn.text, true);
   });
 
-  await step("a body-only update returns the new code on the next turn with the same skill id and runtime", async () => {
-    const previous = talk.codes[0] ?? "";
-    const code = talk.mintCode();
-    const runtimeBefore = await world.runtimeIdentity();
-    world.cloud.updateSkillBody(account, world.cloudSkillName, cloudSkillBody(code));
-    const turn = await talk.ask(catalogTurn, code);
-    expect(turn.text).not.toContain(previous);
-    const registry = await world.cloudNativeSkills();
-    expect(registry).toHaveLength(1);
-    const entry = expectCloudNativeEntry(registry[0], world, code);
-    expect(entry.id).toBe(skillId);
-    expect(entry.content).not.toContain(previous);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([skillId]);
-    expect(await world.runtimeIdentity()).toBe(runtimeBefore);
-    expect(world.cloud.toolCallNames()).toEqual([]);
-    evidence.recordAssertionEvidence(
-      "A body-only update keeps the native id stable and replaces the served instructions without restarting the engine",
-      `id=${entry.id}; pid=${runtimeBefore}; newCodeVisible=${turn.text.includes(code)}; oldCodeVisible=${turn.text.includes(previous)}`,
-      entry.id === skillId && turn.text.includes(code) && !turn.text.includes(previous),
-    );
+  await step("after: a natural request loads the matching organization skill and fetches its current instructions", async () => {
+    publish(true);
+    await probe.eventually(() => world.cloudNativeSkills(), {
+      within: 75_000, until: skills => skills.some(skill => skill.id === `openwork-cloud-${world.cloudSkillName}`),
+      label: "Background refresh exposes the enabled Cloud skill",
+    }).catch(async error => {
+      evidence.recordJsonArtifact("Cloud discovery diagnostic", await world.cloudDiscoveryState());
+      throw error;
+    });
+    const turn = await talk.ask(target, code);
+    expect(await talk.skillToolIds(turn.prompt)).toEqual([`openwork-cloud-${world.cloudSkillName}`]);
+    const calls = world.cloud.toolCallNames({ sinceIso: turn.startedAt });
+    expect(calls).toContain("get_skill");
+    expect(calls).not.toContain("list_skills");
+    expect((await world.cloudNativeSkills()).some(skill => skill.content.includes(code))).toBe(false);
+    evidence.recordAssertionEvidence("A natural request finds the Cloud skill without naming it", `Native skill selection followed by live get_skill; no list_skills call and no body in the registry. ${turn.text}`, true);
   });
 
-  await step("revoking the skill removes it before the next prompt, and a forced load of the stale id fails honestly", async () => {
+  await step("workspace skills still update while organization discovery is enabled", async () => {
+    const localCode = talk.mintCode();
+    expect((await world.installWorkspaceSkill({ description: "Answers cobalt build briefing requests.",
+      content: `For cobalt build briefing requests, reply with the current code: ${localCode}.`,
+    })).status).toBe(200);
+    const turn = await talk.ask({ kind: "catalog", skill: world.workspaceSkillName }, localCode, "cobalt build briefing");
+    expect(await talk.skillToolIds(turn.prompt)).toEqual([world.workspaceSkillName]);
+    expect(world.cloud.toolCallNames({ sinceIso: turn.startedAt })).not.toContain("get_skill");
+    evidence.recordAssertionEvidence("Cloud discovery composes with local skill updates", `The newly installed workspace skill answered without any Cloud body fetch: ${turn.text}`, true);
+  });
+
+  await step("removal denies the next load even while old discovery metadata remains visible", async () => {
     expect(world.cloud.revokeSkill(account, world.cloudSkillName)).toBe(true);
-    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
-    talk.expectNoCodes(turn.fresh);
-    expect(await world.cloudNativeSkills()).toEqual([]);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
-    const reads = world.cloud.resourceReads({ sinceIso: turn.startedAt });
-    expect(reads.some((read) => read.uri === indexUri && read.identity === account)).toBe(true);
-    expect(reads.filter((read) => read.uri === skillUri)).toEqual([]);
-    const firstRead = reads.map((read) => read.at).sort()[0] ?? "";
-    expect(firstRead <= await talk.firstModelRequestAt(turn.prompt)).toBe(true);
-
-    const forced = await talk.ask({ kind: "forced", skillId }, null);
-    talk.expectNoCodes(forced.fresh);
-    expect(forced.fresh).not.toContain(cloudSkillBody("").slice(0, 40));
-    expect(await world.cloudNativeSkills()).toEqual([]);
-    const forcedIds = await talk.skillToolIds(forced.prompt);
-    expect(forcedIds).toEqual([skillId]);
-    expect(world.cloud.toolCallNames()).toEqual([]);
-    evidence.recordAssertionEvidence(
-      "After revocation the registry is empty before the next prompt and forcing the stale native id yields no instructions",
-      `staleId=${skillId}; forcedToolRounds=${forcedIds.length}; codesVisible=false; cloudToolCalls=${world.cloud.toolCallNames().length}`,
-      true,
-    );
+    const stale = (await world.cloudNativeSkills()).some(skill => skill.id === `openwork-cloud-${world.cloudSkillName}`);
+    expect(stale).toBe(true);
+    // Exercise a stale tool snapshot even if background metadata catches up.
+    const turn = await talk.ask({ kind: "forced", skillId: `openwork-cloud-${world.cloudSkillName}` }, "UNAVAILABLE");
+    expect(turn.fresh).not.toContain(code);
+    expect(world.cloud.toolCallNames({ sinceIso: turn.startedAt })).toContain("get_skill");
+    evidence.recordAssertionEvidence("Removed skill bodies are inaccessible despite stale context", `Old metadata was still present (${stale}); the next get_skill denied access and the answer was ${turn.text}`, true);
   });
 });
 
-jitTest("SKILL-CLOUD-02 two accounts on one endpoint never see each other's skill body, and removing Cloud leaves nothing behind", async ({ world, user, probe, step, evidence }) => {
-  const talk = jitConversation({ world, user, probe });
-  const catalogTurn: SkillJitTurnTarget = { kind: "catalog", skill: world.cloudSkillName };
-  const codeA = talk.mintCode();
-  const codeB = talk.mintCode();
-  const locations: string[] = [];
-  world.cloud.publishSkill(skillJitAccounts.a, { name: world.cloudSkillName, description: cloudSkillDescription, body: cloudSkillBody(codeA) });
-  world.cloud.publishSkill(skillJitAccounts.b, { name: world.cloudSkillName, description: cloudSkillDescription, body: cloudSkillBody(codeB) });
-
-  await step("account A receives only A's body", async () => {
-    expect((await world.authorizeCloud(skillJitAccounts.a)).status).toBe(200);
-    const turn = await talk.ask(catalogTurn, codeA);
-    expect(turn.text).not.toContain(codeB);
-    const entry = expectCloudNativeEntry((await world.cloudNativeSkills())[0], world, codeA);
-    expect(entry.content).not.toContain(codeB);
-    locations.push(entry.location);
-    const reads = world.cloud.resourceReads({ sinceIso: turn.startedAt });
-    expect(reads.length).toBeGreaterThan(0);
-    expect(reads.filter((read) => read.identity !== skillJitAccounts.a)).toEqual([]);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([entry.id]);
-  });
-
-  await step("switching the connection to account B replaces the body; B never sees A's code", async () => {
-    expect((await world.authorizeCloud(skillJitAccounts.b)).status).toBe(200);
-    const turn = await talk.ask(catalogTurn, codeB);
-    expect(turn.text).not.toContain(codeA);
-    const registry = await world.cloudNativeSkills();
-    expect(registry).toHaveLength(1);
-    const entry = expectCloudNativeEntry(registry[0], world, codeB);
-    expect(entry.content).not.toContain(codeA);
-    locations.push(entry.location);
-    const reads = world.cloud.resourceReads({ sinceIso: turn.startedAt });
-    expect(reads.length).toBeGreaterThan(0);
-    expect(reads.filter((read) => read.identity === skillJitAccounts.a)).toEqual([]);
-    expect(reads.every((read) => read.identity === skillJitAccounts.b && read.authorized)).toBe(true);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([entry.id]);
-    expect(world.cloud.toolCallNames()).toEqual([]);
-    evidence.recordAssertionEvidence(
-      "Account B's turn read only B's resources and answered only B's code",
-      `reads=${reads.length}; identities=${JSON.stringify([...new Set(reads.map((read) => read.identity))])}; aCodeVisible=${turn.text.includes(codeA)}; bCodeVisible=${turn.text.includes(codeB)}`,
-      !turn.text.includes(codeA) && turn.text.includes(codeB),
-    );
-  });
-
-  await step("removing the Cloud config while B's skill is materialized deletes the private files, empties the registry, stops all endpoint contact, and leaves nothing in the workspace or home", async () => {
-    // Switching to B already deleted A's private file; B's is live until the config goes away.
-    const [locationA, locationB] = locations;
-    if (!locationA || !locationB) throw new Error("Both account materializations must have been recorded");
-    expect(await world.materializedFileExists(locationA)).toBe(false);
-    expect(await world.materializedFileExists(locationB)).toBe(true);
-    const removal = await world.removeCloud();
-    expect(removal.status).toBe(200);
-    expect(removal.remaining).not.toContain("openwork-cloud");
-    // The DELETE itself must clear the private file and the registry, before
-    // any later prompt admission gets a chance to reconcile them away.
-    await probe.eventually(() => world.materializedFileExists(locationB), {
-      within: 5_000, label: "the removed account's private SKILL.md is deleted by the Cloud removal", until: (exists) => exists === false,
-    });
-    expect(await world.cloudNativeSkills()).toEqual([]);
-    const contactsBefore = world.cloud.log().length;
-    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
-    talk.expectNoCodes(turn.fresh);
-    expect(await world.cloudNativeSkills()).toEqual([]);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
-    expect(world.cloud.log().length).toBe(contactsBefore);
-    // The engine-private bodies are gone from disk, not merely unregistered.
-    for (const location of locations) expect(await world.materializedFileExists(location)).toBe(false);
-    expect(await world.workspaceFilesContaining([codeA, codeB, cloudNativeSkillIdPrefix])).toEqual([]);
-    for (const location of locations) expect(world.locationLeaks(location)).toEqual({ workspace: false, home: false });
-    expect(world.cloud.toolCallNames()).toEqual([]);
-    evidence.recordAssertionEvidence(
-      "Removing the Cloud config with an active materialization deletes the private SKILL.md files, empties the registry, and stops endpoint contact; no body reached the workspace or home",
-      `fixtureRequestsBefore=${contactsBefore}; after=${world.cloud.log().length}; privateLocations=${locations.length}; filesRemaining=0; workspaceMatches=0`,
-      true,
-    );
-  });
-
-  await step("re-authorizing B then losing authorization (401) fails closed: the skill and its file disappear before the next prompt", async () => {
-    expect((await world.authorizeCloud(skillJitAccounts.b)).status).toBe(200);
-    const restored = await talk.ask(catalogTurn, codeB);
-    expect(restored.text).not.toContain(codeA);
-    const entry = expectCloudNativeEntry((await world.cloudNativeSkills())[0], world, codeB);
-    expect(await world.materializedFileExists(entry.location)).toBe(true);
-    world.cloud.setAuthorization(skillJitAccounts.b, false);
-    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
-    talk.expectNoCodes(turn.fresh);
-    expect(await world.cloudNativeSkills()).toEqual([]);
-    expect(await world.materializedFileExists(entry.location)).toBe(false);
-    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
-    const refused = world.cloud.log({ sinceIso: turn.startedAt, identity: skillJitAccounts.b }).filter((log) => log.status === 401);
-    expect(refused.length).toBeGreaterThan(0);
-    expect(world.cloud.resourceReads({ sinceIso: turn.startedAt }).filter((read) => read.status === 200)).toEqual([]);
-    expect(world.cloud.toolCallNames()).toEqual([]);
-    evidence.recordAssertionEvidence(
-      "A 401 from the Cloud endpoint clears the materialized skill and its file before the prompt is admitted; the conversation still answers",
-      `refused401=${refused.length}; registryAfter=0; fileRemaining=false; answeredUnavailable=${turn.text.includes("UNAVAILABLE")}`,
-      turn.text.includes("UNAVAILABLE"),
-    );
-  });
-});
-
-jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admission while the workspace skill lifecycle still converges", async ({ world, user, probe, step }) => {
-  const talk = jitConversation({ world, user, probe });
+jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admission while the workspace skill lifecycle still converges", async ({ world, user, probe, step, evidence }) => {
+  const talk = jitConversation({ world, user, probe, diagnostic: data => evidence.recordJsonArtifact("Skill turn diagnostic", data) });
   const catalogTurn: SkillJitTurnTarget = { kind: "catalog", skill: world.workspaceSkillName };
   const install = async (code: string, description: string) => {
     const result = await world.installWorkspaceSkill({ description, content: cloudSkillBody(code) });
@@ -547,6 +402,16 @@ jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admissi
     expect(turn.text).toMatch(/OpenWork/i);
     expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
     expect(await world.cloudNativeSkills()).toEqual([]);
+  });
+
+  await step("the same skill installed in both .agents and .claude never blocks the next turn", async () => {
+    // Skill installers commonly copy one skill into every agent folder. The
+    // engine serves one copy per name; the turn must run as it does in the CLI.
+    const duplicate = "---\nname: shared-helper\ndescription: Formats changelog entries.\n---\n\nFormat changelog entries as bullet points.\n";
+    for (const folder of [".agents", ".claude"] as const) await world.writeWorkspaceSkillFile("shared-helper", duplicate, folder);
+    const turn = await talk.ask(catalogTurn, "UNAVAILABLE");
+    expect(turn.text).toMatch(/OpenWork/i);
+    expect(await talk.skillToolIds(turn.prompt)).toEqual([]);
   });
 
   await step("installing, editing and removing the workspace skill still changes the next answer", async () => {
@@ -566,4 +431,6 @@ jitTest("SKILL-NATIVE-01 a malformed workspace skill never blocks prompt admissi
     expect(await talk.skillToolIds(removed.prompt)).toEqual([]);
     expect(world.cloud.log()).toEqual([]);
   });
+  evidence.recordAssertionEvidence("Workspace skills never block a turn",
+    "A malformed skill and one skill installed in both .agents and .claude were answered normally; installing, editing and removing the workspace skill through OpenWork still changed the next answer.", true);
 });

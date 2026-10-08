@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import {
   Children,
   isValidElement,
@@ -36,6 +36,9 @@ type DenSelectOption = {
 
 export type DenSelectProps = Omit<SelectHTMLAttributes<HTMLSelectElement>, "disabled"> & {
   disabled?: boolean;
+  /** Adds a filter field above long option lists. The trigger stays a button. */
+  searchLabel?: string;
+  searchEmptyLabel?: string;
 };
 
 function getOptionText(node: ReactNode): string {
@@ -84,12 +87,16 @@ export function DenSelect({
   onBlur,
   "aria-label": ariaLabel,
   "aria-labelledby": ariaLabelledBy,
+  searchLabel,
+  searchEmptyLabel = "No options match this search.",
 }: DenSelectProps) {
   const [open, setOpen] = useState(false);
   const [activeValue, setActiveValue] = useState<string | null>(null);
   const [uncontrolledValue, setUncontrolledValue] = useState<string | null>(defaultValue !== undefined ? String(defaultValue) : null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
   const optionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const listboxId = useId();
 
@@ -121,6 +128,12 @@ export function DenSelect({
     }
   }, [options, uncontrolledValue, value]);
 
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleOptions = useMemo(() => {
+    if (!searchLabel || !normalizedQuery) return options;
+    return options.filter((option) => `${getOptionText(option.content)} ${option.value}`.toLowerCase().includes(normalizedQuery));
+  }, [normalizedQuery, options, searchLabel]);
+
   const selectedValue = value !== undefined ? String(value) : uncontrolledValue ?? "";
   const selectedOption = options.find((option) => option.value === selectedValue) ?? options[0] ?? null;
 
@@ -134,13 +147,18 @@ export function DenSelect({
     }
 
     setOpen(true);
+    setQuery("");
     const nextActive = options.find((option) => option.value === preferredValue && !option.disabled) ?? getFirstEnabledOption(options);
     setActiveValue(nextActive?.value ?? null);
+    if (searchLabel) {
+      requestAnimationFrame(() => searchRef.current?.focus());
+    }
   }
 
   function closeSelect({ focus = false }: { focus?: boolean } = {}) {
     setOpen(false);
     setActiveValue(null);
+    setQuery("");
     if (focus) {
       focusTrigger();
     }
@@ -161,7 +179,7 @@ export function DenSelect({
   }
 
   function moveActive(step: 1 | -1) {
-    const enabledOptions = options.filter((option) => !option.disabled);
+    const enabledOptions = visibleOptions.filter((option) => !option.disabled);
     if (!enabledOptions.length) {
       return;
     }
@@ -176,6 +194,27 @@ export function DenSelect({
       ? 0
       : (currentIndex + step + enabledOptions.length) % enabledOptions.length;
     setActiveValue(enabledOptions[nextIndex]?.value ?? null);
+  }
+
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActive(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (activeValue && visibleOptions.some((option) => option.value === activeValue)) {
+        commitValue(activeValue);
+      }
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeSelect({ focus: true });
+    }
   }
 
   function handleTriggerKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -267,7 +306,7 @@ export function DenSelect({
     };
   }, [activeValue, open]);
 
-  const activeIndex = activeValue ? options.findIndex((option) => option.value === activeValue) : -1;
+  const activeIndex = activeValue ? visibleOptions.findIndex((option) => option.value === activeValue) : -1;
   const activeDescendant = activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined;
 
   return (
@@ -298,7 +337,7 @@ export function DenSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listboxId}
-        aria-activedescendant={activeDescendant}
+        aria-activedescendant={searchLabel ? undefined : activeDescendant}
         onClick={() => {
           if (open) {
             closeSelect();
@@ -326,8 +365,40 @@ export function DenSelect({
 
       {open ? (
         <div className={denDropdownMenuBaseClass}>
+          {searchLabel ? (
+            <div className="relative border-b border-gray-200">
+              <Search size={16} strokeWidth={1.5} className="pointer-events-none absolute inset-y-0 left-3 my-auto text-gray-400" aria-hidden="true" />
+              <input
+                ref={searchRef}
+                type="text"
+                value={query}
+                aria-label={searchLabel}
+                placeholder={searchLabel}
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={open}
+                aria-controls={listboxId}
+                aria-activedescendant={activeDescendant}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => {
+                  const nextQuery = event.target.value;
+                  setQuery(nextQuery);
+                  const normalized = nextQuery.trim().toLowerCase();
+                  const firstMatch = options.find((option) => !option.disabled
+                    && (!normalized || `${getOptionText(option.content)} ${option.value}`.toLowerCase().includes(normalized)));
+                  setActiveValue(firstMatch?.value ?? null);
+                }}
+                onKeyDown={handleSearchKeyDown}
+                className="h-10 w-full bg-transparent pl-9 pr-3 text-[14px] text-gray-900 outline-hidden placeholder:text-gray-400 focus-visible:bg-gray-50"
+              />
+            </div>
+          ) : null}
+          {searchLabel && !visibleOptions.length ? (
+            <div role="status" className="px-3 py-4 text-[13px] text-gray-500">{searchEmptyLabel}</div>
+          ) : null}
           <div id={listboxId} role="listbox" className={denDropdownListClass}>
-            {options.map((option, index) => {
+            {visibleOptions.map((option, index) => {
               const selected = option.value === selectedValue;
               const active = option.value === activeValue;
 

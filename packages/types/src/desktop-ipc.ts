@@ -95,13 +95,9 @@ export type OpenworkServerInfo = {
    * the bridge predates the field or no start completed yet.
    */
   generation: number | null;
-  remoteAccessEnabled: boolean;
   host: string | null;
   port: number | null;
   baseUrl: string | null;
-  connectUrl: string | null;
-  mdnsUrl: string | null;
-  lanUrl: string | null;
   clientToken: string | null;
   ownerToken: string | null;
   hostToken: string | null;
@@ -325,30 +321,6 @@ export type DesktopWorkspaceFileOpenResult =
   | { ok: true; action: "opened" | "revealed" }
   | { ok: false; error: string };
 
-export type DesktopMultipartUploadInput = {
-  transferId: string;
-  url: string;
-  bytes: ArrayBuffer;
-  filename: string;
-  size: number;
-  contentType?: string;
-  fieldName?: string;
-  fields?: Record<string, string>;
-  method?: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-};
-
-export type DesktopBinaryDownloadInput = {
-  transferId: string;
-  url: string;
-  destinationPath: string;
-  maxBytes?: number;
-  method?: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-};
-
 export type DesktopBinaryDownloadResult = {
   status: number;
   statusText: string;
@@ -364,43 +336,9 @@ export type WorkspaceCreateInput = {
   preset?: string | null;
 };
 
-export type WorkspaceCreateRemoteInput = {
-  baseUrl: string;
-  remoteType?: "openwork" | "opencode" | null;
-  directory?: string | null;
-  displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkClientToken?: string | null;
-  openworkHostToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
-  sandboxBackend?: string | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
-};
-
-export type WorkspaceUpdateRemoteInput = WorkspaceCreateRemoteInput & {
-  workspaceId: string;
-};
-
 export type UiControlBridgeInfo = {
   baseUrl?: string;
   token?: string;
-};
-
-export type ComputerUsePermissions = {
-  ok: boolean;
-  accessibility: boolean;
-  screenRecording: boolean;
-  supported?: boolean;
-  protocolVersion?: string;
-  error?: string;
-};
-
-export type RunningAppsResult = {
-  ok: boolean;
-  apps: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -413,17 +351,7 @@ export type DesktopCommandMap = {
   workspaceSetSelected: { args: [workspaceId: string]; result: WorkspaceList };
   workspaceSetRuntimeActive: { args: [workspaceId: string | null]; result: WorkspaceList };
   workspaceCreate: { args: [input: WorkspaceCreateInput]; result: WorkspaceList };
-  workspaceCreateRemote: { args: [input: WorkspaceCreateRemoteInput]; result: WorkspaceList };
-  workspaceUpdateRemote: { args: [input: WorkspaceUpdateRemoteInput]; result: WorkspaceList };
-  workspaceUpdateDisplayName: {
-    args: [input: { workspaceId: string; displayName?: string | null }];
-    result: WorkspaceList;
-  };
   workspaceForget: { args: [workspaceId: string]; result: WorkspaceList };
-  workspaceAddAuthorizedRoot: {
-    args: [input: { workspacePath: string; folderPath?: string; authorizedRoot?: string }];
-    result: unknown;
-  };
   workspaceOpenworkRead: {
     args: [input: { workspacePath: string }];
     result: WorkspaceOpenworkConfig;
@@ -432,39 +360,14 @@ export type DesktopCommandMap = {
     args: [input: { workspacePath: string; config: WorkspaceOpenworkConfig }];
     result: unknown;
   };
-  workspaceExportConfig: {
-    args: [input: { workspaceId: string; outputPath: string }];
-    result: WorkspaceExportSummary;
-  };
-  workspaceImportConfig: {
-    args: [input: { archivePath: string; targetDir: string; name?: string | null }];
-    result: unknown;
-  };
-
-  // Opencode custom commands
-  opencodeCommandList: {
-    args: [input: { scope: string; projectDir?: string }];
-    result: string[];
-  };
-  opencodeCommandWrite: {
-    args: [input: { scope: string; projectDir?: string; command: OpencodeCommandDraft }];
-    result: unknown;
-  };
-  opencodeCommandDelete: {
-    args: [input: { scope: string; projectDir?: string; name: string }];
-    result: unknown;
-  };
 
   // Engine / runtime lifecycle
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
-  prepareFreshRuntime: { args: []; result: unknown };
   runtimeBootstrap: { args: []; result: unknown };
   runtimeStatus: { args: []; result: unknown };
   engineStop: { args: []; result: EngineInfo };
   engineRestart: { args: [options?: Record<string, unknown>]; result: EngineInfo };
   engineInfo: { args: []; result: EngineInfo };
-  engineDoctor: { args: [projectDir?: string]; result: EngineDoctorResult };
-  engineInstall: { args: []; result: unknown };
 
   // App / bridge info
   appBuildInfo: { args: []; result: AppBuildInfo };
@@ -485,16 +388,7 @@ export type DesktopCommandMap = {
   desktopIntegrationRemove: { args: []; result: DesktopIntegrationResult };
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
   getOpenworkUiMcpCommand: { args: []; result: string[] };
-  getComputerUseMcpCommand: { args: []; result: string[] };
-  getComputerUseState: { args: []; result: unknown };
-  computerUseAction: { args: [value: { connectionId: string; id: string; action: string; windowId?: number }]; result: void };
   getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
-
-  // Computer use
-  checkComputerUsePermissions: { args: []; result: ComputerUsePermissions };
-  listRunningApps: { args: []; result: RunningAppsResult };
-  openComputerUsePermissionSetup: { args: []; result: ComputerUsePermissions };
-  openComputerUsePermissionSettings: { args: []; result: unknown };
 
   // Bootstrap config
   getDesktopBootstrapConfig: { args: []; result: DesktopBootstrapConfig };
@@ -516,9 +410,6 @@ export type DesktopCommandMap = {
   };
   nukeOpenworkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
   nukeOpenworkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
-
-  // Sandbox
-  sandboxCleanupOpenworkContainers: { args: []; result: OpenworkDockerCleanupResult };
 
   // Openwork server sidecar
   openworkServerInfo: { args: []; result: OpenworkServerInfo };
@@ -546,10 +437,6 @@ export type DesktopCommandMap = {
       },
     ];
     result: string | string[] | null;
-  };
-  saveFile: {
-    args: [options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }];
-    result: string | null;
   };
 
   // Skills
@@ -583,9 +470,7 @@ export type DesktopCommandMap = {
    * whether "onboarding" should preserve desktop workspace state.
    */
   resetOpenworkState: { args: [mode?: "onboarding" | "all"]; result: unknown };
-  resetOpencodeCache: { args: []; result: CacheResetResult };
   opencodeMcpAuth: { args: [action: string, name: string]; result: ExecResult };
-  setWindowDecorations: { args: [decorated: boolean]; result: unknown };
 
   // Window / OS utilities (dunder commands)
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
@@ -593,7 +478,6 @@ export type DesktopCommandMap = {
   __openPath: { args: [target: string]; result: unknown };
   __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
-  __getFileIcon: { args: [target: string, size?: "small" | "normal" | "large"]; result: string | null };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };
   __getBrandIconState: { args: []; result: BrandIconState };
@@ -601,8 +485,6 @@ export type DesktopCommandMap = {
   __getApplicationsForFile: { args: [target: string]; result: { name: string; appPath: string; icon: string | null }[] };
   __openWithApp: { args: [target: string, appPath: string, workspaceRoot: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
-  __uploadMultipart: { args: [input: DesktopMultipartUploadInput]; result: DesktopFetchResult };
-  __downloadBinary: { args: [input: DesktopBinaryDownloadInput]; result: DesktopBinaryDownloadResult };
   __cancelTransfer: { args: [transferId: string]; result: boolean };
   __homeDir: { args: []; result: string };
   __joinPath: { args: [...segments: string[]]; result: string };

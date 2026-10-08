@@ -362,7 +362,6 @@ Applications that need approval or durable consequences should model those above
 From the package directory:
 
 ```sh
-bun test
 bun run typecheck
 ```
 

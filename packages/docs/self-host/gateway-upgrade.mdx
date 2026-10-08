@@ -58,8 +58,8 @@ The embedded preflight checks the complete prior schema, indexes, IDs, ownership
 2. Confirm the backup and migration starting state. A legacy schema must reach verified `0096` before applying `0097`; an already-migrated or partially migrated schema needs explicit inspection rather than replay. A genuinely empty database can be initialized from the matching current-schema snapshot, but must not be confused with a populated database missing its ledger.
 3. Run the approved migration procedure. Execute `0097` with its embedded preflight and connection requirements, then registered `0098_gateway_provider_model_universe` and `0099_gateway_credential_set_creator` in order, and any further release prerequisites. Keep old writers stopped: `0098` also backfills model policy that old code does not maintain.
 4. Verify actual schema, preserved data, and receipts. Record each migration only after all its SQL succeeds. Check canonical Gateway tables and selection columns, `gateway_providers.model_ids`, and `gateway_credential_sets.created_by_org_membership_id`, not just `select 1` or ledger timestamps.
-5. With traffic still closed, deploy the matching Den API, Den Web, and Gateway images. Keep `migrations.enabled: false` for this externally migrated rollout. Review sparse values and required Secret references as described in [the opt-in guide](/self-host/gateway).
-6. Verify liveness/readiness, then the authenticated `GET /v1/org` top-level `deploymentCapabilities` contract across API replicas. For opt-in, expect `{ "version": 1, "aiGateway": true }`. Confirm the intended organization's separate dashboard grant and fresh admin access. Readiness and the capability response are not schema proofs.
+5. With traffic still closed, deploy the matching Den API, Den Web, and Gateway images. Keep `migrations.enabled: false` for this externally migrated rollout. Review sparse values and required Secret references as described in [the deployment configuration guide](/self-host/gateway).
+6. Verify liveness/readiness, then the authenticated `GET /v1/org` top-level `deploymentCapabilities` contract across API replicas. For a configured Gateway deployment, expect `{ "version": 1, "aiGateway": true }`. Confirm fresh organization-admin access; all organizations have Gateway access without a platform-admin grant. Readiness and the capability response are not schema proofs.
 7. Exercise a permitted provider flow with non-sensitive test data, verify public desktop routing and internal routing, and check usage attribution. Reopen traffic only after these checks pass; resume approved retention and background work last.
 
 If embedded preflight fails before the first persistent DDL, close the connection to discard its temporary table, investigate the named check, and resolve it through the approved preservation plan. If execution fails **after the first rename**, stop startup and inspect partial state. MySQL DDL auto-commits: neither a failed Job nor a process restart rolls it back. Do not blindly retry, schema-push, stamp a baseline, or start either incompatible runtime against partial tables.
@@ -74,11 +74,12 @@ If embedded preflight fails before the first persistent DDL, close the connectio
 
 ## Disable without a schema downgrade
 
+The organization `gatewayDashboard` flag is retired: Gateway is GA for every organization's admins when the deployment is configured. The deprecated admin API input is a no-op and the response field is constant `true` for older clients, not a real feature flag. Stored values, including `false`, are ignored; retirement needs no database migration or backfill. This does not waive the release schema cutover above. There is no per-organization dashboard toggle.
+
 Choose the operation that matches your intent. These switches preserve persisted Gateway data; they are not credential-revocation controls or a schema rollback.
 
 | Intent | Action | Consequence |
 | --- | --- | --- |
-| Hide one organization's Gateway dashboard | Allowlisted platform admin disables the existing `capabilities.gatewayDashboard` flag in `/admin`. | Removes dashboard exposure; does not disable management APIs, provider sync, credentials, traffic, or billing. |
 | Stop new Gateway management admission while keeping the component | Native deployment: set `GATEWAY_ENABLED=false` on Den API and Gateway and restart the matching release. Helm: retain `inference.enabled: true` and **omit** `gateway.enabled` from effective values, as below. | Capability becomes false; management reads/writes are blocked. Existing authorized member usable/connect/OAuth/revoke paths and runtime routes are not shut off by this flag. |
 | Remove the Helm-managed component | Set `gateway.enabled: false`. | Canonical false overrides legacy true: the Gateway Deployment, Service, and chart retention job are omitted/deleted on upgrade. Traffic depending on that Service stops. |
 
@@ -104,7 +105,7 @@ There are additional environment differences in this legacy service-only mode. V
 
 Stopping new management admission does not mean stopping all new model requests, member connections, or OAuth operations. If the goal is security revocation, use the appropriate provider/grant/key controls or an explicit traffic stop. If the component, its dependencies, or ingress is stopped, **do not promise existing traffic will continue** merely because the disable flag itself is non-revoking.
 
-OpenWork Models remains available to eligible hosted admins alongside Gateway, whether or not effective Gateway dashboard enablement is removed; existing single-org custom-provider behavior remains. Changing Gateway dashboard enablement neither cancels nor creates a subscription and does not revoke Models or Gateway keys.
+OpenWork Models remains available to eligible hosted admins alongside Gateway, whether or not deployment Gateway management is enabled; existing single-org custom-provider behavior remains. Retiring the organization opt-in and changing deployment management configuration neither cancel nor create a subscription and do not revoke Models or Gateway keys.
 
 Keep schema-compatible images when disabling. **Do not run `helm rollback` to an older pre-migration image against the renamed schema.** Recover by fixing forward with compatible images, or use a separately approved, quiesced database-and-image restore from the verified backup. A restore can lose post-backup writes and must account for credentials, usage, and billing reconciliation. Keep traffic stopped until schema and all readers/writers agree again.
 

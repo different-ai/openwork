@@ -14,17 +14,23 @@ import type { DesktopConnectLinkInput } from "./desktop-connect-link.js"
 
 export type DesktopConnectGrantFailureCode = "invalid_token" | "expired" | "replayed"
 
+/**
+ * Organization and install link the grant belongs to (audit attribution);
+ * never the code or its hash.
+ */
+export type DesktopConnectGrantOwner = { organizationId: string; installLinkId: string }
+
 export type DesktopConnectGrantResult =
-  | { ok: true; claims: ConnectLinkClaims }
+  | ({ ok: true; claims: ConnectLinkClaims } & DesktopConnectGrantOwner)
   | { ok: false; code: DesktopConnectGrantFailureCode }
 
 export type DesktopConnectGrantStatusResult =
-  | {
+  | ({
       ok: true
       status: "pending" | "connected"
       claims: ConnectLinkClaims
       expiresAt: Date
-    }
+    } & DesktopConnectGrantOwner)
   | { ok: false; code: Exclude<DesktopConnectGrantFailureCode, "replayed"> }
 
 type DesktopConnectGrantRow = {
@@ -61,7 +67,7 @@ function validateGrantRow(row: DesktopConnectGrantRow | undefined, now: Date): D
   }
   const claims = connectLinkClaimsSchema.safeParse(grantClaimsInput(row.grant.claims))
   return claims.success
-    ? { ok: true, claims: claims.data }
+    ? { ok: true, claims: claims.data, organizationId: row.installLink.organizationId, installLinkId: row.installLink.id }
     : { ok: false, code: "invalid_token" }
 }
 
@@ -81,6 +87,8 @@ function inspectGrantRow(row: DesktopConnectGrantRow | undefined, now: Date): De
     status: row.grant.consumedAt ? "connected" : "pending",
     claims: claims.data,
     expiresAt: row.grant.expiresAt,
+    organizationId: row.installLink.organizationId,
+    installLinkId: row.installLink.id,
   }
 }
 

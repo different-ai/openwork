@@ -86,36 +86,3 @@ export async function ingestMigrationSnapshotOnElectronBoot(): Promise<number> {
   return hydrated;
 }
 
-// Localstorage key that stores a "don't ask again until" epoch-ms.
-export const MIGRATION_DEFER_KEY = "openwork.migration.deferredUntil";
-export const MIGRATION_DEFAULT_DEFER_MS = 24 * 60 * 60 * 1000;
-
-export function isMigrationDeferred(now: number = Date.now()): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const raw = window.localStorage.getItem(MIGRATION_DEFER_KEY);
-    if (!raw) return false;
-    const until = Number.parseInt(raw, 10);
-    return Number.isFinite(until) && until > now;
-  } catch {
-    return false;
-  }
-}
-
-export function deferMigration(ms: number = MIGRATION_DEFAULT_DEFER_MS): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(MIGRATION_DEFER_KEY, String(Date.now() + ms));
-  } catch {
-    // non-fatal
-  }
-}
-
-export function clearMigrationDefer(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(MIGRATION_DEFER_KEY);
-  } catch {
-    // non-fatal
-  }
-}

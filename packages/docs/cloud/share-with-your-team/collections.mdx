@@ -1,37 +1,93 @@
 ---
 title: "Collections"
-description: "Group plugins into reusable Cloud assignments for teams and members"
+description: "Group several plugins for the same audience in OpenWork Cloud, so one access change covers the whole set."
+keywords: ["collections", "collection", "group plugins", "catalog", "marketplace", "share plugins with a team", "who can access this", "advanced settings", "team access"]
 ---
 
-Collections are the advanced OpenWork Cloud tool for grouping multiple plugins and assigning them as one managed set. Use a Collection when the same team or members need several plugins, when you expect the set to change, or when individual plugin grants would become difficult to maintain.
+A Collection groups several plugins so you can give them to the same people in one step. Anyone with access to the Collection gets every plugin in it, in the desktop app.
 
-For the simplest one-skill publishing flow, start with [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill).
+Collections are optional. The simplest way to share a skill or plugin is to set **Who can use it** on its own page. See [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill).
 
-## How Collections work
+Only admins (owners, super-admins, and admins) can create and manage Collections.
 
-- A plugin contains skills and can also contain other extension resources.
-- A Collection contains one or more plugins.
-- A Collection can be granted to everyone in the organization, selected teams, or individual members.
-- The plugin creator keeps access automatically.
-- Adding, updating, or removing a plugin changes the managed set for the Collection's audience. Members can use `Refresh` in `Settings > Library` if a recent change has not appeared yet.
+## When to use a Collection
 
-## Create and assign a Collection
+| Use direct sharing when... | Use a Collection when... |
+| --- | --- |
+| You're sharing one skill or plugin. | The same team needs several plugins. |
+| Each plugin goes to different people. | You want one place to change who gets the whole set. |
+| A member is sharing something they made. | You expect to add plugins to the set over time. |
 
-1. Open `Collections` in the OpenWork Cloud dashboard.
-2. Click `New collection`, enter a clear name and optional description, then click `Create collection`.
-3. Open `Plugin Directory` and create or edit each plugin that belongs in the Collection.
-4. In each plugin's `Share` section, choose the Collection.
-5. Return to the Collection and use `Who can access this` to add teams or individual members, or turn on access for everyone in the organization.
-6. Ask a member to open `Settings > Library` in the desktop app and confirm the assigned plugins and skills are present.
+You can use both. A person gets a plugin if any route gives it to them: direct sharing, a Collection, or everyone in the organization.
 
-Only owners and admins can create Collections and publish skills for other people by default.
+## Where to find Collections
 
-## Keep complex setups manageable
+In the OpenWork Cloud dashboard, open **Settings › Advanced** and select the **Collections** tab.
 
-- Create Collections around a stable audience or purpose, such as `Sales Enablement` or `Engineering Operations`.
-- Put plugins used by the same audience in one Collection so one access change covers the whole set.
-- Prefer team grants over many individual grants when membership changes often.
+The built-in OpenWork collection and any Collection assigned to you show up in the desktop app after sign-in.
+
+## Create a Collection
+
+1. Open **Settings › Advanced › Collections** and click **New collection**.
+2. Enter a **Name**, like `Sales Enablement`, and an optional description.
+3. Click **Create collection**. The new Collection opens.
+
+To rename or delete a Collection later, use its ⋯ menu and choose **Edit** or **Delete**. The built-in collection can't be deleted.
+
+## Add plugins
+
+1. Open the Collection. On the **Plugins** tab, click **Add a plugin**.
+2. Enter a **Plugin name** and **Description**.
+3. Under **What's inside**, add a **Skill**, **Command**, or **Connector**. To bring in an existing plugin from a GitHub repository, click **Import from GitHub** instead.
+4. Under **Share**, check that **Collection** shows this Collection.
+5. Leave **Share with everyone in the organization** off if only the Collection's audience should get the plugin.
+6. Click **Create plugin**.
+
+Plugins can also arrive automatically from a connected source repository. Before you have any Collections, the Collections tab shows **Open Sources** so you can connect one.
+
+<Note>
+The dashboard puts a plugin in a Collection when you create it from that Collection. To share a plugin that already exists, set **Who can use it** on the plugin's page instead.
+</Note>
+
+If a plugin needs a connector, the **Configure** tab lists each one and whether it's ready. A plugin may show **Members need sign-in** or **Needs connection** until that's done. For connector setup, see [Sharing MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
+
+## Choose who can access it
+
+1. Open the Collection and select the **Members** tab.
+2. Under **Who can access this**, do one of the following:
+   - Turn on **Everyone in** followed by your organization's name.
+   - Click **Add team** and pick one or more teams.
+   - Click **Add people** and pick individual members.
+
+Changes apply to every plugin in the Collection. Anyone added to a team later gets the team's Collections automatically.
+
+## See what a team can use
+
+To check what a team has, and why:
+
+1. Open **Members**, select the **Teams** tab, and click the team.
+2. Select the **Access** tab and scroll to **Plugins & connections**.
+
+Each plugin shows how the team got it:
+
+- **direct team grant**: the plugin was shared with this team directly. Click **Revoke** to remove it.
+- **via catalog:** followed by a Collection name: the team gets it through that Collection. Click **Open catalog** to change the Collection's access.
+- **org-wide**: the plugin is shared with everyone in the organization.
+
+## Where members find the plugins
+
+Members open **Settings › Library** in the desktop app. Plugins and skills from their Collections appear under **From OpenWork**. If a recent change hasn't appeared yet, they can click the refresh button (its tooltip says **Refresh**).
+
+## Keep larger setups manageable
+
+- Build each Collection around a stable audience or purpose, such as `Sales Enablement` or `Engineering Operations`.
+- Grant Collections to teams rather than many individual people when membership changes often.
 - Use separate Collections when audiences or update schedules differ.
-- Review Collection access before adding a plugin that reaches sensitive systems.
+- Review a Collection's access before adding a plugin that reaches sensitive systems.
+- Put service accounts and credentials in [connectors](/cloud/share-with-your-team/shared-mcp-connections), never in a skill.
 
-For a complete organization walkthrough, see [Team quickstart](/cloud/team-quickstart). For managed service accounts and MCP servers, use [Connectors](/cloud/share-with-your-team/shared-mcp-connections) rather than placing credentials in a skill.
+## Related
+
+- [Share skills and MCP servers with your team](/start-here/do-work-with-it/share-your-setup)
+- [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill)
+- [Team quickstart](/cloud/team-quickstart)

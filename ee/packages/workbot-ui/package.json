@@ -1,0 +1,39 @@
+{
+  "name": "@openwork-ee/workbot-ui",
+  "private": true,
+  "type": "module",
+  "description": "The Workbot page: the conversation, steps, files and preview panel. A host app renders <WorkbotScreen host={...} /> and imports styles.css.",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.4.1",
+    "@openwork/calendar": "workspace:*",
+    "@openwork/types": "workspace:*",
+    "@openwork/workbook": "workspace:*",
+    "lucide-react": "^0.577.0",
+    "marked": "^17.0.1",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.96.2",
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.96.2",
+    "@types/react": "19.2.14",
+    "react": "catalog:",
+    "typescript": "5.4.5"
+  }
+}

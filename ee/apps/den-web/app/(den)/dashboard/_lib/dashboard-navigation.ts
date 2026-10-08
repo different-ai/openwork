@@ -3,11 +3,12 @@ import {
   Box,
   CalendarClock,
   Globe,
-  Home,
-  LayoutDashboard,
+  Laptop,
   LibraryBig,
+  LockKeyhole,
+  MessageCircle,
+  ScrollText,
   Plug,
-  Settings2,
   SlidersHorizontal,
   Sparkles,
   Users,
@@ -16,22 +17,17 @@ import {
 import {
   type DenOrgAccessFlags,
   type DenOrgCapabilities,
-  getAnalyticsRoute,
+  getAiGatewayRoute,
   getApiKeysRoute,
+  getAuditLogsRoute,
   getAutomationsRoute,
   getBillingRoute,
-  getBrandAppearanceRoute,
-  getCustomLlmProvidersRoute,
-  getGatewayProvidersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
-  getInferenceRoute,
   getLibraryRoute,
-  getManagedDashboardsRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
-  getOrgDashboardRoute,
   getOrgSettingsRoute,
   getPluginsRoute,
   getScimRoute,
@@ -40,7 +36,6 @@ import {
   getWebRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
-import type { getGatewayDashboardAccess } from "./gateway-dashboard-access";
 
 export type DashboardNavChild = {
   href: string;
@@ -53,10 +48,12 @@ export type DashboardNavItem = {
   label: string;
   icon: LucideIcon;
   badge?: string;
+  /** Quiet dot beside the label when something here is waiting on the viewer. */
+  attention?: string;
   testId?: string;
   /** Extra pathname prefixes that select this entry. */
   matchHrefs?: string[];
-  /** Grouped entries link to the first child and expand on child pages. */
+  /** Grouped entries link to their own href and expand on parent or child pages. */
   children?: DashboardNavChild[];
 };
 
@@ -78,31 +75,32 @@ export type BuildDashboardNavSectionsInput = {
   orgSlug: string | null;
   access: DenOrgAccessFlags;
   capabilities: DenOrgCapabilities;
-  gatewayAccess: ReturnType<typeof getGatewayDashboardAccess>;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
+  /** How many Library items wait on the viewer's sign-in. */
+  libraryNeedsSignIn?: number;
 };
 
 export function buildDashboardNavSections({
   orgSlug,
   access,
   capabilities,
-  gatewayAccess,
-  orgMode,
   runtimeConfigLoaded,
+  libraryNeedsSignIn = 0,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
-    {
-      href: orgSlug ? getOrgDashboardRoute(orgSlug) : "#",
-      label: "Dashboard",
-      icon: Home,
-    },
+    ...(capabilities.workbot
+      ? [{ href: "/workbot", label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot" }]
+      : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
       label: "My Library",
       icon: LibraryBig,
+      ...(libraryNeedsSignIn > 0
+        ? { attention: `${libraryNeedsSignIn} ${libraryNeedsSignIn === 1 ? "needs" : "need"} your sign-in` }
+        : {}),
     },
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
@@ -112,56 +110,17 @@ export function buildDashboardNavSections({
       : []),
   ];
 
-  // Hosted deployments expose OpenWork Models; self-hosted deployments only
-  // expose their own providers. Keep hidden until runtime config is known.
-  const showOpenWorkModels = runtimeConfigLoaded && orgMode === "multi_org"
-    && gatewayAccess !== "checking";
-  const modelsGroup: DashboardNavItem | null = access.isAdmin && orgSlug
-    ? {
-        href: showOpenWorkModels
-          ? getInferenceRoute(orgSlug)
-          : getCustomLlmProvidersRoute(orgSlug),
-        label: "Models",
-        icon: Sparkles,
-        badge: "Providers",
-        children: [
-          ...((gatewayAccess === "enabled" || gatewayAccess === "unavailable") && capabilities.gatewayDashboard === true
-            ? [{ href: getGatewayProvidersRoute(orgSlug), label: "Gateway", badge: "New" }]
-            : []),
-          ...(showOpenWorkModels
-            ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
-            : []),
-          { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring Your Own Keys (Legacy)" },
-        ],
-      }
-    : null;
   const manageItems: DashboardNavItem[] = access.isAdmin && orgSlug
     ? [
-        { href: getPluginsRoute(orgSlug), label: "Plugin Directory", icon: Box },
-        {
-          href: getMcpConnectionsRoute(orgSlug),
-          label: "Connectors",
-          icon: Plug,
-          badge: "MCPs",
-        },
-        ...(capabilities.orgManagedDashboards
-          ? [{ href: getManagedDashboardsRoute(orgSlug), label: "Dashboards", icon: LayoutDashboard }]
-          : []),
-        ...(modelsGroup ? [modelsGroup] : []),
-        {
-          href: getMarketplacesRoute(orgSlug),
-          label: "Advanced",
-          icon: Settings2,
-          matchHrefs: [
-            getDesktopPoliciesRoute(orgSlug),
-            getBrandAppearanceRoute(orgSlug),
-          ],
-        },
+        { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
+        { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
+        { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
+        { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
       ]
     : [];
-  const observabilityItems: DashboardNavItem[] = access.isAdmin && orgSlug
+  const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
-        { href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 },
+        ...(capabilities.auditLogs ? [{ href: getAuditLogsRoute(orgSlug), label: "Audit logs", icon: access.isAdmin ? ScrollText : LockKeyhole, ...(access.isAdmin ? {} : { badge: "Admin access" }) }] : []),
       ]
     : [];
   const settingsChildren: DashboardNavChild[] = orgSlug
@@ -175,6 +134,9 @@ export function buildDashboardNavSections({
               { href: getSsoRoute(orgSlug), label: "SSO" },
               { href: getScimRoute(orgSlug), label: "SCIM" },
             ]
+          : []),
+        ...(access.isAdmin
+          ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
         ...(capabilities.mcpConnections && access.isAdmin
           ? [{ href: getToolTesterRoute(orgSlug), label: "Tool Tester" }]
@@ -206,14 +168,14 @@ export function buildDashboardNavSections({
 
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
-  Advanced: ["policy", "desktop policies", "mdm", "lock", "marketplace", "branding"],
-  Gateway: ["llm", "provider", "gateway", "inference", "usage"],
-  Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
+  Advanced: ["marketplace", "collections", "branding", "brand appearance"],
+  "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
+  "Audit logs": ["audit", "history", "operations", "changes", "security"],
   "API Keys": ["token", "secret"],
   Billing: ["plan", "invoice", "payment"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
-  Dashboard: ["home", "overview"],
+  "Desktop policies": ["policy", "mdm", "lock", "desktop"],
   Dashboards: ["boards", "apps"],
   Diagnostics: ["health", "debug", "troubleshooting"],
   General: ["organization", "workspace"],
@@ -223,7 +185,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
-  "Plugin Directory": ["skills", "plugins", "marketplace"],
+  Plugins: ["skills", "commands", "plugin directory"],
   SCIM: ["provisioning", "directory", "users"],
   Settings: ["organization", "workspace"],
   SSO: ["single sign on", "saml", "oidc"],

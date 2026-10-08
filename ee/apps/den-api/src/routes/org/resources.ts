@@ -15,7 +15,6 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { organizationAllowsManagedModels } from "../../inference.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { listAccessibleMarketplaceCapabilityReferences } from "../../mcp/marketplace-capabilities.js"
 import {
   type MemberTeamsContext,
@@ -26,6 +25,7 @@ import { jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { listAccessibleLlmProviderAccess } from "./llm-provider-access.js"
 import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
 import type { OrgRouteVariables } from "./shared.js"
+import { organizationFeatureEnabled } from "../../features.js"
 
 type OrganizationId = typeof LlmProviderTable.$inferSelect.organizationId
 type MemberId = NonNullable<typeof LlmProviderAccessTable.$inferSelect.orgMembershipId>
@@ -281,9 +281,7 @@ export function registerOrgResourceRoutes<T extends { Variables: OrgRouteVariabl
           orgMembershipId: organizationContext.currentMember.id,
           teamIds,
         },
-        enabled: memberFacingMcpConnectionsEnabled(organizationContext.organization.metadata, {
-          gatingEnabled: env.mcpConnectionsGatingEnabled,
-        }),
+        enabled: await organizationFeatureEnabled(organizationContext.organization.id, "mcpConnections"),
       })
       return c.json({
         items: items.map((item) => ({

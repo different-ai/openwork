@@ -14,6 +14,7 @@ export type CapabilityCallSentence = {
   present: string
   /** Past-tense line once the call completed. */
   past: string
+  failure?: string
 }
 
 const PAST_TENSE: Record<string, string> = {
@@ -74,12 +75,44 @@ export function parseRecord(value: unknown): Record<string, unknown> | null {
   }
 }
 
+/** Brand names whose casing a plain title case would get wrong. */
+const BRAND_WORDS: Record<string, string> = { openwork: "OpenWork", github: "GitHub", gitlab: "GitLab", hubspot: "HubSpot" }
+
 function titleCase(slug: string): string {
   return slug
     .split(/[-_.\s]+/)
     .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .map((word) => BRAND_WORDS[word.toLowerCase()] ?? word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
+}
+
+/**
+ * Connection namespaces carry routing ids ("openwork-direct-slack-c1ca24").
+ * People should see the service ("Slack"), never the plumbing around it.
+ */
+export function serviceNameFromSlug(slug: string): string {
+  const cleaned = slug.replace(/^openwork-direct-/i, "").replace(/-[0-9a-f]{6}$/i, "")
+  return titleCase(cleaned || slug)
+}
+
+/**
+ * Tool actions often repeat their service and lead with a qualifier
+ * ("web_search_exa"). Drop the repeated service word, and move a known verb
+ * to the front so "web_search" reads as "search web".
+ */
+function normalizeAction(action: string, serviceSlug: string): string {
+  const serviceWords = new Set(serviceSlug.toLowerCase().split(/[-_.\s]+/))
+  const words = action.split(/[-_.\s]+/).filter(Boolean)
+  const withoutService = words.filter((word) => !serviceWords.has(word.toLowerCase()))
+  const kept = withoutService.length > 0 ? withoutService : words
+  const verbIndex = kept.findIndex((word) => PAST_TENSE[word.toLowerCase()] !== undefined)
+  if (verbIndex > 0) kept.unshift(...kept.splice(verbIndex, 1))
+  return kept.join("_")
+}
+
+/** "list_files" → "list files", for "Couldn't list files". */
+function baseVerbPhrase(action: string): string {
+  return humanize(action).toLowerCase()
 }
 
 function humanize(slug: string): string {
@@ -121,7 +154,7 @@ function splitCapabilityName(name: string): { service: string; action: string } 
   const service = name.slice(0, index)
   const action = name.slice(index + 1)
   if (!service || !action) return null
-  return { service: titleCase(service), action }
+  return { service: serviceNameFromSlug(service), action }
 }
 
 function verbPhrase(action: string, tense: "present" | "past"): string {
@@ -135,16 +168,68 @@ function verbPhrase(action: string, tense: "present" | "past"): string {
   return `${prefix} ${humanize(action)}`
 }
 
-/**
- * Build the human sentence for a dynamic (MCP / capability) tool call.
- * Tool names follow "{connection}_{tool}", e.g.
- * "openwork-cloud_search_capabilities".
- */
+/** Skill slug from a get_skill call: the name asked for, else the one returned. */
+function skillReference(part: DynamicToolUIPart): string | null {
+  const input = parseRecord(part.input)
+  const asked = typeof input?.name === "string" ? input.name.trim() : ""
+  if (asked && !asked.includes(":")) return asked
+  const raw = "output" in part ? part.output : undefined
+  const output = parseRecord(raw)
+  if (typeof output?.name === "string" && output.name.trim()) return output.name.trim()
+  // The text result is the SKILL.md itself; its frontmatter carries the slug.
+  const frontmatter = typeof raw === "string" ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw)?.[1] : undefined
+  const name = frontmatter ? /^name:\s*(.+)$/m.exec(frontmatter)?.[1]?.trim() ?? "" : ""
+  // Den keeps marketplace skill names unique with an 8-character id suffix.
+  return (asked.startsWith("plugin:") ? name.replace(/-[a-z0-9]{8}$/, "") : name) || null
+}
+
+export function getConnectionStatusProbeId(part: DynamicToolUIPart): string | null {
+  if (part.toolName !== "openwork_execute_capability" && part.toolName !== "openwork-cloud_execute_capability") return null
+  const input = parseRecord(part.input)
+  return typeof input?.name === "string" ? /^mcp:([^:\s]+):\*$/.exec(input.name)?.[1] ?? null : null
+}
+
 export function getCapabilityCallSentence(
   part: DynamicToolUIPart,
-  options?: { includeQuery?: boolean },
+  options?: { includeQuery?: boolean; connectionName?: string | null },
 ): CapabilityCallSentence {
   const toolName = part.toolName
+  if (getConnectionStatusProbeId(part)) {
+    const service = options?.connectionName?.trim() || null
+    const target = service ? `${service} connection` : "connection"
+    return {
+      service,
+      present: `Checking ${target}…`,
+      past: `Checked ${target}`,
+      failure: `Couldn't check ${target}`,
+    }
+  }
+  if (toolName.endsWith("_get_skill")) {
+    const name = skillReference(part)
+    const target = name ? `your ${name} skill` : "a skill"
+    return {
+      service: null,
+      present: `Using ${target}…`,
+      past: `Used ${target}`,
+      failure: `Couldn't use ${target}`,
+    }
+  }
+
+  if (toolName.endsWith("_list_skills")) {
+    return { service: null, present: "Looking through your skills…", past: "Looked through your skills" }
+  }
+
+  // Code Mode's own catalog lookup is plumbing: say what it did, never echo
+  // the internal tool name it searched for.
+  if (toolName === "search") {
+    return {
+      service: null,
+      present: "Checking which tools are available",
+      past: "Checked which tools are available",
+      failure: "Couldn't check which tools are available",
+    }
+  }
+
   const query = options?.includeQuery === false ? null : extractQuery(part.input)
   const quoted = query ? ` “${query}”` : ""
 
@@ -153,6 +238,18 @@ export function getCapabilityCallSentence(
       service: null,
       present: `Searching your connections for${quoted || " capabilities"}`,
       past: `Searched your connections for${quoted || " capabilities"}`,
+      failure: "Couldn't search your connections",
+    }
+  }
+
+  // A Den Code Mode script: the work happens inside the script, so name the
+  // place it ran rather than the plumbing tool ("execute capability script").
+  if (toolName.endsWith("execute_capability_script")) {
+    return {
+      service: "OpenWork Cloud",
+      present: "Running a script on OpenWork Cloud",
+      past: "Ran a script on OpenWork Cloud",
+      failure: "Script on OpenWork Cloud failed",
     }
   }
 
@@ -160,11 +257,12 @@ export function getCapabilityCallSentence(
     const name = isRecord(part.input) && typeof part.input.name === "string" ? part.input.name : null
     const split = name ? splitCapabilityName(name) : null
     if (split) {
-      const suffix = quoted ? ` —${quoted}` : ""
+      const suffix = quoted ? `:${quoted}` : ""
       return {
         service: split.service,
         present: `${verbPhrase(split.action, "present")} · ${split.service}${suffix}`,
         past: `${verbPhrase(split.action, "past")} · ${split.service}${suffix}`,
+        failure: `Couldn't ${baseVerbPhrase(split.action)} · ${split.service}`,
       }
     }
 
@@ -172,13 +270,28 @@ export function getCapabilityCallSentence(
     // connection id is opaque, so the trailing tool name carries the meaning
     // ("query_granola_meetings" → "Queried granola meetings").
     if (name?.startsWith("mcp:")) {
-      const action = name.split(":").filter(Boolean).at(-1)
-      if (action) {
-        const suffix = quoted ? ` —${quoted}` : ""
+      const rawAction = name.split(":").filter(Boolean).at(-1)
+      if (rawAction) {
+        // The connection id is opaque; the resolved connector names the service.
+        const service = options?.connectionName?.trim() || null
+        const action = normalizeAction(rawAction, service ?? "")
+        if (service && /^(?:search|find|query)(?:_|$)/i.test(action)) {
+          const verb = action.split("_")[0]!.toLowerCase()
+          return {
+            service,
+            present: `${PRESENT_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
+            past: `${PAST_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
+            failure: `Couldn't ${verb} ${service}`,
+          }
+        }
+        const suffix = quoted ? `:${quoted}` : ""
+        const tail = service ? ` · ${service}` : ""
         return {
-          service: null,
-          present: `${verbPhrase(action, "present")}${suffix}`,
-          past: `${verbPhrase(action, "past")}${suffix}`,
+          service,
+          present: `${verbPhrase(action, "present")}${tail}${suffix}`,
+          past: `${verbPhrase(action, "past")}${tail}${suffix}`,
+          // Without a known service there is nothing specific to say.
+          ...(service ? { failure: `Couldn't ${baseVerbPhrase(action)}${tail}` } : {}),
         }
       }
     }
@@ -202,20 +315,27 @@ export function getCapabilityCallSentence(
     }
 
     // Native camelCase capabilities, e.g.
-    // "getCapabilitiesGoogleWorkspaceCalendarEvents".
+    // "native:<connection>:getCapabilitiesGoogleWorkspaceCalendarEvents".
     if (name) {
-      const words = name.split(/(?=[A-Z])|[-_.\s]+/).filter(Boolean)
+      const nativeName = name.replace(/^native:[^:]+:/, "")
+      const words = nativeName.split(/(?=[A-Z])|[-_.\s]+/).filter(Boolean)
       const first = words[0]?.toLowerCase()
       const verbPast = first ? PAST_TENSE[first] : undefined
       const verbPresent = first ? PRESENT_TENSE[first] : undefined
       let rest = words.slice(1)
       if (/^capabilit(y|ies)$/i.test(rest[0] ?? "")) rest = rest.slice(1)
+      // "GoogleWorkspaceCalendarEvents" → service "Google Workspace", "calendar events".
+      const nativeService = /^GoogleWorkspace/.test(rest.join("")) ? "Google Workspace"
+        : /^Microsoft365/.test(rest.join("")) ? "Microsoft 365" : null
+      if (nativeService) rest = rest.slice(nativeService === "Google Workspace" ? 2 : 1)
       if (verbPast && verbPresent && rest.length > 0) {
-        const phrase = rest.join(" ")
+        const phrase = rest.join(" ").toLowerCase()
+        const suffix = nativeService ? ` · ${nativeService}` : ""
         return {
-          service: null,
-          present: `${verbPresent} ${phrase}`,
-          past: `${verbPast} ${phrase}`,
+          service: nativeService,
+          present: `${verbPresent} ${phrase}${suffix}`,
+          past: `${verbPast} ${phrase}${suffix}`,
+          failure: `Couldn't ${first} ${phrase}${suffix}`,
         }
       }
     }
@@ -230,17 +350,32 @@ export function getCapabilityCallSentence(
   // Generic "{connection}_{tool}" MCP tools.
   const underscore = toolName.indexOf("_")
   if (underscore > 0) {
-    const service = titleCase(toolName.slice(0, underscore))
-    const action = toolName.slice(underscore + 1)
-    const suffix = quoted ? ` —${quoted}` : ""
+    const serviceSlug = toolName.slice(0, underscore)
+    const service = serviceNameFromSlug(serviceSlug)
+    const action = normalizeAction(toolName.slice(underscore + 1), serviceSlug)
+    // A bare search reads as "Searched Exa", not "Searched · Exa".
+    // Search qualifiers ("search_public_and_private", "web_search") add
+    // nothing a person needs; the query says what was searched.
+    if (/^(?:search|find|query)(?:_|$)/i.test(action)) {
+      const verb = action.split("_")[0]!.toLowerCase()
+      const suffix = quoted ? ` for${quoted}` : ""
+      return {
+        service,
+        present: `${PRESENT_TENSE[verb]} ${service}${suffix}`,
+        past: `${PAST_TENSE[verb]} ${service}${suffix}`,
+        failure: `Couldn't ${verb} ${service}`,
+      }
+    }
+    const suffix = quoted ? `:${quoted}` : ""
     return {
       service,
       present: `${verbPhrase(action, "present")} · ${service}${suffix}`,
       past: `${verbPhrase(action, "past")} · ${service}${suffix}`,
+      failure: `Couldn't ${baseVerbPhrase(action)} · ${service}`,
     }
   }
 
-  const suffix = quoted ? ` —${quoted}` : ""
+  const suffix = quoted ? `:${quoted}` : ""
   return {
     service: null,
     present: `${verbPhrase(toolName, "present")}${suffix}`,

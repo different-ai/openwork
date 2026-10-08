@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, CreditCard, RefreshCw } from "lucide-react";
-import { DenButton, buttonVariants } from "../../_components/ui/button";
+import { DenButton } from "../../_components/ui/button";
 import { DenActionList, DenActionRow } from "../../_components/ui/action-row";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenCard } from "../../_components/ui/card";
@@ -57,14 +57,6 @@ type StripeSeatBilling = {
     quantity: number;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
-  } | null;
-};
-
-type PolarBilling = {
-  hasActivePlan: boolean;
-  portalUrl: string | null;
-  subscription: {
-    status: string;
   } | null;
 };
 
@@ -144,23 +136,6 @@ function BillingStat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-function parsePolarBilling(payload: unknown): PolarBilling | null {
-  if (!payload || typeof payload !== "object" || !("billing" in payload)) return null;
-  const billing = (payload as { billing?: unknown }).billing;
-  if (!billing || typeof billing !== "object" || !("polar" in billing)) return null;
-  const polar = (billing as { polar?: unknown }).polar;
-  if (!polar || typeof polar !== "object") return null;
-  const value = polar as Partial<PolarBilling>;
-  return {
-    hasActivePlan: value.hasActivePlan === true,
-    portalUrl: typeof value.portalUrl === "string" ? value.portalUrl : null,
-    subscription: value.subscription && typeof value.subscription === "object"
-      ? {
-          status: typeof value.subscription.status === "string" ? value.subscription.status : "active",
-        }
-      : null,
-  };
-}
 
 export function BillingDashboardScreen() {
   const router = useRouter();
@@ -169,7 +144,6 @@ export function BillingDashboardScreen() {
   const activeOrgId = orgContext?.organization.id ?? null;
   const [stripeBillingValue, setStripeBillingValue] = useState<StripeBilling | null>(null);
   const [stripeBillingOrgId, setStripeBillingOrgId] = useState<string | null>(null);
-  const [polarBilling, setPolarBilling] = useState<PolarBilling | null>(null);
   const [stripeBusy, setStripeBusy] = useState(false);
   const [stripeActionBusy, setStripeActionBusy] = useState<"seat-checkout" | "portal" | null>(null);
   const [stripeError, setStripeError] = useState<string | null>(null);
@@ -205,7 +179,6 @@ export function BillingDashboardScreen() {
       if (currentOrgIdRef.current !== expectedOrgId || billingRequestIdRef.current !== requestId) return null;
       setStripeBillingValue(parsed);
       setStripeBillingOrgId(expectedOrgId);
-      setPolarBilling(parsePolarBilling(payload));
       return parsed;
     } catch (error) {
       if (!quiet && currentOrgIdRef.current === expectedOrgId && billingRequestIdRef.current === requestId) {
@@ -325,7 +298,6 @@ export function BillingDashboardScreen() {
     }
   }
 
-  const showPolar = polarBilling?.hasActivePlan === true && Boolean(polarBilling.portalUrl);
   const stripePrice = stripeBilling ? formatMoneyMinor(stripeBilling.unitAmount, stripeBilling.currency) : null;
   const seatBilling = stripeBilling?.seats;
   const webBilling = stripeBilling?.web ?? null;
@@ -428,25 +400,6 @@ export function BillingDashboardScreen() {
         </DenCard>
       ) : (
         <>
-      {showPolar ? (
-        <section className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
-          <div className="mb-6 flex items-start justify-between gap-4">
-            <div>
-              <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400">Polar</p>
-              <h2 className="text-[18px] font-medium text-gray-950">Cloud worker plan</h2>
-              <p className="mt-2 text-[14px] text-gray-500">
-                Your existing Polar subscription is {formatSubscriptionStatus(polarBilling?.subscription?.status ?? "active").toLowerCase()}.
-              </p>
-            </div>
-            {canManageBillingSettings && polarBilling?.portalUrl ? (
-              <a href={polarBilling.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
-                Open Polar portal
-              </a>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
       <DenCard className="mb-6 !p-0" data-testid="billing-summary-card">
         <DenSectionHeader
           className="p-6 pb-4"

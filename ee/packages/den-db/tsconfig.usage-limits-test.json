@@ -1,5 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": { "rootDir": "../../..", "noEmit": true, "allowImportingTsExtensions": true },
-  "include": ["src", "test/gateway-usage-limits.test.ts", "test/gateway-usage-limits-db.test.ts", "test/gateway-usage-migration.test.ts", "scripts/gateway-usage-operations.ts"]
-}

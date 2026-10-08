@@ -117,11 +117,11 @@ export function AppFeedbackForm(props: Props) {
 
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as
-          | { error?: string }
+          | { error?: string; message?: string }
           | null;
         setState("error");
         setErrorMessage(
-          data?.error ?? "Something went wrong while sending feedback.",
+          data?.message ?? data?.error ?? "Something went wrong while sending feedback.",
         );
         return;
       }

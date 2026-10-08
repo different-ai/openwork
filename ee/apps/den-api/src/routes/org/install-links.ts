@@ -11,7 +11,8 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
-import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
+import { organizationFeatureEnabled } from "../../features.js"
+import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { mintDesktopConnectLink } from "../../desktop-connect-link.js"
 import { resolveInstallerReleaseTag } from "../../desktop-releases.js"
@@ -25,7 +26,7 @@ import { env } from "../../env.js"
 import { hashInstallLinkToken, mintOrganizationInstallLink } from "../../install-links.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
-import { organizationCapabilityKeySchema } from "../../organization-capabilities.js"
+import { featureKeySchema } from "@openwork/features"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   cloudDesktopReleaseAssetName,
@@ -51,7 +52,9 @@ const createInstallLinkBodySchema = z.object({
 
 const createInstallLinkResponseSchema = z.object({
   token: z.string(),
-  installPageUrl: z.string().url(),
+  installPageUrl: z.string().url().describe("Share this page: it downloads the OpenWork desktop app for this organization."),
+  connectUrl: z.string().describe("Open on a computer that already has OpenWork installed to point the desktop app at this organization. Short-lived; mint a new link when it expires."),
+  connectExpiresAt: z.string().datetime(),
 }).meta({ ref: "CreateInstallLinkResponse" })
 
 const installLinkQuerySchema = z.object({
@@ -93,7 +96,7 @@ const installLinkNotFoundSchema = z.object({
 
 const capabilityDisabledSchema = z.object({
   error: z.literal("capability_disabled"),
-  capability: organizationCapabilityKeySchema,
+  capability: featureKeySchema,
 }).meta({ ref: "CapabilityDisabledError" })
 
 const rateLimitedSchema = z.object({
@@ -268,6 +271,26 @@ async function resolveInstallConfigForOrganization(input: {
   }
 }
 
+type InstallConfig = ReturnType<typeof buildInstallConfig>
+
+async function mintInstallHandoff(
+  installer: InstallExperienceDependencies,
+  input: { installLinkId: Parameters<InstallExperienceDependencies["mintConnectGrant"]>[0]["installLinkId"]; config: InstallConfig },
+) {
+  const connectInput = {
+    installLinkId: input.installLinkId,
+    organizationName: input.config.clientName,
+    appName: input.config.appName,
+    logoUrl: input.config.logoUrl,
+    iconUrl: input.config.iconUrl,
+    webUrl: input.config.webUrl,
+    apiUrl: input.config.apiUrl,
+  }
+  const exchangeHandoff = await installer.mintConnectGrant(connectInput)
+  const handoff = mintDesktopConnectLink(connectInput) ?? exchangeHandoff
+  return { handoff, exchangeHandoff }
+}
+
 async function resolveInstallConfigForToken(token: string, request: Request) {
   const tokenHash = hashInstallLinkToken(token)
   const now = new Date()
@@ -291,8 +314,22 @@ async function resolveInstallConfigForToken(token: string, request: Request) {
   return {
     ...await resolveInstallConfigForOrganization({ organization: row.organization, request }),
     installLinkId: row.installLink.id,
+    organizationId: row.organization.id,
     organizationSlug: row.organization.slug,
   }
+}
+
+/**
+ * The verified install-link token (or a connect grant issued from it) names
+ * the organization; actor service install_link:<installLinkId>. Never the
+ * token, code or a hash of either.
+ */
+async function attributeInstallLink(c: Context, owner: { organizationId: string; installLinkId: string }) {
+  const audited = await attributeAuditRequest(c, {
+    organizationId: owner.organizationId,
+    ...auditServiceAttribution("install_link", owner.installLinkId),
+  })
+  return audited.ok ? null : audited.response
 }
 
 async function serveInstallerArtifact<
@@ -351,8 +388,8 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/orgs/:organizationId/install-links",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Create organization install link",
-      description: "Mints a shareable OpenWork desktop install link for a signed-in organization member. Older active links remain valid unless an owner or admin explicitly requests rotation.",
+      summary: "Create organization install link (download desktop app, install OpenWork)",
+      description: "Download the desktop app and install OpenWork pointed at this organization. Returns installPageUrl, a shareable page that downloads OpenWork for this organization, and connectUrl, a short-lived link that opens an already-installed desktop app signed in to this organization. Any member can mint one. Older active links remain valid unless an owner or admin explicitly requests rotation.",
       responses: {
         200: jsonResponse("Install link created successfully.", createInstallLinkResponseSchema),
         400: jsonResponse("The install-link request was invalid.", invalidRequestSchema),
@@ -369,9 +406,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       const input = c.req.valid("json")
       const payload = c.get("organizationContext")
 
-      if (!organizationInstallLinksEnabled(payload.organization.metadata, {
-        gatingEnabled: env.installLinksGatingEnabled,
-      })) {
+      if (!(await organizationFeatureEnabled(payload.organization.id, "installLinks"))) {
         return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
       }
 
@@ -396,7 +431,6 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       const installLink = await mintOrganizationInstallLink({
         organizationId: payload.organization.id,
         createdByUserId: payload.currentMember.userId,
-        metadata: payload.organization.metadata,
         rotate: input.rotate,
       })
 
@@ -404,7 +438,17 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "capability_disabled", capability: "installLinks" }, 403)
       }
 
-      return c.json(installLink)
+      const { handoff } = await mintInstallHandoff(installer, {
+        installLinkId: installLink.installLinkId,
+        config: buildInstallConfig({ organization: payload.organization, request: c.req.raw }),
+      })
+
+      return c.json({
+        token: installLink.token,
+        installPageUrl: installLink.installPageUrl,
+        connectUrl: handoff.connectUrl,
+        connectExpiresAt: handoff.connectExpiresAt,
+      })
     },
   )
 
@@ -501,18 +545,13 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       if (!resolved) {
         return c.json({ error: "install_link_not_found" }, 404)
       }
+      const auditBlocked = await attributeInstallLink(c, resolved)
+      if (auditBlocked) return auditBlocked
 
-      const connectInput = {
+      const { handoff, exchangeHandoff } = await mintInstallHandoff(installer, {
         installLinkId: resolved.installLinkId,
-        organizationName: resolved.config.clientName,
-        appName: resolved.config.appName,
-        logoUrl: resolved.config.logoUrl,
-        iconUrl: resolved.config.iconUrl,
-        webUrl: resolved.config.webUrl,
-        apiUrl: resolved.config.apiUrl,
-      }
-      const exchangeHandoff = await installer.mintConnectGrant(connectInput)
-      const handoff = mintDesktopConnectLink(connectInput) ?? exchangeHandoff
+        config: resolved.config,
+      })
 
       return c.json({
         ...resolved.config,
@@ -552,6 +591,8 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
 
       const result = await installer.inspectConnectGrant(c.req.valid("json").code)
       if (result.ok) {
+        const auditBlocked = await attributeInstallLink(c, result)
+        if (auditBlocked) return auditBlocked
         return c.json({
           status: result.status,
           claims: result.claims,
@@ -595,9 +636,14 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         }
 
         const input = c.req.valid("json")
-        const result = mode === "preview"
-          ? await installer.previewConnectGrant(input.code)
-          : await installer.consumeConnectGrant(input.code)
+        // Resolve the grant's organization without consuming it, attribute,
+        // then perform the (possibly one-time) exchange.
+        const preview = await installer.previewConnectGrant(input.code)
+        if (preview.ok) {
+          const auditBlocked = await attributeInstallLink(c, preview)
+          if (auditBlocked) return auditBlocked
+        }
+        const result = mode === "preview" ? preview : await installer.consumeConnectGrant(input.code)
         if (result.ok) {
           return c.json({ claims: result.claims })
         }
@@ -646,6 +692,8 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
       if (!resolved) {
         return c.json({ error: "install_link_not_found" }, 404)
       }
+      const auditBlocked = await attributeInstallLink(c, resolved)
+      if (auditBlocked) return auditBlocked
 
       return serveInstallerArtifact(c, installer, platformResult.data.platform, resolved.installerReleaseTag)
     },

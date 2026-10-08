@@ -11,6 +11,10 @@ offer to connect the OpenWork MCP to the agent the user is already using.
 > these setup steps so the bootstrap flow stays distinct from other OpenWork
 > tooling a user may already have on their PATH.
 
+> Working without a person present (CI, a background agent)? Follow
+> https://openworklabs.com/auth.md instead: it is the agent sign-in protocol
+> (register, use, hand over a claim later).
+
 ## 1. Install CLI
 
 Install the `openwork-bootstrap` CLI into a user-writable bin dir.
@@ -27,7 +31,10 @@ node packages/openwork-bootstrap/bin/openwork.mjs install \
 In production, download the bootstrap script, inspect it, then run it. Do not
 pipe remote scripts directly into a shell. The script downloads the
 `openwork-bootstrap` CLI (a single dependency-free Node file) and installs it
-into `$HOME/.local/bin` - no npm or npx required.
+into `$HOME/.local/bin` - no npm or npx required. If Node.js 20+ is missing,
+the script downloads the official Node.js build into
+`$HOME/.openwork/bootstrap/node` (checksum-verified, no admin rights), so the
+user does not need to install anything first.
 
 ```bash
 curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh
@@ -84,17 +91,48 @@ openwork-bootstrap cloud bootstrap-workspace \
 ```
 
 If the user wants to attach a real account immediately, finish this provisional
-setup first, then use the `Claim this workspace` action in the desktop app. Do
+setup first, then use the `Claim workspace and continue` action in the desktop app. Do
 not create an email/password account from the CLI during agent-first install.
+
+### Signing in as an existing user (no password)
+
+When the user already has an OpenWork account, or wants the CLI to act as them,
+sign in with a one-time code instead of a password:
+
+```bash
+openwork-bootstrap login --base-url https://api.openworklabs.com --json
+```
+
+The command prints a link (`verification_uri_complete`) and a code such as
+`ABCD-EFGH` on stderr. Show both to the user; they open the link, sign in or
+create an account, check that the code matches, choose the organization, and
+click `Sign in OpenWork CLI`. The command then saves the session to
+`~/.openwork/credentials.json` (owner-only) and prints who is signed in. If
+`OPENWORK_API_TOKEN` is set, it is used instead and no code is shown.
+
+After `login`, `openwork-bootstrap cloud onboard --base-url <url> --org-name
+"<name>" [--teammate-emails <emails>] --json` creates the organization, any invitations,
+and starter skill as that user. Never ask the user for their password.
+
+Only if `login` is unavailable, the deprecated password path remains: `cloud
+onboard --request-code` emails a 6-digit code, then rerun with
+`--verification-code <code>` (or `--verification-code-stdin`). Ask the user for
+the code; never guess it.
 
 ## 4. Launch the App
 
 Open the desktop app so the user lands on the setup-complete screen with their
-first skill ready.
+first skill ready. This works on macOS, Windows, and Linux:
 
 ```bash
-open -a OpenWork    # macOS
+openwork-bootstrap open app --json
 ```
+
+The app opens to a green `Setup complete` banner with the workspace name and
+`First skill ready`. The person is not signed in yet: a provisional workspace
+has no owner until they claim it, so do not try to sign them in from the CLI.
+On Linux the app may first ask to add itself to the application launcher; tell
+the user to choose `Integrate` so browser sign-in can return to the app.
 
 ## 5. Finish Well (most important step)
 
@@ -104,9 +142,10 @@ friendly, human message that gives momentum:
 
 1. Confirm in one line that OpenWork is installed and their workspace is ready
    (use the workspace name).
-2. Point them at ONE concrete first task they can run right now, e.g. "OpenWork
-   is open — try typing: 'summarize the files in my Downloads folder' and hit
-   Run."
+2. Give them the ONE next step: in the app, click `Claim workspace and
+   continue` to make the workspace theirs (it signs them in and sends any
+   teammate invites). Then suggest one first task, e.g. "try typing:
+   'summarize the files in my Downloads folder' and hit Run."
 3. Mention that teammates whose emails were already provided will be invited
    automatically once the workspace is claimed. If no emails were provided,
    offer to collect them later.
@@ -180,7 +219,7 @@ You are done only when all are true:
 - `openwork-bootstrap doctor --desktop-bootstrap --json` returns `ok: true`
 - When the desktop app is launched, it lands on the onboarding screen showing a
   green "Setup complete" banner, the organization name, a "First skill ready"
-  tile, and a "Claim this workspace" action.
+  row, and a "Claim workspace and continue" action.
 
 ## 8. If Something Fails
 
@@ -190,7 +229,7 @@ You are done only when all are true:
   (`$HOME/.local/bin/openwork-bootstrap`).
 - If app install fails: run `openwork-bootstrap doctor --app --json` and report failed checks.
 - If the user needs account ownership immediately: complete the install, launch
-  the app, and use `Claim this workspace` so email verification happens in the
+  the app, and use `Claim workspace and continue` so email verification happens in the
   browser/app instead of in the CLI.
 
 ## 9. Constraints

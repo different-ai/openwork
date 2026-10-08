@@ -1,27 +1,57 @@
 ---
 title: "Team prompt cards"
-description: "Use desktop policies to show different suggested prompts to teams and members."
+description: "Show your own suggested prompts to everyone, or different prompts to different teams, in the OpenWork desktop app."
+keywords: ["prompt cards", "suggested prompts", "organization prompt suggestions", "starter prompts", "task suggestions", "team prompts", "onboarding prompts"]
 ---
 
-Organization prompt cards are an OpenWork Cloud desktop-policy feature. Admins manage them in Cloud, and assigned members see them in the desktop composer as task suggestions. Managing desktop policies requires an Enterprise plan; the API returns `402` when the org is not entitled.
+Prompt cards are the suggested tasks members see when they start a new session in the OpenWork desktop app. You can replace the default suggestions with your own, for everyone or for specific teams and members.
 
-## Create team prompts
+You set prompt cards in a [desktop policy](/cloud/share-with-your-team/desktop-policies). Owners and super-admins can manage them. Desktop policies are part of the Enterprise plan.
 
-1. Open the Cloud dashboard and go to `Settings > Desktop policies`.
-2. Create a non-default policy for the audience. The default policy is org-wide only and cannot be assigned to members or teams.
-3. Turn on `Organization prompt suggestions`.
-4. Add 2 required prompts, and optionally a third. Each `Prompt` is limited to 500 characters; each `Description` is limited to 120 characters.
-5. Assign the policy to `Members` or `Teams`, then save. The API stores those choices as `memberIds` and `teamIds`, so different departments can use separate non-default policies.
+<Note>
+Prompt cards work today. Most other desktop policy controls are paused while they are redesigned, but organization prompt suggestions still reach members' desktop apps. See [Desktop policies](/cloud/share-with-your-team/desktop-policies).
+</Note>
 
-## Know what members see
+## Create prompt cards
+
+1. Open [app.openworklabs.com](https://app.openworklabs.com/) and go to **Manage › Desktop policies**.
+2. Choose the audience:
+   - For everyone, click **Edit** on the policy marked **Default**.
+   - For specific teams or members, click **New policy**.
+3. Turn on **Organization prompt suggestions**.
+4. Fill in **First prompt** and **Second prompt**. **Optional third prompt** can stay empty.
+5. For each prompt, enter:
+   - **Description**: the card's title, up to 120 characters.
+   - **Prompt**: the text that goes into the message box, up to 500 characters.
+6. For a new policy, choose who sees it under **Members** and **Teams**.
+7. Click **Create policy**, or **Save changes** for an existing policy.
+
+To give different departments different prompts, create one policy per department and assign each to its team.
+
+## When more than one policy matches
+
+Members see one set of prompt cards. Prompt sets never mix.
+
+- If a member matches several policies with prompts, the policy with the highest **Priority** wins. On a tie, the policy created first wins.
+- If no matching policy has prompts, the member sees the default policy's prompts.
+- If the default policy has no prompts either, the member sees OpenWork's standard suggestions.
+- Disabled policies don't count.
+
+## What members see
 
 <Frame>
   ![OpenWork desktop composer showing organization prompt cards assigned through a Cloud desktop policy](/images/desktop-team-prompt-cards.png)
 </Frame>
 
-1. The admin's `Description` becomes the card title in the desktop app.
-2. The admin's `Prompt` becomes the card body and the text inserted into the composer.
-3. Clicking a card fills the composer; it does not auto-send the task.
-4. Boolean policy toggles combine across every matching policy: any `true` wins.
-5. Prompt cards do not combine. The desktop uses one prompt set from the matching policy with the highest `Priority`; ties go to the earliest created policy, then the lowest policy id.
-6. Members receive changes from `GET /v1/me/desktop-config`. The desktop loads its cached config first, refreshes on Cloud session/settings changes, and polls every hour, so reload or switch the active Cloud organization if a change is not visible.
+- Cards appear on the screen a member sees when they start a new session.
+- The **Description** is the card title. If you leave it empty, the card is titled "Organization prompt 1", "Organization prompt 2", and so on.
+- The **Prompt** appears on the card and fills the message box when the member clicks it. The member can edit it before sending. Nothing is sent automatically.
+
+The desktop app checks for changes when the member signs in, when they switch organizations, and every hour. To see a change sooner, the member can quit and reopen the app.
+
+<Accordion title="Technical details">
+- Prompts are stored in the desktop policy document as `onboardingPrompts` (2 or 3 strings) and `onboardingPromptDescriptions` (the same number of strings).
+- Members receive the resolved prompt set in their desktop config from `GET /v1/me/desktop-config`.
+- Ties on **Priority** are broken by earliest creation time, then by the lowest policy ID.
+- Desktop policy routes return HTTP `402` when the organization doesn't have the Enterprise plan.
+</Accordion>

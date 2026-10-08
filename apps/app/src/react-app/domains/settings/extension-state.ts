@@ -1,22 +1,9 @@
 import { getMcpServerName, type McpDirectoryInfo } from "../../../app/constants";
-import type { ExtensionLayout } from "../../design-system/extension-card";
 
-const EXTENSION_LAYOUT_KEY = "openwork.extensions.layout";
 const EXTENSION_DISABLED_KEY_PREFIX = "openwork.extension.disabled.";
 const EXTENSION_ENABLED_KEY_PREFIX = "openwork.extension.enabled.";
 const EXTENSION_HIDDEN_KEY_PREFIX = "openwork.extension.hidden.";
 export const OPENWORK_EXTENSION_STATE_CHANGED = "openwork:extension-state-changed";
-
-/** An absent or stale value uses cards; an explicit list choice is preserved. */
-export function readExtensionLayout(): ExtensionLayout {
-  if (typeof window === "undefined") return "grid";
-  return window.localStorage.getItem(EXTENSION_LAYOUT_KEY) === "list" ? "list" : "grid";
-}
-
-export function writeExtensionLayout(layout: ExtensionLayout) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(EXTENSION_LAYOUT_KEY, layout);
-}
 
 export function getExtensionId(entry: McpDirectoryInfo): string {
   return entry.id ?? entry.serverName ?? getMcpServerName(entry);

@@ -203,6 +203,8 @@ interface UndoToastOptions {
   undo: ToastAction
   /** Optional secondary action that leaves the change in place, e.g. "View". */
   view?: ToastAction
+  /** Quiet second half of the line, e.g. who else is affected. */
+  detail?: React.ReactNode
   closeLabel?: string
 }
 
@@ -220,7 +222,7 @@ interface UndoToastCardProps extends Omit<UndoToastOptions, "id" | "duration"> {
  * spans sonner's toast width so the pill itself can hug its content and stay
  * centered under the title bar.
  */
-function UndoToastCard({ id, title, icon: Icon, undo, view, closeLabel }: UndoToastCardProps) {
+function UndoToastCard({ id, title, icon: Icon, undo, view, detail, closeLabel }: UndoToastCardProps) {
   // Sonner keeps a dismissed toast mounted through its exit animation. Once an
   // action is chosen the pill has done its job, so hide it at once instead of
   // letting "Undo" linger for another few hundred milliseconds.
@@ -236,10 +238,11 @@ function UndoToastCard({ id, title, icon: Icon, undo, view, closeLabel }: UndoTo
     <div className="flex w-[var(--width)] max-w-full justify-center">
       <div
         data-undo-toast
-        className="flex w-fit max-w-full items-center gap-3 rounded-2xl bg-popover/95 py-1.5 pl-4 pr-1.5 text-popover-foreground shadow-md backdrop-blur-sm"
+        className="flex w-max max-w-[min(40rem,calc(100vw-2rem))] shrink-0 items-center gap-3 rounded-2xl bg-popover/95 py-1.5 pl-4 pr-1.5 text-popover-foreground shadow-md backdrop-blur-sm"
       >
         {Icon ? <Icon className="size-4 shrink-0" /> : null}
-        <p className="min-w-0 truncate text-sm font-medium">{title}</p>
+        <p className={detail ? "shrink-0 text-sm font-medium" : "min-w-0 truncate text-sm font-medium"}>{title}</p>
+        {detail ? <p className="min-w-0 truncate text-xs text-muted-foreground">{detail}</p> : null}
         <div className="flex shrink-0 items-center gap-1">
           {view ? (
             <Button size="sm" variant="secondary" onClick={() => choose(view)}>
@@ -267,6 +270,7 @@ function showUndoToast(message: React.ReactNode, options: UndoToastOptions) {
         icon={options.icon}
         undo={options.undo}
         view={options.view}
+        detail={options.detail}
         closeLabel={options.closeLabel}
       />
     ),

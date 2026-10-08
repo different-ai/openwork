@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { execFileSync } from "node:child_process"
+import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { execFileSync, spawn } from "node:child_process"
 import { createHash, generateKeyPairSync } from "node:crypto"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -69,28 +69,60 @@ function printHelp() {
     "Usage:",
     "  openwork-bootstrap install [--bin-dir <path>] [--install-dir <path>] [--source <path>] [--json]",
     "  openwork-bootstrap install app --manifest <url-or-file> [--app-dir <path>] [--json]",
+    "  openwork-bootstrap open app [--app-dir <path>] [--json]",
     "  openwork-bootstrap doctor [--bin-dir <path>] [--install-dir <path>] [--base-url <url>] [--desktop-bootstrap] [--json]",
-    "  OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  openwork-bootstrap login [--base-url <url>] [--force] [--json]",
+    "  openwork-bootstrap logout [--json]",
+    "  openwork-bootstrap cloud onboard --base-url <url> --org-name <name> [--teammate-emails a@x.com,b@y.com] [--skill-name <name>] [--web-base-url <url>] [--prepare-desktop] [--json]",
+    "  (deprecated) OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --request-code --base-url <url> --owner-email <email> [--json]",
+    "  (deprecated) OPENWORK_OWNER_PASSWORD=<password> openwork-bootstrap cloud onboard --verification-code <code> --base-url <url> --owner-email <email> --org-name <name> --invite-email <email> [--json]",
     "  openwork-bootstrap cloud bootstrap-workspace --base-url <url> --workspace-name <name> [--skill-name <name>] [--owner-email <email>] [--teammate-emails a@x.com,b@y.com] [--claim-roles owner,member] [--web-base-url <url>] [--prepare-desktop] [--json]",
     "  openwork-bootstrap cloud claim-link [--role owner] [--desktop-bootstrap-path <path>] [--json]",
+    "  openwork-bootstrap migrate scan [--json]",
+    "  openwork-bootstrap migrate plan [--source <github-url,...>] [--org <id>] [--no-skills] [--json]",
+    "  openwork-bootstrap migrate apply [--plugin <name,...> | --all] [--source <github-url,...>] [--org <id>] [--private] [--no-skills] [--json]",
     "",
     "Commands:",
     "  install          Install the openwork-bootstrap CLI into a user bin dir",
     "  install app      Download and install the desktop app from a manifest",
+    "  open app         Launch the installed desktop app (macOS, Windows, Linux)",
     "  doctor           Check CLI installation and optional Den API health",
-    "  cloud onboard    Sign up, create an org, invite a teammate, and create a skill",
+    "  login            Sign in from the browser with a one-time code (no password)",
+    "  logout           Sign out and delete the saved credentials",
+    "  cloud onboard    Create an org you own, optionally invite teammates, and create a skill as the",
+    "                   signed-in person (OPENWORK_API_TOKEN, then `login`). The",
+    "                   --owner-email/--owner-password flags are deprecated.",
     "  cloud bootstrap-workspace  Create a provisional workspace without email/password auth",
     "  cloud claim-link Retrieve a claim link saved by --prepare-desktop. Only run",
     "                   this when you are ready to hand the link to a human; do",
     "                   not print claim links preemptively.",
+    "  migrate scan     List the Claude Cowork / Claude Code marketplaces and your",
+    "                   own Cowork skills on this computer (reads only)",
+    "  migrate plan     Preview what importing them into your OpenWork organization",
+    "                   brings: plugins, skills, connectors (no changes)",
+    "  migrate apply    Import the chosen plugins (organization-wide unless",
+    "                   --private) and your own skills (private). Safe to re-run:",
+    "                   imported plugins update in place.",
     "",
     "Options:",
+    "  --request-code   Create the account (or resend) and email a 6-digit",
+    "                   verification code, then stop. Hosted OpenWork Cloud",
+    "                   requires it before the first sign-in.",
+    "  --verification-code <code> | --verification-code-stdin",
+    "                   Verify the emailed code first, then sign in and finish",
+    "                   onboarding. Each new sign-up/sign-in attempt emails a",
+    "                   new code, so pass the latest one.",
     "  --web-base-url   Browser-facing origin written into --prepare-desktop's",
     "                   config (used for the app's Sign In button and claim",
     "                   links). Defaults to https://app.openworklabs.com when",
     "                   --base-url is the hosted API (api.openworklabs.com);",
     "                   set explicitly for self-hosted/custom deployments.",
     "  --json           Print machine-readable JSON",
+    "",
+    "Environment:",
+    "  OPENWORK_API_TOKEN        Use this token instead of the saved login",
+    "  OPENWORK_CREDENTIALS_PATH Where `login` saves credentials",
+    "                            (default ~/.openwork/credentials.json)",
     "  --version        Print version",
     "  --help           Show help",
   ].join("\n"))
@@ -165,6 +197,159 @@ function deriveWebBaseUrl(apiBaseUrl) {
   }
 }
 
+const DEVICE_CLIENT_ID = "openwork-cli"
+const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+const DEFAULT_API_BASE_URL = "https://api.openworklabs.com"
+
+function defaultCredentialsPath() {
+  return process.env.OPENWORK_CREDENTIALS_PATH || join(process.env.HOME || process.env.USERPROFILE || process.cwd(), ".openwork", "credentials.json")
+}
+
+function normalizeBaseUrl(value) {
+  return String(value || "").replace(/\/$/, "")
+}
+
+// Saved credentials are a bearer secret: owner-only file, never printed.
+function readSavedCredentials(filePath = defaultCredentialsPath()) {
+  if (!existsSync(filePath)) return null
+  try {
+    const stored = JSON.parse(readFileSync(filePath, "utf8"))
+    if (typeof stored?.accessToken !== "string" || !stored.accessToken || typeof stored.baseUrl !== "string") return null
+    if (typeof stored.expiresAt === "string" && Date.parse(stored.expiresAt) <= Date.now()) return null
+    return stored
+  } catch {
+    return null
+  }
+}
+
+function writeSavedCredentials(value, filePath = defaultCredentialsPath()) {
+  mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 })
+  writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 })
+  try {
+    chmodSync(filePath, 0o600)
+  } catch {}
+  return filePath
+}
+
+/**
+ * The token to act with, in order: OPENWORK_API_TOKEN, then a saved `login`
+ * for the same API base URL. Returns null when neither exists.
+ */
+function resolveApiToken(baseUrl) {
+  const fromEnv = process.env.OPENWORK_API_TOKEN?.trim()
+  if (fromEnv) return { token: fromEnv, source: "env" }
+  const saved = readSavedCredentials()
+  if (saved && normalizeBaseUrl(saved.baseUrl) === normalizeBaseUrl(baseUrl)) {
+    return { token: saved.accessToken, source: "login" }
+  }
+  return null
+}
+
+async function fetchMe(baseUrl, token) {
+  const me = await request(baseUrl, "/v1/me", { method: "GET", headers: { authorization: `Bearer ${token}` } })
+  if (me.status !== 200 || !me.body?.user?.id) return null
+  return me.body.user
+}
+
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
+
+/**
+ * OAuth 2.0 Device Authorization Grant (RFC 8628). Shows the code and link on
+ * stderr so --json stdout stays machine-readable, then polls until the person
+ * approves, denies, or the code expires.
+ */
+async function deviceLogin(baseUrl, { json, log = (line) => console.error(line) } = {}) {
+  const started = await request(baseUrl, "/api/auth/device/code", {
+    method: "POST",
+    body: JSON.stringify({ client_id: DEVICE_CLIENT_ID }),
+  })
+  if (started.status !== 200 || typeof started.body?.device_code !== "string") {
+    throw new Error(`device_code_failed: ${started.status} ${JSON.stringify(started.body)}`)
+  }
+  const { device_code: deviceCode, user_code: userCode, verification_uri: verificationUri, verification_uri_complete: verificationUriComplete } = started.body
+  const displayCode = userCode.length === 8 ? `${userCode.slice(0, 4)}-${userCode.slice(4)}` : userCode
+  let intervalMs = Math.max(1, Number(started.body.interval) || 5) * 1000
+  const deadline = Date.now() + (Number(started.body.expires_in) || 900) * 1000
+
+  if (json) {
+    log(JSON.stringify({ event: "device_authorization", verification_uri: verificationUri, verification_uri_complete: verificationUriComplete, user_code: displayCode, expires_in: started.body.expires_in, interval: started.body.interval }))
+  } else {
+    log(`Open this link to sign in:\n\n  ${verificationUriComplete}\n\nand confirm the code ${displayCode}. Waiting for approval...`)
+  }
+
+  while (Date.now() < deadline) {
+    await sleep(intervalMs)
+    const polled = await request(baseUrl, "/api/auth/device/token", {
+      method: "POST",
+      body: JSON.stringify({ grant_type: DEVICE_CODE_GRANT, device_code: deviceCode, client_id: DEVICE_CLIENT_ID }),
+    })
+    if (polled.status === 200 && typeof polled.body?.access_token === "string") {
+      const expiresIn = Number(polled.body.expires_in)
+      return {
+        accessToken: polled.body.access_token,
+        expiresAt: Number.isFinite(expiresIn) && expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000).toISOString() : null,
+      }
+    }
+    const error = polled.body?.error
+    if (error === "authorization_pending") continue
+    if (error === "slow_down") {
+      intervalMs += 5000
+      continue
+    }
+    if (error === "access_denied") throw new Error("login_denied: the sign-in request was denied in the browser")
+    if (error === "expired_token") break
+    throw new Error(`login_failed: ${polled.status} ${JSON.stringify(polled.body)}`)
+  }
+  throw new Error("login_expired: the code expired before it was approved; run login again")
+}
+
+async function runLogin(args) {
+  const json = hasFlag(args.flags, "json")
+  // Without --base-url, check the account already signed in (self-hosted or
+  // hosted) before starting a new sign-in against the hosted default.
+  const baseUrl = normalizeBaseUrl(getFlag(args.flags, "base-url", readSavedCredentials()?.baseUrl || DEFAULT_API_BASE_URL))
+  const force = hasFlag(args.flags, "force")
+
+  const existing = force ? null : resolveApiToken(baseUrl)
+  if (existing) {
+    const user = await fetchMe(baseUrl, existing.token)
+    if (user) {
+      jsonOut({ ok: true, message: `Already signed in as ${user.email}${existing.source === "env" ? " (OPENWORK_API_TOKEN)" : ""}`, source: existing.source, user: { id: user.id, email: user.email } }, json)
+      return
+    }
+    if (existing.source === "env") throw new Error("invalid_api_token: OPENWORK_API_TOKEN was rejected by /v1/me")
+  }
+
+  const granted = await deviceLogin(baseUrl, { json })
+  const user = await fetchMe(baseUrl, granted.accessToken)
+  if (!user) throw new Error("login_failed: the new session was rejected by /v1/me")
+  const credentialsPath = writeSavedCredentials({
+    baseUrl,
+    accessToken: granted.accessToken,
+    expiresAt: granted.expiresAt,
+    user: { id: user.id, email: user.email },
+    createdAt: new Date().toISOString(),
+  })
+  jsonOut({ ok: true, message: `Signed in as ${user.email}`, source: "login", user: { id: user.id, email: user.email }, credentialsPath }, json)
+}
+
+async function runLogout(args) {
+  const json = hasFlag(args.flags, "json")
+  const credentialsPath = defaultCredentialsPath()
+  const saved = readSavedCredentials(credentialsPath)
+  let revoked = false
+  if (saved) {
+    const signOut = await request(normalizeBaseUrl(saved.baseUrl), "/api/auth/sign-out", {
+      method: "POST",
+      headers: { authorization: `Bearer ${saved.accessToken}` },
+      body: "{}",
+    }).catch(() => null)
+    revoked = signOut?.status === 200
+  }
+  rmSync(credentialsPath, { force: true })
+  jsonOut({ ok: true, message: saved ? "Signed out" : "Not signed in", revoked, credentialsPath }, json)
+}
+
 function slugifySkillName(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "openwork-bootstrap-skill"
 }
@@ -191,10 +376,14 @@ function runInstall(args) {
   chmodSync(installedCli, 0o755)
 
   const executable = join(binDir, executableBasename())
+  // Pin the Node that ran the install: install.sh may have fetched a private
+  // Node into the install dir that is not on PATH. Fall back to PATH if that
+  // Node is later removed (for example a version manager uninstall).
+  const nodePath = process.execPath
   if (process.platform === "win32") {
-    writeFileSync(executable, `@echo off\r\nnode "${installedCli}" %*\r\n`)
+    writeFileSync(executable, `@echo off\r\nif exist "${nodePath}" (\r\n  "${nodePath}" "${installedCli}" %*\r\n) else (\r\n  node "${installedCli}" %*\r\n)\r\n`)
   } else {
-    writeFileSync(executable, `#!/usr/bin/env sh\nexec node "${installedCli}" "$@"\n`)
+    writeFileSync(executable, `#!/usr/bin/env sh\nif [ -x "${nodePath}" ]; then exec "${nodePath}" "${installedCli}" "$@"; fi\nexec node "${installedCli}" "$@"\n`)
   }
   chmodSync(executable, 0o755)
 
@@ -449,6 +638,85 @@ async function runInstallApp(args) {
   }
 }
 
+function resolveInstalledApp(appDir) {
+  const appManifest = join(appDir, "openwork-app-install.json")
+  let appPath = process.platform === "darwin"
+    ? join(appDir, "OpenWork.app")
+    : process.platform === "win32"
+      ? join(appDir, "OpenWork.exe")
+      : join(appDir, "openwork")
+  if (existsSync(appManifest)) {
+    try {
+      const appInstall = JSON.parse(readFileSync(appManifest, "utf8"))
+      if (appInstall.appPath) appPath = appInstall.appPath
+    } catch {
+      // Keep fallback path.
+    }
+  }
+  return { appPath, appManifest }
+}
+
+function launchDetached(command, commandArgs, logPath) {
+  const log = openSync(logPath, "a")
+  const child = spawn(command, commandArgs, { detached: true, stdio: ["ignore", log, log] })
+  closeSync(log)
+  let exit = null
+  child.on("exit", (code, signal) => { exit = { code, signal } })
+  child.unref()
+  return { child, exited: () => exit }
+}
+
+
+// Electron's Chromium sandbox cannot start for an AppImage when the OS blocks
+// unprivileged user namespaces (Ubuntu 24.04+ AppArmor default, containers) or
+// when running as root. Retry once without it instead of leaving the user with
+// a window that never appears.
+function linuxSandboxFailure(logPath) {
+  try {
+    return /sandbox|namespace|setuid/i.test(readFileSync(logPath, "utf8"))
+  } catch {
+    return false
+  }
+}
+
+async function runOpenApp(args) {
+  const json = hasFlag(args.flags, "json")
+  const appDir = resolve(getFlag(args.flags, "app-dir", defaultAppDir()))
+  const { appPath } = resolveInstalledApp(appDir)
+  if (!existsSync(appPath)) {
+    throw new Error(`app_not_installed: ${appPath} (run \`${COMMAND_NAME} install app --manifest <url>\` first)`)
+  }
+
+  if (process.platform === "darwin") {
+    execFileSync("open", [appPath])
+    jsonOut({ ok: true, message: `Opened ${appPath}`, appPath, launcher: "open" }, json)
+    return
+  }
+
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    throw new Error("no_display: DISPLAY and WAYLAND_DISPLAY are unset; run this from the user's desktop session")
+  }
+
+  const logPath = join(appDir, "openwork-app-launch.log")
+  const forceNoSandbox = process.platform === "linux" && typeof process.getuid === "function" && process.getuid() === 0
+  let appArgs = forceNoSandbox ? ["--no-sandbox"] : []
+  let launch = launchDetached(appPath, appArgs, logPath)
+  await sleep(4000)
+  if (process.platform === "linux" && launch.exited() && !appArgs.includes("--no-sandbox") && linuxSandboxFailure(logPath)) {
+    appArgs = ["--no-sandbox"]
+    launch = launchDetached(appPath, appArgs, logPath)
+    await sleep(4000)
+  }
+
+  const exited = launch.exited()
+  if (exited && exited.code !== 0) {
+    jsonOut({ ok: false, message: `OpenWork exited during launch (code ${exited.code ?? exited.signal}); see ${logPath}`, appPath, args: appArgs, log: logPath }, json)
+    process.exitCode = 1
+    return
+  }
+  jsonOut({ ok: true, message: `Opened ${appPath}`, appPath, pid: launch.child.pid, args: appArgs, log: logPath }, json)
+}
+
 async function runDoctor(args) {
   const installDir = resolve(getFlag(args.flags, "install-dir", defaultInstallDir()))
   const binDir = resolve(getFlag(args.flags, "bin-dir", defaultBinDir()))
@@ -486,20 +754,7 @@ async function runDoctor(args) {
   }
 
   if (hasFlag(args.flags, "app") || args.flags.has("app-dir")) {
-    const appManifest = join(appDir, "openwork-app-install.json")
-    let appPath = process.platform === "darwin"
-      ? join(appDir, "OpenWork.app")
-      : process.platform === "win32"
-        ? join(appDir, "OpenWork.exe")
-        : join(appDir, "openwork")
-    if (existsSync(appManifest)) {
-      try {
-        const appInstall = JSON.parse(readFileSync(appManifest, "utf8"))
-        if (appInstall.appPath) appPath = appInstall.appPath
-      } catch {
-        // Keep fallback path.
-      }
-    }
+    const { appPath, appManifest } = resolveInstalledApp(appDir)
     checks.push({ name: "openworkApp", ok: existsSync(appPath), value: appPath })
     checks.push({ name: "appInstallManifest", ok: existsSync(appManifest), value: appManifest })
   }
@@ -544,23 +799,82 @@ async function request(baseUrl, path, options = {}) {
   return { status: response.status, body }
 }
 
-async function signupAndSignin(baseUrl, input) {
+// Hosted OpenWork Cloud requires a 6-digit email code before the first
+// sign-in. Every sign-up or unverified sign-in emails a NEW code and
+// invalidates the previous one, so the code step must verify first and never
+// sign up or sign in before it.
+function isEmailNotVerified(response) {
+  const code = response.body?.code
+  return response.status === 403 && (code === "EMAIL_NOT_VERIFIED" || /not verified/i.test(String(response.body?.message ?? "")))
+}
+
+function verificationRequiredMessage(email) {
+  return `We emailed a 6-digit verification code to ${email}. Ask the person for it, then run the same command with --verification-code <code> (or --verification-code-stdin).`
+}
+
+async function verifyEmailCode(baseUrl, input) {
+  const verified = await request(baseUrl, "/api/auth/email-otp/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ email: input.email, otp: input.verificationCode }),
+  })
+  if (verified.status !== 200) {
+    throw new Error(`email_verification_failed: ${verified.status} ${JSON.stringify(verified.body)}. The code may be wrong or expired; run with --request-code to email a new one.`)
+  }
+  return verified
+}
+
+async function requestVerificationCode(baseUrl, input) {
   const signup = await request(baseUrl, "/api/auth/sign-up/email", {
     method: "POST",
     body: JSON.stringify({ name: input.name, email: input.email, password: input.password }),
   })
-  if (signup.status !== 200 && signup.status !== 400) {
-    throw new Error(`signup_failed: ${signup.status} ${JSON.stringify(signup.body)}`)
+  if (signup.status === 200) {
+    // A fresh sign-up already emailed the code when verification is required;
+    // deployments without verification sign the person in immediately.
+    return { signup, verificationRequired: !signup.body?.token }
+  }
+  const sent = await request(baseUrl, "/api/auth/email-otp/send-verification-otp", {
+    method: "POST",
+    body: JSON.stringify({ email: input.email, type: "email-verification" }),
+  })
+  if (sent.status !== 200) {
+    throw new Error(`verification_code_request_failed: ${sent.status} ${JSON.stringify(sent.body)}`)
+  }
+  return { signup, verificationRequired: true }
+}
+
+async function signupAndSignin(baseUrl, input) {
+  let signup = null
+  if (input.verificationCode) {
+    await verifyEmailCode(baseUrl, input)
+  } else {
+    signup = await request(baseUrl, "/api/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: input.name, email: input.email, password: input.password }),
+    })
+    if (signup.status !== 200 && signup.status !== 400 && signup.status !== 422) {
+      throw new Error(`signup_failed: ${signup.status} ${JSON.stringify(signup.body)}`)
+    }
   }
 
   const signin = await request(baseUrl, "/api/auth/sign-in/email", {
     method: "POST",
     body: JSON.stringify({ email: input.email, password: input.password }),
   })
+  if (isEmailNotVerified(signin)) {
+    throw new Error(`email_verification_required: ${verificationRequiredMessage(input.email)}`)
+  }
   if (signin.status !== 200 || !signin.body?.token) {
     throw new Error(`signin_failed: ${signin.status} ${JSON.stringify(signin.body)}`)
   }
   return { signup, signin, token: signin.body.token, user: signin.body.user }
+}
+
+async function resolveVerificationCode(flags) {
+  const fromFlag = getFlag(flags, "verification-code")
+  if (fromFlag) return fromFlag.trim()
+  if (hasFlag(flags, "verification-code-stdin")) return (await readStdin()).trim()
+  return null
 }
 
 function skillText(name, output) {
@@ -785,18 +1099,43 @@ async function runCloudOnboard(args) {
   const json = hasFlag(args.flags, "json")
   const baseUrl = getFlag(args.flags, "base-url")?.replace(/\/$/, "")
   const ownerEmail = getFlag(args.flags, "owner-email")
-  const ownerPassword = await resolveOwnerPassword(args.flags)
+  // The deprecated password path stays available when explicitly requested.
+  const explicitPasswordPath = hasFlag(args.flags, "request-code") || args.flags.has("verification-code") || hasFlag(args.flags, "verification-code-stdin")
+  const signedIn = baseUrl && !explicitPasswordPath ? resolveApiToken(baseUrl) : null
+  const ownerPassword = signedIn ? null : await resolveOwnerPassword(args.flags)
   const orgName = getFlag(args.flags, "org-name")
-  const inviteEmail = getFlag(args.flags, "invite-email")
+  // Teammates are optional: a person can start alone and invite later.
+  const inviteEmails = [getFlag(args.flags, "invite-email"), getFlag(args.flags, "teammate-emails")]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim())
+    .filter(Boolean)
   const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
   const skillOutput = getFlag(args.flags, "skill-output", "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
   const skillsDir = getFlag(args.flags, "skills-dir", defaultSkillsDir())
   const webBaseUrl = getFlag(args.flags, "web-base-url", deriveWebBaseUrl(baseUrl))?.replace(/\/$/, "")
+  const requestCodeOnly = hasFlag(args.flags, "request-code")
+  if (requestCodeOnly && (args.flags.has("verification-code") || hasFlag(args.flags, "verification-code-stdin"))) {
+    throw new Error("conflicting_flags: use --request-code first, then run again with --verification-code")
+  }
+  if (hasFlag(args.flags, "verification-code-stdin") && hasFlag(args.flags, "owner-password-stdin")) {
+    throw new Error("conflicting_flags: stdin can carry either the password or the verification code, not both")
+  }
+  const verificationCode = requestCodeOnly ? null : await resolveVerificationCode(args.flags)
+  if (verificationCode !== null && !/^\d{4,10}$/.test(verificationCode)) {
+    throw new Error("invalid_verification_code: expected the numeric code from the verification email")
+  }
 
-  for (const [name, value] of Object.entries({ baseUrl, ownerEmail, ownerPassword, orgName, inviteEmail })) {
+  const required = requestCodeOnly
+    ? { baseUrl, ownerEmail, ownerPassword }
+    : { baseUrl, orgName }
+  for (const [name, value] of Object.entries(required)) {
     if (!value) throw new Error(`missing_required_flag: --${name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`)
+  }
+  if (!signedIn && (!ownerEmail || !ownerPassword)) {
+    throw new Error(`not_signed_in: run "openwork-bootstrap login --base-url ${baseUrl}" first (or set OPENWORK_API_TOKEN)`)
   }
 
   const health = await request(baseUrl, "/health", { method: "GET" })
@@ -804,11 +1143,44 @@ async function runCloudOnboard(args) {
     throw new Error(`den_api_unhealthy: ${health.status} ${JSON.stringify(health.body)}`)
   }
 
-  const owner = await signupAndSignin(baseUrl, {
-    name: "OpenWork Owner",
-    email: ownerEmail,
-    password: ownerPassword,
-  })
+  if (requestCodeOnly) {
+    console.error("warning: --owner-email/--owner-password are deprecated; use `openwork-bootstrap login` instead")
+    const requested = await requestVerificationCode(baseUrl, {
+      name: "OpenWork Owner",
+      email: ownerEmail,
+      password: ownerPassword,
+    })
+    jsonOut({
+      ok: true,
+      step: requested.verificationRequired ? "verification_required" : "verified",
+      message: requested.verificationRequired
+        ? verificationRequiredMessage(ownerEmail)
+        : "This deployment does not require email verification. Run the command again without --request-code.",
+      email: ownerEmail,
+    }, json)
+    return
+  }
+
+  let owner
+  if (signedIn) {
+    const user = await fetchMe(baseUrl, signedIn.token)
+    if (!user) {
+      throw new Error(signedIn.source === "env"
+        ? "invalid_api_token: OPENWORK_API_TOKEN was rejected by /v1/me"
+        : `session_expired: run "openwork-bootstrap login --base-url ${baseUrl} --force" again`)
+    }
+    owner = { token: signedIn.token, user }
+  } else {
+    // Deprecated: passwords on the command line end up in shell history.
+    // Kept for existing scripts.
+    console.error("warning: --owner-email/--owner-password are deprecated; use `openwork-bootstrap login` instead")
+    owner = await signupAndSignin(baseUrl, {
+      name: "OpenWork Owner",
+      email: ownerEmail,
+      password: ownerPassword,
+      verificationCode,
+    })
+  }
   const auth = { authorization: `Bearer ${owner.token}` }
 
   const org = await request(baseUrl, "/v1/org", {
@@ -820,13 +1192,17 @@ async function runCloudOnboard(args) {
     throw new Error(`org_create_failed: ${org.status} ${JSON.stringify(org.body)}`)
   }
 
-  const invite = await request(baseUrl, "/v1/invitations", {
-    method: "POST",
-    headers: auth,
-    body: JSON.stringify({ email: inviteEmail, role: "member" }),
-  })
-  if (invite.status !== 201 || !invite.body?.invitationId) {
-    throw new Error(`invite_failed: ${invite.status} ${JSON.stringify(invite.body)}`)
+  const invitations = []
+  for (const email of inviteEmails) {
+    const invite = await request(baseUrl, "/v1/invitations", {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ email, role: "member" }),
+    })
+    if (invite.status !== 201 || !invite.body?.invitationId) {
+      throw new Error(`invite_failed: ${invite.status} ${JSON.stringify(invite.body)}`)
+    }
+    invitations.push(invite.body)
   }
 
   const rawSourceText = skillText(skillName, skillOutput)
@@ -858,8 +1234,11 @@ async function runCloudOnboard(args) {
     ok: true,
     message: "OpenWork cloud onboarding complete",
     user: { id: owner.user.id, email: owner.user.email, emailVerified: owner.user.emailVerified },
+    signedInWith: signedIn ? signedIn.source : "password",
     organization: org.body.organization,
-    invitation: invite.body,
+    // `invitation` kept for scripts written against the single-invite shape.
+    invitation: invitations[0] ?? null,
+    invitations,
     skill,
     skillRun,
     desktop,
@@ -983,6 +1362,370 @@ function runCloudClaimLink(args) {
   }, json)
 }
 
+// ---------------------------------------------------------------------------
+// migrate: Claude Cowork / Claude Code plugins and skills -> OpenWork Cloud
+//
+// Reads what the person already has on this computer (marketplaces they added
+// in Cowork or Claude Code, and the skills they wrote themselves in Cowork),
+// then imports it into their OpenWork organization through Den's GitHub plugin
+// import. Every step is safe to re-run: Den updates a plugin imported earlier
+// from the same repository, and a skill that already exists gets a new
+// version only when its text changed.
+// ---------------------------------------------------------------------------
+
+function coworkSessionsDir() {
+  if (process.env.OPENWORK_COWORK_DIR) return process.env.OPENWORK_COWORK_DIR
+  const home = process.env.HOME || process.env.USERPROFILE || process.cwd()
+  if (process.platform === "darwin") return join(home, "Library", "Application Support", "Claude", "local-agent-mode-sessions")
+  if (process.platform === "win32") return join(process.env.APPDATA || join(home, "AppData", "Roaming"), "Claude", "local-agent-mode-sessions")
+  return join(configHomeDir(), "Claude", "local-agent-mode-sessions")
+}
+
+function claudeCodePluginsDir() {
+  if (process.env.OPENWORK_CLAUDE_CODE_PLUGINS_DIR) return process.env.OPENWORK_CLAUDE_CODE_PLUGINS_DIR
+  const home = process.env.HOME || process.env.USERPROFILE || process.cwd()
+  return join(process.env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "plugins")
+}
+
+function readJsonFile(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"))
+  } catch {
+    return null
+  }
+}
+
+function listDirs(path) {
+  try {
+    return readdirSync(path, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => join(path, entry.name))
+  } catch {
+    return []
+  }
+}
+
+function githubRepoUrl(repo) {
+  const cleaned = String(repo || "").trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/+$/, "")
+  return /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(cleaned) ? `https://github.com/${cleaned}` : null
+}
+
+function addMarketplace(found, input) {
+  const url = input.source?.source === "github" ? githubRepoUrl(input.source.repo) : null
+  if (!url) {
+    found.unsupported.push({ name: input.name, origin: input.origin, reason: "not_on_github", detail: "Only public GitHub marketplaces can be imported; add its plugins to your organization by hand." })
+    return
+  }
+  const existing = found.marketplaces.find((entry) => entry.url === url)
+  if (existing) {
+    if (!existing.origins.includes(input.origin)) existing.origins.push(input.origin)
+    for (const plugin of input.installedPlugins ?? []) if (!existing.installedPlugins.includes(plugin)) existing.installedPlugins.push(plugin)
+    return
+  }
+  found.marketplaces.push({ name: input.name, url, origins: [input.origin], installedPlugins: [...(input.installedPlugins ?? [])] })
+}
+
+/** What the person has locally. Reads names and file paths; never uploads anything. */
+function scanLocalClaude() {
+  const found = { marketplaces: [], skills: [], unsupported: [], searched: [] }
+
+  const coworkDir = coworkSessionsDir()
+  found.searched.push(coworkDir)
+  for (const account of listDirs(coworkDir)) {
+    for (const org of listDirs(account)) {
+      const known = readJsonFile(join(org, "cowork_plugins", "known_marketplaces.json"))
+      if (!known || typeof known !== "object") continue
+      for (const [name, entry] of Object.entries(known)) addMarketplace(found, { name, origin: "cowork", source: entry?.source })
+    }
+  }
+
+  // Skills the person wrote in Cowork (creatorType "user"); Anthropic's
+  // built-in skills stay behind.
+  const seenSkills = new Set()
+  for (const org of listDirs(join(coworkDir, "skills-plugin"))) {
+    for (const bundle of listDirs(org)) {
+      const manifest = readJsonFile(join(bundle, "manifest.json"))
+      for (const skill of Array.isArray(manifest?.skills) ? manifest.skills : []) {
+        if (skill?.creatorType !== "user" || typeof skill.name !== "string") continue
+        const path = join(bundle, "skills", skill.name, "SKILL.md")
+        if (!existsSync(path) || seenSkills.has(skill.name)) continue
+        seenSkills.add(skill.name)
+        found.skills.push({ name: skill.name, description: typeof skill.description === "string" ? skill.description : null, enabled: skill.enabled !== false, origin: "cowork", path })
+      }
+    }
+  }
+
+  const claudeCodeDir = claudeCodePluginsDir()
+  found.searched.push(claudeCodeDir)
+  const installed = readJsonFile(join(claudeCodeDir, "installed_plugins.json"))
+  const installedByMarketplace = new Map()
+  for (const key of Object.keys(installed?.plugins ?? {})) {
+    const at = key.lastIndexOf("@")
+    if (at <= 0) continue
+    const list = installedByMarketplace.get(key.slice(at + 1)) ?? []
+    list.push(key.slice(0, at))
+    installedByMarketplace.set(key.slice(at + 1), list)
+  }
+  const knownClaudeCode = readJsonFile(join(claudeCodeDir, "known_marketplaces.json"))
+  for (const [name, entry] of Object.entries(knownClaudeCode && typeof knownClaudeCode === "object" ? knownClaudeCode : {})) {
+    addMarketplace(found, { name, origin: "claude-code", source: entry?.source ?? entry, installedPlugins: installedByMarketplace.get(name) })
+  }
+
+  return found
+}
+
+async function resolveMigrationTarget(flags) {
+  const baseUrl = normalizeBaseUrl(getFlag(flags, "base-url", readSavedCredentials()?.baseUrl || DEFAULT_API_BASE_URL))
+  const token = resolveApiToken(baseUrl)
+  if (!token) throw new Error(`not_signed_in: run \`${COMMAND_NAME} login\` first (or set OPENWORK_API_TOKEN)`)
+  const orgs = await request(baseUrl, "/v1/me/orgs", { method: "GET", headers: { authorization: `Bearer ${token.token}` } })
+  if (orgs.status !== 200 || !Array.isArray(orgs.body?.orgs)) throw new Error(`org_list_failed: ${orgs.status} ${JSON.stringify(orgs.body)}`)
+  const wanted = getFlag(flags, "org")
+  const org = wanted
+    ? orgs.body.orgs.find((entry) => entry.id === wanted || entry.slug === wanted || entry.name === wanted)
+    : orgs.body.orgs.length === 1 ? orgs.body.orgs[0] : orgs.body.orgs.find((entry) => entry.id === orgs.body.activeOrgId)
+  if (!org) {
+    const names = orgs.body.orgs.map((entry) => `${entry.name ?? entry.slug} (${entry.id})`).join(", ")
+    throw new Error(wanted ? `org_not_found: ${wanted}. Yours: ${names}` : `org_ambiguous: pass --org <id>. Yours: ${names}`)
+  }
+  const headers = { authorization: `Bearer ${token.token}`, "x-openwork-org-id": org.id }
+  return { baseUrl, headers, org: { id: org.id, name: org.name ?? org.slug ?? org.id, memberId: org.orgMemberId ?? null } }
+}
+
+function sourcesFromFlags(flags) {
+  return String(getFlag(flags, "source", "")).split(",").map((value) => value.trim()).filter(Boolean)
+}
+
+function listFlag(flags, name) {
+  return String(getFlag(flags, name, "")).split(",").map((value) => value.trim()).filter(Boolean)
+}
+
+/** Den's preview of one marketplace, reduced to what a person decides on. */
+async function previewMarketplace(target, url) {
+  const preview = await request(target.baseUrl, "/v1/plugins/import-mcps-from-github-url/preview", {
+    method: "POST",
+    headers: target.headers,
+    body: JSON.stringify({ githubUrl: url }),
+  })
+  if (preview.status !== 200) {
+    return { url, error: preview.body?.message ?? preview.body?.error ?? `HTTP ${preview.status}` }
+  }
+  const item = preview.body?.item ?? preview.body
+  const branch = item.branch || "main"
+  const plugins = (item.plugins ?? []).map((plugin) => {
+    const folder = String(plugin.key ?? "").replace(/^marketplace:/, "")
+    const servers = (item.servers ?? []).filter((server) => server.pluginKey === plugin.key)
+    const skills = (item.skills ?? []).filter((skill) => skill.pluginKey === plugin.key && skill.supported)
+    return {
+      name: plugin.name,
+      description: plugin.description ?? null,
+      url: plugin.key?.startsWith("marketplace:") && folder ? `${url}/tree/${branch}/${folder}` : url,
+      skills: skills.map((skill) => skill.name),
+      connectors: servers.filter((server) => server.supported).map((server) => server.name),
+      // Connectors Den maps to a connection the organization already has
+      // (e.g. Claude's Slack or blank Gmail entry -> your Slack / Google Workspace).
+      usesExisting: servers.filter((server) => server.reuse).map((server) => ({ name: server.name, connection: server.reuse.connectionName })),
+      needsSetup: servers.filter((server) => !server.supported && !server.reuse).map((server) => ({ name: server.name, reason: server.skippedReason, mapsTo: server.mapsTo?.displayName ?? null })),
+    }
+  })
+  const marketplaceName = item.marketplace?.name ?? url.split("/").at(-1) ?? url
+  return { url, name: marketplaceName, plugins: plugins.map((plugin) => ({ ...plugin, marketplaceName })) }
+}
+
+function connectorNextStep(entry) {
+  const mapsTo = entry.mapsTo?.displayName ?? null
+  if (entry.reason === "native_connector") return `${entry.name}: Claude-only connector; connect ${mapsTo ?? "the matching provider"} in OpenWork (Connections) instead`
+  if (entry.reason === "missing_url") return `${entry.name}: the plugin leaves this for you to choose; connect it in OpenWork (Connections)`
+  if (entry.reason === "local_unsupported") return `${entry.name}: runs on your computer in Claude; add it to OpenWork as a local MCP server if you still need it`
+  return `${entry.name}: not importable (${entry.reason})`
+}
+
+async function importMarketplacePlugin(target, plugin, access) {
+  const importAs = (name) => request(target.baseUrl, "/v1/plugins/import-mcps-from-github-url", {
+    method: "POST",
+    headers: target.headers,
+    body: JSON.stringify({ githubUrl: plugin.url, name, access }),
+  })
+  // The organization may already have a different plugin with this name
+  // (made by hand, or from another source). Import next to it under a name
+  // that says where it came from; later runs land on the same name and update.
+  let imported = await importAs(plugin.name)
+  let importedName = plugin.name
+  if (imported.status === 409 && imported.body?.error === "duplicate_plugin" && plugin.marketplaceName) {
+    importedName = `${plugin.name} (${plugin.marketplaceName})`
+    imported = await importAs(importedName)
+  }
+  if (imported.status !== 200 && imported.status !== 201) {
+    return { plugin: plugin.name, ok: false, error: imported.body?.message ?? imported.body?.error ?? `HTTP ${imported.status}` }
+  }
+  const item = imported.body?.item ?? imported.body
+  return {
+    plugin: plugin.name,
+    ...(importedName !== plugin.name ? { importedAs: importedName } : {}),
+    ok: true,
+    mode: item.mode ?? "created",
+    pluginId: item.plugin?.id ?? null,
+    skillsAdded: (item.importedSkills ?? []).map((skill) => skill.name),
+    skillsUpdated: (item.updatedSkills ?? []).map((skill) => skill.name),
+    connectorsAdded: (item.imported ?? []).map((server) => server.name),
+    usesExisting: [
+      ...(item.imported ?? []).filter((server) => server.existingConnection).map((server) => ({ name: server.name, connection: server.connectionName })),
+      ...(item.skipped ?? []).filter((entry) => entry.reuse).map((entry) => ({ name: entry.name, connection: entry.reuse.connectionName })),
+    ],
+    unchanged: (item.unchanged ?? []).length,
+    // Skills and connectors deleted upstream since the last run.
+    removed: (item.removed ?? []).map((entry) => `${entry.objectType === "mcp" ? "connector" : "skill"} ${entry.name}`),
+    nextSteps: [...(item.skipped ?? []).filter((entry) => !entry.reuse).map((entry) => connectorNextStep(entry)), ...(item.skippedSkills ?? []).map((entry) => `${entry.name}: skill not imported (${entry.reason})`)],
+  }
+}
+
+async function singleSkillOfPlugin(target, pluginId) {
+  const components = await request(target.baseUrl, `/v1/plugins/${encodeURIComponent(pluginId)}/config-objects`, { method: "GET", headers: target.headers })
+  const objects = (components.body?.items ?? []).map((entry) => entry.configObject).filter(Boolean)
+  return objects.length === 1 && objects[0].objectType === "skill" ? objects[0] : null
+}
+
+/**
+ * A Cowork skill the person wrote becomes a private OpenWork skill in a plugin
+ * of the same name. Re-running updates that skill when its text changed. A
+ * different plugin that already has the name is left alone: the skill goes
+ * next to it as "<name> (from Cowork)".
+ */
+async function migrateLocalSkill(target, skill) {
+  const rawSourceText = readFileSync(skill.path, "utf8")
+  for (const name of [skill.name, `${skill.name} (from Cowork)`]) {
+    const created = await request(target.baseUrl, "/v1/plugins", {
+      method: "POST",
+      headers: target.headers,
+      body: JSON.stringify({ name, components: [{ type: "skill", input: { rawSourceText } }], orgWide: false }),
+    })
+    if (created.status === 201) return { skill: skill.name, ...(name !== skill.name ? { importedAs: name } : {}), ok: true, mode: "created", pluginId: created.body?.item?.id ?? null }
+    const existingId = created.status === 409 ? String(created.body?.message ?? "").match(/\((plg_[0-9a-z]+)\)/)?.[1] : null
+    if (!existingId) return { skill: skill.name, ok: false, error: created.body?.message ?? created.body?.error ?? `HTTP ${created.status}` }
+    const configObject = await singleSkillOfPlugin(target, existingId)
+    if (!configObject?.id) continue
+    const latest = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions/latest`, { method: "GET", headers: target.headers })
+    const current = latest.body?.item?.rawSourceText ?? null
+    const base = { skill: skill.name, ...(name !== skill.name ? { importedAs: name } : {}), ok: true, pluginId: existingId }
+    if (typeof current === "string" && current.trim() === rawSourceText.trim()) return { ...base, mode: "unchanged" }
+    const updated = await request(target.baseUrl, `/v1/config-objects/${encodeURIComponent(configObject.id)}/versions`, {
+      method: "POST",
+      headers: target.headers,
+      body: JSON.stringify({ input: { rawSourceText }, reason: "Re-migrated from Claude Cowork" }),
+    })
+    if (updated.status !== 200 && updated.status !== 201) return { skill: skill.name, ok: false, error: updated.body?.message ?? `HTTP ${updated.status}` }
+    return { ...base, mode: "updated" }
+  }
+  return { skill: skill.name, ok: false, error: `plugins named "${skill.name}" and "${skill.name} (from Cowork)" already exist with other content` }
+}
+
+function migrationSummary(lines) {
+  return lines.filter(Boolean).join("\n")
+}
+
+async function runMigrate(args) {
+  const json = hasFlag(args.flags, "json")
+  const subcommand = args.positionals[1] || "plan"
+
+  if (subcommand === "scan") {
+    const found = scanLocalClaude()
+    jsonOut({
+      ok: true,
+      ...found,
+      message: migrationSummary([
+        `Marketplaces: ${found.marketplaces.map((entry) => `${entry.name} (${entry.url})`).join(", ") || "none found"}`,
+        `Your Cowork skills: ${found.skills.map((skill) => skill.name).join(", ") || "none found"}`,
+        found.unsupported.length ? `Not importable: ${found.unsupported.map((entry) => `${entry.name} (${entry.reason})`).join(", ")}` : "",
+      ]),
+    }, json)
+    return
+  }
+
+  if (subcommand !== "plan" && subcommand !== "apply") {
+    printHelp()
+    process.exitCode = 1
+    return
+  }
+
+  const target = await resolveMigrationTarget(args.flags)
+  const found = scanLocalClaude()
+  const explicitSources = sourcesFromFlags(args.flags)
+  const sourceUrls = explicitSources.length > 0 ? explicitSources : found.marketplaces.map((entry) => entry.url)
+  const marketplaces = []
+  for (const url of sourceUrls) marketplaces.push(await previewMarketplace(target, url))
+  const includeSkills = !hasFlag(args.flags, "no-skills")
+  const localSkills = includeSkills && explicitSources.length === 0 ? found.skills : []
+
+  if (subcommand === "plan") {
+    jsonOut({
+      ok: marketplaces.every((entry) => !entry.error),
+      org: target.org,
+      marketplaces: marketplaces.map((entry) => ({
+        ...entry,
+        installedLocally: found.marketplaces.find((local) => local.url === entry.url)?.installedPlugins ?? [],
+      })),
+      skills: localSkills.map((skill) => ({ name: skill.name, description: skill.description })),
+      unsupported: found.unsupported,
+      message: migrationSummary([
+        `Plan for ${target.org.name}:`,
+        ...marketplaces.flatMap((entry) => entry.error
+          ? [`  ${entry.url}: preview failed (${entry.error})`]
+          : [`  ${entry.name}: ${entry.plugins.length} plugins`, ...entry.plugins.flatMap((plugin) => [
+            `    - ${plugin.name}: ${plugin.skills.length} skills, ${plugin.connectors.length} optional connectors${plugin.needsSetup.length ? `, ${plugin.needsSetup.length} to set up yourself` : ""}`,
+            ...plugin.usesExisting.map((use) => `        ${use.name}: will use your existing ${use.connection} connection`),
+          ])]),
+        localSkills.length ? `  Your own Cowork skills (private to you): ${localSkills.map((skill) => skill.name).join(", ")}` : "",
+        "",
+        `Import with: ${COMMAND_NAME} migrate apply --plugin <name,...> (or --all)`,
+      ]),
+    }, json)
+    return
+  }
+
+  const wanted = new Set(listFlag(args.flags, "plugin").map((name) => name.toLowerCase()))
+  const all = hasFlag(args.flags, "all")
+  const selected = marketplaces.flatMap((entry) => (entry.plugins ?? []).filter((plugin) => {
+    if (all) return true
+    if (wanted.has(plugin.name.toLowerCase())) return true
+    const local = found.marketplaces.find((candidate) => candidate.url === entry.url)
+    return wanted.size === 0 && (local?.installedPlugins ?? []).includes(plugin.name)
+  }))
+  const missing = [...wanted].filter((name) => !marketplaces.some((entry) => (entry.plugins ?? []).some((plugin) => plugin.name.toLowerCase() === name)))
+  if (missing.length > 0) throw new Error(`plugin_not_found: ${missing.join(", ")}. Run \`${COMMAND_NAME} migrate plan\` to list them.`)
+  if (selected.length === 0 && localSkills.length === 0) {
+    throw new Error(`nothing_selected: pass --plugin <name,...> or --all. Run \`${COMMAND_NAME} migrate plan\` to see what is available.`)
+  }
+
+  if (hasFlag(args.flags, "private") && !target.org.memberId) throw new Error("private_unavailable: this OpenWork server did not return your member id; omit --private")
+  const access = hasFlag(args.flags, "private") ? { orgWide: false, memberIds: [target.org.memberId], teamIds: [] } : { orgWide: true }
+  const plugins = []
+  for (const plugin of selected) plugins.push(await importMarketplacePlugin(target, plugin, access))
+  const skills = []
+  for (const skill of localSkills) skills.push(await migrateLocalSkill(target, skill))
+
+  const failures = [...plugins, ...skills].filter((entry) => !entry.ok)
+  const nextSteps = plugins.flatMap((entry) => (entry.nextSteps ?? []).map((step) => `${entry.plugin}: ${step}`))
+  jsonOut({
+    ok: failures.length === 0,
+    org: target.org,
+    plugins,
+    skills,
+    nextSteps,
+    message: migrationSummary([
+      `Migrated into ${target.org.name}:`,
+      ...plugins.map((entry) => entry.ok
+        ? [
+          `  ${entry.importedAs ?? entry.plugin} (${entry.mode}): ${entry.skillsAdded.length} skills added, ${entry.skillsUpdated.length} updated, ${entry.connectorsAdded.length} optional connectors added, ${entry.unchanged} unchanged${entry.removed.length ? `, ${entry.removed.length} removed (deleted upstream: ${entry.removed.join(", ")})` : ""}`,
+          ...entry.usesExisting.map((use) => `    ${use.name}: uses your existing ${use.connection} connection`),
+        ].join("\n")
+        : `  ${entry.plugin}: failed (${entry.error})`),
+      ...skills.map((entry) => entry.ok ? `  your skill ${entry.importedAs ?? entry.skill}: ${entry.mode}` : `  your skill ${entry.skill}: failed (${entry.error})`),
+      nextSteps.length ? "\nStill to do:" : "",
+      ...nextSteps.map((step) => `  - ${step}`),
+      "\nSkills work now. Each person connects the optional connectors they use from OpenWork; skills say which ones help.",
+    ]),
+  }, json)
+  if (failures.length > 0) process.exitCode = 1
+}
+
 async function runCloud(args) {
   const subcommand = args.positionals[1]
   if (subcommand === "claim-link") {
@@ -1017,12 +1760,29 @@ async function main() {
     runInstall(args)
     return
   }
+  if (command === "open") {
+    if (args.positionals[1] !== "app") throw new Error("usage: openwork-bootstrap open app [--json]")
+    await runOpenApp(args)
+    return
+  }
   if (command === "doctor") {
     await runDoctor(args)
     return
   }
   if (command === "cloud") {
     await runCloud(args)
+    return
+  }
+  if (command === "login") {
+    await runLogin(args)
+    return
+  }
+  if (command === "migrate") {
+    await runMigrate(args)
+    return
+  }
+  if (command === "logout") {
+    await runLogout(args)
     return
   }
 
