@@ -13,7 +13,7 @@ import type { Place } from "../../evals/packages/env/src/place.ts";
 import { defaultDaytonaExec, execInSandbox, startScriptOnSandbox } from "../../evals/packages/hosts/src/index.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
 
-export const ACME_MODEL = "claude-haiku-4-5-20251001";
+export const ACME_MODEL = "claude-haiku-5-5-20251001";
 export const ACME_REPLY = "Acme AI Gateway is working.";
 export const ACME_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 
