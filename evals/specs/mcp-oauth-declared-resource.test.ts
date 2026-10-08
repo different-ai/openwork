@@ -76,3 +76,40 @@ test("Den OAuth refuses a protected resource declared on another site", { timeou
   expect(isRecord(started.body) && "authorizeUrl" in started.body).toBe(false);
   evidence.recordAssertionEvidence("Sign-in is refused for a resource on another site", `Configured ${provider.mcpUrl}; resource ${declaredResource} returned HTTP ${started.response.status} without an authorization URL.`, true);
 });
+
+// Servers that already worked must see the same resource indicator: a
+// pathless declared resource is sent as written, not with a trailing slash.
+test("Den OAuth sends a pathless declared resource exactly as written", { timeout: 300_000 }, async ({ place, evidence }) => {
+  needs({ commands: ["bun"], placement: "local" });
+  const [port] = await allocateFreePorts(1);
+  const declaredResource = `http://127.0.0.1:${port}`;
+  await using den = await server({
+    place, web: false,
+    mocks: { connector: mcpMock({ port, protectedResource: declaredResource }) },
+    org: { name: `OAuth Pathless Resource ${Date.now()}`, members: {} },
+  });
+  const provider = den.mocks.connector;
+  const headers = { authorization: `Bearer ${den.admin.token}` };
+
+  const created = await denFetch(den.admin, "/v1/mcp-connections", {
+    method: "POST", headers,
+    body: JSON.stringify({ name: "Pathless resource", url: provider.mcpUrl, authType: "oauth", credentialMode: "shared", access: { orgWide: true } }),
+  });
+  expect(created.response.status, created.text).toBe(200);
+  if (!isRecord(created.body) || typeof created.body.id !== "string") throw new Error("Connection id missing");
+  const id = created.body.id;
+
+  const started = await denFetch(den.admin, `/v1/mcp-connections/${id}/connect/start`, { headers });
+  expect(started.response.status, started.text).toBe(200);
+  if (!isRecord(started.body) || typeof started.body.authorizeUrl !== "string") throw new Error("Authorization URL missing");
+  const authorize = new URL(started.body.authorizeUrl);
+  expect(authorize.searchParams.get("resource")).toBe(declaredResource);
+
+  const redirect = await fetch(authorize, { redirect: "manual" });
+  expect(redirect.status).toBe(302);
+  const completed = await fetch(redirect.headers.get("location")!, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+  expect(completed.status, await completed.text()).toBe(200);
+  const tools = await denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
+  expect(tools.response.status, tools.text).toBe(200);
+  evidence.recordAssertionEvidence("Pathless resource is sent as written", `Declared ${declaredResource}; authorization requested resource ${authorize.searchParams.get("resource")} and the connection listed tools.`, true);
+});

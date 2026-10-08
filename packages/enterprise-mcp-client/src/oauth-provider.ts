@@ -171,9 +171,14 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
     if (!resource) return undefined
     const declared = new URL(resource)
-    if (checkResourceAllowed({ requestedResource: serverUrl, configuredResource: declared })) return declared
-    if (isTrustedResourceAlias(new URL(serverUrl), declared)) return declared
-    throw new Error(`Protected resource ${resource} does not match expected ${serverUrl} (or origin)`)
+    if (!checkResourceAllowed({ requestedResource: serverUrl, configuredResource: declared }) &&
+        !isTrustedResourceAlias(new URL(serverUrl), declared)) {
+      throw new Error(`Protected resource ${resource} does not match expected ${serverUrl} (or origin)`)
+    }
+    // The SDK sends this result as is, and a parsed URL would add a trailing
+    // slash to a pathless resource, so return the declared string verbatim as
+    // the SDK does without this hook.
+    return resource as unknown as URL
   }
 
   private assertDiscoveryBinding(state: OAuthDiscoveryState): void {
