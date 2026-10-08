@@ -96,7 +96,7 @@ export async function bootAcmeWebOnDaytona(stack: AsyncDisposableStack, place: P
   const web = await startDaytonaWebRuntime(stack, place, gateway.den, gateway.model.orgId);
   const { den, model, gatewayUrl } = gateway;
   return {
-    webUrl: secret(web.browserOrigin, { group: "URLs", note: "Private signed OpenWork web runtime; sign in as alex, then pick Acme AI Gateway / Claude Haiku 5.5" }),
+    webUrl: secret(web.browserOrigin, { group: "URLs", note: "Private signed OpenWork web runtime; sign in as alex, then pick Acme AI Gateway / Claude Haiku 4.5 (latest)" }),
     denWeb: output(den.ref.webUrl, { group: "URLs" }),
     denApi: output(den.ref.apiUrl, { group: "URLs" }),
     aiGateway: output(`${den.ref.webUrl}/dashboard/ai-gateway?tab=ai-providers`, { group: "URLs", note: "Den admin screen for providers, keys and who can use them" }),
