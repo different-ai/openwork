@@ -1,4 +1,5 @@
 import type {
+  Agent,
   ApiError,
   ConfigProvidersResponse,
   FilePart,
@@ -973,6 +974,30 @@ function mapV2Model(value: unknown): Model | null {
     options: {},
     headers: {},
     release_date: released === undefined ? "" : new Date(released).toISOString(),
+  };
+}
+
+/**
+ * Map a native v2 `/api/agent` row onto the v1 SDK `Agent` the picker expects.
+ * Use the API `id` as `name` — selection and `POST …/session/:id/agent` speak ids
+ * (`build`, `plan`), not the display title (`Build`, `Plan`).
+ */
+export function mapV2Agent(value: unknown): Agent | null {
+  if (!isRecord(value)) return null;
+  const id = readString(value, "id");
+  if (!id) return null;
+  const mode = readString(value, "mode");
+  if (mode !== "subagent" && mode !== "primary" && mode !== "all") return null;
+  const description = readString(value, "description");
+  const color = readString(value, "color");
+  return {
+    name: id,
+    mode,
+    hidden: value.hidden === true,
+    permission: [],
+    options: {},
+    ...(description ? { description } : {}),
+    ...(color ? { color } : {}),
   };
 }
 
@@ -2287,6 +2312,15 @@ export function createClientV2(
         options?.signal,
       );
       if (!modelResult.response.ok) return failedResult(modelResult);
+      if (parameters.agent) {
+        const agentResult = await request(
+          "POST",
+          `/api/session/${encodeURIComponent(parameters.sessionID)}/agent`,
+          { agent: parameters.agent },
+          options?.signal,
+        );
+        if (!agentResult.response.ok) return failedResult(agentResult);
+      }
       if (parameters.system !== undefined) {
         const instructions = await request("PUT",
           `/api/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
@@ -2464,7 +2498,18 @@ export function createClientV2(
       list: (parameters?: DirectoryParameters, options?: RequestOptions) => listProviders(parameters, options),
     },
     app: {
-      agents: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/agent", []),
+      agents: async (
+        _parameters: DirectoryParameters = {},
+        options?: RequestOptions,
+      ): Promise<FieldsResult<Agent[]>> => {
+        const result = await request("GET", "/api/agent", undefined, options?.signal);
+        if (!result.response.ok) return failedResult(result);
+        const data = responseItems(result.payload).flatMap((item) => {
+          const mapped = mapV2Agent(item);
+          return mapped ? [mapped] : [];
+        });
+        return successfulResult(result, data);
+      },
     },
     command: {
       list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/command", []),
