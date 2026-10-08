@@ -445,6 +445,8 @@ import type {
   GetV1PermissionsSetsByPermissionSetIdHistoryErrors,
   GetV1PermissionsSetsByPermissionSetIdHistoryResponses,
   GetV1PermissionsSetsByPermissionSetIdResponses,
+  GetV1PermissionsSetsByPermissionSetIdRulesErrors,
+  GetV1PermissionsSetsByPermissionSetIdRulesResponses,
   GetV1PermissionsSetsErrors,
   GetV1PermissionsSetsResponses,
   GetV1PluginsByPluginIdAccessErrors,
@@ -901,6 +903,8 @@ import type {
   PutV1McpConnectionsByKeyByExternalKeyResponses,
   PutV1PermissionsSetsByPermissionSetIdPermissionsErrors,
   PutV1PermissionsSetsByPermissionSetIdPermissionsResponses,
+  PutV1PermissionsSetsByPermissionSetIdRulesErrors,
+  PutV1PermissionsSetsByPermissionSetIdRulesResponses,
   PutV1TeamsByKeyByExternalKeyErrors,
   PutV1TeamsByKeyByExternalKeyResponses,
   RunAutomationNowErrors,
@@ -938,6 +942,7 @@ import type {
   UpdateMicrosoft365MailMessageErrors,
   UpdateMicrosoft365MailMessageResponses,
   UpdatePermissionSetPermissionsBody,
+  UpdatePermissionSetRulesBody,
 } from "./types.gen.js";
 
 export type Options<
@@ -8104,6 +8109,68 @@ export class DenClient extends HeyApiClient {
       url: "/v1/members/{memberId}/permissions",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Get a set's permission rules
+   *
+   * Returns the OpenCode permission rules in one permission set: what members it applies to may run (shell), open (webfetch), and use as local skills (skill) or local MCP servers (mcp). Requires permissions.view and the Permissions and Permission rules features.
+   */
+  public getV1PermissionsSetsByPermissionSetIdRules<ThrowOnError extends boolean = false>(
+    parameters: {
+      permissionSetId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "permissionSetId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1PermissionsSetsByPermissionSetIdRulesResponses,
+      GetV1PermissionsSetsByPermissionSetIdRulesErrors,
+      ThrowOnError
+    >({
+      url: "/v1/permissions/sets/{permissionSetId}/rules",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Change a set's permission rules
+   *
+   * Replaces one action's OpenCode permission rules in a set. Every change is kept in the set's rule history and audited. Only the owner and admins can change rules in Admin permissions, and archived sets can't be changed. Returns the set's rules. Requires permissions.manage, a recent sign-in, and the Permissions and Permission rules features.
+   */
+  public putV1PermissionsSetsByPermissionSetIdRules<ThrowOnError extends boolean = false>(
+    parameters: {
+      permissionSetId: string;
+      updatePermissionSetRulesBody: UpdatePermissionSetRulesBody;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "permissionSetId" },
+            { key: "updatePermissionSetRulesBody", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1PermissionsSetsByPermissionSetIdRulesResponses,
+      PutV1PermissionsSetsByPermissionSetIdRulesErrors,
+      ThrowOnError
+    >({
+      url: "/v1/permissions/sets/{permissionSetId}/rules",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

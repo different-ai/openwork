@@ -279,6 +279,25 @@ export async function resolvePermissionsForMember(input: {
   }))
 }
 
+/**
+ * The permission sets that apply to a member, in the order their rules apply:
+ * Member, then Admin for admins, then each team's. Empty for the owner (who can
+ * always do everything), a missing or removed member, or with Permissions off.
+ */
+export async function permissionSetsForMember(input: {
+  organizationId: OrganizationId
+  memberId: MemberId
+}): Promise<{ setId: string; setName: string }[]> {
+  const subject = await loadPermissionSubject(input)
+  if (!subject) return []
+  const collected = await collectPermissionGrants({ ...subject, teamIds: subject.teams.map((team) => team.id) })
+  const sets = new Map<string, string>()
+  for (const { source } of collected.grants) {
+    if ("setId" in source && !sets.has(source.setId)) sets.set(source.setId, source.setName)
+  }
+  return [...sets].map(([setId, setName]) => ({ setId, setName }))
+}
+
 /** `explainMemberPermissions` for any member, or null when the member is missing or removed. */
 export async function explainPermissionsForMember(input: {
   organizationId: OrganizationId

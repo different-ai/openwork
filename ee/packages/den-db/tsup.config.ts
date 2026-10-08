@@ -19,6 +19,7 @@ export default defineConfig({
     "organization-features": "src/organization-features.ts",
     "audit-accounting": "src/audit-accounting.ts",
     permissions: "src/permissions.ts",
+    "permission-rules": "src/permission-rules.ts",
     "permission-states": "src/permission-states.ts",
   },
   format: ["esm"],

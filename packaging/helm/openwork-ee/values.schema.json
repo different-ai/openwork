@@ -138,6 +138,16 @@
               ],
               "description": "Permissions: Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults. Renders DEN_FEATURE_PERMISSIONS."
             },
+            "permissionRules": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Permission rules: Organization admins add OpenCode permission rules to Member, Admin and team permissions for the commands, websites, local skills and local MCP servers members' apps may use. Needs Permissions. Renders DEN_FEATURE_PERMISSION_RULES."
+            },
             "platformAuditReads": {
               "enum": [
                 "",

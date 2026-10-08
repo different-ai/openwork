@@ -23,6 +23,7 @@ import { registerModelsAnalyticsRoutes } from "./models-analytics.js"
 import { registerModelsAnalyticsExportRoutes } from "../../models-analytics-export.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
+import { registerOrgPermissionRuleRoutes } from "./permission-rules.js"
 import { registerOrgPermissionRoutes } from "./permissions.js"
 import { registerMcpConnectionRoutes } from "./mcp-connections.js"
 import { registerMicrosoft365Routes } from "./microsoft-365.js"
@@ -83,6 +84,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgInferenceProviderRoutes(app)
   registerOrgMemberRoutes(app)
   registerOrgPermissionRoutes(app)
+  registerOrgPermissionRuleRoutes(app)
   registerOAuthProviderRoutes(app)
   registerGoogleWorkspaceRoutes(app)
   registerMicrosoft365Routes(app)
