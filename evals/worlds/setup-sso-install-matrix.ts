@@ -6,7 +6,7 @@ import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { allocateFreePorts, navigate } from "@openwork/cdp";
+import { addInitScript, allocateFreePorts, browserScript, evaluate, navigate } from "@openwork/cdp";
 import { clickText, waitFor } from "@openwork/behaviors";
 import { resolvePlace } from "@openwork/env";
 import { chrome } from "@openwork/hosts";
@@ -16,8 +16,13 @@ const execFileAsync = promisify(execFile);
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const COMPOSE_FILE = join(REPO_ROOT, "packaging", "docker", "docker-compose.eval.yml");
 const MANIFEST_PATH = join(REPO_ROOT, "tmp", "setup-sso-install-matrix.json");
-const DEV_API_IMAGE = "openwork-den-api:setup-sso-dev-a51297520";
-const DEV_WEB_IMAGE = "openwork-den-web:setup-sso-dev-a51297520";
+const PLATFORM = process.env.OPENWORK_SETUP_SSO_PLATFORM?.trim() || (process.arch === "arm64" ? "linux/arm64" : "linux/amd64");
+if (!["linux/arm64", "linux/amd64"].includes(PLATFORM)) throw new Error("The matrix supports linux/arm64 or linux/amd64.");
+const SOURCE_ROOT = process.env.OPENWORK_SETUP_SSO_SOURCE_ROOT?.trim() || REPO_ROOT;
+const SOURCE_SCOPES = [
+  "ee", "packages", "packaging/docker", "patches", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc", ".dockerignore", "tsconfig.json",
+  "apps/desktop/package.json", "evals/packages/behaviors/package.json", "evals/packages/cdp/package.json", "evals/packages/labs/package.json", "evals/packages/matchers/package.json",
+];
 const HOST_API_VERSION = "0.18.48";
 const HOST_API_IMAGE = "ghcr.io/different-ai/openwork-den-api:0.18.48@sha256:8f2977788063c47d06f3cd2b2c60b43da5137d42c807b577e2f30ad968e86204";
 const HOST_CONTAINER_WEB_IMAGE = "ghcr.io/different-ai/openwork-den-web:0.18.48@sha256:fe856630e05b1ff96accfb2a8a108b416a1fdc1a842ea0af492b3a8472f594a5";
@@ -44,14 +49,14 @@ function hostAddressReachableFromDocker(): string {
 
 const RELEASE_COLUMNS = [
   {
-    id: "0.18.43",
-    apiImage: "ghcr.io/different-ai/openwork-den-api:0.18.43@sha256:5efc691668ac750238a244afd529f5baa9abf8ede13242238d947802c4387146",
-    webImage: "ghcr.io/different-ai/openwork-den-web:0.18.43@sha256:fc4676f5be201500beb3ef262e702a864a847338428d3efbe045b922dc4d41c2",
+    id: "0.18.54",
+    apiImage: "ghcr.io/different-ai/openwork-den-api:0.18.54@sha256:d4cbd7dbe4dfa1108711b801c089504da340d319949558fe23aafee39c0f11f0",
+    webImage: "ghcr.io/different-ai/openwork-den-web:0.18.54@sha256:c3ffe73874c870e519b516a14a7eb239f2bc4eb8afcba87914486562db57717e",
   },
   {
-    id: "0.18.48",
-    apiImage: "ghcr.io/different-ai/openwork-den-api:0.18.48@sha256:8f2977788063c47d06f3cd2b2c60b43da5137d42c807b577e2f30ad968e86204",
-    webImage: "ghcr.io/different-ai/openwork-den-web:0.18.48@sha256:fe856630e05b1ff96accfb2a8a108b416a1fdc1a842ea0af492b3a8472f594a5",
+    id: "0.18.57",
+    apiImage: "ghcr.io/different-ai/openwork-den-api:0.18.57@sha256:9a1d036b2f39c67544c9f78cb3e966ddcc1b0296aa61af7eebd04308afdad6d0",
+    webImage: "ghcr.io/different-ai/openwork-den-web:0.18.57@sha256:aadaae6fb1b96b8e87b63c15ab4a51f5ab8782969850911b134978d357bc4569",
   },
 ];
 
@@ -95,6 +100,9 @@ export interface SetupSsoMatrixManifest {
   commit: string;
   source: {
     fingerprint: string;
+    root: string;
+    scopes: readonly string[];
+    platform: string;
     productFiles: readonly string[];
     dirtyProductFiles: string[];
     apiImageFingerprint: string | null;
@@ -210,18 +218,21 @@ async function imageId(image: string): Promise<string> {
 }
 
 export async function setupSsoProductSourceFingerprint(): Promise<string> {
+  const untracked = (await command("git", ["-C", SOURCE_ROOT, "ls-files", "--others", "--exclude-standard", "-z", "--", ...SOURCE_SCOPES], 60_000)).split("\0").filter(Boolean);
+  if (untracked.length) throw new Error("Untracked nonignored Docker source inputs must be tracked or removed before building the matrix.");
   const hash = createHash("sha256");
-  for (const file of SETUP_SSO_PRODUCT_SOURCE_FILES) {
+  const files = (await command("git", ["-C", SOURCE_ROOT, "ls-files", "-z", "--", ...SOURCE_SCOPES], 60_000)).split("\0").filter(Boolean).sort();
+  for (const file of files) {
     hash.update(file);
     hash.update("\0");
-    hash.update(await readFile(join(REPO_ROOT, file)));
+    hash.update(await readFile(join(SOURCE_ROOT, file)));
     hash.update("\0");
   }
   return hash.digest("hex");
 }
 
 export async function setupSsoCurrentCommit(): Promise<string> {
-  return (await command("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], 60_000)).trim();
+  return (await command("git", ["-C", SOURCE_ROOT, "rev-parse", "HEAD"], 60_000)).trim();
 }
 
 export async function readSetupSsoManifest(path: string): Promise<unknown> {
@@ -237,14 +248,19 @@ async function imageFingerprint(image: string): Promise<string> {
   return (await command("docker", ["image", "inspect", "--format", `{{ index .Config.Labels "${SOURCE_FINGERPRINT_LABEL}" }}`, image], 60_000)).trim();
 }
 
-async function buildDevImages(fingerprint: string): Promise<void> {
-  const label = `${SOURCE_FINGERPRINT_LABEL}=${fingerprint}`;
-  await command("docker", ["buildx", "build", "--load", "--label", label, "-f", "packaging/docker/Dockerfile.den", "-t", DEV_API_IMAGE, "."]);
-  await command("docker", ["buildx", "build", "--load", "--label", label, "-f", "packaging/docker/Dockerfile.den-web", "-t", DEV_WEB_IMAGE, "."]);
-  const fingerprints = await Promise.all([imageFingerprint(DEV_API_IMAGE), imageFingerprint(DEV_WEB_IMAGE)]);
-  if (fingerprints.some((value) => value !== fingerprint)) {
-    throw new Error("Built development images do not match the tested product-source fingerprint.");
+async function buildDevImages(fingerprint: string, commit: string): Promise<{ apiImage: string; webImage: string }> {
+  const apiImage = `openwork-den-api:setup-sso-${commit.slice(0, 12)}-${fingerprint.slice(0, 12)}`;
+  const webImage = `openwork-den-web:setup-sso-${commit.slice(0, 12)}-${fingerprint.slice(0, 12)}`;
+  const labels = ["--label", `${SOURCE_FINGERPRINT_LABEL}=${fingerprint}`, "--label", `org.opencontainers.image.revision=${commit}`];
+  for (const [dockerfile, image] of [["Dockerfile.den", apiImage], ["Dockerfile.den-web", webImage]]) {
+    const versionArgs = dockerfile === "Dockerfile.den" ? ["--build-arg", `DEN_API_VERSION=${commit}`] : [];
+    await command("docker", ["buildx", "build", "--load", "--platform", PLATFORM, ...labels, ...versionArgs, "-f", join(SOURCE_ROOT, "packaging/docker", dockerfile), "-t", image, SOURCE_ROOT], 1_800_000);
   }
+  const fingerprints = await Promise.all([imageFingerprint(apiImage), imageFingerprint(webImage)]);
+  if (fingerprints.some((value) => value !== fingerprint) || await setupSsoProductSourceFingerprint() !== fingerprint) {
+    throw new Error("Built development images do not match the tested full API/Web source fingerprint.");
+  }
+  return { apiImage, webImage };
 }
 
 async function buildHostWeb(expectedFingerprint: string): Promise<void> {
@@ -431,11 +447,7 @@ async function seedEnterpriseSsoContext(input: {
     timeoutMs: 90_000,
     label: "OIDC configuration test completion",
   });
-  const browserResult = await configurationBrowser.client.send("Runtime.evaluate", {
-    expression: `({ href: location.href, body: document.body?.innerText ?? "" })`,
-    returnByValue: true,
-  });
-  const browserValue = recordField(recordField(browserResult, "result"), "value");
+  const browserValue = await evaluate(configurationBrowser.client, () => ({ href: location.href, body: document.body?.innerText ?? "" }));
   const browserBody = stringField(browserValue, "body");
   if (!/authentication test finished/i.test(browserBody)) {
     throw new Error(`OIDC configuration test failed at ${stringField(browserValue, "href")}: ${browserBody}`);
@@ -498,14 +510,39 @@ async function seedEnterpriseSsoContext(input: {
   requireOk(singleton, "singleton SSO status");
   const singletonConfigured = booleanField(singleton.body, "configured");
   if (!singletonConfigured) throw new Error("Singleton SSO status did not report configured=true.");
-  const installLink = await jsonRequest(`${input.apiUrl}/v1/orgs/${encodeURIComponent(organizationId)}/install-links`, {
-    method: "POST",
-    headers: adminHeaders,
-    body: JSON.stringify({ rotate: true }),
+  // Observe the real admin UI action; keep its bearer link in memory/private manifest only.
+  await navigate(configurationBrowser.client, `${input.webUrl}/dashboard/members`);
+  await waitFor(configurationBrowser, () => [...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Copy install link"), {
+    timeoutMs: 90_000,
+    label: "administrator Copy install link action",
   });
-  requireOk(installLink, "install link creation");
-  const installPageUrl = stringField(installLink.body, "installPageUrl");
-  if (!installPageUrl) throw new Error("Install link creation omitted installPageUrl.");
+  await evaluate(configurationBrowser.client, () => {
+    const originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = async (text) => {
+      sessionStorage.setItem("setup-sso-ui-install-link", text);
+      return originalWriteText(text);
+    };
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (new URL(response.url).pathname.endsWith("/install-links") && response.ok) {
+        const payload: unknown = await response.clone().json();
+        if (payload && typeof payload === "object" && "installPageUrl" in payload && typeof payload.installPageUrl === "string") {
+          sessionStorage.setItem("setup-sso-issued-install-link", payload.installPageUrl);
+        }
+      }
+      return response;
+    };
+  });
+  await clickText(configurationBrowser, "Copy install link");
+  await waitFor(configurationBrowser, () => Boolean(sessionStorage.getItem("setup-sso-issued-install-link")) && Boolean(sessionStorage.getItem("setup-sso-ui-install-link")), {
+    timeoutMs: 30_000,
+    label: "real admin UI install-link response and copy argument",
+  });
+  const copyMatchesResponse = await evaluate(configurationBrowser.client, () => sessionStorage.getItem("setup-sso-ui-install-link") === sessionStorage.getItem("setup-sso-issued-install-link"));
+  if (!copyMatchesResponse) throw new Error("Admin UI copied a different install link than the issued response (values withheld).");
+  const installPageUrl = await evaluate(configurationBrowser.client, () => sessionStorage.getItem("setup-sso-ui-install-link"));
+  if (!installPageUrl) throw new Error("Admin UI install-link action omitted its copy argument.");
   const installUrl = new URL(installPageUrl);
   if (installUrl.pathname !== "/install" || !installUrl.searchParams.get("token")) throw new Error("Install link did not contain a valid /install token.");
   const enforcementOff = await jsonRequest(`${input.apiUrl}/v1/org`, {
@@ -597,16 +634,21 @@ async function bootColumn(
   const organizationName = `Synthetic enterprise ${definition.id}`;
   await writeFile(overridePath, [
     "services:",
+    "  mysql:",
+    `    platform: ${PLATFORM}`,
     "  den-migrate:",
+    `    platform: ${PLATFORM}`,
     `    image: "${definition.apiImage}"`,
     `    pull_policy: ${pullPolicy}`,
     "  den:",
+    `    platform: ${PLATFORM}`,
     `    image: "${definition.apiImage}"`,
     `    pull_policy: ${pullPolicy}`,
     "    environment:",
     `      CORS_ORIGINS: "${trustedOrigins}"`,
     `      DEN_BETTER_AUTH_TRUSTED_ORIGINS: "${trustedOrigins}"`,
     "  web:",
+    `    platform: ${PLATFORM}`,
     `    image: "${definition.webImage}"`,
     `    pull_policy: ${pullPolicy}`,
     ...(hostWeb ? ["    profiles: [\"container-web\"]"] : []),
@@ -646,6 +688,13 @@ async function bootColumn(
     await compose([...owned.composeArgs, "down", "--volumes", "--remove-orphans", "--timeout", "10"], owned.composeEnv)
       .catch((error: unknown) => console.error(`[setup-sso-matrix] cleanup failed for ${project}: ${messageText(error)}`));
   });
+  for (const service of ["den-migrate", "den", ...hostWeb ? [] : ["web"]]) {
+    const image = service === "web" ? definition.webImage : definition.apiImage;
+    const actualId = (await command("docker", ["inspect", "--format", "{{.Image}}", `${project}-${service}-1`], 60_000)).trim();
+    if (actualId !== await imageId(image)) throw new Error(`${service} is not running the expected immutable image.`);
+    const actualPlatform = (await command("docker", ["image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image], 60_000)).trim();
+    if (actualPlatform !== PLATFORM) throw new Error(`${service} image does not match ${PLATFORM}.`);
+  }
   if (setup === "pending") {
     return {
       id: "pending",
@@ -698,11 +747,15 @@ export async function bootSetupSsoInstallMatrix(
 ): Promise<SetupSsoMatrixManifest> {
   const hostWeb = options.hostWeb ?? process.env.OPENWORK_SETUP_SSO_HOST_WEB === "1";
   const requested = new Set(
-    (options.columns ?? process.env.OPENWORK_SETUP_SSO_MATRIX_COLUMNS?.split(",") ?? ["0.18.43", "0.18.48", "dev", "pending"])
+    (options.columns ?? process.env.OPENWORK_SETUP_SSO_MATRIX_COLUMNS?.split(",") ?? ["dev"])
       .map((value) => value.trim())
       .filter(Boolean),
   );
+  if (requested.size !== 1) throw new Error("Run exactly one matrix column at a time to bound local capacity.");
+  if (![...requested].every((id) => ["0.18.54", "0.18.57", "control", "dev", "pending"].includes(id))) throw new Error("Unknown matrix column.");
+  if (requested.has("control") && SOURCE_ROOT === REPO_ROOT) throw new Error("Control requires an explicit independent OPENWORK_SETUP_SSO_SOURCE_ROOT.");
   const fingerprint = await setupSsoProductSourceFingerprint();
+  const commit = await setupSsoCurrentCommit();
   const columns: SetupSsoMatrixColumn[] = [];
   for (const definition of RELEASE_COLUMNS) {
     if (requested.has(definition.id)) {
@@ -710,48 +763,42 @@ export async function bootSetupSsoInstallMatrix(
     }
   }
   let pending: SetupSsoPendingColumn | null = null;
-  if ((requested.has("dev") || requested.has("pending")) && hostWeb) {
-    await buildHostWeb(fingerprint);
-  } else if (requested.has("dev") || requested.has("pending")) {
-    await buildDevImages(fingerprint);
+  const includesDevImages = requested.has("dev") || requested.has("control") || requested.has("pending");
+  let images: { apiImage: string; webImage: string } | null = null;
+  if (includesDevImages) {
+    if (hostWeb) {
+      if (SOURCE_ROOT !== REPO_ROOT) throw new Error("Independent source roots require full compose images.");
+      await buildHostWeb(fingerprint);
+      images = { apiImage: HOST_API_IMAGE, webImage: HOST_CONTAINER_WEB_IMAGE };
+    } else {
+      images = await buildDevImages(fingerprint, commit);
+    }
   }
-  if (requested.has("dev")) {
-    columns.push(await bootColumn(
-      stack,
-      hostWeb
-        ? { id: "dev", apiVersion: HOST_API_VERSION, apiImage: HOST_API_IMAGE, webImage: HOST_CONTAINER_WEB_IMAGE }
-        : { id: "dev", apiVersion: "a51297520", apiImage: DEV_API_IMAGE, webImage: DEV_WEB_IMAGE },
-      hostWeb ? "always" : "never",
-      "configured",
-      hostWeb ? { fingerprint } : undefined,
-    ));
+  if (images) {
+    const definition = { ...images, apiVersion: hostWeb ? HOST_API_VERSION : commit };
+    if (requested.has("pending")) {
+      pending = await bootColumn(stack, { ...definition, id: "pending" }, hostWeb ? "always" : "never", "pending", hostWeb ? { fingerprint } : undefined);
+    } else {
+      columns.push(await bootColumn(stack, { ...definition, id: requested.has("control") ? "control" : "dev" }, hostWeb ? "always" : "never", "configured", hostWeb ? { fingerprint } : undefined));
+    }
   }
-  if (requested.has("pending")) {
-    pending = await bootColumn(
-      stack,
-      hostWeb
-        ? { id: "pending", apiVersion: HOST_API_VERSION, apiImage: HOST_API_IMAGE, webImage: HOST_CONTAINER_WEB_IMAGE }
-        : { id: "pending", apiVersion: "a51297520", apiImage: DEV_API_IMAGE, webImage: DEV_WEB_IMAGE },
-      hostWeb ? "always" : "never",
-      "pending",
-      hostWeb ? { fingerprint } : undefined,
-    );
-  }
-  const commit = (await command("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], 60_000)).trim();
-  const dirtyProductFiles = (await command("git", ["-C", REPO_ROOT, "status", "--short", "--", ...SETUP_SSO_PRODUCT_SOURCE_FILES], 60_000))
+  const dirtyProductFiles = (await command("git", ["-C", SOURCE_ROOT, "status", "--short", "--", ...SOURCE_SCOPES], 60_000))
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => line.slice(3));
-  const includesDevImages = requested.has("dev") || requested.has("pending");
+  if (requested.has("control") && dirtyProductFiles.length) throw new Error("Control API/Web source tree must be clean.");
   const manifest: SetupSsoMatrixManifest = {
     createdAt: new Date().toISOString(),
     commit,
     source: {
       fingerprint,
+      root: SOURCE_ROOT,
+      scopes: SOURCE_SCOPES,
+      platform: PLATFORM,
       productFiles: SETUP_SSO_PRODUCT_SOURCE_FILES,
       dirtyProductFiles,
-      apiImageFingerprint: includesDevImages && !hostWeb ? await imageFingerprint(DEV_API_IMAGE) : null,
-      webImageFingerprint: includesDevImages && !hostWeb ? await imageFingerprint(DEV_WEB_IMAGE) : null,
+      apiImageFingerprint: images && !hostWeb ? await imageFingerprint(images.apiImage) : null,
+      webImageFingerprint: images && !hostWeb ? await imageFingerprint(images.webImage) : null,
       webMode: hostWeb ? "host-production" : "image",
       hostWebFingerprint: hostWeb ? fingerprint : null,
       hostWebCommit: hostWeb ? commit : null,
@@ -762,6 +809,118 @@ export async function bootSetupSsoInstallMatrix(
   await mkdir(join(REPO_ROOT, "tmp"), { recursive: true });
   await writeFile(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
   return manifest;
+}
+
+export async function openSetupSsoBrowser(options: { host: NonNullable<Parameters<typeof chrome>[0]>["host"]; name: string }) {
+  return chrome({ ...options, startUrl: "about:blank", headless: true });
+}
+
+// Stop only at the OS-launch boundary: the real UI request and real grant remain intact.
+// This prevents the isolated Chromium lab from opening the operator's desktop app.
+export async function captureSetupSsoDesktopHandoff(browser: Awaited<ReturnType<typeof chrome>>): Promise<void> {
+  await addInitScript(browser.client, () => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (new URL(response.url).pathname.endsWith("/desktop-handoff") && response.ok) {
+        sessionStorage.setItem("setup-sso-desktop-handoff", await response.clone().text());
+        return new Promise<Response>(() => {});
+      }
+      return response;
+    };
+  });
+}
+
+export async function exchangeSetupSsoDesktopHandoff(browser: Awaited<ReturnType<typeof chrome>>, webUrl: string) {
+  await waitFor(browser, () => Boolean(sessionStorage.getItem("setup-sso-desktop-handoff")), { timeoutMs: 90_000, label: "real desktop handoff grant" });
+  const raw = await evaluate(browser.client, () => sessionStorage.getItem("setup-sso-desktop-handoff"));
+  const payload: unknown = JSON.parse(raw ?? "null");
+  const grant = stringField(payload, "grant");
+  const openworkUrl = stringField(payload, "openworkUrl");
+  if (!grant || !openworkUrl) throw new Error("Desktop handoff omitted its grant or registered URL.");
+  const deepLink = new URL(openworkUrl);
+  const parsedGrant = deepLink.searchParams.get("grant");
+  const denBaseUrl = deepLink.searchParams.get("denBaseUrl");
+  const destinationMatches = deepLink.protocol === "openwork:" && deepLink.hostname === "den-auth" && deepLink.pathname === "";
+  const grantMatches = parsedGrant === grant;
+  const denBaseUrlMatches = denBaseUrl === `${webUrl}/api/den`;
+  if (!destinationMatches || !grantMatches || !denBaseUrlMatches) throw new Error("Desktop deep link has an incorrect destination, grant, or Den base URL (values withheld).");
+  const response = await jsonRequest(`${denBaseUrl}/v1/auth/desktop-handoff/exchange`, { method: "POST", body: JSON.stringify({ grant: parsedGrant }) });
+  const replay = await jsonRequest(`${denBaseUrl}/v1/auth/desktop-handoff/exchange`, { method: "POST", body: JSON.stringify({ grant: parsedGrant }) });
+  return { destinationMatches, grantMatches, denBaseUrlMatches, status: response.response.status, hasToken: Boolean(stringField(response.body, "token")), replayStatus: replay.response.status };
+}
+
+export async function readSetupSsoBrowserUrl(browser: Awaited<ReturnType<typeof chrome>>): Promise<string> {
+  return evaluate(browser.client, () => location.href);
+}
+
+export async function clearSetupSsoFetchFault(browser: Awaited<ReturnType<typeof chrome>>): Promise<void> {
+  await evaluate(browser.client, () => sessionStorage.removeItem("setup-sso-fetch-fault"));
+}
+
+export async function installSetupSsoFetchFault(browser: Awaited<ReturnType<typeof chrome>>, pathname: string, kind: "network" | "http-500"): Promise<void> {
+  await addInitScript(browser.client, browserScript((path, faultKind) => {
+    const originalFetch = window.fetch.bind(window);
+    sessionStorage.setItem("setup-sso-fetch-fault", "enabled");
+    window.fetch = (input, init) => {
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url = new URL(rawUrl, window.location.origin);
+      if (sessionStorage.getItem("setup-sso-fetch-fault") === "enabled" && (url.pathname === path || url.pathname === `/api/browser${path}`)) {
+        if (faultKind === "network") return Promise.reject(new TypeError("Synthetic network failure"));
+        return Promise.resolve(new Response(JSON.stringify({ error: "synthetic_failure" }), { status: 500, headers: { "content-type": "application/json" } }));
+      }
+      return originalFetch(input, init);
+    };
+  }, [pathname, kind]));
+}
+
+export function sanitizedSetupSsoUrl(raw: string): string {
+  const url = new URL(raw);
+  const keys = [...url.searchParams.keys()];
+  return `${url.origin}${url.pathname}${keys.length ? `?${keys.map((key) => `${encodeURIComponent(key)}=<redacted>`).join("&")}` : ""}`;
+}
+
+// Retain only document/navigation metadata. Never retain headers, bodies, or query values.
+export async function observeSetupSsoNavigation(debuggerUrl: string | undefined) {
+  if (!debuggerUrl) throw new Error("Navigation observation requires the isolated browser target.");
+  const entries: Array<{ kind: string; url: string; status?: number }> = [];
+  const socket = new WebSocket(debuggerUrl);
+  const safeUrl = sanitizedSetupSsoUrl;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Navigation observer did not attach")), 10_000);
+      socket.addEventListener("open", () => {
+        socket.send(JSON.stringify({ id: 1, method: "Page.enable" }));
+        socket.send(JSON.stringify({ id: 2, method: "Network.enable" }));
+      });
+      socket.addEventListener("error", () => { clearTimeout(timer); reject(new Error("Navigation observer disconnected")); });
+      socket.addEventListener("message", (event) => {
+        const message: unknown = JSON.parse(String(event.data));
+        if (!isRecord(message)) return;
+        if (message.id === 2) {
+          clearTimeout(timer);
+          if (message.error) reject(new Error("Navigation observation failed"));
+          else resolve();
+        }
+        const params = message.params;
+        if (!isRecord(params)) return;
+        const append = (kind: string, raw: unknown, status?: unknown) => {
+          if (typeof raw === "string" && entries.length < 100) entries.push({ kind, url: safeUrl(raw), ...(typeof status === "number" ? { status } : {}) });
+        };
+        if (message.method === "Network.requestWillBeSent" && params.type === "Document") {
+          if (isRecord(params.redirectResponse)) append("http-redirect", params.redirectResponse.url, params.redirectResponse.status);
+          if (isRecord(params.request)) append("document-request", params.request.url);
+        }
+        if (message.method === "Network.responseReceived" && params.type === "Document" && isRecord(params.response)) append("document-response", params.response.url, params.response.status);
+        if (message.method === "Page.frameNavigated" && isRecord(params.frame) && params.frame.parentId === undefined) append("navigation", params.frame.url);
+        if (message.method === "Page.navigatedWithinDocument") append("client-navigation", params.url);
+      });
+    });
+    return { entries, [Symbol.dispose]: () => socket.close() };
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
 }
 
 export function setupSsoInstallMatrixManifestPath(): string {

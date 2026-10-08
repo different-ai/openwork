@@ -5,6 +5,18 @@ import { useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl } from "../_lib/den-flow";
 import { resolveMemberAuthGuardDecision, type MemberRoute, type SetupBootstrapStatus } from "../_lib/member-auth-routing";
 import { useDenFlow } from "../_providers/den-flow-provider";
+import { DenButton } from "./ui/button";
+
+export function MemberAuthCheckError() {
+  const { memberAuthCheckError, retryMemberAuthCheck } = useDenFlow();
+  return (
+    <div className="grid gap-5" data-testid="member-auth-check-error">
+      <h1 className="den-title-lg">Sign-in check unavailable</h1>
+      <p className="den-copy" role="alert">{memberAuthCheckError ?? "Could not check your sign-in status."}</p>
+      <DenButton type="button" onClick={retryMemberAuthCheck}>Try again</DenButton>
+    </div>
+  );
+}
 
 export function MemberAuthGuard({
   route,
@@ -20,8 +32,6 @@ export function MemberAuthGuard({
     user,
     runtimeConfig,
     memberAuthCheckStatus,
-    memberAuthCheckError,
-    retryMemberAuthCheck,
   } = useDenFlow();
   const decision = resolveMemberAuthGuardDecision({
     route,
@@ -62,12 +72,8 @@ export function MemberAuthGuard({
   if (decision === "error") {
     return (
       <section className="den-page flex min-h-[calc(100vh-2.5rem)] w-full items-center justify-center py-3 sm:py-4">
-        <div className="den-frame mx-auto grid w-full max-w-[520px] gap-5 p-5 text-center sm:p-8" data-testid="member-auth-check-error">
-          <div className="grid gap-2">
-            <h1 className="den-title-lg">Sign-in check unavailable</h1>
-            <p className="den-copy" role="alert">{memberAuthCheckError ?? "Could not check your sign-in status."}</p>
-          </div>
-          <button type="button" className="den-button-primary" onClick={retryMemberAuthCheck}>Try again</button>
+        <div className="den-frame mx-auto w-full max-w-[520px] p-5 text-center sm:p-8">
+          <MemberAuthCheckError />
         </div>
       </section>
     );
