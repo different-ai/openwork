@@ -315,7 +315,7 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
-async function splitPaneQuestions(
+export async function splitPaneQuestions(
   seed: Seed,
   name: string,
   agentWorkloads: MockAgentWorkload[],
@@ -371,6 +371,7 @@ async function splitPaneQuestions(
   }, [workspace.workspaceId, JSON.stringify(policy)]), { awaitPromise: true });
   if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    ...policy,
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
