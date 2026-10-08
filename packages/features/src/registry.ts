@@ -67,6 +67,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  driveResumableUploads: {
+    label: "Resumable Google Drive uploads",
+    description: "Members upload larger workspace files to Google Drive and prepare upload sessions for external clients.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   implicitCloudSkills: {
     label: "Implicit Cloud skills",
     description: "Agents discover organization skills automatically without waiting for Cloud before starting a task.",
