@@ -44,6 +44,10 @@ import {
 } from "@openwork/calendar"
 import { AutomationDetailPanel, MeetingDetailPanel } from "./calendar-detail-panel"
 import { CreateAutomationCard, type CreateAnchor } from "./calendar-create"
+import { CalendarEditDialog } from "./calendar-edit"
+import type { AutomationProviderCatalog } from "@/react-app/domains/automations/automation-model-options"
+import { useAutomationEditorSetup } from "@/react-app/domains/automations/use-automation-editor-setup"
+import { globalSettingsRoute, workspaceSettingsRoute } from "@/react-app/shell/workspace-routes"
 import { toast } from "@/components/ui/sonner"
 import { CalendarMonthGrid, CalendarTimeGrid, type CalendarSelection } from "./calendar-grid"
 import {
@@ -114,7 +118,13 @@ function CalendarSkeleton() {
  * from their connected Google or Outlook calendar. Automations come from Den;
  * meetings are read-only overlays (nothing is written to the member's calendar).
  */
-export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?: () => void; workspaceId?: string | null }) {
+export function CalendarPage(props: {
+  onSignIn?: () => void
+  onOpenConnections?: () => void
+  onOpenProviderSettings?: () => void
+  workspaceId?: string | null
+  providerCatalog?: AutomationProviderCatalog
+}) {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
   const platform = usePlatform()
@@ -152,6 +162,10 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
   })
   const [layers, setLayers] = useState<Layers>(readLayers)
   const [creating, setCreating] = useState<CreateAnchor | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const editorSetup = useAutomationEditorSetup(denContext, props.providerCatalog)
+  const openProviderSettings = props.onOpenProviderSettings
+    ?? (() => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai")))
   const [hiddenProviders, setHiddenProviders] = useState<ReadonlySet<CalendarProviderId>>(new Set())
 
   useEffect(() => {
@@ -410,13 +424,27 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
             key={creating.slot.at}
             anchor={creating}
             context={denContext}
+            setup={editorSetup}
+            providerCatalog={props.providerCatalog}
             workspaceId={props.workspaceId ?? null}
+            onOpenProviderSettings={openProviderSettings}
             onClose={() => setCreating(null)}
             onCreated={(detail) => {
               setCreating(null)
               setSelection({ kind: "automation", automationId: detail.automation.id, itemKey: null })
               toast.success("Automation created")
             }}
+          />
+        ) : null}
+        {selectedAutomation && editingId === selectedAutomation.automation.id ? (
+          <CalendarEditDialog
+            item={selectedAutomation}
+            context={denContext}
+            setup={editorSetup}
+            providerCatalog={props.providerCatalog}
+            workspaceId={props.workspaceId ?? null}
+            onOpenProviderSettings={openProviderSettings}
+            onClose={() => setEditingId(null)}
           />
         ) : null}
         {selectedAutomation ? (
@@ -427,8 +455,10 @@ export function CalendarPage(props: { onSignIn?: () => void; onOpenConnections?:
             runs={selectedRuns.data?.items}
             runsLoading={selectedRuns.isLoading}
             timeZone={timeZone}
+            modelOptions={editorSetup.modelsFor(selectedAutomation.revision.executionTarget ?? "desktop")}
             onClose={() => setSelection(null)}
             actions={{
+              onEdit: () => setEditingId(selectedAutomation.automation.id),
               busyAction,
               onOpenRun: openRun,
               onPause: () => void act("deactivate", async () => {

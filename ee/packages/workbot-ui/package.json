@@ -21,6 +21,7 @@
     "@base-ui/react": "^1.4.1",
     "@openwork/calendar": "workspace:*",
     "@openwork/types": "workspace:*",
+    "@openwork/ui": "workspace:*",
     "@openwork/workbook": "workspace:*",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.1",

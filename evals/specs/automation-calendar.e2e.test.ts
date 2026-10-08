@@ -77,7 +77,8 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
 
   await step("Alex clicks an empty Wednesday slot next week and creates an Automation that repeats there", async () => {
     await alex.click({ role: "button", label: /^New automation on Wed, .* at 12:30 PM$/ });
-    await alex.see({ text: /^At 12:30 PM .*\. Runs on this computer/ });
+    await alex.see({ text: /^At 12:30 PM / });
+    await alex.see({ text: "Needs OpenWork open on one of your computers at the scheduled time." });
     await alex.type({ role: "textbox", label: /^What should it do\?$/ }, "Check the launch checklist for anything still open");
     await alex.click({ role: "button", text: "Create automation" });
     await alex.see({ text: "Automation created" });
@@ -86,6 +87,22 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     const created = await blocks('[data-calendar-automation][aria-label^="Check the launch checklist"]');
     evidence.recordAssertionEvidence("created from the slot", `${created} new slot(s) on next week's grid; the panel shows "Every Wednesday at 12:30 PM"`, created >= 1);
     expect(created).toBeGreaterThanOrEqual(1);
+    await alex.screenshot();
+  });
+
+  await step("Alex edits it from the Calendar with the Automations editor: new instructions, its model shown with the provider's logo", async () => {
+    await alex.click({ role: "button", text: "Edit" });
+    await alex.see({ text: "Edit automation" });
+    await alex.type({ role: "textbox", label: "Instructions" }, "Check the launch checklist and list owners of anything still open", { replace: true });
+    const logos = (await look.dom("[data-calendar-edit] [data-automation-model] img, [data-calendar-edit] [data-automation-model] svg[role='img']")).elements.length;
+    await alex.screenshot();
+    await alex.click({ role: "button", text: "Save changes" });
+    await alex.see({ text: "Automation updated" });
+    await alex.see({ text: "Check the launch checklist and list owners of anything still open" });
+    const model = (await look.dom("[data-calendar-detail] [data-automation-model]")).elements[0]?.text ?? "";
+    evidence.recordAssertionEvidence("edited through the shared editor", `model button shows ${logos} logo(s); the panel's model row reads "${model}"`, logos >= 1 && model.length > 0);
+    expect(logos).toBeGreaterThanOrEqual(1);
+    expect(model.length).toBeGreaterThan(0);
     await alex.screenshot();
   });
 

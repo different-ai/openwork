@@ -2,6 +2,7 @@ import { createNativeConnector, denFetch, type DenSession } from "@openwork/beha
 import { startMockGoogle } from "@openwork/labs";
 import { localMysqlIsRunning, SkipError, type Place, type Seed } from "@openwork/env";
 import { startCalendarMock } from "../packages/labs/src/calendar-mock.mjs";
+import { publishCalendarModels } from "../../worlds/lib/calendar.ts";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
 import { isRecord } from "./library.ts";
 
@@ -64,7 +65,8 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
     web: true, seedProfile: "demo-org", seedAutomations: true,
     env: { RESEND_API_KEY: "", SMTP_HOST: "", ...calendarDenEnv(identity, calendar.baseUrl) },
   });
-  await enableOrganizationCapabilities(seed, den.admin, { automationCalendar: true });
+  const orgId = await enableOrganizationCapabilities(seed, den.admin, { automationCalendar: true });
+  await publishCalendarModels(den.admin, orgId);
   await connectCalendarAccount(den.admin, identity, { providerKey: "google-workspace", name: "Google Workspace" });
   await connectCalendarAccount(den.admin, identity, { providerKey: "microsoft-365", name: "Microsoft 365" });
   const desktop = await seed.desktop({ den, as: "admin", enterpriseActivated: true, name: "automation-calendar" });

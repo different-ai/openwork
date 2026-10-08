@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { allocateFreePorts } from "../../evals/packages/cdp/src/index.ts";
 import { denFetch } from "../../evals/packages/behaviors/src/den.ts";
+import { publishCalendarModels } from "./calendar.ts";
 import { server } from "../../evals/packages/env/src/den.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../../evals/packages/env/src/place.ts";
@@ -275,6 +276,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   });
   // --calendar turns on both Calendars (desktop and Workbot), each behind its own feature.
   const orgId = await enableWorkbot(den, { ...options.features, ...(options.calendar ? { automationCalendar: true, workbotCalendar: true } : {}) });
+  // --calendar: a real provider (Anthropic, fixture key) so the Calendar's model pickers show logos and choices.
+  if (options.calendar) await publishCalendarModels(den.admin, orgId);
   // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
   const demo = await bootDemoWorkspace(stack, den);
   await connectDemoWorkspace(den, demo);
