@@ -1,0 +1,12 @@
+// Experimental owner-cell runtime. Not selected by production callers.
+// Keep the script and class names stable: celld derives persistent actor identities from them.
+{
+  "name": "openwork-headless-owner-cells",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "HEADLESS_OWNER", "class_name": "HeadlessOwner" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HeadlessOwner"] }]
+}

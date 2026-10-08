@@ -13,7 +13,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx scripts/smoke.ts",
     "test:computer-config": "tsx --test scripts/computer-config.test.ts",
-    "test:sql-store": "tsx --test scripts/sql-store.test.ts"
+    "test:sql-store": "tsx --test scripts/sql-store.test.ts",
+    "worker:types": "wrangler types",
+    "worker:typecheck": "wrangler types && tsc -p tsconfig.worker.json --noEmit",
+    "worker:e2e": "tsx scripts/owner-cells-e2e.ts",
+    "worker:e2e:celld": "tsx scripts/owner-cells-e2e.ts --celld"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
@@ -29,6 +33,7 @@
     "@types/node": "^24.0.0",
     "esbuild": "0.25.12",
     "tsx": "^4.23.1",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "wrangler": "4.142.0"
   }
 }

@@ -125,6 +125,8 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+  # Wrangler's local runtime installs its platform-specific workerd executable.
+  workerd: true
   # effect -> msgpackr -> msgpackr-extract ships an optional native accelerator;
   # msgpackr falls back to pure JS, so skip compiling it in CI and images.
   msgpackr-extract: false
