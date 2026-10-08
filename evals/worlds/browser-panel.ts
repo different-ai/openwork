@@ -657,14 +657,23 @@ export async function browserConnectionFailureWorld(seed: Seed) {
 /** Real native tab and deterministic document, with no viewport emulation. */
 export async function browserGeometryWorld(seed: Seed) {
   const world = await createBuiltinBrowserWorld(seed);
-  const tab = await world.openTab("geometry", world.session.sessionId);
+  const session = { ...world.session, title: "Browser geometry" };
+  await world.renameSession(session.sessionId, session.title);
+  const neighbor = await world.openSession("Browser neighbor");
+  await world.showSession(session.sessionId);
+  const tab = await world.openTab("geometry", session.sessionId);
   await world.loadInputProbe(tab);
   const page = await attachBuiltinTab(world.app, tab.targetId);
-  return { app: world.app, session: world.session, tab, page,
+  return { app: world.app, session, neighbor, tab, page,
     async [Symbol.asyncDispose]() { await page.stop(); } };
 }
 
-/** Leave the emulation fault behind before the body; recovery is a real user act. */
+/**
+ * Leave the emulation fault behind before the body; recovery is a real user act.
+ * The capture client stays connected until disposal: since Electron 43.5
+ * (electron/electron#52946), a client that disconnects without clearing its
+ * override restores the view size itself, which would undo the fault early.
+ */
 export async function browserViewportWorld(seed: Seed) {
   const base = await builtinBrowserWorld(seed);
   const tab = await seedBrowserTab(seed, base.app, `${base.origin}/?viewport-probe=first`, base.session.sessionId);
@@ -679,6 +688,9 @@ export async function browserViewportWorld(seed: Seed) {
     if (metrics.width <= 0 || metrics.width >= 1280) throw new Error("The tab never acquired its panel viewport.");
     const panelViewport = { width: metrics.width, height: metrics.height };
     await surface.client.send("Emulation.setDeviceMetricsOverride", { ...CAPTURE_VIEWPORT, deviceScaleFactor: 0, mobile: false });
-    return { ...base, tab, panelViewport };
-  } finally { await surface.stop(); }
+    return { ...base, tab, panelViewport, async [Symbol.asyncDispose]() { await surface.stop(); } };
+  } catch (error) {
+    await surface.stop();
+    throw error;
+  }
 }

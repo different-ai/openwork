@@ -20,6 +20,7 @@ test('anything other than clear fails, with a reason a person can act on', () =>
     ['major-security-findings', /high or medium/],
     ['review-incomplete', /didn't finish/],
     ['flagged', /flagged/],
+    ['files-over-size-limits', /too big/],
     ['analysis-cancelled', /analysis-cancelled/],
   ]) {
     const body = checkRunBody({ sha, verdict: 'flagged', reason });

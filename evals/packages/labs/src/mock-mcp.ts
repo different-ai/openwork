@@ -151,6 +151,8 @@ export interface StartMockMcpOptions {
   publicUrl?: string;
   /** Advertised OAuth/resource origin when the mock sits behind a proxy; defaults to the mock's own URL. */
   issuer?: string;
+  /** Protected resource declared in resource metadata; defaults to the issuer's /mcp URL. */
+  protectedResource?: string;
   /** Set RFC 9207 metadata explicitly; undefined omits it. Only true includes response iss. */
   authorizationResponseIssuerSupported?: boolean;
   profileId?: EnterpriseMcpProfileId;
@@ -446,6 +448,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         AUTO_APPROVE: "1",
         ...(options.authorizationResponseIssuerSupported === undefined ? {} : { MOCK_AUTHORIZATION_RESPONSE_ISSUER: options.authorizationResponseIssuerSupported ? "1" : "0" }),
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
+        ...(options.protectedResource ? { MOCK_PROTECTED_RESOURCE: options.protectedResource } : {}),
         ...(options.rejectDynamicRedirectUris ? { MOCK_REJECT_DCR_REDIRECT_URIS: options.rejectDynamicRedirectUris } : {}),
         ...(options.rejectTokenClientIds?.length ? { MOCK_REJECT_TOKEN_CLIENT_IDS: options.rejectTokenClientIds.join(",") } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),

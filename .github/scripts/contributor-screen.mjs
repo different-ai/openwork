@@ -327,7 +327,10 @@ export function scanRepository({ gitDir, base, head }) {
 
 // --- Warden output --------------------------------------------------------------
 
-// Reads Warden CLI JSONL (`-o`). Fails closed: anything unexpected is incomplete.
+// Reads Warden CLI JSONL (`-o`). Fails closed: anything unexpected is
+// incomplete. When the analysis ran but stopped early (failed chunks, files
+// over the size limits), the findings it did produce are still returned with
+// complete: false, so the comment can show them; it is never clear.
 export function parseWardenJsonl(text, expectedSkills) {
   const records = [];
   for (const line of (text ?? "").split("\n")) {
@@ -343,14 +346,22 @@ export function parseWardenJsonl(text, expectedSkills) {
   const chunks = records.filter((record) => record !== summary && typeof record?.skill === "string");
   const unexpected = chunks.find((chunk) => !expectedSkills.includes(chunk.skill));
   if (unexpected) return { complete: false, reason: `unexpected-skill:${unexpected.skill}`, findings: [] };
-  if (summary.error || summary.failedSkills?.length || summary.totalFailedHunks || summary.totalFailedExtractions ||
-      chunks.some((chunk) => chunk.status === "error" || chunk.error)) {
-    return { complete: false, reason: "analysis-failed", findings: [] };
-  }
   const findings = chunks.flatMap((chunk) => (Array.isArray(chunk.findings) ? chunk.findings : []).map((finding) => ({ ...finding, skill: chunk.skill })));
   const valid = findings.every((finding) => ["high", "medium", "low"].includes(finding.severity) && typeof finding.title === "string");
   if (!valid || findings.length !== summary.totalFindings) return { complete: false, reason: "inconsistent-findings", findings: [] };
-  return { complete: true, findings };
+  const skippedByFile = new Map();
+  for (const chunk of chunks) {
+    for (const file of Array.isArray(chunk.skippedFiles) ? chunk.skippedFiles : []) {
+      if (typeof file?.filename === "string" && String(file.reason).startsWith("limit:")) skippedByFile.set(file.filename, file.reason);
+    }
+  }
+  const skipped = skippedByFile.size;
+  if (summary.error || summary.failedSkills?.length || summary.totalFailedHunks || summary.totalFailedExtractions ||
+      chunks.some((chunk) => chunk.status === "error" || chunk.error)) {
+    return { complete: false, reason: "analysis-failed", findings, skipped };
+  }
+  if (skipped) return { complete: false, reason: "files-over-size-limits", findings, skipped };
+  return { complete: true, findings, skipped: 0 };
 }
 
 // --- Decisions ------------------------------------------------------------------
@@ -380,6 +391,9 @@ export function aiScreenDecision(warden) {
 }
 
 export function reviewDecision(warden) {
+  if (!warden.complete && warden.reason === "files-over-size-limits") {
+    return { verdict: "too-big", state: "failure", description: "PR too big for Warden to review in full; split it" };
+  }
   if (!warden.complete) return { verdict: "incomplete", state: "failure", description: `Warden review incomplete (${warden.reason})` };
   const confidentiality = warden.findings.filter((finding) => finding.skill === "confidentiality-review").length;
   const serious = warden.findings.filter((finding) => finding.skill === "diff-security-review" && finding.severity !== "low").length;
@@ -464,6 +478,8 @@ export function renderAiScreenComment({ sha, decision, warden, runUrl }) {
 
 export function renderReviewComment({ sha, decision, warden, runUrl }) {
   const lines = [WARDEN_MARKER, `### Warden review: ${decision.verdict === "clear" ? "clear" : "not clear"}`, "", `Commit \`${sha.slice(0, 10)}\` · [run](${runUrl})`, "", decision.description + "."];
+  if (warden.skipped) lines.push("", `Warden skipped ${warden.skipped} file(s) over its size limits, so this PR can't be fully reviewed. Split it into smaller PRs (under 400 files and 60,000 changed lines each).`);
+  if (!warden.complete && warden.findings.length) lines.push("", "Findings from the part that was reviewed (the review is incomplete, so there may be more):");
   const security = warden.findings.filter((finding) => finding.skill === "diff-security-review");
   const confidentiality = warden.findings.length - security.length;
   if (security.length) {

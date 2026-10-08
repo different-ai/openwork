@@ -227,6 +227,7 @@ export interface HeadlessThreadClientOptions {
    * engine its chats use, so headless threads land where the app reads them.
    */
   engine?: HeadlessThreadEngine | "auto";
+  requireModelAvailability?: boolean;
   /** Default `waitForThread` poll interval. Defaults to 500ms. */
   pollIntervalMs?: number;
   /** Bounds every individual HTTP request. Defaults to 15 seconds; use 0 to disable. */

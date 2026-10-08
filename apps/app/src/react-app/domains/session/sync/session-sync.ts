@@ -448,6 +448,25 @@ function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0 || entry.retainedSessionTimers.has(sessionId);
 }
 
+function admitRelatedSession(entry: SyncEntry, sessionId: string) {
+  if (!isTrackedSession(entry, sessionId)) retainSession(entry.input, entry, sessionId);
+}
+
+function discoverTaskSessions(entry: SyncEntry, parentId: string) {
+  if (!isTrackedSession(entry, parentId)) return;
+  const records = useSessionActivityStore.getState().recordsByWorkspaceId[entry.input.workspaceId];
+  const visited = new Set([parentId]);
+  const parents = [parentId];
+  for (const parent of parents) {
+    for (const child of records?.[parent]?.childSessionIds ?? []) {
+      if (visited.has(child)) continue;
+      visited.add(child);
+      admitRelatedSession(entry, child);
+      parents.push(child);
+    }
+  }
+}
+
 function getSessionUpdatedInfo(event: OpencodeEvent) {
   if (event.type !== "session.updated") return null;
   const props = event.properties;
@@ -1009,6 +1028,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.created") {
     const session = getSessionCreatedInfo(event);
     if (!session) return;
+    if (session.parentID && isTrackedSession(entry, session.parentID)) {
+      admitRelatedSession(entry, session.id);
+      discoverTaskSessions(entry, session.id);
+    }
     for (const listener of entry.sessionCreatedListeners.keys()) listener(session);
     return;
   }
@@ -1272,6 +1295,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     );
     useSessionActivityStore.getState().observeTranscript(workspaceId, info.sessionID,
       queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID)) ?? []);
+    discoverTaskSessions(entry, info.sessionID);
     return;
   }
 
@@ -1392,6 +1416,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (pending) entry.pendingDeltas.delete(pendingKey);
     useSessionActivityStore.getState().observeTranscript(workspaceId, part.sessionID,
       queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID)) ?? []);
+    discoverTaskSessions(entry, part.sessionID);
     return;
   }
 
@@ -1403,9 +1428,12 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       field?: string;
       delta?: string;
     };
-    if (!props.sessionID || !props.messageID || !props.partID || !props.delta) return;
-    clearSessionRetry(entry, workspaceId, props.sessionID);
-    useSessionActivityStore.getState().markAssistantOutput(workspaceId, props.sessionID, props.messageID, { allowUnknownMessageRole: true });
+    if (!props.sessionID || !props.messageID || !props.partID || typeof props.delta !== "string" || !props.delta) return;
+    const activity = useSessionActivityStore.getState();
+    if (activity.recordsByWorkspaceId[workspaceId]?.[props.sessionID]?.runActive) {
+      clearSessionRetry(entry, workspaceId, props.sessionID);
+    }
+    activity.markAssistantOutput(workspaceId, props.sessionID, props.messageID, { allowUnknownMessageRole: true, markDeltaProgress: true });
     if (!isTrackedSession(entry, props.sessionID)) return;
     // Note: we do NOT trust `props.field` to disambiguate reasoning vs
     // text. Opencode emits `field: "text"` for both kinds; the actual
@@ -1490,10 +1518,12 @@ function commitDeltas(entry: SyncEntry, workspaceId: string, items: PendingDelta
   }
 
   for (const [sessionId, items] of bySession) {
+    let applied = false;
     queryClient.setQueryData<UIMessage[]>(
       transcriptKey(workspaceId, sessionId),
       (current = []) => {
         const result = applyPendingDeltasToTranscript(current, items);
+        applied = result.unapplied.length < items.length;
         for (const item of result.unapplied) {
           // The declaration event is the source of truth for text versus
           // reasoning. Hold early deltas until that event arrives instead of
@@ -1511,8 +1541,11 @@ function commitDeltas(entry: SyncEntry, workspaceId: string, items: PendingDelta
         return result.messages;
       },
     );
-    useSessionActivityStore.getState().observeTranscript(workspaceId, sessionId,
-      queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? []);
+    const activity = useSessionActivityStore.getState();
+    if (applied && activity.recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive) {
+      activity.observeTranscript(workspaceId, sessionId,
+        queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? []);
+    }
   }
 }
 
@@ -2155,6 +2188,9 @@ export function seedSessionState(
   useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id, transcript, true, {
     snapshotStartedAt,
   });
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId === workspaceId) discoverTaskSessions(entry, snapshot.session.id);
+  }
 }
 
 /**
@@ -2236,6 +2272,7 @@ export function trackWorkspaceSessionSync(input: SyncOptions, sessionId: string 
     normalizedSessionId,
     (entry.trackedSessionRefs.get(normalizedSessionId) ?? 0) + 1,
   );
+  discoverTaskSessions(entry, normalizedSessionId);
 
   return () => {
     const current = entry.trackedSessionRefs.get(normalizedSessionId) ?? 0;

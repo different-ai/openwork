@@ -167,7 +167,7 @@ jobs:
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ needs.authorize.outputs.sha }}
           VERDICT: ${{ needs.review.outputs.verdict }}
-          # The review's verdict is clear, flagged or incomplete.
-          REASON: ${{ (needs.review.result == 'failure' || needs.review.outputs.verdict == 'incomplete') && 'review-incomplete' || (needs.review.outputs.verdict == 'flagged' && 'flagged' || '') }}
+          # The review's verdict is clear, flagged, too-big or incomplete.
+          REASON: ${{ needs.review.outputs.verdict == 'too-big' && 'files-over-size-limits' || ((needs.review.result == 'failure' || needs.review.outputs.verdict == 'incomplete') && 'review-incomplete' || (needs.review.outputs.verdict == 'flagged' && 'flagged' || '')) }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node .github/scripts/warden-check.mjs post

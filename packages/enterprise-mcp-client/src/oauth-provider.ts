@@ -1,5 +1,5 @@
 import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/core"
-import { discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
+import { checkResourceAllowed, discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
 import type {
   AuthorizationServerMetadata,
   OAuthClientInformationContext,
@@ -162,6 +162,18 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       application_type: this.applicationType,
       ...(scope ? { scope } : {}),
     }
+  }
+
+  // Some providers serve one MCP endpoint from several hosts and declare a
+  // single canonical resource, such as a regional API host. Tokens are always
+  // sent to the configured URL, so beyond the SDK's same-origin rule only a
+  // listed host alias, with the same scheme, port and path, is accepted.
+  async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
+    if (!resource) return undefined
+    const declared = new URL(resource)
+    if (checkResourceAllowed({ requestedResource: serverUrl, configuredResource: declared })) return declared
+    if (isTrustedResourceAlias(new URL(serverUrl), declared)) return declared
+    throw new Error(`Protected resource ${resource} does not match expected ${serverUrl} (or origin)`)
   }
 
   private assertDiscoveryBinding(state: OAuthDiscoveryState): void {
@@ -566,4 +578,22 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     }
     if (retainedClient) throw retainedClient
   }
+}
+
+// Configured host -> hosts it may declare as its protected resource.
+const TRUSTED_RESOURCE_HOST_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  // ElevenLabs documents the global host, which declares its US host.
+  "api.elevenlabs.io": ["api.us.elevenlabs.io"],
+}
+
+function isTrustedResourceAlias(configured: URL, declared: URL): boolean {
+  if (configured.protocol !== declared.protocol || configured.port !== declared.port) return false
+  if (configured.pathname !== declared.pathname || declared.search || declared.hash) return false
+  if (isLoopbackHost(configured.hostname) && isLoopbackHost(declared.hostname)) return true
+  return configured.protocol === "https:" &&
+    (TRUSTED_RESOURCE_HOST_ALIASES[configured.hostname] ?? []).includes(declared.hostname)
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname)
 }

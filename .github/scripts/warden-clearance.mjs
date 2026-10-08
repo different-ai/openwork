@@ -27,7 +27,16 @@ export function guardedFiles(files) {
 }
 
 // Pure decision over the trusted reporter's receipt (warden-report.mjs schema 2).
+// True only for this run's own receipt, so a forged or stale one can't change
+// the reason shown (it is never a reason to approve).
+function tooBig(receipt, expected) {
+  return receipt?.schema_version === 2 && receipt.repository === expected.repository && receipt.run_id === expected.runId &&
+    receipt.run_attempt === expected.attempt && receipt.head_sha === expected.head && receipt.pr === expected.pr &&
+    Array.isArray(receipt.incomplete_reasons) && receipt.incomplete_reasons.includes("files-over-size-limits");
+}
+
 export function decide(receipt, expected) {
+  if (tooBig(receipt, expected)) return { verdict: "flagged", reason: "files-over-size-limits" };
   if (expected.conclusion !== "success") return { verdict: "flagged", reason: `analysis-${expected.conclusion || "unknown"}` };
   if (!receipt || receipt.schema_version !== 2) return { verdict: "flagged", reason: "missing-or-invalid-receipt" };
   if (receipt.repository !== expected.repository || receipt.run_id !== expected.runId ||
@@ -88,16 +97,36 @@ function headline(decision, guarded) {
     case "confidentiality-findings":
       return ["### Warden: not approved",
         `Confidentiality review flagged ${plural(c.confidentiality, "item")} that may identify a customer, prospect, partner, or outside person (see \`AGENTS.md\`). Details stay out of this public comment; check the lines this PR adds.`];
+    case "files-over-size-limits":
+      return ["### Warden: not approved",
+        "This PR is too big for Warden to review in full (over 400 files or 60,000 changed lines), so it can't be approved. Re-running won't help: split it into smaller PRs."];
     default:
       return ["### Warden: not approved",
         `The review didn't finish (\`${decision.reason}\`), so Warden can't approve. Re-run the Warden job or push again.`];
   }
 }
 
+const LIMIT_REASONS = {
+  "limit:changed_lines": "over the changed-line limit",
+  "limit:file_count": "over the file-count limit",
+  "limit:file_lines": "too long to read",
+  "limit:file_size": "too large to read",
+  "limit:file_read": "couldn't be read",
+  "limit:missing_patch": "had no diff from GitHub",
+};
+
 export function renderComment(decision, findings, guarded, env) {
   const lines = [MARKER, ...headline(decision, guarded)];
+  const skipped = findings?.skipped;
+  if (Number.isSafeInteger(skipped?.count) && skipped.count > 0) {
+    const why = Object.entries(skipped.reasons ?? {}).map(([reason, n]) => `${n} ${LIMIT_REASONS[reason] ?? reason}`).join(", ");
+    lines.push("", `Warden skipped ${plural(skipped.count, "file")} (${safe(why, 300)}), so this PR can't be fully reviewed. Split it into smaller PRs (under 400 files and 60,000 changed lines each).`);
+  }
   if (findings?.findings.length) {
-    lines.push("", `**Security findings** (${plural(findings.total, "finding")})`, "");
+    const partial = findings.complete === false;
+    lines.push("", partial
+      ? `**Security findings so far** (${plural(findings.total, "finding")} in the part that was reviewed; the review is incomplete, so there may be more)`
+      : `**Security findings** (${plural(findings.total, "finding")})`, "");
     let size = lines.join("\n").length;
     for (const finding of findings.findings) {
       const where = finding.path ? ` in ${code(finding.line ? `${finding.path}:${finding.line}` : finding.path)}` : "";

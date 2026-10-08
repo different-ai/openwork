@@ -19,7 +19,9 @@ jobs:
   warden:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Up to 400 files / 60,000 changed lines (warden.toml); the largest PRs
+    # take well over 20 minutes.
+    timeout-minutes: 60
     steps:
       - name: Start timing
         id: timing

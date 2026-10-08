@@ -9,18 +9,17 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await user.type("composer", world.prompt);
   await user.click("Run task");
 
-  await step("the search and connector action stay readable", async () => {
+  await step("before: a member sees the running lookup without raw tool output", async () => {
     await user.see({ text: /Searched your connections for.*Slack list_channels/ }, { timeoutMs: 60_000 });
-    await user.see({ text: /^(Listing|Listed) channels$/ }, { timeoutMs: 30_000 });
+    await user.see({ text: /^(Listing|Listed) channels(?: · Slack)?$/ }, { timeoutMs: 30_000 });
     await user.notSee({ text: /openwork-cloud_execute_capability/ });
     evidence.recordAssertionEvidence("connector action", "Listing or Listed channels is visible; raw tool names are absent", true);
     await user.screenshot();
   });
 
-  await step("the completed connector action exposes its arguments and survives reload", async () => {
+  await step("after: the member can inspect the saved lookup result after reload", async () => {
     await user.see({ text: world.proof }, { timeoutMs: 60_000 });
     await user.see("Run task");
-    if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
     expect(await world.den.mocks.connector.toolCalls({ name: "list_channels", sinceIso, atLeast: 1 }))
       .toMatchObject([{ name: "list_channels", args: { limit: 3 } }]);
     // TODO(primitive): probe.connectorBranding
@@ -29,25 +28,34 @@ test("connector-backed tool calls show first-class branding and human-readable l
       const matching = rows.filter(row => row.textContent.includes('Listed channels'));
       const mark = matching[0]?.querySelector<HTMLElement>('[data-connector-name="Slack"]');
       const image = mark?.querySelector('img');
-      return { count: matching.length, connector: mark?.getAttribute('data-connector-name'),
+      return { resultText: matching[0]?.textContent ?? "", count: matching.length, connector: mark?.getAttribute('data-connector-name'),
         imageLoaded: image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 };
     });
     const branded = await probe.eventually(inspect, { within: 15_000, label: "Slack tool icon and one completed row",
       until: (value) => isRecord(value) && value.imageLoaded === true });
     expect(branded).toMatchObject({ count: 1, connector: "Slack", imageLoaded: true });
-    await user.click({ role: "button", label: "Listed channels. Show technical details" });
+    // The details toggle appears when the row is hovered.
+    await user.hover({ text: /^Listed channels(?: · Slack)?$/ });
+    await user.click({ role: "button", label: /^Show technical details for Listed channels/ });
     await user.see({ text: /mcp:.*:list_channels/ });
     await user.see({ text: /"limit":\s*3/ });
+    // Scope result inspection to this action so an assistant repeating the
+    // same text cannot make missing capture pass.
+    const savedResult = async () => (await inspect()).resultText;
+    if (world.engine === "v2") expect(await savedResult()).toContain(world.proof);
     await user.screenshot();
     await user.reload();
-    if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
-    await user.see({ text: /^Listed channels$/ }, { timeoutMs: 30_000 });
+    await user.see({ text: /^Listed channels(?: · Slack)?$/ }, { timeoutMs: 30_000 });
     expect(await inspect()).toMatchObject({ count: 1, connector: "Slack" });
     await user.notSee({ text: /openwork-cloud_execute_capability/ });
-    await user.click({ role: "button", label: "Listed channels. Show technical details" });
+    // The details toggle appears when the row is hovered.
+    await user.hover({ text: /^Listed channels(?: · Slack)?$/ });
+    await user.click({ role: "button", label: /^Show technical details for Listed channels/ });
     await user.see({ text: /"limit":\s*3/ });
-    await user.click({ role: "button", label: "Listed channels. Hide technical details" });
-    evidence.recordAssertionEvidence("connector action after reload", "One branded Slack row; limit 3 is available under technical details", true);
+    if (world.engine === "v2") expect(await savedResult()).toContain(world.proof);
+    await user.screenshot();
+    await user.click({ role: "button", label: /^Hide technical details for Listed channels/ });
+    evidence.recordAssertionEvidence("inspect the same action after reload", `One branded Slack row; limit 3${world.engine === "v2" ? ` and the captured result ${world.proof}` : ""} remain under technical details`, true);
   });
 
   await step("before: a note has not yet been created", async () => {
@@ -59,13 +67,9 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await step("a member sees the note being created rather than the last lookup", async () => {
     await user.type("composer", world.mutationPrompt);
     await user.click("Run task");
-    if (world.engine === "v2") {
-      await user.see({ role: "button", label: /(?:Creating|Created) a note in Slack/ }, { timeoutMs: 60_000 });
-      await user.notSee({ text: /Tool activity|Task step|Completed with errors/ });
-    } else {
-      await user.see({ text: /(?:Creating|Created) note/ }, { timeoutMs: 60_000 });
-    }
-    evidence.recordAssertionEvidence("creation in progress", world.engine === "v2" ? "Creating or Created a note in Slack, not Tool activity" : "Creating or Created note is visible", true);
+    await user.see({ text: /(?:Creating|Created) note/ }, { timeoutMs: 60_000 });
+    if (world.engine === "v2") await user.notSee({ text: /Tool activity|Task step|Completed with errors/ });
+    evidence.recordAssertionEvidence("creation in progress", "Creating or Created note is visible, not Tool activity", true);
     await user.screenshot();
   });
 
@@ -74,11 +78,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.see("Run task");
     expect(await world.den.mocks.connector.toolCalls({ name: "create_note", sinceIso, atLeast: 1 }))
       .toMatchObject([{ name: "create_note", args: { limit: 3 } }]);
-    if (world.engine === "v2") {
-      await user.see({ role: "button", label: /Created a note in Slack/ });
-    } else {
-      await user.see({ text: /Created note/ });
-    }
+    await user.see({ text: /Created note/ });
     await user.screenshot();
     await user.reload();
     await user.see({ text: world.mutationProof }, { timeoutMs: 30_000 });
@@ -89,29 +89,21 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await step("a failed connector action stays identifiable and is not shown as successful", async () => {
     await user.type("composer", world.failurePrompt);
     await user.click("Run task");
-    if (world.engine === "v2") {
-      await user.see({ role: "button", label: /Reading history|Couldn.t finish this step/ }, { timeoutMs: 30_000 });
-      await user.notSee({ text: /Completed with errors|Tool activity/ });
-    } else {
-      await user.see({ text: /^(Reading history|Read history failed)$/ }, { timeoutMs: 60_000 });
-      await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 60_000 });
-    }
+    await user.see({ role: "button", label: /technical details for (?:Reading history|Couldn.t read history)/ }, { timeoutMs: 60_000 });
+    if (world.engine === "v2") await user.notSee({ text: /Completed with errors|Tool activity/ });
     await user.see("Run task");
     await user.see({ text: "The history lookup failed." });
-    await user.notSee({ role: "button", label: "Read history. Show technical details" });
+    await user.notSee({ role: "button", label: /^Show technical details for Read history/ });
     await user.notSee({ role: "button", label: /^Ran(?:\s|\.|[0-9]|$)/ });
     expect(await world.den.mocks.connector.toolCalls({ name: "read_history", sinceIso, atLeast: 1 }))
       .toMatchObject([{ name: "read_history", args: { limit: 3 } }]);
     evidence.recordAssertionEvidence("history lookup failed without claiming success", "read_history received limit 3; the reply says the lookup failed", true);
     await user.screenshot();
     await user.reload();
-    if (world.engine === "v2") {
-      await user.notSee({ text: /Completed with errors|Tool activity/ });
-    } else {
-      await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 30_000 });
-    }
+    if (world.engine === "v2") await user.notSee({ text: /Completed with errors|Tool activity/ });
+    else await user.see({ role: "button", label: /technical details for Couldn.t read history/ }, { timeoutMs: 30_000 });
     await user.see({ text: "The history lookup failed." });
-    await user.notSee({ role: "button", label: "Read history. Show technical details" });
+    await user.notSee({ role: "button", label: /^Show technical details for Read history/ });
     await user.notSee({ role: "button", label: /^Ran(?:\s|\.|[0-9]|$)/ });
   });
 });

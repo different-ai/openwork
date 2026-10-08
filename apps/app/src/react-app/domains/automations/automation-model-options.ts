@@ -16,7 +16,14 @@ export type { AutomationModelOption }
 
 export type ResolvedProposalModel = {
   model: AutomationModel
-  resolution: "exact" | "mapped" | "default" | "fallback"
+  resolution: "exact" | "mapped" | "default" | "unavailable"
+}
+
+export type AutomationModelAvailability = {
+  includeFreeStarter?: boolean
+  includeCloudDefault?: boolean
+  /** The executing desktop workspace's runtime catalog; when given, only models it can run are offered. */
+  catalog?: AutomationProviderCatalog
 }
 
 /**
@@ -25,33 +32,50 @@ export type ResolvedProposalModel = {
  */
 export function automationModelOptions(
   providers: readonly DenOrgLlmProvider[],
-  options: { includeFreeStarter?: boolean; includeCloudDefault?: boolean } = {},
+  options: AutomationModelAvailability = {},
 ): AutomationModelOption[] {
-  return sharedAutomationModelOptions(providers, options)
+  const { catalog, ...shared } = options
+  return sharedAutomationModelOptions(providers, shared)
+    .filter((model) => catalog === undefined || Boolean(catalog[model.providerId]?.[model.modelId]))
 }
 
 export { findAutomationModelOption }
 
+/** A runtime's connected providers as an Automation catalog: providerId → modelId → model record. */
+export function automationProviderCatalog(
+  providers: readonly ProviderListItem[] | undefined,
+): AutomationProviderCatalog {
+  const catalog: AutomationProviderCatalog = {}
+  for (const provider of providers ?? []) catalog[provider.id] = { ...(provider.models ?? {}) }
+  return catalog
+}
+
 export function resolveProposalModel(
   proposed: AutomationModel | undefined,
   providers: readonly DenOrgLlmProvider[],
+  availability: AutomationModelAvailability = {},
 ): ResolvedProposalModel {
   const freeModel: AutomationModel = {
     providerId: AUTOMATION_FREE_MODEL.providerId,
     modelId: AUTOMATION_FREE_MODEL.modelId,
     variant: null,
   }
-  if (!proposed) return { model: freeModel, resolution: "default" }
+  const options = automationModelOptions(providers, availability)
+  if (!proposed) return {
+    model: freeModel,
+    resolution: findAutomationModelOption(options, freeModel) ? "default" : "unavailable",
+  }
 
-  if (findAutomationModelOption(automationModelOptions(providers), proposed)) {
+  if (findAutomationModelOption(options, proposed)) {
     return { model: proposed, resolution: "exact" }
   }
 
-  const provider = providers.find((candidate) =>
+  const matches = providers.filter((candidate) =>
     candidate.source !== "openwork"
     && candidate.providerId === proposed.providerId
     && candidate.models.some((model) => model.id === proposed.modelId))
-  if (provider) {
+  const provider = matches.length === 1 ? matches[0] : undefined
+  if (provider && findAutomationModelOption(options, { providerId: provider.id, modelId: proposed.modelId })) {
     return {
       model: {
         providerId: provider.id,
@@ -62,7 +86,7 @@ export function resolveProposalModel(
     }
   }
 
-  return { model: freeModel, resolution: "fallback" }
+  return { model: proposed, resolution: "unavailable" }
 }
 
 /**
@@ -85,8 +109,7 @@ export function describeAutomationModel(
  * and the same reasoning levels as a chat.
  *
  * Reasoning variants are a property of the desktop runtime that will execute
- * the run, so they come from the local provider catalog. A model Den authorizes
- * but the local runtime does not know still lists — without variants.
+ * the run, so they come from the local provider catalog.
  */
 export function automationPickerOptions(input: {
   options: readonly AutomationModelOption[]

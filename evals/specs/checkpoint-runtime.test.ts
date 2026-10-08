@@ -4,10 +4,10 @@ import { checkpointCapability, spec } from "@openwork/testkit";
 import type { CheckpointCapability, Surface } from "@openwork/testkit";
 
 // Exercises the testkit wiring with a synthetic world: which calls save a
-// checkpoint, the end state of tagged tests, and the warning when a world
+// checkpoint, the start and end states of tagged tests, and the warning when a world
 // cannot capture. The capture rule itself is covered in evidence-checkpoint.test.ts.
 const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-/** Every capture, by world label; lets a later test see an earlier test's end state. */
+/** Every capture, by world label; lets a later test see an earlier test's start and end states. */
 const captureLog: string[] = [];
 
 function surface(name: string): Surface {
@@ -68,19 +68,22 @@ capable("only the world's own surface can be checkpointed", async ({ world, user
   expect(warn).toHaveBeenCalledTimes(1);
 });
 
-tagged("tagged tests keep their end state", { tags: ["checkpoints"] }, async ({ world, user }) => {
+tagged("tagged tests keep their start and end states", { tags: ["checkpoints"] }, async ({ world, user }) => {
+  expect(world.captures()).toBe(1); // The start state, saved before the body runs.
   await user.screenshot();
-  expect(world.captures()).toBe(0); // Saved after the body passes.
+  expect(world.captures()).toBe(1); // The end state is saved after the body passes.
 });
 
-taggedIdle("a tagged test that just checkpointed does not save the same state twice", { tags: ["checkpoints"] }, async ({ user }) => {
+taggedIdle("a tagged test that just checkpointed does not save the same state twice", { tags: ["checkpoints"] }, async ({ world, user }) => {
+  expect(world.captures()).toBe(1);
   await user.screenshot();
   await user.checkpoint("Last moment");
 });
 
-capable("end states were saved after the tagged tests above passed", async () => {
-  expect(captureLog.filter((label) => label === "tagged")).toHaveLength(1);
-  expect(captureLog.filter((label) => label === "tagged-idle")).toHaveLength(1);
+capable("start and end states were saved around the tagged tests above", async () => {
+  expect(captureLog.filter((label) => label === "tagged")).toHaveLength(2);
+  // Start state and "Last moment"; the end state matched the last checkpoint.
+  expect(captureLog.filter((label) => label === "tagged-idle")).toHaveLength(2);
 });
 
 capable("nothing is saved unless the run asked for checkpoints", async ({ world, user, step }) => {

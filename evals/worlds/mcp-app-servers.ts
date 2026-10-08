@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chrome, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
-import { browserScript, connect, debuggerUrlFor, evaluate, listTargets, type Surface } from "@openwork/cdp";
+import { browserScript, connect, debuggerUrlFor, evaluate, listTargets, locate, type Surface } from "@openwork/cdp";
 import type { EvalEngine, Place, Seed } from "@openwork/env";
 import type { MockMcpTool } from "@openwork/labs";
 import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
@@ -516,13 +516,15 @@ export const reopenReply = "Here it is again, below.";
 export const pricerTitle = "Quick order pricer";
 export const buildPrompt = "Build me an App that looks up a product's unit price in Inventory and multiplies it by the quantity.";
 export const buildReply = "The Quick order pricer is ready in this conversation.";
+export const signInPrompt = "I need the Order calculator once more for 6 of WIDGET-7.";
+export const signInReply = "Here is the Order calculator.";
 
 /**
  * Apps prompted from an OpenWork chat: the model builds a new App with
  * create_app and opens an existing one with launch input, both through
  * Connect, and each App's own tools run in the conversation.
  */
-export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place: Place } = false, options: { engine?: EvalEngine; desktop?: boolean; lifecycle?: boolean } = {}) {
+export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place: Place } = false, options: { engine?: EvalEngine; desktop?: boolean; lifecycle?: boolean; ownSignIn?: boolean } = {}) {
   const measured = benchmark === true;
   const engine = options.engine ?? "v1";
   const toolStep = (tool: string, args: Record<string, unknown>) => engine === "v2" ? { tool: "execute", arguments: { code: `return await tools["openwork-cloud"].${tool}(${JSON.stringify(args)});` } } : { tool, arguments: args };
@@ -531,11 +533,22 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
     org: { name: `App servers chat ${Date.now()}` },
     mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool, reserveTool] }) },
   });
+  // With ownSignIn, each person signs in to Inventory with their own account, as with a real provider.
   const connection = await seed.orgConnection(den.admin, {
     name: `Inventory ${Date.now()}`, url: den.mocks.inventory.mcpUrl,
-    authType: "none", credentialMode: "shared", access: { orgWide: true },
+    ...(options.ownSignIn ? { authType: "oauth", credentialMode: "per_member" } : { authType: "none", credentialMode: "shared" }),
+    access: { orgWide: true },
   });
   const organizationId = field(record((await seed.api(den.admin, "/v1/org")).body).organization, "id");
+  if (options.ownSignIn) {
+    // The owner signs in once, through the provider's real OAuth, before building with Inventory's tools.
+    const started = record((await seed.api(den.admin, `/v1/mcp-connections/${connection.id}/connect/start`)).body);
+    if (typeof started.authorizeUrl !== "string") throw new Error(`Inventory sign-in did not start: ${JSON.stringify(started)}`);
+    const callback = (await fetch(started.authorizeUrl, { redirect: "manual", signal: AbortSignal.timeout(15_000) })).headers.get("location");
+    if (!callback) throw new Error("Inventory sign-in did not redirect back to Den");
+    const completed = await fetch(callback, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+    if (!completed.ok) throw new Error(`Inventory sign-in callback failed: HTTP ${completed.status}`);
+  }
   const minted = await seed.api(den.admin, "/v1/mcp/token", {
     method: "POST", headers: { "x-openwork-org-id": organizationId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
   });
@@ -572,6 +585,9 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
         { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
       ] },
       { promptMarker: reopenPrompt, finalReply: reopenReply, latestUserTurn: true, steps: [
+        { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
+      ] },
+      { promptMarker: signInPrompt, finalReply: signInReply, latestUserTurn: true, steps: [
         { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
       ] },
     ] }),
@@ -659,6 +675,24 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
     },
     inventoryCalls: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.connection, atLeast: 0, ...options }),
     reservations: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.reserve, atLeast: 0, ...options }),
+    inventoryName: connection.name,
+    /** The owner removes their own Inventory account, as a teammate who never signed in would be. */
+    async disconnectInventory() {
+      const removed = await seed.api(den.admin, `/v1/mcp-connections/${connection.id}/disconnect-my-account`, { method: "POST" });
+      if (!removed.response.ok) throw new Error(`Disconnecting Inventory failed: HTTP ${removed.response.status}`);
+    },
+    /** Whether the owner is signed in to Inventory, from the connection list the desktop reads. */
+    async inventorySignedIn() {
+      const listed = rows(record((await seed.api(den.admin, "/v1/mcp-connections?scope=usable")).body).connections);
+      return listed.find(entry => entry.id === connection.id)?.connectedForMe === true;
+    },
+    /**
+     * Back to OpenWork after signing in. The provider's sign-in opens in a new tab in front of
+     * OpenWork, and a background tab does not lay out the App frames it creates.
+     */
+    async returnToOpenWork() {
+      await app.client.send("Page.bringToFront");
+    },
     /** Clicks a button from the App's own script: a click the host does not trust as user input. */
     async scriptedClick(frame: Surface, label: string) {
       const clicked = await evaluate(frame.client, browserScript((text: string) => {
@@ -667,6 +701,31 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
         return Boolean(button);
       }, [label]));
       if (!clicked) throw new Error(`The App has no ${label} button`);
+    },
+    /**
+     * The App frame, by title, where a person sees the given text. A reloaded App replaces a frame
+     * the browser may still list, and a closed or hidden frame keeps its text without rendering it.
+     */
+    async appFrameShowing(title: string, text: string): Promise<Surface & AsyncDisposable> {
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        for (const target of (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe" && entry.url === "about:srcdoc")) {
+          const frame = { handle: app.handle, client: await connect(debuggerUrlFor(app.handle.cdpUrl, target)) };
+          const shown = await evaluate(frame.client, () => document.title).catch(() => "") === title
+            && await locate(frame, { text }).then(found => found.visible && found.hitTestOk, () => false);
+          if (shown) return { ...frame, [Symbol.asyncDispose]: async () => frame.client.close() };
+          frame.client.close();
+        }
+        await delay(500);
+      }
+      const seen: string[] = [];
+      for (const target of (await listTargets(app.handle.cdpUrl)).filter(entry => entry.type === "iframe")) {
+        const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+        seen.push(String(await evaluate(client, () => `${document.body?.getClientRects().length ? "" : "[not rendered] "}${document.title} | ${(document.body?.innerText ?? "").slice(0, 200)}`).catch(() => "unreadable")));
+        client.close();
+      }
+      const host = await evaluate(app.client, () => Array.from(document.querySelectorAll("[data-mcp-app-resource], [role=alert], [role=status]")).map(node => `${node.tagName} ${node.getAttribute("role") ?? ""} ${(node.textContent ?? "").slice(0, 160)}`)).catch(() => []);
+      throw new Error(`No ${title} frame visibly showed "${text}". Frames: ${JSON.stringify(seen)} Host: ${JSON.stringify(host)}`);
     },
     /** An App's isolated frame in the conversation, by its title, for trusted input. */
     async appFrame(title: string): Promise<Surface & AsyncDisposable> {
@@ -687,6 +746,7 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
   };
 }
 
+export const mcpAppServersChatOwnSignIn = (seed: Seed) => mcpAppServersChat(seed, false, { ownSignIn: true });
 export const mcpAppCreationV1 = (seed: Seed) => mcpAppServersChat(seed, false, { engine: "v1", lifecycle: true });
 export const mcpAppCreationV2 = (seed: Seed) => mcpAppServersChat(seed, false, { engine: "v2", lifecycle: true });
 export const mcpAppCreationDesktop = (seed: Seed) => mcpAppServersChat(seed, false, { engine: "v1", desktop: true, lifecycle: true });

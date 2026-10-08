@@ -48,6 +48,16 @@ that team requirement must be removed for clearance to merge PRs. Then any
 approval from someone with write access counts too. The model can be steered by
 text in the diff it reviews, so clearance is a judgment call, not a guarantee.
 
+## Size limits
+
+`warden.toml` and `.warden/contributor.toml` review up to 400 files and
+60,000 changed lines per PR (`[defaults.scan]`); the Warden jobs allow 60
+minutes. Warden lists files beyond those limits as skipped but doesn't fail
+the review for them, so the reporter does: a PR with any file skipped over a
+limit is incomplete, never clear, and its `warden-clear` check and comment say
+to split it. Findings from the part that was reviewed are still posted,
+marked as incomplete, so authors can act on them.
+
 ## Local review
 
 With the model credentials configured, run the pinned CLI:

@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec, type SpecBodyContext } from "@openwork/testkit";
-import { appSource, appTitle, buildPrompt, buildReply, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, mcpAppCreationV1, mcpAppCreationV2, mcpAppCreationDesktop, payload, pricerTitle, record, reopenPrompt, reopenReply, reservationId, rows, toolNames } from "../worlds/mcp-app-servers.ts";
+import { appSource, appTitle, buildPrompt, buildReply, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, mcpAppServersChatOwnSignIn, mcpAppCreationV1, mcpAppCreationV2, mcpAppCreationDesktop, payload, pricerTitle, record, reopenPrompt, reopenReply, reservationId, rows, signInPrompt, signInReply, toolNames } from "../worlds/mcp-app-servers.ts";
 
 const test = spec.world(mcpAppServers, {
   resources: { surfaces: ["web"], services: ["den", "mock"] },
@@ -470,6 +470,72 @@ chatTest("an owner follows App creation progress and opens the finished App besi
 
 });
 
+
+const signInTest = spec.world(mcpAppServersChatOwnSignIn, {
+  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
+  needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000,
+});
+
+signInTest("a person who has not signed in to the service an App uses is asked to sign in, and the App reloads once they do", async ({ world, agent, user, probe, step, evidence }) => {
+  let frame: Awaited<ReturnType<typeof world.appFrame>> | undefined;
+  await using _openFrame = { [Symbol.asyncDispose]: async () => { await frame?.[Symbol.asyncDispose](); } };
+  const focus = async () => {
+    await frame?.[Symbol.asyncDispose]();
+    frame = await world.appFrame(appTitle);
+    return user.on(frame);
+  };
+  // Inventory signs each person in with their own account.
+  const signInRow = { text: `Sign in to ${world.inventoryName} to use ${appTitle}` };
+
+  await step("signed in to Inventory, the owner opens the Order calculator and its price loads with no prompt", async () => {
+    expect(await world.inventorySignedIn()).toBe(true);
+    const openedAt = new Date().toISOString();
+    await agent.send(chatPrompt);
+    await user.see({ text: chatReply }, { timeoutMs: 120_000 });
+    const calculator = await focus();
+    await calculator.see({ testId: "order-line" }, { text: pricedLine, timeoutMs: 90_000 });
+    await user.notSee({ role: "button", label: "Sign in" });
+    expect((await world.inventoryCalls({ sinceIso: openedAt, atLeast: 1 })).map(call => call.args)).toEqual([{ sku: launchInput.sku }]);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("A connected person sees no sign-in prompt", `Signed in to ${world.inventoryName}, the owner opened ${appTitle}: one Inventory lookup ran, the order line reads "${pricedLine}", and no Sign in button was shown.`, true);
+  });
+
+  await step("before: without an Inventory sign-in, the App's price lookup fails and the App asks the person to sign in", async () => {
+    await frame?.[Symbol.asyncDispose]();
+    frame = undefined;
+    await world.disconnectInventory();
+    expect(await world.inventorySignedIn()).toBe(false);
+    const openedAt = new Date().toISOString();
+    await agent.send(signInPrompt);
+    await user.see({ text: signInReply }, { timeoutMs: 120_000 });
+    await user.see(signInRow, { timeoutMs: 60_000 });
+    await user.see({ role: "button", label: "Sign in" });
+    const calculator = await focus();
+    await calculator.see({ role: "button", label: "Look up price" }, { timeoutMs: 90_000 });
+    await calculator.see({ testId: "order-line" }, { text: orderLine });
+    await user.notSee({ text: /needs_connection|connectionStatus/ });
+    expect(await world.inventoryCalls({ sinceIso: openedAt })).toEqual([]);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("A missing sign-in is named above the App", `After the owner disconnected their own Inventory account, opening ${appTitle} showed "Sign in to ${world.inventoryName} to use ${appTitle}" with one Sign in button above the App. Its price lookup never reached Inventory (0 lookups), so the order line reads "${orderLine}" with no price.`, true);
+  });
+
+  await step("after: one click on Sign in completes Inventory's sign-in, and the App reloads with its price", async () => {
+    const signedInAt = new Date().toISOString();
+    await user.click({ role: "button", label: "Sign in" });
+    await probe.eventually(() => world.inventorySignedIn(), { within: 90_000, intervalMs: 1_000, label: "the owner's Inventory sign-in completes", until: signedIn => signedIn });
+    await world.returnToOpenWork();
+    await user.notSee(signInRow, { timeoutMs: 60_000 });
+    // The reload replaces the App's frame; read the new one, not the closed one the browser may still list.
+    await frame?.[Symbol.asyncDispose]();
+    frame = await world.appFrameShowing(appTitle, pricedLine);
+    const calculator = user.on(frame);
+    await calculator.see({ testId: "order-line" }, { text: pricedLine });
+    await calculator.notSee({ role: "button", label: "Look up price" });
+    expect((await world.inventoryCalls({ sinceIso: signedInAt, atLeast: 1 })).map(call => call.args)).toEqual([{ sku: launchInput.sku }]);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Signing in reloads the App", `One click on Sign in completed Inventory's OAuth sign-in (connectedForMe true). The sign-in row went away, ${appTitle} reloaded on its own, and its lookup reached Inventory once, so the order line reads "${pricedLine}".`, true);
+  });
+});
 
 const creationV1Test = spec.world(mcpAppCreationV1, { resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 });
 const creationV2Test = spec.world(mcpAppCreationV2, { resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 });

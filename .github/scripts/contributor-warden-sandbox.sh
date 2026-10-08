@@ -53,7 +53,7 @@ docker network create --internal "$network" > /dev/null
 docker run -d --name "$proxy" \
   --read-only --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 \
   --memory 256m --pids-limit 64 \
-  -e OPENAI_API_KEY -e ALLOWED_MODELS -e MAX_REQUESTS="${MAX_REQUESTS:-600}" ${UPSTREAM:+-e UPSTREAM} \
+  -e OPENAI_API_KEY -e ALLOWED_MODELS -e MAX_REQUESTS="${MAX_REQUESTS:-3000}" ${UPSTREAM:+-e UPSTREAM} \
   -v "$PROXY_SCRIPT:/proxy.mjs:ro" \
   "$IMAGE" node /proxy.mjs > /dev/null
 docker network connect "$network" "$proxy"

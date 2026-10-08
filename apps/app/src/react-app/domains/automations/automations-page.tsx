@@ -198,7 +198,7 @@ export function AutomationsPage(props: {
   const placement = automationCreationPlacement()
 
   const listQuery = useAutomationListQuery(denContext)
-  const { placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsFor } = useAutomationEditorSetup(denContext, props.providerCatalog)
+  const { placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsByPlacementFor, modelsFor } = useAutomationEditorSetup(denContext, props.providerCatalog, props.workspaceId)
   const runnerPresenceQuery = useQuery({
     queryKey: [...queryRoot, "runner-presence"],
     queryFn: () => client!.getAutomationDesktopRunnerPresence(organizationId!),
@@ -428,8 +428,8 @@ export function AutomationsPage(props: {
             initialKey={detail.revision.id}
             busy={busyAction === "update"}
             openModelPickerOnMount={repairingModel}
-            modelOptions={modelsFor(detailPlacement)}
-            modelOptionsByPlacement={modelsByPlacement}
+            modelOptions={modelsFor(detailPlacement, detail.revision.workspaceId)}
+            modelOptionsByPlacement={modelsByPlacementFor(detail.revision.workspaceId)}
             providerCatalog={props.providerCatalog}
             submitLabel="Save changes"
             onCancel={() => {
@@ -590,7 +590,7 @@ export function AutomationsPage(props: {
                 <CardDescription>{detail.revision.executionTarget === "cloud" ? "Runs on your cloud computer, even when your desktop is offline." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
-                <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, modelsFor(detailPlacement))}</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, modelsFor(detailPlacement, detail.revision.workspaceId))}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Next run</span><p className="break-words">{task.state === "needs_attention" ? "No future run scheduled" : formatAutomationTime(task.nextDueAt)}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Runtime limit</span><p className="break-words">{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Integrations</span><p className="break-words">Your available OpenWork Connect tools</p></div>

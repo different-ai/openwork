@@ -8,7 +8,8 @@ import { useOpeningSessionHistory } from "../src/react-app/domains/session/surfa
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { composeNativeSessionHistory } from "../src/app/lib/opencode-session-native";
 import { createClient } from "../src/app/lib/opencode";
-import { interruptSessionTurn } from "../src/app/lib/opencode-interruption";
+import { createSessionInterruptionClient, interruptSessionTurn, submitImmediateSessionTurn } from "../src/app/lib/opencode-interruption";
+import { createClientV2 } from "../src/app/lib/opencode-v2-adapter";
 import { buildOpenworkSessionSystemContext, clearOpenworkEnvSystemContextCache } from "../src/react-app/domains/session/sync/env-context";
 
 const originalWindow = globalThis.window;
@@ -19,7 +20,7 @@ afterEach(() => {
   clearOpenworkEnvSystemContextCache();
 });
 
-function fixture() {
+function fixture(options: { renderer?: () => Promise<void> } = {}) {
   const main: Request[] = [];
   const renderer: Request[] = [];
   const directory = "/fixture/send";
@@ -45,6 +46,7 @@ function fixture() {
   const raw: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     renderer.push(request);
+    await options.renderer?.();
     return Response.json(respond(request));
   };
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: raw });
@@ -117,13 +119,76 @@ test("ordinary-send environment preflight opts in without changing other environ
 
 test("Stop verification uses its scoped client for foreground descendants, ownership, idle and approvals", async () => {
   const world = fixture();
-  const client = createClient(world.base, world.directory, { token: "fixture-client", mode: "openwork" }, { desktopTransport: "main" });
+  const ordinaryClient = createClient(world.base, world.directory, { token: "fixture-client", mode: "openwork" });
+  const client = createSessionInterruptionClient(world.base, ordinaryClient, world.directory, "fixture-client");
   await interruptSessionTurn(world.base, client, "ses_root", world.directory, { timeoutMs: 2_000 });
   expect(world.renderer).toHaveLength(0);
   const paths = world.main.map(request => new URL(request.url).pathname.replace("/workspace/ws_fixture/opencode", ""));
   for (const path of ["/session/ses_root/abort", "/session/ses_child/abort", "/session/ses_child", "/session/ses_child/message", "/path", "/session/status", "/permission", "/question"]) expect(paths).toContain(path);
   expect(paths.some(path => path.includes("prompt"))).toBe(false);
   expect(world.main.every(request => request.headers.get("authorization") === "Bearer fixture-client" && new URL(request.url).searchParams.get("directory") === world.directory)).toBe(true);
+});
+
+for (const fault of ["blocked", "rejected"]) {
+  test(`immediate foreground handoff completes once while ordinary renderer traffic is ${fault}`, async () => {
+    const rendererGate = Promise.withResolvers<void>();
+    let rendererSettled = false;
+    const world = fixture({ renderer: async () => {
+      if (fault === "rejected") throw new Error("Renderer unavailable");
+      await rendererGate.promise;
+    } });
+    const ordinaryClient = createClient(world.base, world.directory, { token: "fixture-client", mode: "openwork" });
+    const client = createSessionInterruptionClient(world.base, ordinaryClient, ` ${world.directory} `, "fixture-client");
+    const history = await composeNativeSessionHistory({ opencodeBaseUrl: world.base, token: "fixture-client", desktopTransport: "main" }, "ses_root");
+    world.main.length = 0;
+    const background = ordinaryClient.session.status().finally(() => { rendererSettled = true; });
+    const sends: boolean[] = [];
+    const sending = submitImmediateSessionTurn(world.base, client, "ses_root", history.messages, async (afterStop) => {
+      sends.push(afterStop);
+      return "accepted";
+    }, { directory: world.directory, messageID: "msg_successor" });
+    const deadline = Promise.withResolvers<never>();
+    const timer = setTimeout(() => deadline.reject(new Error("Interruption waited on renderer traffic")), 1_000);
+    try {
+      expect(await Promise.race([sending, deadline.promise])).toBe("accepted");
+      expect(sends).toEqual([true]);
+      expect(world.renderer).toHaveLength(1);
+      expect(new URL(world.renderer[0].url).pathname).toEndWith("/session/status");
+      if (fault === "blocked") expect(rendererSettled).toBe(false);
+      else expect((await background).error).toBeDefined();
+      const paths = world.main.map(request => new URL(request.url).pathname.replace("/workspace/ws_fixture/opencode", ""));
+      for (const path of ["/session/ses_root/abort", "/session/ses_child/abort", "/session/ses_child", "/session/ses_child/message", "/path", "/session/status", "/permission", "/question"]) expect(paths).toContain(path);
+      expect(paths.some(path => path.includes("prompt"))).toBe(false);
+      expect(world.main.every(request => request.headers.get("authorization") === "Bearer fixture-client" && new URL(request.url).searchParams.get("directory") === world.directory)).toBe(true);
+    } finally {
+      clearTimeout(timer);
+      rendererGate.resolve();
+      await Promise.allSettled([background, sending]);
+    }
+    expect(sends).toEqual([true]);
+  });
+}
+
+test("immediate sends without foreground delegation do not interrupt or reroute ordinary reads", async () => {
+  const world = fixture();
+  const ordinaryClient = createClient(world.base, world.directory, { token: "fixture-client", mode: "openwork" });
+  const client = createSessionInterruptionClient(world.base, ordinaryClient, world.directory, "fixture-client");
+  const sends: boolean[] = [];
+  await submitImmediateSessionTurn(world.base, client, "ses_root", [], async (afterStop) => { sends.push(afterStop); });
+  expect(sends).toEqual([false]);
+  expect(world.main).toHaveLength(0);
+  await ordinaryClient.session.status();
+  expect(world.renderer).toHaveLength(1);
+  expect(world.main).toHaveLength(0);
+});
+
+test("v2 interruption preserves the ordinary adapter instance", () => {
+  const world = fixture();
+  const base = world.base.replace(/opencode$/, "opencode2");
+  const ordinaryClient = createClientV2(base, world.directory, { token: "fixture-client" });
+  expect(createSessionInterruptionClient(base, ordinaryClient, world.directory, "fixture-client")).toBe(ordinaryClient);
+  expect(world.main).toHaveLength(0);
+  expect(world.renderer).toHaveLength(0);
 });
 
 test("Stop's final history refresh opts in without changing ordinary snapshot transport", async () => {

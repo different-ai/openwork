@@ -96,7 +96,7 @@ jobs:
       - name: Test the shared Calendar logic
         run: pnpm --filter @openwork/calendar test
       - name: Test fork authorization and free screening policy
-        run: node --test .github/scripts/contributor-pr.test.mjs .github/scripts/contributor-screen.test.mjs .github/scripts/warden-check.test.mjs
+        run: node --test .github/scripts/contributor-pr.test.mjs .github/scripts/contributor-screen.test.mjs .github/scripts/warden-check.test.mjs .github/scripts/warden-report.test.mjs
       - name: Run core unit tests
         run: pnpm --dir evals run test:core
       # Uses the pinned OpenCode that Setup tests put on PATH.

@@ -25,7 +25,7 @@ type PageScope = {
   hydrating: boolean;
   removed: Set<string>;
   expiredPositions: WeakSet<Page>;
-  request: AbortController | null;
+  request: (AbortController & { restore: boolean }) | null;
   failed: Direction | null;
   state: Pages | null;
   baseline: Map<string, UIMessage>;
@@ -271,11 +271,14 @@ export function useSessionHistoryPages(input: {
       publish({ ...state, pages: state.pages.map((page, position) => position === index ? opening : page) }, false, input.initialBaseline, [opening]);
     }
   }, [client, historyKey, input.initial, input.initialBaseline, input.complete, input.saved, input.sessionId, input.owner, install, publish, scope]);
-  const load = useCallback(async (direction: Direction, options?: { desktopTransport: "main" }, rejectCancelled = false): Promise<void> => {
+  const load = useCallback(async (requestedDirection: Direction | "restore", options?: { desktopTransport: "main" }, rejectCancelled = false): Promise<void> => {
+    if (requestedDirection === "restore" && scope.restoreCancelled) return;
+    const direction = requestedDirection === "restore" ? "older" : requestedDirection;
     if (direction === "latest" && scope.request && scope.active && currentScope.current === scope) {
-      scope.request.abort();
+      const pending = scope.request;
+      pending.abort();
       await client.cancelQueries({ queryKey: pageKey });
-      scope.request = null;
+      if (scope.request === pending) scope.request = null;
     }
     const state = scope.state;
     if (!state || !scope.active || currentScope.current !== scope || scope.request || input.complete) return;
@@ -291,7 +294,7 @@ export function useSessionHistoryPages(input: {
     const limit = newest.pagination.limit;
     const baseline = client.getQueryData<LatestSessionHistory>(historyKey)?.messages ?? EMPTY;
     const sourceBefore = new Map(readSource().map((message) => [message.id, message]));
-    const controller = new AbortController();
+    const controller = Object.assign(new AbortController(), { restore: requestedDirection === "restore" });
     scope.request = controller;
     scope.failed = null;
     setStatus({ scope, pending: true, failed: false });
@@ -307,7 +310,7 @@ export function useSessionHistoryPages(input: {
       });
       if (rejectCancelled && readSignal?.aborted) throw new CancelledError();
       if (currentScope.current !== scope || !scope.active) return;
-      if (scope.state !== state) throw new CancelledError();
+      if (scope.request !== controller || controller.signal.aborted || scope.state !== state) throw new CancelledError();
       const overlap = direction === "newer" && snapshot.messages.some((message) => newest.messages.some((current) => current.info.id === message.info.id));
       if (!isPage(snapshot) || (snapshot.pagination.before ?? null) !== before
         || snapshot.pagination.nextCursor !== null && (snapshot.pagination.nextCursor === before
@@ -454,11 +457,16 @@ export function useSessionHistoryPages(input: {
   const anchorPending = Boolean(savedAnchor && state && !input.complete && !scope.restoreCancelled
     && !scope.ids.has(nativeId(savedAnchor)) && !scope.removed.has(nativeId(savedAnchor)) && state.pages[0].pagination.nextCursor !== null);
   useEffect(() => {
-    if (anchorPending && !scope.request && !scope.failed) void load("older").catch(() => undefined);
+    if (anchorPending && !scope.request && !scope.failed) void load("restore").catch(() => undefined);
   }, [anchorPending, load, revision, scope, status]);
   const cancelRestore = useCallback(() => {
-    if (scope.restoreCancelled) return;
+    if (!scope.active || currentScope.current !== scope || scope.restoreCancelled) return;
     scope.restoreCancelled = true;
+    if (scope.request?.restore) {
+      scope.request.abort();
+      scope.request = null;
+      setStatus({ scope, pending: false, failed: false });
+    }
     render((value) => value + 1);
   }, [scope]);
   const readLatestForSend = useCallback(async (options?: { desktopTransport: "main" }) => {

@@ -33,13 +33,13 @@ export type ModelsDevProvider = {
   models: ModelsDevModel[]
 }
 
-let modelsDevCache:
-  | {
-      expiresAt: number
-      providers: ModelsDevProvider[]
-      providersById: Map<string, ModelsDevProvider>
-    }
-  | null = null
+type ModelsDevCatalog = {
+  expiresAt: number
+  providers: ModelsDevProvider[]
+  providersById: Map<string, ModelsDevProvider>
+}
+
+let modelsDevCache: ModelsDevCatalog | null = null
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -55,11 +55,7 @@ function asStringList(value: unknown): string[] {
     : []
 }
 
-async function loadModelsDevCatalog() {
-  if (modelsDevCache && modelsDevCache.expiresAt > Date.now()) {
-    return modelsDevCache
-  }
-
+async function fetchModelsDevCatalog() {
   const response = await fetch(MODELS_DEV_API_URL, {
     signal: AbortSignal.timeout(10_000),
     headers: {
@@ -127,6 +123,16 @@ async function loadModelsDevCatalog() {
 
   modelsDevCache = nextCache
   return nextCache
+}
+
+// Only the public catalog is shared. Provider configuration and authorization
+// still run independently for every request. Failed refreshes remain retryable.
+let modelsDevInflight: Promise<ModelsDevCatalog> | null = null
+
+async function loadModelsDevCatalog() {
+  if (modelsDevCache && modelsDevCache.expiresAt > Date.now()) return modelsDevCache
+  modelsDevInflight ??= fetchModelsDevCatalog().finally(() => { modelsDevInflight = null })
+  return modelsDevInflight
 }
 
 export async function listModelsDevProviders(): Promise<ModelsDevProviderSummary[]> {

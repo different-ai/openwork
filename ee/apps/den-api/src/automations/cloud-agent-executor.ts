@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { createHeadlessThreadClient, type HeadlessThreadTranscript } from "@openwork/headless-threads"
+import { createHeadlessThreadClient, isHeadlessModelAccessError, type HeadlessThreadTranscript } from "@openwork/headless-threads"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -317,7 +317,7 @@ export type CloudConnectDeps = {
 
 type CloudConnectResult =
   | { ok: true }
-  | { ok: false; code: "connect_access_unavailable" | "model_access_lost" | "provider_unavailable"; message: string }
+  | { ok: false; code: "connect_access_unavailable" | "model_access_lost" | "provider_unavailable" | "execution_failed"; message: string }
 
 /**
  * Den leaves a per-member provider off the owner's worker while the owner has
@@ -421,10 +421,17 @@ export async function connectHealth(input: {
     health = isRecord(refreshed?.health) ? refreshed.health : null
   }
   if (health?.usable === true && health.usableByCurrentModel === true) return { ok: true }
-  if (health?.usable === true && health.usableByCurrentModel !== true) {
-    return { ok: false, code: "model_access_lost", message: "The selected model cannot use the current OpenWork Connect capabilities." }
-  }
   const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
+  if (failure?.code === "provider_tool_projection_missing") {
+    return { ok: false, code: "model_access_lost", message: "The selected model cannot use the current OpenWork Connect capabilities. Choose a supported model to resume this Automation." }
+  }
+  if (failure?.stage === "provider_projection" || health?.usable === true) {
+    return {
+      ok: false,
+      code: "execution_failed",
+      message: "The selected model's availability could not be checked. Retry the run when the runtime catalog is available.",
+    }
+  }
   return {
     ok: false,
     code: "connect_access_unavailable",
@@ -475,7 +482,7 @@ function terminalFailure(input: {
   usage: AutomationUsage
 }): CloudAgentExecution {
   const { error, transcript, usage } = input
-  const modelAccess = error.name === "ProviderAuthError"
+  const modelAccess = isHeadlessModelAccessError(error)
   return {
     ok: false,
     status: "failed",
@@ -585,7 +592,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       signal,
     })
     if (!connect.ok) {
-      return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: true }
+      return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: connect.code !== "execution_failed" }
     }
 
     client = createHeadlessThreadClient({
@@ -594,6 +601,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       token: runtime.access.clientToken,
       hostToken: runtime.access.hostToken,
       requestTimeoutMs: WORKER_REQUEST_TIMEOUT_MS,
+      requireModelAvailability: true,
       fetch: (url, init = {}) => fetchPreviewNoRedirect(previewFetch(), url, init),
       defaultModel: {
         providerId: input.action.model.providerId,
@@ -712,10 +720,12 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
         }
       }
     }
+    const modelAccess = !cancelled && !timedOut && isHeadlessModelAccessError(error)
     return {
       ok: false,
       status: cancelled ? "cancelled" : "failed",
-      code: cancelled ? "cancelled" : timedOut ? "execution_timed_out" : "execution_failed",
+      code: cancelled ? "cancelled" : timedOut ? "execution_timed_out" : modelAccess ? "model_access_lost" : "execution_failed",
+      needsAttention: modelAccess,
       message: cancelled ? "The Automation run was cancelled."
         : timedOut ? "The Automation run exceeded its maximum runtime." : error instanceof Error ? error.message : "Cloud agent execution failed.",
       // A thrown transport or executor error may happen after OpenCode accepted

@@ -6,6 +6,7 @@ const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3978);
 const issuer = process.env.ISSUER || `http://${host}:${port}`;
 const extraToolCount = Number(process.env.MOCK_EXTRA_TOOL_COUNT || 0);
+const protectedResource = process.env.MOCK_PROTECTED_RESOURCE || "";
 const autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
 const rejectDcrRedirectUris = process.env.MOCK_REJECT_DCR_REDIRECT_URIS || "";
@@ -747,7 +748,7 @@ function record(req, url, res) {
 
 function protectedResourceMetadata() {
   return {
-    resource: `${issuer}/mcp`,
+    resource: protectedResource || `${issuer}/mcp`,
     authorization_servers: [issuer],
     scopes_supported: advertisedScopes,
     bearer_methods_supported: ["header"],
