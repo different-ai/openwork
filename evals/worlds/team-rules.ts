@@ -15,6 +15,20 @@ export function teamRules(seed: Seed) {
   return teamRulesOrganization(seed, { web: false });
 }
 
+/** The same organization with permission rules on and the owner on the Contractors team's permissions page. */
+export async function teamRulesEditor(seed: Seed) {
+  const world = await teamRulesOrganization(seed, { web: true });
+  await world.enableTeamRules();
+  const web = await seed.web({
+    den: world.den,
+    signedInAs: world.den.admin,
+    startPath: `/dashboard/permissions/${encodeURIComponent(world.contractorsSetId)}`,
+    headless: true,
+    viewport: { width: 1280, height: 1400 },
+  });
+  return { ...world, web };
+}
+
 async function teamRulesOrganization(seed: Seed, { web, trustedOrigins }: { web: boolean; trustedOrigins?: string[] }) {
   const stamp = Date.now().toString(36);
   const den = await seed.den({

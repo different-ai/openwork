@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { ChevronRight, History, LockKeyhole, ShieldCheck } from "lucide-react";
+import { ChevronRight, History, ListChecks, LockKeyhole, ShieldCheck } from "lucide-react";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, type PermissionKey } from "@openwork/types/den/permissions";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getPermissionsRoute, getTeamRoute, permissionLockReason } from "../../_lib/den-org";
+import { getPermissionsRoute, getTeamRoute, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenToast } from "./den-toast";
 import {
   PermissionsRequestError,
@@ -23,6 +24,7 @@ import {
   type PermissionSetDetail,
   type PermissionStatus,
 } from "./permissions-data";
+import { PermissionSetRules } from "./permission-set-rules";
 import {
   PermissionEditor,
   PermissionRowsSkeleton,
@@ -35,7 +37,7 @@ import {
 } from "./permissions-ui";
 
 type ReadyAccess = Extract<PermissionsAccess, { state: "ready" }>;
-type SetTab = "permissions" | "history";
+type SetTab = "permissions" | "rules" | "history";
 
 function plural(count: number, one: string, many = `${one}s`) {
   return `${count} ${count === 1 ? one : many}`;
@@ -54,6 +56,8 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
   // Lives above the editor, which remounts after each save, so Undo and errors survive it.
   const update = useUpdatePermissionSet(ready.orgId, permissionSetId);
   const [tab, setTab] = useState<SetTab>("permissions");
+  const { orgContext } = useOrgDashboard();
+  const rulesEnabled = orgFeatureEnabled(orgContext, "permissionRules");
   const back = { href: getPermissionsRoute(ready.orgSlug), label: "Permissions" };
 
   if (query.isError) {
@@ -74,6 +78,7 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
   const set = query.data;
   const tabs: readonly TabItem<SetTab>[] = [
     { value: "permissions", label: "Permissions", icon: ShieldCheck },
+    ...(rulesEnabled ? [{ value: "rules", label: "Rules", icon: ListChecks } satisfies TabItem<SetTab>] : []),
     { value: "history", label: "History", icon: History },
   ];
   const removable = set.kind === "team" && set.archivedAt === null && ready.access.canManagePermissions;
@@ -92,6 +97,10 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
         <div role="tabpanel" aria-label="Permissions">
           {/* Remount when the saved state changes so the draft starts from it. */}
           <PermissionSetEditor key={set.permissions.map((state) => state.status).join("")} ready={ready} set={set} update={update} />
+        </div>
+      ) : tab === "rules" && rulesEnabled ? (
+        <div role="tabpanel" aria-label="Rules">
+          <PermissionSetRules orgId={ready.orgId} set={set} readOnlyReason={setReadOnlyReason(ready, set)} />
         </div>
       ) : (
         <div role="tabpanel" aria-label="History">
