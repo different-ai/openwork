@@ -75,8 +75,9 @@ function isSharedGatewayRequest(request: Request, path: string) {
 }
 
 /**
- * Free Auto on a key whose organization pays for OpenWork Models: the Auto status check, or a chat request for the
- * Auto model. Those go to the free handler, which bills the member's free allowance, never the organization.
+ * Free Auto on a key whose organization pays for OpenWork Models: the Auto status check, or a request for the Auto
+ * model that OpenWork Models do not serve. Those go to the free handler, which bills the member's free allowance,
+ * never the organization.
  */
 async function isFreeAutoRequest(request: Request): Promise<boolean> {
   const path = new URL(request.url).pathname
@@ -84,7 +85,10 @@ async function isFreeAutoRequest(request: Request): Promise<boolean> {
   if (request.method !== "POST" || (path !== chatCompletionsPath && path !== MEMBER_FREE_RESPONSES_PATH)) return false
   try {
     const body: unknown = await request.clone().json()
+    // Once OpenWork Models list Auto's model, chat completions for it use the organization's own usage;
+    // free Auto still reaches it through the Responses API.
     return isJsonObject(body) && body.model === INFERENCE_FREE_MODEL_ID
+      && (path === MEMBER_FREE_RESPONSES_PATH || !resolveModelAlias(INFERENCE_FREE_MODEL_ID))
   } catch { return false }
 }
 const topLevelModelSelectorFields = ["models", "fallbacks", "preset", "route"]

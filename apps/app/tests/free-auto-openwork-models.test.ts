@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildModelCatalog, resolveRetainedSelection } from "../src/react-app/domains/models/catalog";
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, shouldSelectInitialAuto } from "../src/react-app/domains/models/model-catalog";
+import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, openWorkModelsAutoReplacement, preferredAutoModel, shouldSelectInitialAuto } from "../src/react-app/domains/models/model-catalog";
 import type { ModelOption } from "../src/app/types";
 
 const auto: ModelOption = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, title: "Auto", isFree: true };
@@ -28,4 +28,19 @@ test("new members with OpenWork Models do not start on free Auto", () => {
   const input = { current: null, empty: true, explicit: false };
   expect(shouldSelectInitialAuto({ ...input, available: [auto, other] })).toBe(true);
   expect(shouldSelectInitialAuto({ ...input, available: [auto, openWorkModel] })).toBe(false);
+});
+
+const openWorkAuto: ModelOption = { providerID: "openwork", modelID: AUTO_MODEL_ID, title: "Auto" };
+
+test("members start on Auto from their OpenWork Models once it is listed", () => {
+  const input = { current: null, empty: true, explicit: false };
+  expect(shouldSelectInitialAuto({ ...input, available: [auto, openWorkModel, openWorkAuto] })).toBe(true);
+  expect(preferredAutoModel([auto, openWorkModel, openWorkAuto])).toBe(openWorkAuto);
+  expect(preferredAutoModel([auto, other])).toBe(auto);
+});
+
+test("a saved free Auto choice moves to OpenWork Models Auto", () => {
+  expect(openWorkModelsAutoReplacement(auto, [auto, openWorkModel, openWorkAuto])).toBe(openWorkAuto);
+  expect(openWorkModelsAutoReplacement(auto, [auto, openWorkModel])).toBeUndefined();
+  expect(openWorkModelsAutoReplacement(other, [auto, openWorkAuto])).toBeUndefined();
 });

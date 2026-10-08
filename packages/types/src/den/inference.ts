@@ -119,6 +119,13 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
+  // Auto's model on the organization's own OpenWork Models usage, counted at half its cost.
+  "openai/gpt-6-luna": {
+    upstreamModel: "openai/gpt-6-luna",
+    displayName: "OpenWork: Auto",
+    enabled: true,
+    usageFactor: 0.5,
+  },
 } as const;
 
 export type InferenceModelAlias = keyof typeof INFERENCE_MODEL_ALIASES;
