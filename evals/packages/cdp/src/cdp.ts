@@ -35,6 +35,8 @@ export interface CdpConnectOptions {
 export interface EvaluateOptions {
   awaitPromise?: true;
   timeoutMs?: number;
+  /** Runs in this execution context (for example an isolated world in a child frame) instead of the page's main one. */
+  contextId?: number;
 }
 
 export type CdpFunctionArgument = string | number | boolean | null | undefined;
@@ -281,12 +283,13 @@ export function connect(
 export async function evaluate<T>(
   client: CdpClient,
   expression: BrowserEvaluation<T>,
-  { awaitPromise = true, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: EvaluateOptions = {},
+  { awaitPromise = true, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS, contextId }: EvaluateOptions = {},
 ): Promise<Awaited<T>> {
   const payload = await client.send("Runtime.evaluate", {
     expression: browserSource(expression),
     awaitPromise,
     returnByValue: true,
+    ...(contextId === undefined ? {} : { contextId }),
   }, { timeoutMs });
   // CDP is the one untyped transport boundary; callers infer the callback result.
   return runtimeResultValue(payload) as Awaited<T>;

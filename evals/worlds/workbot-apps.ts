@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { denFetch } from "@openwork/behaviors";
-import { allocateFreePorts, browserScript, clickAt, connect, debuggerUrlFor, emulateFocus, evaluate, listTargets, type CdpClient, type Surface } from "@openwork/cdp";
+import { allocateFreePorts, browserScript, type BrowserEvaluation, clickAt, connect, debuggerUrlFor, emulateFocus, evaluate, listTargets, type CdpClient, type Surface } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
 import type { Place, Seed } from "@openwork/env";
 import { bootWorkbot, enableWorkbot, signInWorkbot } from "../../worlds/lib/workbot.ts";
@@ -174,12 +174,9 @@ async function openAppView(browser: Surface, sandbox: CdpClient, title: string):
   const world = await sandbox.send("Page.createIsolatedWorld", { frameId, worldName: "workbot-apps-spec" });
   const contextId = record(world) && typeof world.executionContextId === "number" ? world.executionContextId : null;
   if (contextId === null) return null;
-  const read = async (expression: string): Promise<unknown> => {
-    const result = await sandbox.send("Runtime.evaluate", { expression, contextId, returnByValue: true });
-    return record(result) && record(result.result) ? result.result.value : undefined;
-  };
-  if (await read("document.title") !== title) return null;
-  const textOf = async (testId: string) => String(await read(`document.querySelector(${JSON.stringify(`[data-testid="${testId}"]`)})?.textContent ?? ""`));
+  const read = <T>(script: BrowserEvaluation<T>) => evaluate(sandbox, script, { contextId });
+  if (await read(() => document.title) !== title) return null;
+  const textOf = async (testId: string) => await read(browserScript((id: string) => document.querySelector(`[data-testid="${CSS.escape(id)}"]`)?.textContent ?? "", [testId]));
   return {
     async sees(testId, expected, timeoutMs = 30_000) {
       const deadline = Date.now() + timeoutMs;
@@ -191,11 +188,16 @@ async function openAppView(browser: Surface, sandbox: CdpClient, title: string):
       }
       throw new Error(`${title} shows "${shown}" in ${testId}, not ${String(expected)}`);
     },
-    text: async () => String(await read("document.body.innerText")),
+    text: async () => await read(() => document.body.innerText),
     async click(label) {
       // The App fills its sandbox, which fills the frame on the page: the button's place on the page is the sum.
       const where = async () => {
-        const inner = await read(`(() => { const button = Array.from(document.querySelectorAll("button")).find((entry) => entry.textContent.trim() === ${JSON.stringify(label)}); if (!button) return null; const box = button.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; })()`);
+        const inner = await read(browserScript((name: string) => {
+          const button = Array.from(document.querySelectorAll("button")).find((entry) => entry.textContent?.trim() === name);
+          if (!button) return null;
+          const box = button.getBoundingClientRect();
+          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        }, [label]));
         const frame = await evaluate(browser.client, browserScript((name: string) => {
           const element = Array.from(document.querySelectorAll("[data-workbot-app] iframe")).find((entry) => entry.getAttribute("title") === name);
           if (!element) return null;
@@ -203,7 +205,7 @@ async function openAppView(browser: Surface, sandbox: CdpClient, title: string):
           const box = element.getBoundingClientRect();
           return { x: box.x, y: box.y };
         }, [title]));
-        return record(inner) && typeof inner.x === "number" && typeof inner.y === "number" && frame ? { x: frame.x + inner.x, y: frame.y + inner.y } : null;
+        return inner && frame ? { x: frame.x + inner.x, y: frame.y + inner.y } : null;
       };
       // The chat keeps the newest reply in view and an App resizes as it renders: click once the button has settled.
       const deadline = Date.now() + 5_000;

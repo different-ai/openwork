@@ -1965,6 +1965,17 @@ describe("MCP App iframe policy", () => {
     }))).toThrow("markup before its policy-bearing head")
   })
 
+  test("places the policy in time for unclosed repeated tags", () => {
+    for (const tag of ["html", "head", "body"]) {
+      const started = performance.now()
+      const html = secureMcpAppHtml(fixture({ html: `<${tag}\t`.repeat(50_000) }))
+      expect(performance.now() - started).toBeLessThan(1_000)
+      expect(html.indexOf("Content-Security-Policy")).toBeGreaterThan(-1)
+    }
+    const attributed = secureMcpAppHtml(fixture({ html: '<!DOCTYPE html>\n<html lang="en">\n<head data-x="1"><title>A</title></head><body>ok</body></html>' }))
+    expect(attributed).toContain('<head data-x="1"><meta http-equiv="Content-Security-Policy"')
+  })
+
   test("allows only the server-declared origins in each directive", () => {
     const csp = buildMcpAppCsp(fixture({
       csp: {

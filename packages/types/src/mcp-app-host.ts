@@ -164,26 +164,34 @@ function escapeAttribute(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;")
 }
 
+/** Where the first `<name>` or `<name …>` opening tag starts and ends; one forward scan, no backtracking. */
+function findOpeningTag(html: string, pattern: RegExp): { index: number; end: number } | null {
+  const start = pattern.exec(html)
+  if (!start) return null
+  const close = html.indexOf(">", start.index)
+  return close < 0 ? null : { index: start.index, end: close + 1 }
+}
+
 /** The App's HTML with its policy placed first in `<head>`, so nothing in the page runs before the policy applies. */
 export function secureMcpAppHtml(app: { html: string; csp: McpAppCsp }): string {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(buildMcpAppCsp(app))}">`
-  const html = /<html(?:\s[^>]*)?>/i.exec(app.html)
-  if (html?.index !== undefined) {
-    const prefix = app.html.slice(0, html.index).replace(/^﻿/, "")
-    if (!/^\s*(?:<!doctype\s+html\s*>)?\s*$/i.test(prefix)) {
+  const html = findOpeningTag(app.html, /<html(?=[\s>])/i)
+  if (html) {
+    const prefix = app.html.slice(0, html.index).replace(/^\uFEFF/, "").trim()
+    if (prefix && !/^<!doctype\s+html\s*>$/i.test(prefix)) {
       throw new McpAppResourceError("invalid_resource", "The MCP App document contains executable markup before its HTML root.")
     }
-    const htmlEnd = html.index + html[0].length
-    const head = /<head(?:\s[^>]*)?>/i.exec(app.html)
-    if (head?.index !== undefined) {
+    const htmlEnd = html.end
+    const head = findOpeningTag(app.html, /<head(?=[\s>])/i)
+    if (head) {
       if (head.index < htmlEnd || app.html.slice(htmlEnd, head.index).trim()) {
         throw new McpAppResourceError("invalid_resource", "The MCP App document contains markup before its policy-bearing head.")
       }
-      const headEnd = head.index + head[0].length
+      const headEnd = head.end
       return `${app.html.slice(0, headEnd)}${meta}${app.html.slice(headEnd)}`
     }
-    const body = /<body(?:\s[^>]*)?>/i.exec(app.html)
-    if (body?.index !== undefined && (body.index < htmlEnd || app.html.slice(htmlEnd, body.index).trim())) {
+    const body = findOpeningTag(app.html, /<body(?=[\s>])/i)
+    if (body && (body.index < htmlEnd || app.html.slice(htmlEnd, body.index).trim())) {
       throw new McpAppResourceError("invalid_resource", "The MCP App document contains markup before its policy-bearing head.")
     }
     return `${app.html.slice(0, htmlEnd)}<head>${meta}</head>${app.html.slice(htmlEnd)}`
