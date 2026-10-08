@@ -1,4 +1,5 @@
 import { policyRuleDenial, policyRuleDenialMessage, type PolicyRuleAction, type SourcedPolicyRule } from "@openwork/types/den/policy-rules-runtime";
+import { isOrganizationMcpName } from "../organization-mcp-names.js";
 
 type Registration = { dispose(): Promise<void> };
 type PermissionEvent = {
@@ -9,14 +10,19 @@ type PermissionEvent = {
 };
 type ToolError = { error?: { _tag?: unknown; permission?: unknown; resources?: unknown; reason?: string } };
 type ExecuteAfter = { readonly status: string; readonly error?: ToolError };
+type McpEditor = {
+  list(): Iterable<readonly [string, unknown]>;
+  set(name: string, config: Record<string, unknown>): void;
+};
 type Context = {
   options: { rules?: SourcedPolicyRule[] };
+  mcp: { transform(callback: (editor: McpEditor) => void): Promise<Registration> };
   permission: { hook(name: "evaluate", callback: (event: PermissionEvent) => void): Promise<Registration> };
   tool: { hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration> };
 };
 
 // Actions this plugin keeps the organization's rules for.
-const ENFORCED: readonly PolicyRuleAction[] = ["shell"];
+const ENFORCED: readonly PolicyRuleAction[] = ["shell", "skill"];
 
 function enforced(action: unknown): action is PolicyRuleAction {
   return ENFORCED.some((entry) => entry === action);
@@ -51,7 +57,19 @@ export default {
       const message = teamRuleDenial(rules, blocked.permission, blocked.resources);
       if (message !== null) blocked.reason = message;
     });
+    // OpenCode has no permission action for MCP servers, so `mcp` rules apply
+    // to the server registry the way OpenCode's provider policies apply to its
+    // catalog: a blocked local server is kept but disabled, from any source.
+    const servers = rules.some((rule) => rule.action === "mcp")
+      ? await context.mcp.transform((editor) => {
+        for (const [name, server] of [...editor.list()]) {
+          if (isOrganizationMcpName(name) || policyRuleDenial(rules, "mcp", [name]) === null) continue;
+          if (typeof server === "object" && server !== null) editor.set(name, { ...server, disabled: true });
+        }
+      })
+      : undefined;
     return async () => {
+      await servers?.dispose();
       await explain.dispose();
       await permission.dispose();
     };
