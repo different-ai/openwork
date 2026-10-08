@@ -118,8 +118,12 @@ export interface MockMcpHandle {
     tokenErrorDescription?: string;
   }): Promise<void>;
   resetOAuth(): Promise<void>;
-  /** Expire access tokens and hold refresh replies until explicitly released. */
-  holdRefreshResponses(): Promise<void>;
+  /**
+   * Expire access tokens and hold refresh replies until explicitly released.
+   * `keep-latest` models providers whose every refresh, including one that
+   * presents the previous refresh token, leaves only its new token usable.
+   */
+  holdRefreshResponses(options?: { rotation?: "reject-reuse" | "keep-latest" }): Promise<void>;
   pendingRefreshResponses(): Promise<{ id: number; status: number; tokenId: string }[]>;
   releaseRefreshResponse(id: number): Promise<void>;
   stop(): Promise<void>;
@@ -659,8 +663,13 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       const response = await fetch(`${url}/admin/expire-oauth-tokens`, { method: "POST" });
       if (!response.ok) throw new Error(`Mock OAuth reset failed: HTTP ${response.status}`);
     },
-    async holdRefreshResponses() {
-      const response = await fetch(`${url}/admin/refresh-responses`, { method: "POST", signal: AbortSignal.timeout(5_000) });
+    async holdRefreshResponses(options = {}) {
+      const response = await fetch(`${url}/admin/refresh-responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(options),
+        signal: AbortSignal.timeout(5_000),
+      });
       if (!response.ok) throw new Error(`Mock refresh hold failed: HTTP ${response.status}`);
     },
     async pendingRefreshResponses() {

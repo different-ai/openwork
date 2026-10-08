@@ -145,7 +145,29 @@ export interface EnterpriseMcpOAuthCredentialPort {
     context: EnterpriseMcpPersistenceContext
     reason: "expired" | "provider-rejected" | "post-authorization-validation-failed"
   }): Promise<void>
+  /**
+   * Optional. Runs one refresh-token grant at a time per credential, across
+   * every process sharing the store. Providers that rotate refresh tokens keep
+   * only one of several concurrent refreshes valid, so parallel grants can
+   * leave the saved credential unusable. The adapter holds the credential
+   * exclusively, then:
+   * - returns `superseded` with the current credential (if any), without
+   *   calling `refresh`, when the stored refresh token is no longer
+   *   `refreshToken`;
+   * - otherwise calls `refresh` and, when it returns tokens, commits them as a
+   *   refresh before releasing the credential (`refreshed`), or commits
+   *   nothing (`not-saved`).
+   */
+  refreshExclusively?(input: {
+    context: EnterpriseMcpPersistenceContext
+    refreshToken: string
+    refresh: () => Promise<{ tokens: StoredOAuthTokens; expiresAt?: EnterpriseMcpEpochMs } | undefined>
+  }): Promise<EnterpriseMcpOAuthRefreshOutcome>
 }
+
+export type EnterpriseMcpOAuthRefreshOutcome =
+  | { status: "refreshed" | "not-saved" }
+  | { status: "superseded"; credential?: EnterpriseMcpOAuthCredential }
 
 /** Application-owned ports. No database, tenant, or deployment shape leaks in. */
 export type EnterpriseMcpOAuthPersistence = {

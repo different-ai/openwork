@@ -295,7 +295,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       authProvider: input.flow.kind === "callback" && oauthProvider
         ? { token: async () => (await oauthProvider.tokens())?.access_token }
         : oauthProvider,
-      fetch: observer.fetch,
+      fetch: oauthProvider ? oauthProvider.exclusiveRefreshFetch(observer.fetch) : observer.fetch,
       requestInit: requestInit(input.connection.authorization),
     })
     const capabilities = {

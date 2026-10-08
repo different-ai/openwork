@@ -162,35 +162,6 @@ for (const issuerSupport of [true, false, undefined]) {
         });
         expect(invalidations(await den.apiLog())).toHaveLength(0);
 
-        await provider.holdRefreshResponses();
-        const first = denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
-        await eventually(() => provider.pendingRefreshResponses(), { within: 8_000, intervalMs: 50, until: (responses) => responses.length === 1, label: "first refresh response held" });
-        const second = denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
-        const pending = await eventually(() => provider.pendingRefreshResponses(), { within: 8_000, intervalMs: 50, until: (responses) => responses.length === 2, label: "two concurrent refresh responses held" });
-        const success = pending.find((response) => response.status === 200);
-        const failure = pending.find((response) => response.status === 400);
-        expect(success).toBeDefined();
-        expect(failure).toBeDefined();
-        if (!success || !failure) throw new Error("Expected one successful rotation and one rejected refresh");
-        expect(failure.tokenId).toBe(success.tokenId);
-        await provider.releaseRefreshResponse(success.id);
-        const refreshed = await first;
-        expect(refreshed.response.status, refreshed.text).toBe(200);
-        await provider.releaseRefreshResponse(failure.id);
-        const recovered = await second;
-        expect(recovered.response.status, recovered.text).toBe(200);
-        const afterRace = await denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
-        expect(afterRace.response.status, afterRace.text).toBe(200);
-        const raceLogs = await den.apiLog();
-        expect(invalidations(raceLogs)).toHaveLength(0);
-        const preserved = invalidations(raceLogs, "external_mcp_credential_invalidation_skipped");
-        expect(preserved).toHaveLength(1);
-        expect(preserved[0]).toMatchObject({ mode: credentialMode, reason: "provider-rejected", skip_reason: "revision-changed", revision_changed: true, had_access: true, had_refresh: true });
-        expect(preserved[0].current_revision).not.toBe(preserved[0].loaded_revision);
-        expect(preserved[0].diagnostic).toMatchObject({ httpStatus: 400, providerErrorMessage: expect.stringContaining("invalid_grant") });
-        expect(JSON.stringify(preserved)).not.toMatch(/mock-access-|mock-refresh-|code_verifier|client_secret/);
-        evidence.recordAssertionEvidence(`Den preserves renewed ${credentialMode} credentials after a late rejection`, "Two requests used the same refresh grant. The successful rotation completed before the held invalid_grant was released. A subsequent authenticated tools request succeeded, zero deletion events were logged, and one skipped invalidation named different loaded/current revisions.", true);
-
         await provider.resetOAuth();
         const tokenRequestsBefore = (await provider.requests()).filter((entry) => entry.path === "/token").length;
         const rejected = await denFetch(den.admin, `/v1/mcp-connections/${id}/tools`, { headers });
