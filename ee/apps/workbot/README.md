@@ -30,6 +30,23 @@ returns at once while their Den session lasts. Den is asked who the person is at
 30 seconds, so a revoked grant or membership signs them out quickly. Changes must come from this site's own origin.
 Signing out revokes the refresh token at Den.
 
+## The phone app
+
+The [Workbot app](../workbot-mobile) for iPhone and Android signs in through Workbot, so Den keeps one return address
+and the phone never holds Den tokens:
+
+1. The app opens `/auth/app/login` in the system's sign-in browser with its own PKCE challenge, its state and its
+   return address (one of `WORKBOT_APP_REDIRECT_URIS`).
+2. Workbot sends the person to Den with that challenge. Den returns to Workbot's `/auth/callback`, which hands the
+   code to the app's address.
+3. The app trades the code and its verifier at `POST /auth/app/token` for a Workbot session, encrypted with
+   `WORKBOT_SESSION_SECRET` like the cookie, and sends it as `Authorization: Bearer`. When the Den tokens inside are refreshed, the response
+   carries the new session in `Workbot-Session`; `POST /auth/app/refresh` renews it before it expires, and
+   `POST /auth/logout` revokes it.
+
+The phone also needs the `workbotMobile` feature. Without it, `/v1/workbot/me` says so and every other request is
+refused with `workbot_mobile_not_enabled`.
+
 ## Configuration
 
 | Variable | | |
@@ -39,6 +56,7 @@ Signing out revokes the refresh token at Den.
 | `WORKBOT_DEN_WEB_URL` | sign-in origin | Den's web app, for the link back and app logos |
 | `WORKBOT_RUNNER_URL`, `WORKBOT_RUNNER_TOKEN` | required | The headless runner and its service token (`HEADLESS_API_TOKEN`) |
 | `WORKBOT_SESSION_SECRET` | required | ≥ 32 characters; encrypts the sign-in cookies. Changing it signs everyone out |
+| `WORKBOT_APP_REDIRECT_URIS` | `com.openworklabs.workbot:/auth/callback` | The phone app's return addresses, comma-separated. A loopback `WORKBOT_PUBLIC_URL` also allows the development build's `com.openworklabs.workbot.dev:/auth/callback` |
 | `PORT` / `WORKBOT_PORT` | `3020` | |
 
 On Den, set `DEN_WORKBOT_URL` (den-api) to the same address as `WORKBOT_PUBLIC_URL`; den-web's `/workbot` redirects
