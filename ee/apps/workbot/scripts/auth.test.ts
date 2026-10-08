@@ -6,7 +6,8 @@ import { DenSignedOutError, type DenSession } from "../src/server/den.js"
 import type { Tokens } from "../src/server/sealed.js"
 
 const SECRET = "test-secret-test-secret-test-secret-0001"
-const config = { publicUrl: "https://workbot.test", secureCookies: true, sessionSecret: SECRET }
+const APP_REDIRECT = "com.openworklabs.workbot:/auth/callback"
+const config = { publicUrl: "https://workbot.test", secureCookies: true, sessionSecret: SECRET, appRedirectUris: [APP_REDIRECT] }
 const who: DenSession = {
   user: { id: "user_test", name: "Test Person", email: "person@example.test" },
   organization: { id: "org_test", name: "Test Org", brandAppName: null },
@@ -14,19 +15,23 @@ const who: DenSession = {
   enabled: true,
   canSchedule: false,
   sideChats: true,
+  mobile: true,
 }
 // About the size of Den's JWT access tokens, so the cookie-size limit is exercised realistically.
 const accessToken = (n: number) => `access-${n}-${"x".repeat(1_400)}`
 
 function world(options: { secret?: string } = {}) {
   let clock = 1_000_000
-  const calls = { refresh: [] as string[], revoke: [] as string[] }
+  const calls = { refresh: [] as string[], revoke: [] as string[], exchange: [] as string[] }
   let refreshes = 0
   let refreshOutcome: "ok" | "signed_out" = "ok"
   let releaseRefresh: (() => void) | null = null
   const den: DenAuth = {
-    authorizeUrl: async ({ state }) => `https://den.test/authorize?state=${state}`,
-    exchangeCode: async (): Promise<Tokens> => ({ accessToken: accessToken(0), refreshToken: "refresh-0", expiresAt: clock + 45 * 60_000 }),
+    authorizeUrl: async (input) => `https://den.test/authorize?${new URLSearchParams({ state: input.state, ...("challenge" in input ? { code_challenge: input.challenge } : {}) })}`,
+    exchangeCode: async (_code, verifier): Promise<Tokens> => {
+      calls.exchange.push(verifier)
+      return { accessToken: accessToken(0), refreshToken: "refresh-0", expiresAt: clock + 45 * 60_000 }
+    },
     session: async () => who,
     refresh: async (refreshToken) => {
       calls.refresh.push(refreshToken)
@@ -153,4 +158,106 @@ test("Den refusing a refresh signs the person out; signing out revokes the refre
   const refused = await pending
   assert.equal(refused.status, 401)
   assert.ok(refused.headers.getSetCookie().some((cookie) => cookie.startsWith("__Host-workbot=;")))
+})
+
+/** The phone app's sign-in, as the app does it: its own PKCE pair and state, Den's code back at its address. */
+async function signInApp(app: Hono<AppEnv>) {
+  const verifier = "v".repeat(43)
+  const challenge = "c".repeat(43)
+  const appState = "app-state-0123456789"
+  const login = await app.request(`/auth/app/login?${new URLSearchParams({ code_challenge: challenge, code_challenge_method: "S256", state: appState, redirect_uri: APP_REDIRECT })}`)
+  assert.equal(login.status, 302)
+  assert.equal(login.headers.getSetCookie().length, 0)
+  const authorize = new URL(login.headers.get("location") ?? "")
+  assert.equal(authorize.searchParams.get("code_challenge"), challenge)
+  const state = authorize.searchParams.get("state") ?? ""
+  const callback = await app.request(`/auth/callback?state=${encodeURIComponent(state)}&code=den-code`)
+  assert.equal(callback.status, 302)
+  assert.equal(callback.headers.getSetCookie().length, 0)
+  const back = new URL(callback.headers.get("location") ?? "")
+  assert.equal(`${back.protocol}${back.pathname}`, APP_REDIRECT)
+  assert.equal(back.searchParams.get("code"), "den-code")
+  assert.equal(back.searchParams.get("state"), appState)
+  const token = await app.request("/auth/app/token", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: "den-code", codeVerifier: verifier, redirectUri: APP_REDIRECT }),
+  })
+  assert.equal(token.status, 200)
+  const body = (await token.json()) as { session: string; expiresAt: number }
+  assert.ok(body.session.length < 3_800)
+  return { session: body.session, expiresAt: body.expiresAt, verifier, state }
+}
+
+const meApp = (app: Hono<AppEnv>, session: string) => app.request("/v1/workbot/me", { headers: { authorization: `Bearer ${session}` } })
+
+test("the phone app signs in with its own PKCE pair, gets a sealed session, and any instance serves it", async () => {
+  const w = world()
+  const { session, verifier } = await signInApp(w.instance())
+  assert.deepEqual(w.calls.exchange, [verifier])
+  const elsewhere = await meApp(w.instance(), session)
+  assert.equal(elsewhere.status, 200)
+  assert.deepEqual(await elsewhere.json(), { token: "access-0-" })
+  assert.equal(elsewhere.headers.get("workbot-session"), null)
+  assert.equal(elsewhere.headers.getSetCookie().length, 0)
+})
+
+test("phone sign-in refuses other return addresses, plain challenges and stale or foreign sessions", async () => {
+  const w = world()
+  const app = w.instance()
+  const start = (params: Record<string, string>) =>
+    app.request(`/auth/app/login?${new URLSearchParams({ code_challenge: "c".repeat(43), code_challenge_method: "S256", state: "app-state-0123456789", redirect_uri: APP_REDIRECT, ...params })}`)
+  assert.equal((await start({ redirect_uri: "https://evil.test/callback" })).status, 400)
+  assert.equal((await start({ redirect_uri: "com.evil.app:/auth/callback" })).status, 400)
+  assert.equal((await start({ code_challenge_method: "plain" })).status, 400)
+  assert.equal((await start({ state: "short" })).status, 400)
+  const token = (body: unknown) => app.request("/auth/app/token", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+  assert.equal((await token({ code: "c", codeVerifier: "v".repeat(43), redirectUri: "com.evil.app:/auth/callback" })).status, 400)
+  assert.equal((await token({ code: "c", codeVerifier: "short", redirectUri: APP_REDIRECT })).status, 400)
+
+  // A sign-in that took longer than ten minutes doesn't go back to the app.
+  const login = await start({})
+  const state = new URL(login.headers.get("location") ?? "").searchParams.get("state") ?? ""
+  w.advance(11 * 60_000)
+  assert.equal((await app.request(`/auth/callback?state=${encodeURIComponent(state)}&code=c`)).status, 400)
+
+  // A browser's cookie value, or another secret's session, is not an app session.
+  const { session: cookie } = await signIn(app)
+  assert.equal((await meApp(app, cookie)).status, 401)
+  const { session } = await signInApp(app)
+  assert.equal((await meApp(world({ secret: "another-secret-another-secret-0002" }).instance(), session)).status, 401)
+  assert.equal((await me(app, session)).status, 401)
+})
+
+test("the phone app's session refreshes once for parallel requests and comes back in a header; logout revokes it", async () => {
+  const w = world()
+  const app = w.instance()
+  const { session: before } = await signInApp(app)
+  w.advance(44 * 60_000)
+  const parallel = Promise.all([meApp(app, before), meApp(app, before), meApp(app, before)])
+  await w.release()
+  const responses = await parallel
+  assert.deepEqual(responses.map((response) => response.status), [200, 200, 200])
+  assert.deepEqual(w.calls.refresh, ["refresh-0"])
+  const after = responses[0]?.headers.get("workbot-session")
+  assert.ok(after && after !== before)
+  assert.ok(Number(responses[0]?.headers.get("workbot-session-expires")) > 0)
+  assert.deepEqual(await (await meApp(w.instance(), after)).json(), { token: "access-1-" })
+  assert.deepEqual(w.calls.refresh, ["refresh-0"])
+
+  // Ahead of time: the app asks for a fresh session six minutes before its token runs out.
+  const refreshed = await app.request("/auth/app/refresh", { method: "POST", headers: { authorization: `Bearer ${after}` } })
+  assert.equal(refreshed.status, 200)
+  assert.equal(((await refreshed.json()) as { session: string }).session.length > 0, true)
+  assert.deepEqual(w.calls.refresh, ["refresh-0"])
+  w.advance(40 * 60_000)
+  const early = app.request("/auth/app/refresh", { method: "POST", headers: { authorization: `Bearer ${after}` } })
+  await w.release()
+  assert.equal((await early).status, 200)
+  assert.deepEqual(w.calls.refresh, ["refresh-0", "refresh-1"])
+
+  const out = await app.request("/auth/logout", { method: "POST", headers: { authorization: `Bearer ${after}` } })
+  assert.equal(out.status, 200)
+  assert.deepEqual(w.calls.revoke, ["refresh-1"])
+  assert.equal(out.headers.getSetCookie().length, 0)
 })

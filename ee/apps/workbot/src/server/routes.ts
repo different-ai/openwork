@@ -115,8 +115,18 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     return null
   }
 
-  app.use("/v1/workbot/*", input.sameOrigin, input.member)
-  app.use("/v1/workbot", input.sameOrigin, input.member)
+  /**
+   * The phone app works only where its feature is on. `/me` still answers, so the app can say so instead of failing;
+   * turning the feature off stops every phone on its next request.
+   */
+  const phoneAllowed: MiddlewareHandler<AppEnv> = async (c, next) => {
+    const member = c.get("member")
+    if (member.app && !member.den.mobile && c.req.path !== "/v1/workbot/me") return c.json({ error: "workbot_mobile_not_enabled" }, 403)
+    await next()
+  }
+
+  app.use("/v1/workbot/*", input.sameOrigin, input.member, phoneAllowed)
+  app.use("/v1/workbot", input.sameOrigin, input.member, phoneAllowed)
 
   app.get("/v1/workbot/me", async (c) => {
     const { den: who } = c.get("member")
@@ -128,6 +138,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       calendar: who.enabled && who.calendar === true,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
+      mobile: who.enabled && who.mobile,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
   })

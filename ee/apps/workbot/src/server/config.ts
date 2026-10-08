@@ -38,7 +38,30 @@ const schema = z.object({
   WORKBOT_CALENDAR_MOCK_URL: origin(false).optional(),
   /** Serve the page from Vite with hot reload instead of the built files. */
   WORKBOT_DEV: z.enum(["0", "1"]).default("0"),
+  /**
+   * Where the phone app may be sent back after signing in, exact and comma-separated. Unset: the Workbot app's own
+   * address, plus its development build's when Workbot runs on this machine.
+   */
+  WORKBOT_APP_REDIRECT_URIS: z.string().optional(),
 })
+
+/** The Workbot phone app's sign-in return address, and its development build's. */
+export const WORKBOT_APP_REDIRECT_URI = "com.openworklabs.workbot:/auth/callback"
+export const WORKBOT_DEV_APP_REDIRECT_URI = "com.openworklabs.workbot.dev:/auth/callback"
+
+/** A private-use, reverse-domain scheme (RFC 8252 §7.1) and a path, nothing else: never a web address. */
+const APP_REDIRECT_URI = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+:\/[A-Za-z0-9/_-]*$/
+
+function appRedirectUris(value: string | undefined, publicUrl: string): string[] {
+  if (value === undefined) {
+    const local = LOOPBACK_HOSTS.has(new URL(publicUrl).hostname)
+    return local ? [WORKBOT_APP_REDIRECT_URI, WORKBOT_DEV_APP_REDIRECT_URI] : [WORKBOT_APP_REDIRECT_URI]
+  }
+  const list = value.split(",").map((entry) => entry.trim()).filter(Boolean)
+  const invalid = list.filter((entry) => !APP_REDIRECT_URI.test(entry))
+  if (invalid.length > 0) throw new Error(`Invalid Workbot configuration:\nWORKBOT_APP_REDIRECT_URIS: not an app address: ${invalid.join(", ")}`)
+  return list
+}
 
 export type Config = {
   publicUrl: string
@@ -52,6 +75,8 @@ export type Config = {
   calendarMockUrl: string | null
   /** Cookies are Secure (and __Host- prefixed) whenever Workbot is served over https. */
   secureCookies: boolean
+  /** Where the phone app may be sent back after signing in (exact matches). */
+  appRedirectUris: string[]
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -71,5 +96,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dev: value.WORKBOT_DEV === "1",
     calendarMockUrl: value.WORKBOT_CALENDAR_MOCK_URL ?? null,
     secureCookies: value.WORKBOT_PUBLIC_URL.startsWith("https:"),
+    appRedirectUris: appRedirectUris(value.WORKBOT_APP_REDIRECT_URIS, value.WORKBOT_PUBLIC_URL),
   }
 }

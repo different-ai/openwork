@@ -42,6 +42,8 @@ const sessionSchema = z.object({
   calendar: z.boolean().optional(),
   /** The person can start side chats next to their main chat (the workbotSideChats feature). */
   sideChats: z.boolean(),
+  /** The person can use Workbot from the Workbot phone app (the workbotMobile feature). */
+  mobile: z.boolean(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
@@ -222,6 +224,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         canSchedule,
         calendar: features.workbot && features.workbotCalendar,
         sideChats: features.workbot && features.workbotSideChats,
+        mobile: features.workbot && features.workbotMobile,
       })
     },
   )
