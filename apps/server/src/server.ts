@@ -763,6 +763,10 @@ function admitSessionCommand(
   return "accepted";
 }
 
+// Backoff for re-sending managed provider credentials the engine did not take
+// during startup. After the last attempt, the next launch tries again.
+const STARTUP_PROVIDER_AUTH_RETRY_DELAYS_MS = [2_000, 10_000, 30_000, 120_000];
+
 export async function startServer(
   config: ServerConfig,
   // Callers that spawn a managed engine after binding must complete startup
@@ -1232,6 +1236,29 @@ export async function startServer(
 
   engineInstanceReaper.start();
 
+  // A credential the engine did not take at startup is retried in the
+  // background, so one refused provider never stops the whole app from
+  // starting. Undelivered credentials are re-sent on every attempt because
+  // the sync only skips fingerprints it has delivered.
+  let startupAuthRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleStartupProviderAuthRetry = (attempt: number) => {
+    const delayMs = STARTUP_PROVIDER_AUTH_RETRY_DELAYS_MS[attempt];
+    if (stopped || delayMs === undefined) return;
+    startupAuthRetryTimer = setTimeout(() => {
+      startupAuthRetryTimer = undefined;
+      if (stopped) return;
+      void syncManagedProviderAuth({ config, env, logger: toManagedProviderAuthLogger(logger) })
+        .then((result) => {
+          if (result.delivered.length > 0 || result.removed.length > 0) {
+            cloudProviderSync.markReloadPending();
+          }
+          if (result.failed.length > 0) scheduleStartupProviderAuthRetry(attempt + 1);
+        })
+        .catch(() => scheduleStartupProviderAuthRetry(attempt + 1));
+    }, delayMs);
+    startupAuthRetryTimer.unref?.();
+  };
+
   return {
     ...server,
     completeManagedEngineStartup: async () => {
@@ -1243,9 +1270,22 @@ export async function startServer(
       }
       // Seed the fresh primary before readiness, so there are no serving SDK
       // clients to invalidate and no startup-only rollover to schedule.
-      const result = await syncManagedProviderAuth({ config, env, logger: toManagedProviderAuthLogger(logger) });
-      if (result.failed.length > 0) {
-        throw new Error("Managed provider auth delivery failed during startup");
+      // Delivery is best effort here: a refused or timed-out credential leaves
+      // that one provider unavailable until a background retry lands it,
+      // instead of failing every launch (seen on Windows, where the engine's
+      // auth store can be locked by antivirus or a leftover engine process).
+      const result = await syncManagedProviderAuth({ config, env, logger: toManagedProviderAuthLogger(logger) })
+        .catch((error: unknown) => {
+          logger.log("warn", "Managed provider credentials could not be synced during startup.", {
+            "error.message": error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        });
+      if (!result || result.failed.length > 0) {
+        logger.log("warn", "Starting without some managed provider credentials; retrying in the background.", {
+          "provider.auth.failed": result?.failed.map((entry) => entry.providerId).join(",") ?? "sync_error",
+        });
+        scheduleStartupProviderAuthRetry(0);
       }
       if (stopped || enginePoolForConfig(config) !== pool || !pool.primaryProcess()?.isAlive()
         || pool.connections().find((connection) => connection.role === "primary")?.generationId !== primary.generationId) {
@@ -1258,6 +1298,7 @@ export async function startServer(
     },
     stop: async () => {
       stopped = true;
+      if (startupAuthRetryTimer) clearTimeout(startupAuthRetryTimer);
       let recoveryError: unknown;
       try { await taskRecovery?.stop(); } catch (error) { recoveryError = error; }
       managedDesktopPolicy(config).onChange = undefined;
