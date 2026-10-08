@@ -514,11 +514,11 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       if (entry.isDirectory()) {
         let info;
         try {
+          info = await stat(absPath);
+        } catch (error: unknown) {
           if (isSkippableCatalogFsError(error)) {
             const code = (error as NodeJS.ErrnoException).code;
             if (code !== "ENOENT") skippedDirectories.push(rel);
-        } catch (error: unknown) {
-          if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
             continue;
           }
           throw error;
