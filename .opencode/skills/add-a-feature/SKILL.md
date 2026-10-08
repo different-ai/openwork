@@ -61,7 +61,12 @@ newThing: {
 - **default**: false for new work. A fresh deployment, and a client that cannot reach Den, uses it, so never ship half-done work as `true`.
 - **permanent: true** only when the switch itself is part of the product (e.g. turning Connect off for one organization). Rollouts are temporary.
 
-Then run `pnpm features:sync` and commit the regenerated Helm files.
+Then run `pnpm features:sync`. It regenerates the Helm files **and the Den API
+contract/SDK** (feature keys are part of API schemas). It prepares a disposable
+local database and removes it afterwards; MySQL must be running
+(`pnpm dev:den:mysql`). Commit the Helm files, `packages/docs/openapi.json`, and
+`packages/sdk/src/gen/**` together. Do not stop after Helm generation if the
+contract step fails.
 
 ## 2. Make it safe to turn off at any moment
 

@@ -10,9 +10,11 @@ export function isContractInput(path) {
     || path.startsWith("ee/apps/den-api/scripts/")
     || /^ee\/packages\/[^/]+\/(src\/|package\.json$)/.test(path)
     || path.startsWith("packages/types/src/")
+    || path.startsWith("packages/features/src/")
     || path.startsWith("packages/mcp-apps/")
     || path.startsWith("packages/sdk/script/")
-    || ["package.json", "pnpm-lock.yaml", "apps/app/package.json", "ee/apps/den-api/package.json", "packages/sdk/package.json", "scripts/den-contract.mjs"].includes(path);
+    || path.startsWith("scripts/den-contract")
+    || ["package.json", "pnpm-lock.yaml", "apps/app/package.json", "ee/apps/den-api/package.json", "packages/sdk/package.json"].includes(path);
 }
 
 function isOutput(path) {
