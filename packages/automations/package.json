@@ -23,7 +23,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node --test test/production-exports.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --conditions=development --test src/*.test.ts"
   },

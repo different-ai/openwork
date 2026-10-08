@@ -3,7 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { createServer } from "node:net";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { addInitScript, allocateFreePorts, browserScript, evaluate, navigate } from "@openwork/cdp";
@@ -11,6 +12,12 @@ import { clickText, waitFor } from "@openwork/behaviors";
 import { resolvePlace } from "@openwork/env";
 import { chrome } from "@openwork/hosts";
 import { startMockIdpLab } from "@openwork/labs";
+
+declare global {
+  interface Window {
+    __setupSsoPrivateCapture?: { installResponse?: string; installCopy?: string; desktopResponse?: string };
+  }
+}
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -37,6 +44,23 @@ export const SETUP_SSO_PRODUCT_SOURCE_FILES = [
   "ee/apps/den-web/app/(den)/install/page.tsx",
   "ee/apps/den-web/app/(den)/setup/page.tsx",
 ];
+
+async function matrixPorts(): Promise<number[]> {
+  const configured = process.env.OPENWORK_SETUP_SSO_PORTS?.trim();
+  if (!configured) return allocateFreePorts(3);
+  const ports = configured.split(",").map(Number);
+  if (ports.length !== 3 || new Set(ports).size !== 3 || ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535)) {
+    throw new Error("OPENWORK_SETUP_SSO_PORTS must contain three distinct web,API,IdP ports between 1024 and 65535.");
+  }
+  for (const port of ports) {
+    await new Promise<void>((resolve, reject) => {
+      const server = createServer();
+      server.once("error", () => reject(new Error(`Requested lab port ${port} is occupied; no process was stopped.`)));
+      server.listen(port, "0.0.0.0", () => server.close((error) => error ? reject(error) : resolve()));
+    });
+  }
+  return ports;
+}
 
 function hostAddressReachableFromDocker(): string {
   for (const interfaces of Object.values(networkInterfaces())) {
@@ -116,6 +140,7 @@ export interface SetupSsoMatrixManifest {
 }
 
 export interface SetupSsoPendingColumn {
+  control: { ownerEmail: string; ownerPassword: string; bootstrapCode: string };
   id: "pending";
   apiVersion: string;
   apiImage: string;
@@ -517,9 +542,11 @@ async function seedEnterpriseSsoContext(input: {
     label: "administrator Copy install link action",
   });
   await evaluate(configurationBrowser.client, () => {
+    const captured: NonNullable<Window["__setupSsoPrivateCapture"]> = {};
+    window.__setupSsoPrivateCapture = captured;
     const originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
     navigator.clipboard.writeText = async (text) => {
-      sessionStorage.setItem("setup-sso-ui-install-link", text);
+      captured.installCopy = text;
       return originalWriteText(text);
     };
     const originalFetch = window.fetch.bind(window);
@@ -528,20 +555,24 @@ async function seedEnterpriseSsoContext(input: {
       if (new URL(response.url).pathname.endsWith("/install-links") && response.ok) {
         const payload: unknown = await response.clone().json();
         if (payload && typeof payload === "object" && "installPageUrl" in payload && typeof payload.installPageUrl === "string") {
-          sessionStorage.setItem("setup-sso-issued-install-link", payload.installPageUrl);
+          captured.installResponse = payload.installPageUrl;
         }
       }
       return response;
     };
   });
   await clickText(configurationBrowser, "Copy install link");
-  await waitFor(configurationBrowser, () => Boolean(sessionStorage.getItem("setup-sso-issued-install-link")) && Boolean(sessionStorage.getItem("setup-sso-ui-install-link")), {
+  await waitFor(configurationBrowser, () => Boolean(window.__setupSsoPrivateCapture?.installResponse) && Boolean(window.__setupSsoPrivateCapture?.installCopy), {
     timeoutMs: 30_000,
     label: "real admin UI install-link response and copy argument",
   });
-  const copyMatchesResponse = await evaluate(configurationBrowser.client, () => sessionStorage.getItem("setup-sso-ui-install-link") === sessionStorage.getItem("setup-sso-issued-install-link"));
+  const copyMatchesResponse = await evaluate(configurationBrowser.client, () => window.__setupSsoPrivateCapture?.installCopy === window.__setupSsoPrivateCapture?.installResponse);
   if (!copyMatchesResponse) throw new Error("Admin UI copied a different install link than the issued response (values withheld).");
-  const installPageUrl = await evaluate(configurationBrowser.client, () => sessionStorage.getItem("setup-sso-ui-install-link"));
+  const installPageUrl = await evaluate(configurationBrowser.client, () => {
+    const url = window.__setupSsoPrivateCapture?.installCopy;
+    delete window.__setupSsoPrivateCapture;
+    return url;
+  });
   if (!installPageUrl) throw new Error("Admin UI install-link action omitted its copy argument.");
   const installUrl = new URL(installPageUrl);
   if (installUrl.pathname !== "/install" || !installUrl.searchParams.get("token")) throw new Error("Install link did not contain a valid /install token.");
@@ -605,7 +636,7 @@ async function bootColumn(
   setup: "configured" | "pending",
   hostWeb?: { fingerprint: string },
 ): Promise<SetupSsoMatrixColumn | SetupSsoPendingColumn> {
-  const ports = await allocateFreePorts(3);
+  const ports = await matrixPorts();
   const webPort = ports[0];
   const apiPort = ports[1];
   const idpPort = ports[2];
@@ -613,10 +644,10 @@ async function bootColumn(
   const suffix = randomBytes(4).toString("hex");
   const safeId = definition.id.replaceAll(".", "-");
   const project = `setup-sso-${safeId}-${suffix}`;
-  const ownerEmail = `owner-${safeId}-${suffix}@synthetic-sso.test`;
+  const ownerEmail = "owner@synthetic-sso.test";
   const ownerPassword = `S-${randomBytes(12).toString("hex")}!`;
   const bootstrapCode = `bootstrap-${randomBytes(18).toString("hex")}`;
-  const domain = `idp-${safeId}-${suffix}.test`;
+  const domain = "synthetic-sso.test";
   const idpHost = hostAddressReachableFromDocker();
   const idp = stack.use(await startMockIdpLab({
     publicIssuer: `http://${idpHost}:${idpPort}`,
@@ -631,7 +662,7 @@ async function bootColumn(
   await mkdir(root, { recursive: true });
   const overridePath = join(root, "docker-compose.override.yml");
   const trustedOrigins = [webUrl, apiUrl, new URL(idp.issuer).origin].join(",");
-  const organizationName = `Synthetic enterprise ${definition.id}`;
+  const organizationName = "Synthetic enterprise";
   await writeFile(overridePath, [
     "services:",
     "  mysql:",
@@ -668,10 +699,20 @@ async function bootColumn(
   const composeArgs = ["-p", project, "-f", COMPOSE_FILE, "-f", overridePath];
   let hostWebLogs = () => "";
   const logs = async () => {
-    const composeLogs = await compose([...composeArgs, "logs", "--no-color", "--tail", "120", "den", "web"], composeEnv)
+    const composeLogs = await compose([...composeArgs, "logs", "--no-color", "--tail", "120", "den-migrate", "den", "web"], composeEnv)
       .catch((error: unknown) => `logs unavailable: ${messageText(error)}`);
-    return `${composeLogs}\n${hostWebLogs()}`;
+    const state = await command("docker", ["inspect", "--format", "{{json .State}}", `${project}-den-1`], 30_000).catch(() => "Den container state unavailable.");
+    let output = `${composeLogs}\nDen state: ${state}\n${hostWebLogs()}`;
+    for (const secret of [composeEnv.OPENWORK_AUTH_SECRET, composeEnv.OPENWORK_DB_ENCRYPTION_KEY, bootstrapCode, ownerPassword]) {
+      if (secret) output = output.replaceAll(secret, "<redacted>");
+    }
+    return output.replace(/Bearer\s+[^\s,;]+/gi, "Bearer <redacted>").replace(/((?:token|grant|state|code|password|secret)=)[^&\s"']+/gi, "$1<redacted>");
   };
+  // Register before up: even a partial compose boot belongs to this stack.
+  stack.adopt({ composeArgs, composeEnv }, async (owned) => {
+    await compose([...owned.composeArgs, "down", "--volumes", "--remove-orphans", "--timeout", "10"], owned.composeEnv)
+      .catch((error: unknown) => console.error(`[setup-sso-matrix] cleanup failed for ${project}: ${messageText(error)}`));
+  });
   try {
     await compose([...composeArgs, "up", "-d", "--wait", "--wait-timeout", "300"], composeEnv);
     await waitForHttp(`${apiUrl}/health`, `${definition.id} Den API`, logs);
@@ -680,14 +721,10 @@ async function bootColumn(
     }
     await waitForHttp(`${webUrl}/api/ready`, `${definition.id} Den web`, logs);
   } catch (error) {
-    await writeFile(join(root, "startup-failure.log"), await logs(), { mode: 0o600 });
-    await compose([...composeArgs, "down", "--volumes", "--remove-orphans", "--timeout", "10"], composeEnv).catch(() => undefined);
-    throw error;
+    const diagnostic = await logs();
+    await writeFile(join(root, "startup-failure.log"), diagnostic, { mode: 0o600 });
+    throw new Error(`${definition.id} compose startup failed before route verification:\n${diagnostic}`, { cause: error });
   }
-  stack.adopt({ composeArgs, composeEnv }, async (owned) => {
-    await compose([...owned.composeArgs, "down", "--volumes", "--remove-orphans", "--timeout", "10"], owned.composeEnv)
-      .catch((error: unknown) => console.error(`[setup-sso-matrix] cleanup failed for ${project}: ${messageText(error)}`));
-  });
   for (const service of ["den-migrate", "den", ...hostWeb ? [] : ["web"]]) {
     const image = service === "web" ? definition.webImage : definition.apiImage;
     const actualId = (await command("docker", ["inspect", "--format", "{{.Image}}", `${project}-${service}-1`], 60_000)).trim();
@@ -698,6 +735,7 @@ async function bootColumn(
   if (setup === "pending") {
     return {
       id: "pending",
+      control: { ownerEmail, ownerPassword, bootstrapCode },
       apiVersion: definition.apiVersion,
       apiImage: definition.apiImage,
       webImage: hostWeb ? HOST_WEB_ARTIFACT : definition.webImage,
@@ -823,7 +861,7 @@ export async function captureSetupSsoDesktopHandoff(browser: Awaited<ReturnType<
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
       if (new URL(response.url).pathname.endsWith("/desktop-handoff") && response.ok) {
-        sessionStorage.setItem("setup-sso-desktop-handoff", await response.clone().text());
+        window.__setupSsoPrivateCapture = { desktopResponse: await response.clone().text() };
         return new Promise<Response>(() => {});
       }
       return response;
@@ -832,8 +870,12 @@ export async function captureSetupSsoDesktopHandoff(browser: Awaited<ReturnType<
 }
 
 export async function exchangeSetupSsoDesktopHandoff(browser: Awaited<ReturnType<typeof chrome>>, webUrl: string) {
-  await waitFor(browser, () => Boolean(sessionStorage.getItem("setup-sso-desktop-handoff")), { timeoutMs: 90_000, label: "real desktop handoff grant" });
-  const raw = await evaluate(browser.client, () => sessionStorage.getItem("setup-sso-desktop-handoff"));
+  await waitFor(browser, () => Boolean(window.__setupSsoPrivateCapture?.desktopResponse), { timeoutMs: 90_000, label: "real desktop handoff grant" });
+  const raw = await evaluate(browser.client, () => {
+    const response = window.__setupSsoPrivateCapture?.desktopResponse;
+    delete window.__setupSsoPrivateCapture;
+    return response;
+  });
   const payload: unknown = JSON.parse(raw ?? "null");
   const grant = stringField(payload, "grant");
   const openworkUrl = stringField(payload, "openworkUrl");
@@ -874,16 +916,85 @@ export async function installSetupSsoFetchFault(browser: Awaited<ReturnType<type
   }, [pathname, kind]));
 }
 
-export function sanitizedSetupSsoUrl(raw: string): string {
-  const url = new URL(raw);
-  const keys = [...url.searchParams.keys()];
-  return `${url.origin}${url.pathname}${keys.length ? `?${keys.map((key) => `${encodeURIComponent(key)}=<redacted>`).join("&")}` : ""}`;
+export async function composeSetupSsoStep(browser: Awaited<ReturnType<typeof chrome>>, artifact: { png: Buffer; hash: string; at: string }, input: {
+  column: string; step: number; action: string; caption: string; callback?: string;
+  observedUrl: string; sourceTestRunDir: string; expectations: string[];
+}) {
+  const observedUrl = input.observedUrl;
+  const runnerHead = (await command("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], 60_000)).trim();
+  const lines = [input.caption, `Observed URL (secret values redacted): ${observedUrl}`,
+    ...(input.callback ? [`Observed SSO callback (provider state is opaque): ${input.callback}`] : [])];
+  const composed = await evaluate(browser.client, browserScript(async (png, textLines) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${png}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Evidence annotation canvas is unavailable.");
+    context.font = "14px monospace";
+    const wrapped: string[] = [];
+    for (const text of textLines) {
+      let line = "";
+      for (const char of text) {
+        if (context.measureText(line + char).width > image.width - 40) { wrapped.push(line); line = ""; }
+        line += char;
+      }
+      wrapped.push(line);
+    }
+    const stripHeight = 58 + wrapped.length * 21;
+    canvas.width = image.width;
+    canvas.height = image.height + stripHeight;
+    context.fillStyle = "#edf2f7";
+    context.fillRect(0, 0, canvas.width, stripHeight);
+    context.fillStyle = "#172033";
+    context.font = "bold 14px monospace";
+    context.fillText("Test evidence annotation — not browser chrome", 20, 24);
+    context.font = "14px monospace";
+    wrapped.forEach((line, index) => context.fillText(line, 20, 49 + index * 21));
+    context.imageSmoothingEnabled = false;
+    context.drawImage(image, 0, stripHeight);
+    return { png: canvas.toDataURL("image/png").split(",")[1], originalWidth: image.width, originalHeight: image.height, stripHeight };
+  }, [artifact.png.toString("base64"), lines]));
+  if (!composed.png) throw new Error("Evidence annotation omitted PNG bytes.");
+  const relativeRoot = join("tmp", "setup-sso-journeys", input.column, `${artifact.at.replaceAll(":", "-").replaceAll(".", "-")}-step-${input.step}`);
+  await mkdir(join(REPO_ROOT, relativeRoot), { recursive: true });
+  const original = join(relativeRoot, "original.png");
+  const annotated = join(relativeRoot, "annotated.png");
+  const metadata = join(relativeRoot, "capture.json");
+  await writeFile(join(REPO_ROOT, original), artifact.png, { mode: 0o600 });
+  await writeFile(join(REPO_ROOT, annotated), Buffer.from(composed.png, "base64"), { mode: 0o600 });
+  await writeFile(join(REPO_ROOT, metadata), JSON.stringify({
+    column: input.column, step: input.step, action: input.action, caption: input.caption,
+    sourceTestRun: relative(REPO_ROOT, input.sourceTestRunDir), runnerHead, sourceCommit: await setupSsoCurrentCommit(),
+    observedUrl, callback: input.callback ?? null, capturedAt: artifact.at, originalHash: artifact.hash, visualExpectations: input.expectations,
+    original, annotated, originalWidth: composed.originalWidth, originalHeight: composed.originalHeight,
+    annotationHeight: composed.stripHeight, method: "separate canvas companion; original pixels copied 1:1 below labelled annotation; original PNG retained; annotation is not assertion evidence",
+  }, null, 2), { mode: 0o600 });
+  return { original, annotated, metadata, observedUrl };
 }
 
-// Retain only document/navigation metadata. Never retain headers, bodies, or query values.
+export function sanitizedSetupSsoUrl(raw: string, depth = 0): string {
+  const url = new URL(raw);
+  for (const [key, value] of url.searchParams) {
+    const sensitive = /token|secret|password|credential|assertion/i.test(key) || ["state", "code", "grant", "nonce", "code_challenge"].includes(key.toLowerCase());
+    if (sensitive) url.searchParams.set(key, "<redacted>");
+    else if (/^(https?:\/\/|\/)/.test(value) && value.includes("?")) {
+      const nested = new URL(value, url.origin);
+      url.searchParams.set(key, depth < 4 ? sanitizedSetupSsoUrl(nested.toString(), depth + 1) : "<redacted>");
+    }
+  }
+  if (url.username) url.username = "redacted";
+  if (url.password) url.password = "redacted";
+  if (url.hash) url.hash = "redacted";
+  return url.toString().replaceAll("%3Credacted%3E", "<redacted>");
+}
+
+// Retain only sanitized document/navigation metadata. Never retain headers,
+// bodies, or authentication secrets; safe route/returnTo values stay inspectable.
 export async function observeSetupSsoNavigation(debuggerUrl: string | undefined) {
   if (!debuggerUrl) throw new Error("Navigation observation requires the isolated browser target.");
   const entries: Array<{ kind: string; url: string; status?: number }> = [];
+  const ssoCallbacks: Array<{ url: string; origin: string; returnTo: string | null }> = [];
   const socket = new WebSocket(debuggerUrl);
   const safeUrl = sanitizedSetupSsoUrl;
   try {
@@ -909,14 +1020,25 @@ export async function observeSetupSsoNavigation(debuggerUrl: string | undefined)
         };
         if (message.method === "Network.requestWillBeSent" && params.type === "Document") {
           if (isRecord(params.redirectResponse)) append("http-redirect", params.redirectResponse.url, params.redirectResponse.status);
-          if (isRecord(params.request)) append("document-request", params.request.url);
+          if (isRecord(params.request)) {
+            append("document-request", params.request.url);
+            if (typeof params.request.url === "string") {
+              const requestUrl = new URL(params.request.url);
+              const callback = requestUrl.searchParams.get("callbackURL");
+              if (requestUrl.pathname.startsWith("/sso/") && callback) {
+                const callbackUrl = new URL(callback, requestUrl.origin);
+                const returnTo = callbackUrl.searchParams.get("returnTo");
+                ssoCallbacks.push({ url: safeUrl(callbackUrl.toString()), origin: callbackUrl.origin, returnTo: returnTo === "/install" || returnTo === "/setup" ? returnTo : null });
+              }
+            }
+          }
         }
         if (message.method === "Network.responseReceived" && params.type === "Document" && isRecord(params.response)) append("document-response", params.response.url, params.response.status);
         if (message.method === "Page.frameNavigated" && isRecord(params.frame) && params.frame.parentId === undefined) append("navigation", params.frame.url);
         if (message.method === "Page.navigatedWithinDocument") append("client-navigation", params.url);
       });
     });
-    return { entries, [Symbol.dispose]: () => socket.close() };
+    return { entries, ssoCallbacks, [Symbol.dispose]: () => socket.close() };
   } catch (error) {
     socket.close();
     throw error;

@@ -23,6 +23,7 @@ export * from "@openwork/env";
 export * from "./brief.ts";
 export * from "./daytona-witness.ts";
 export * from "./app-web-preview-witness.ts";
+export * from "./browser-evidence.ts";
 export * from "./eventually.ts";
 export * from "./link.ts";
 export * from "./self-host.ts";
