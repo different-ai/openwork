@@ -11,6 +11,7 @@ export async function exists(path: string): Promise<boolean> {
 }
 
 export async function ensureDir(path: string): Promise<void> {
+  if (await exists(path)) return;
   await mkdir(path, { recursive: true });
 }
 
