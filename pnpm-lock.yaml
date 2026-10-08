@@ -1491,9 +1491,6 @@ importers:
       '@modelcontextprotocol/core':
         specifier: ^2.2.0
         version: 2.2.0
-      tldts:
-        specifier: ^7.4.10
-        version: 7.4.10
       zod:
         specifier: ^4.3.6
         version: 4.3.6
