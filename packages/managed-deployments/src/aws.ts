@@ -1,6 +1,8 @@
 import { XMLParser } from "fast-xml-parser"
 import { z } from "zod"
-import { awsRegionSchema, type AwsTarget } from "./schema.js"
+// Self-reference, not "./schema.js": den-api loads this package's TypeScript
+// source at runtime, where only package exports resolve to the .ts files.
+import { awsRegionSchema, type AwsTarget } from "@openwork/managed-deployments/schema"
 
 /**
  * AWS adapter: bootstrap (CloudFormation), naming shared with the Terraform
