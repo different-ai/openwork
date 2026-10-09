@@ -17,7 +17,7 @@ import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
-import { UsageLimitsCard } from "../_features/gateway-usage/usage-limits-card";
+import { UsageLimitsCard } from "../_features/analytics/usage-limits-card";
 
 /**
  * Editorial detail per model: what a knowledge worker should reach for it for,

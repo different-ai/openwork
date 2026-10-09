@@ -97,7 +97,8 @@ refused rather than treating incomplete metadata visibility as proof of absence.
 Affected table/column collations must match the database defaults. The runner does
 not change engine settings, PK requirements, grants, encryption or TLS.
 
-History must be the exact canonical hash/timestamp prefix. Unknown, superseded,
+History must be the exact canonical hash/timestamp prefix; the only exceptions
+are released bodies listed in `scripts/superseded-migrations.ts`. Unknown, superseded,
 unjournaled, nonempty intermediate or partial-0097 states require separately
 reviewed recovery; bootstrap does not repair, replay partial DDL, or baseline them.
 A failed or uncertain completion must be inspected before any restart. For callers

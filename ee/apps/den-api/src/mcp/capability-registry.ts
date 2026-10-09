@@ -1,6 +1,7 @@
 import { Tool, toolError } from "@openwork/codemode"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import type { CapabilityUsageVia } from "@openwork-ee/den-db/schema"
 import { Effect } from "effect"
 import type { Hono } from "hono"
 import { z } from "zod"
@@ -445,6 +446,7 @@ async function executeMarketplaceSource(
   ctx: CapabilityRegistryContext,
   parsed: Extract<ParsedCapability, { kind: "marketplace" }>,
   input: CapabilityExecuteInput,
+  usageVia: CapabilityUsageVia,
 ): Promise<MarketplaceCapabilityExecuteResult> {
   return executeMarketplaceCapability({
     buildTools: () => buildCapabilityToolTree(ctx),
@@ -457,6 +459,7 @@ async function executeMarketplaceSource(
     enabled: ctx.externalMcpConnectionsEnabled,
     redirectUriBase: ctx.redirectUriBase,
     auditWorkflowExecution: workflowExecutionAudit(ctx),
+    usageVia,
   })
 }
 
@@ -670,7 +673,7 @@ const marketplaceSource: CapabilitySource = {
         readOnly: true,
         authority: "den",
         run: async (args) => {
-          const result = await executeMarketplaceSource(ctx, parsed, { name: capabilityName, body: args })
+          const result = await executeMarketplaceSource(ctx, parsed, { name: capabilityName, body: args }, "codemode")
           if (!result.ok) throw toolError(result.message)
           const content = result.result.content ?? result.result.source ?? result.result.definition
           return typeof content === "string" ? content : JSON.stringify(result.result)
@@ -680,7 +683,7 @@ const marketplaceSource: CapabilitySource = {
   },
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "marketplace")) return unknownCapabilityResult(input.name)
-    const result = await executeMarketplaceSource(ctx, parsed, input)
+    const result = await executeMarketplaceSource(ctx, parsed, input, "execute_capability")
     if (!result.ok) {
       return result.error === "unknown_capability"
         ? unknownCapabilityResult(input.name)

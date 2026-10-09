@@ -294,6 +294,12 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
     sensitive: true,
   },
+  "usage_analytics.view": {
+    area: "organization",
+    label: "View usage analytics",
+    description: "See adoption, usage and skill usage analytics for the organization.",
+    defaultOn: ADMIN,
+  },
   "analytics.view": {
     area: "models",
     label: "View task analytics",

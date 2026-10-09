@@ -232,6 +232,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-litellm-check", "inference_provider.member_oauth.browser_litellm_check", IPO, res("provider_credential"), { external: LITELLM, notes: "Public route. Attributed like browser-litellm-key once the cookie user matches the entry and the provider/set binding and litellm feature are rechecked; before LiteLLM key creation for that member." }),
 
   // Models analytics
+  route("tenant_signal", "POST", "/v1/inference/analytics/events", "models_analytics.events.report", MA, res("models_analytics_event"), "org_context", { notes: "Desktop task metadata for the caller's own OpenWork Models calls; dropped unless the organization opted in. High volume." }),
   access("GET", "/v1/inference/analytics/activity", "models_analytics.activity.list", MA, res("models_analytics_event"), "Per-member task analytics payloads (tool/skill/model metadata)."),
   read("/v1/inference/analytics/consumption", "models_analytics.consumption.read", MA, res("models_analytics_event"), "Aggregates only."),
   read("/v1/inference/analytics/settings", "models_analytics.settings.read", "models_analytics.configuration", res("models_analytics_settings")),
@@ -239,6 +240,15 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   change("POST", "/v1/inference/analytics/langfuse/connect", "models_analytics.export.connect", "models_analytics.configuration", res("models_analytics_export"), "Stores Langfuse credentials (write-only) after a test send to Langfuse; enables the export loop."),
   external("POST", "/v1/inference/analytics/langfuse/test", "models_analytics.export.test", "models_analytics.configuration", res("models_analytics_export"), "Langfuse", "Sends a test event with caller-supplied credentials; no local write."),
   change("DELETE", "/v1/inference/analytics/langfuse", "models_analytics.export.disconnect", "models_analytics.configuration", res("models_analytics_export")),
+
+  // Organization Analytics (desktop adoption telemetry)
+  route("tenant_signal", "POST", "/v1/telemetry/ingest", "telemetry.events.ingest", "telemetry.adoption", res("telemetry_event"), "org_context", { notes: "Desktop activity and session/task lifecycle pings for the calling member; identifiers and timings only. High volume." }),
+  read("/v1/telemetry/dimensions", "telemetry.dimensions.list", "telemetry.adoption", res("telemetry_session_dimension")),
+  read("/v1/telemetry/adoption", "telemetry.adoption.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
+  read("/v1/telemetry/analytics", "telemetry.analytics.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
+
+  // Skill usage (skillUsage feature)
+  read("/v1/skill-usage", "skill_usage.read", "skill_usage.reporting", res("capability_usage_event"), "Aggregates only: per-skill load counts, distinct member counts and last use; no member identities."),
 
   // Legacy LLM providers
   read("/v1/llm-provider-catalog", "llm_provider_catalog.list", LLM, res("llm_provider_catalog")),

@@ -35,7 +35,7 @@ import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../..
 import { buildDenAuthUrl, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
 import { markDesktopSignInInitiated } from "../../app/lib/den-sign-in-intent";
 import { denSettingsChangedEvent } from "../../app/lib/den-session-events";
-import { writeActiveWorkspaceId, writeLastSessionFor } from "./session-memory";
+import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimension } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
 import { shouldHoldWelcomeForDenSession } from "./welcome-den-session";
@@ -160,7 +160,8 @@ export function WelcomeRoute() {
   const handleCreateWorkspace = useCallback(
     async (_preset: string, folder: string | null, options?: CreateWorkspaceOptions) => {
       if (!folder) return;
-        dispatch({ type: "create:start" });
+      const projectLabel = options?.projectLabel?.trim() ?? "";
+      dispatch({ type: "create:start" });
       try {
         const workspaceName = folderNameFromPath(folder);
         let list: WorkspaceList | null = null;
@@ -229,6 +230,11 @@ export function WelcomeRoute() {
         }
         if (targetWorkspaceId) {
           writeActiveWorkspaceId(targetWorkspaceId);
+          if (projectLabel) {
+            writeWorkspaceProjectDimension(targetWorkspaceId, {
+              label: projectLabel,
+            });
+          }
           if (targetSessionId) writeLastSessionFor(targetWorkspaceId, targetSessionId);
         }
         dispatch({ type: "close" });

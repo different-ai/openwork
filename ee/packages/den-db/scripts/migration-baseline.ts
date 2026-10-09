@@ -3,6 +3,7 @@ import path from "node:path"
 import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/api"
 import { readMigrationFiles } from "drizzle-orm/migrator"
 import { ORGANIZATION_REPAIRS, type Executor } from "../src/schema-repairs.ts"
+import { receiptMatchesMigration } from "./superseded-migrations.ts"
 
 export const journalTable = "__drizzle_migrations"
 export const stateTable = "__openwork_dev_migration_state"
@@ -66,7 +67,7 @@ export type MigrationPlan = ReturnType<typeof loadMigrationPlan>
 export function historyPrefix(plan: MigrationPlan, rows: Record<string, unknown>[]) {
   for (const [index, row] of rows.entries()) {
     const entry = plan[index]
-    if (!entry || row.hash !== entry.hash || Number(row.created_at) !== entry.folderMillis) {
+    if (!entry || !receiptMatchesMigration(row.hash, entry) || Number(row.created_at) !== entry.folderMillis) {
       throw new MigrationSafetyError(`Migration history is not an exact hash/timestamp prefix at receipt ${index + 1}. ${recovery}`)
     }
   }

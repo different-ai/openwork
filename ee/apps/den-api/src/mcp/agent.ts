@@ -9,6 +9,7 @@ import {
   type ToolAnnotations,
 } from "@modelcontextprotocol/server"
 import { eq } from "@openwork-ee/den-db/drizzle"
+import type { CapabilityUsageVia } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import type { Hono } from "hono"
@@ -261,6 +262,7 @@ export async function readRemoteSkillSource(input: {
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
   marketplaceEnabled?: boolean
+  usageVia: CapabilityUsageVia
 }): Promise<RemoteSkillSource> {
   const builtinResult = executeBuiltinSkillCapability(input.skill.capability)
   if (builtinResult) return { content: builtinResult.content, provenance: builtinResult.provenance }
@@ -272,6 +274,7 @@ export async function readRemoteSkillSource(input: {
     pluginId: marketplace.pluginId,
     configObjectId: marketplace.configObjectId,
     enabled: input.marketplaceEnabled,
+    usageVia: input.usageVia,
   })
   if (!marketplaceResult.ok || marketplaceResult.result.kind !== "skill") return null
   const result = marketplaceResult.result
@@ -402,6 +405,7 @@ export function registerAgentSkillResources(input: {
         organizationId: input.organizationId,
         member: input.member,
         marketplaceEnabled: input.marketplaceEnabled,
+        usageVia: "skill_resource",
       })
       if (!source) {
         throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "Skill is no longer available")
@@ -793,6 +797,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         organizationId: principal.organizationId,
         member: memberIdentity,
         marketplaceEnabled: externalMcpConnectionsEnabled,
+        usageVia: "get_skill",
       }),
     })
 

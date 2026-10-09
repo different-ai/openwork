@@ -1,8 +1,8 @@
 {
-  "id": "b317fd1d-2076-467a-a04a-860314473d5e",
-  "prevId": "a32fbcdf-549f-45ee-8a1e-9954c5c2b450",
   "version": "5",
   "dialect": "mysql",
+  "id": "4d75e7ee-14da-4153-8fb2-bf5b92fb8ded",
+  "prevId": "2fa7414e-6c3d-4de4-98d4-447497d22c6b",
   "tables": {
     "account": {
       "name": "account",
@@ -3574,6 +3574,121 @@
       "compositePrimaryKeys": {
         "platform_audit_event_id": {
           "name": "platform_audit_event_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "capability_usage_event": {
+      "name": "capability_usage_event",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "org_membership_id": {
+          "name": "org_membership_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "plugin_id": {
+          "name": "plugin_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "config_object_id": {
+          "name": "config_object_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "via": {
+          "name": "via",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dedupe_key": {
+          "name": "dedupe_key",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "capability_usage_dedupe": {
+          "name": "capability_usage_dedupe",
+          "columns": [
+            "organization_id",
+            "dedupe_key"
+          ],
+          "isUnique": true
+        },
+        "capability_usage_object": {
+          "name": "capability_usage_object",
+          "columns": [
+            "organization_id",
+            "kind",
+            "config_object_id",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "capability_usage_recent": {
+          "name": "capability_usage_recent",
+          "columns": [
+            "organization_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "capability_usage_event_id": {
+          "name": "capability_usage_event_id",
           "columns": [
             "id"
           ]
@@ -9656,293 +9771,6 @@
           "columns": [
             "organization_id",
             "feature_key"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "permission_set_permission": {
-      "name": "permission_set_permission",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "permission_set_id": {
-          "name": "permission_set_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "permission_key": {
-          "name": "permission_key",
-          "type": "varchar(128)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum('allow','deny')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source": {
-          "name": "source",
-          "type": "enum('user','seed','reconcile','migration')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "changed_by_org_membership_id": {
-          "name": "changed_by_org_membership_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        }
-      },
-      "indexes": {
-        "permission_set_permission_set_key_created": {
-          "name": "permission_set_permission_set_key_created",
-          "columns": [
-            "permission_set_id",
-            "permission_key",
-            "created_at",
-            "id"
-          ],
-          "isUnique": false
-        },
-        "permission_set_permission_organization_id": {
-          "name": "permission_set_permission_organization_id",
-          "columns": [
-            "organization_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "permission_set_permission_id": {
-          "name": "permission_set_permission_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "permission_set": {
-      "name": "permission_set",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "default_key": {
-          "name": "default_key",
-          "type": "enum('member','admin')",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_org_membership_id": {
-          "name": "created_by_org_membership_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        },
-        "archived_at": {
-          "name": "archived_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "archived_by_org_membership_id": {
-          "name": "archived_by_org_membership_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "permission_set_organization_id": {
-          "name": "permission_set_organization_id",
-          "columns": [
-            "organization_id"
-          ],
-          "isUnique": false
-        },
-        "permission_set_org_default_key": {
-          "name": "permission_set_org_default_key",
-          "columns": [
-            "organization_id",
-            "default_key"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "permission_set_id": {
-          "name": "permission_set_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "permission_set_team": {
-      "name": "permission_set_team",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "permission_set_id": {
-          "name": "permission_set_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "team_id": {
-          "name": "team_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_org_membership_id": {
-          "name": "created_by_org_membership_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "removed_at": {
-          "name": "removed_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "removed_by_org_membership_id": {
-          "name": "removed_by_org_membership_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "permission_set_team_organization_id": {
-          "name": "permission_set_team_organization_id",
-          "columns": [
-            "organization_id"
-          ],
-          "isUnique": false
-        },
-        "permission_set_team_team_id": {
-          "name": "permission_set_team_team_id",
-          "columns": [
-            "team_id"
-          ],
-          "isUnique": false
-        },
-        "permission_set_team_set_team": {
-          "name": "permission_set_team_set_team",
-          "columns": [
-            "permission_set_id",
-            "team_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "permission_set_team_id": {
-          "name": "permission_set_team_id",
-          "columns": [
-            "id"
           ]
         }
       },
@@ -17534,6 +17362,260 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "telemetry_event": {
+      "name": "telemetry_event",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "member_id": {
+          "name": "member_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_timestamp": {
+          "name": "event_timestamp",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "success": {
+          "name": "success",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "telemetry_event_org_id_type_ts": {
+          "name": "telemetry_event_org_id_type_ts",
+          "columns": [
+            "org_id",
+            "event_type",
+            "event_timestamp"
+          ],
+          "isUnique": false
+        },
+        "telemetry_event_org_id_member_id": {
+          "name": "telemetry_event_org_id_member_id",
+          "columns": [
+            "org_id",
+            "member_id"
+          ],
+          "isUnique": false
+        },
+        "telemetry_event_member_ts": {
+          "name": "telemetry_event_member_ts",
+          "columns": [
+            "member_id",
+            "event_timestamp"
+          ],
+          "isUnique": false
+        },
+        "telemetry_event_org_session_ts": {
+          "name": "telemetry_event_org_session_ts",
+          "columns": [
+            "org_id",
+            "session_id",
+            "event_timestamp"
+          ],
+          "isUnique": false
+        },
+        "telemetry_event_org_ts_window": {
+          "name": "telemetry_event_org_ts_window",
+          "columns": [
+            "org_id",
+            "event_timestamp",
+            "event_type",
+            "member_id",
+            "session_id",
+            "source",
+            "duration_ms"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "telemetry_event_id": {
+          "name": "telemetry_event_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "telemetry_session_dimension": {
+      "name": "telemetry_session_dimension",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dimension_type": {
+          "name": "dimension_type",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dimension_value": {
+          "name": "dimension_value",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dimension_label": {
+          "name": "dimension_label",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {
+        "telemetry_session_dimension_org_source_session_type": {
+          "name": "telemetry_session_dimension_org_source_session_type",
+          "columns": [
+            "org_id",
+            "source",
+            "session_id",
+            "dimension_type"
+          ],
+          "isUnique": true
+        },
+        "telemetry_session_dimension_filter": {
+          "name": "telemetry_session_dimension_filter",
+          "columns": [
+            "org_id",
+            "dimension_type",
+            "dimension_value",
+            "session_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "telemetry_session_dimension_id": {
+          "name": "telemetry_session_dimension_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "slack_assistant_desktop_handoff": {
       "name": "slack_assistant_desktop_handoff",
       "columns": {
@@ -18659,9 +18741,9 @@
   },
   "views": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "tables": {},

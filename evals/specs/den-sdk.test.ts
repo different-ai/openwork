@@ -93,11 +93,11 @@ test.skipIf(!available)(
     await expect(invalid.getV1Me({ throwOnError: true })).rejects.toBeDefined();
     evidence.recordAssertionEvidence("Session and API-key authentication", "Both credentials resolve to the issuing user; an invalid key rejects.",
       keyedIdentity.data.user.id === identity.data.user.id);
-    const workers = await keyed.getV1Workers({ limit: 1 }, { throwOnError: true });
-    expect(workers.response.status).toBe(200);
-    expect(requestedUrls).toContain(`${den.ref.apiUrl}/v1/workers?limit=1`);
+    const runs = await keyed.getV1WorkflowRuns({ limit: 1 }, { throwOnError: true });
+    expect(runs.response.status).toBe(200);
+    expect(requestedUrls).toContain(`${den.ref.apiUrl}/v1/workflow-runs?limit=1`);
     evidence.recordAssertionEvidence("Typed query parameters", "The numeric limit becomes ?limit=1 and Den accepts the request.",
-      workers.response.status === 200 && requestedUrls.includes(`${den.ref.apiUrl}/v1/workers?limit=1`));
+      runs.response.status === 200 && requestedUrls.includes(`${den.ref.apiUrl}/v1/workflow-runs?limit=1`));
 
     const created = await keyed.postV1Teams({ name: "SDK team" }, { throwOnError: true });
     expect(created.data.team.name).toBe("SDK team");

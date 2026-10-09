@@ -5,6 +5,7 @@ import {
   getApiKeysRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
+  getAnalyticsRoute,
   getDeploymentsRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
@@ -48,6 +49,7 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: getCustomLlmProvidersRoute(), allowed: (access) => access.canViewAllLlmProviders, needs: ["llm_providers.view"] },
   { prefix: getDesktopPoliciesRoute(), allowed: (access) => access.canViewDesktopPolicies, needs: ["desktop_policies.view"] },
   { prefix: getDeploymentsRoute(), allowed: (access) => access.canViewDeployments, needs: ["deployments.view"] },
+  { prefix: getAnalyticsRoute(), allowed: (access) => access.canViewUsageAnalytics, needs: ["usage_analytics.view"] },
   { prefix: getDiagnosticsRoute(), allowed: (access) => access.canViewEgressDiagnostics, needs: ["egress_diagnostics.view"] },
   { prefix: getIntegrationsRoute(), allowed: (access) => access.canManageSyncSources, needs: ["connectors.manage"] },
   {

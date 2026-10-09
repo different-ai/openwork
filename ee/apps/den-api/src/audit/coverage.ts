@@ -164,6 +164,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "audit.ts": { ...auditReadCoverage, operationKinds: [...auditReadCoverage.operationKinds, ...auditCaptureCoverage.operationKinds], actions: [...auditReadCoverage.actions, ...auditCaptureCoverage.actions], categories: [...auditReadCoverage.categories, ...auditCaptureCoverage.categories], capturePolicy: `${auditReadCoverage.capturePolicy} ${auditCaptureCoverage.capturePolicy}`, snapshotPolicy: `${auditReadCoverage.snapshotPolicy} ${auditCaptureCoverage.snapshotPolicy}`, emitter: `${auditReadCoverage.emitter}; ${auditCaptureCoverage.emitter}`, failurePolicy: `${auditReadCoverage.failurePolicy} ${auditCaptureCoverage.failurePolicy}`, limitations: `${auditReadCoverage.limitations} ${auditCaptureCoverage.limitations}` },
   "billing.ts": routes("Organization billing and checkout are not operation-audited; no audit billing product is introduced."),
   "brand-assets.ts": routes("Branding uploads and downloads."),
+  "codemode-runs.ts": routes("Workflow run receipts and reads."),
   "codemode-scripts.ts": routes("Workflow authoring, testing, saving and execution."),
   "core.ts": routes("Organization settings and lifecycle."),
   "dashboards.ts": routes("Dashboard mutations and reads."),
@@ -209,7 +210,7 @@ export const otherAuditSurfaces: readonly Readonly<{ location: string; surface: 
   { location: "ee/apps/den-api/scripts/audit-pilot.ts", surface: "cli", coverage: pilotPolicyCoverage },
   { location: "ee/apps/den-api/src/routes/admin", surface: "route", coverage: { ...genericRequestCoverage, limitations: "Organization-targeted admin routes declare path:<organizationId> attribution: actor is the platform admin user (no memberId), origin platform_admin, tenant is the validated target organization; other admin routes record to the platform store. DPA and complimentary-access changes use the single-writer legacy bridge (src/audit/domain/organization-settings.ts via writeLegacyOrChangesInTx): change event or legacy row inside the existing organization-locked transaction; free-text reasons are recorded only as reasonProvided." } },
   ...[
-    "auth", "automations", "bootstrap", "cloud", "dev", "email", "me", "mcp", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
+    "auth", "automations", "bootstrap", "cloud", "dev", "email", "me", "mcp", "telemetry", "version", "webhooks", "workers", "deprecated-memory.ts", "deprecated-skill-hubs.ts",
   ].map((name) => ({ location: `ee/apps/den-api/src/routes/${name}`, surface: "route", coverage: routes("Declared per route in src/audit/routes; token, webhook and runner routes attribute their tenant in the handler after verification (attributeAuditRequest), otherwise they record to the platform store.") } satisfies { location: string; surface: "route"; coverage: AuditCoverageDeclaration })),
   { location: "ee/apps/den-api/src/mcp", surface: "mcp", coverage: { ...genericRequestCoverage, status: "implemented_scoped", emitter: "src/audit/service-capture.ts:runAuditedServiceAction via src/audit/mcp-service-audit.ts (declarations: src/audit/service-actions.ts)",
     operationKinds: [...new Set(auditServiceActionDeclarations.map(({ kind }) => kind))].sort(), actions: auditServiceActionEventTypes(),

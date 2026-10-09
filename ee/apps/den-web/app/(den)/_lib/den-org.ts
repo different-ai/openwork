@@ -154,6 +154,7 @@ export type DenOrgAccessFlags = {
   /** `desktop_policies.manage` */
   canManageDesktopPolicies: boolean;
   canViewDeployments: boolean;
+  canViewUsageAnalytics: boolean;
   canManageDeployments: boolean;
   /** `egress_diagnostics.view` */
   canViewEgressDiagnostics: boolean;
@@ -347,6 +348,7 @@ export type DenOrgEntitlements = {
   sso: boolean;
   desktopPolicies: boolean;
   orgControls: boolean;
+  analytics: boolean;
   auditLogs: boolean;
 };
 
@@ -603,6 +605,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canViewDesktopPolicies: can("desktop_policies.view"),
     canManageDesktopPolicies: can("desktop_policies.manage"),
     canViewDeployments: can("deployments.view"),
+    canViewUsageAnalytics: can("usage_analytics.view"),
     canManageDeployments: can("deployments.manage"),
     canViewEgressDiagnostics: can("egress_diagnostics.view"),
     canManageEgressDiagnostics: can("egress_diagnostics.manage"),
@@ -681,7 +684,17 @@ export function getAuditLogsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/audit-logs`;
 }
 
+export function getAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/analytics`;
+}
 
+export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/models`;
+}
+
+export function getSkillUsageRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/skills`;
+}
 
 export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
@@ -689,6 +702,10 @@ export function getMembersRoute(orgSlug?: string | null): string {
 
 export function getTeamRoute(orgSlug: string | null | undefined, teamId: string): string {
   return `${getMembersRoute(orgSlug)}/teams/${encodeURIComponent(teamId)}`;
+}
+
+export function getWorkflowRunsRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/workflow-runs`;
 }
 
 export function getAutomationsRoute(orgSlug?: string | null): string {
@@ -1226,13 +1243,14 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
 
 function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
   if (!isRecord(value)) {
-    return { sso: true, desktopPolicies: true, orgControls: true, auditLogs: false };
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false };
   }
 
   return {
     sso: value.sso !== false,
     desktopPolicies: value.desktopPolicies !== false,
     orgControls: value.orgControls !== false,
+    analytics: value.analytics !== false,
     auditLogs: value.auditLogs === true,
   };
 }

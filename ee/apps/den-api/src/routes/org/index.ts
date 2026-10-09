@@ -6,6 +6,7 @@ import { registerManagedDeploymentRoutes } from "./managed-deployments.js"
 import { registerOrgAuditRoutes } from "./audit.js"
 import { registerOrgBillingRoutes } from "./billing.js"
 import { registerOrgBrandAssetRoutes } from "./brand-assets.js"
+import { registerOrgWorkflowRunRoutes } from "./codemode-runs.js"
 import { registerOrgWorkflowRoutes } from "./codemode-scripts.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -21,6 +22,7 @@ import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceProviderRoutes } from "./inference-providers.js"
 import { registerOrgInferenceRoutes } from "./inference.js"
 import { registerModelsAnalyticsRoutes } from "./models-analytics.js"
+import { registerSkillUsageRoutes } from "./skill-usage.js"
 import { registerModelsAnalyticsExportRoutes } from "../../models-analytics-export.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
@@ -69,6 +71,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgAuditRoutes(app)
   registerOrgBillingRoutes(app)
   registerOrgBrandAssetRoutes(app)
+  registerOrgWorkflowRunRoutes(app)
   registerOrgWorkflowRoutes(app)
   registerOrgDashboardRoutes(app)
   registerOrgMcpAppCatalogRoutes(app)
@@ -76,6 +79,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)
   registerModelsAnalyticsRoutes(app)
+  registerSkillUsageRoutes(app)
   registerModelsAnalyticsExportRoutes(app)
   registerOrgScimRoutes(app)
   registerOrgSsoRoutes(app)

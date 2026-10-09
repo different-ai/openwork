@@ -61,6 +61,11 @@
       "development": "./src/schema/system.ts",
       "default": "./dist/schema/system.js"
     },
+    "./schema/telemetry": {
+      "types": "./src/schema/telemetry.ts",
+      "development": "./src/schema/telemetry.ts",
+      "default": "./dist/schema/telemetry.js"
+    },
     "./audit-accounting": {
       "types": "./src/audit-accounting.ts",
       "development": "./src/audit-accounting.ts",

@@ -87,6 +87,7 @@ const ADMIN_SCOPE_KEYS = [
   "sso.view",
   "teams.manage",
   "teams.view",
+  "usage_analytics.view",
   "web_origins.view",
 ]
 

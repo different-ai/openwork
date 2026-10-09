@@ -7,12 +7,43 @@ import {
   Users,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { requestJson } from "../../_lib/den-flow";
 import { getAddConnectorRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DashboardActivity } from "../_features/activity/dashboard-activity";
 import { ConnectorQuickAddGrid } from "./connector-quick-add-grid";
 import { useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
+
+/* ── Types ── */
+
+type AdoptionData = {
+  members: number;
+  pendingInvites: number;
+  activeUsers7d: number;
+  activeUsers30d: number;
+  weeklyTrend: number[];
+};
+
+/* ── Data ── */
+
+async function fetchAdoption(): Promise<AdoptionData | null> {
+  try {
+    const { response, payload } = await requestJson("/v1/telemetry/adoption", { method: "GET" }, 12000);
+    if (!response.ok || !payload || typeof payload !== "object") return null;
+    const p = payload as Record<string, unknown>;
+    return {
+      members: typeof p.members === "number" ? p.members : 0,
+      pendingInvites: typeof p.pendingInvites === "number" ? p.pendingInvites : 0,
+      activeUsers7d: typeof p.activeMembers7d === "number" ? p.activeMembers7d : (typeof p.activeUsers7d === "number" ? p.activeUsers7d : 0),
+      activeUsers30d: typeof p.activeMembers30d === "number" ? p.activeMembers30d : (typeof p.activeUsers30d === "number" ? p.activeUsers30d : 0),
+      weeklyTrend: Array.isArray(p.weeklyTrend) ? p.weeklyTrend.map(Number) : [],
+    };
+  } catch {
+    return null;
+  }
+}
 
 /* ── Helpers ── */
 
@@ -82,8 +113,13 @@ export function DashboardOverviewScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
 
-  const members = orgContext?.members.length ?? 0;
-  const pending = (orgContext?.invitations ?? []).filter((invite) => invite.status === "pending").length;
+  const { data: adoption } = useQuery({
+    queryKey: ["telemetry", "adoption"],
+    queryFn: fetchAdoption,
+  });
+
+  const members = adoption?.members ?? orgContext?.members.length ?? 0;
+  const pending = adoption?.pendingInvites ?? (orgContext?.invitations ?? []).filter((i) => i.status === "pending").length;
   // Quick add creates organization connections, which needs `connections.manage`.
   const canAddConnectors = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
