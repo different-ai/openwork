@@ -72,7 +72,7 @@ const statements = [
       arn("elasticloadbalancing", "listener/app/${Name}-*"), arn("elasticloadbalancing", "listener-rule/app/${Name}-*")]),
   // Creating an instance also names the default option and parameter groups.
   allow("OwnDatabase", ["rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:CreateDBSubnetGroup", "rds:ModifyDBSubnetGroup", "rds:AddTagsToResource"],
-    [arn("rds", "db:${Name}-den-*"), arn("rds", "subgrp:${Name}-den"), arn("rds", "og:*"), arn("rds", "pg:*")]),
+    [arn("rds", "db:${Name}-den-*"), arn("rds", "subgrp:${Name}-den-*"), arn("rds", "og:*"), arn("rds", "pg:*")]),
   allow("ReplaceFailedCertificate", "acm:DeleteCertificate", arn("acm", "certificate/*"), tagged("aws:ResourceTag/Deployment")),
   allow("NewServiceDiscovery", ["servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:CreateService", "servicediscovery:TagResource"], "*", inRegion),
   allow("OwnServiceDiscovery", "servicediscovery:UpdateService", "*", { StringEquals: { "aws:RequestedRegion": ref("AWS::Region"), "aws:ResourceTag/Deployment": ref("DeploymentId") } }),
