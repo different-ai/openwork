@@ -40,7 +40,7 @@ export type RoleAssignmentInput = {
 }
 
 export type RoleAssignmentDenial = {
-  reason: "own_role" | "admin_permissions_missing" | "admin_grant_requires_admin" | "admin_role_change_requires_admin"
+  reason: "own_role" | "admin_permissions_missing" | "admin_grant_requires_admin" | "admin_role_change_requires_admin" | "permission_not_held"
   message: string
   /** The first Admin default key the caller lacks, when that is the reason. */
   requiredPermission: PermissionKey | null

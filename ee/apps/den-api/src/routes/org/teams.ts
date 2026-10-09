@@ -12,8 +12,6 @@ import {
   LlmProviderAccessTable,
   MarketplaceAccessGrantTable,
   MemberTable,
-  PermissionSetTable,
-  PermissionSetTeamTable,
   PluginAccessGrantTable,
   TeamMemberTable,
   TeamTable,
@@ -38,6 +36,7 @@ import {
   TEAM_GRANTS_FORBIDDEN_MESSAGE,
 } from "../../permissions/team-grants.js"
 import { ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE, decideAdminTeamChange } from "../../permissions/role-assignment.js"
+import { archiveTeamPermissionSets } from "../../permissions/team-set-archive.js"
 import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError, type AgentErrorEnvelope } from "../../agent-error-envelope.js"
 import type { PermissionDeniedResponse } from "../../permissions/check.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -364,57 +363,6 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }, (tx) => input.memberIds === undefined ? Promise.resolve([]) : affectedTeamUsageMembers(tx, payload.organization.id, rawId, input.memberIds))
 }
 
-/**
- * Team delete cascade for permissions (overview section 10): soft-removes the
- * team's active permission set links and archives each linked team set that
- * no other team still uses. Default sets are never archived. Nothing is deleted.
- */
-async function archiveTeamPermissionSets(tx: TeamMutationTransaction, input: {
-  organizationId: typeof TeamTable.$inferSelect.organizationId
-  teamId: TeamId
-  actorMemberId: MemberId
-  at: Date
-}) {
-  const links = await tx
-    .select({ id: PermissionSetTeamTable.id, permissionSetId: PermissionSetTeamTable.permissionSetId })
-    .from(PermissionSetTeamTable)
-    .where(and(
-      eq(PermissionSetTeamTable.organizationId, input.organizationId),
-      eq(PermissionSetTeamTable.teamId, input.teamId),
-      isNull(PermissionSetTeamTable.removedAt),
-    ))
-    .for("update")
-  if (links.length === 0) return
-
-  await tx
-    .update(PermissionSetTeamTable)
-    .set({ removedAt: input.at, removedByOrgMembershipId: input.actorMemberId })
-    .where(inArray(PermissionSetTeamTable.id, links.map((link) => link.id)))
-
-  const setIds = [...new Set(links.map((link) => link.permissionSetId))]
-  const stillLinked = new Set((await tx
-    .select({ permissionSetId: PermissionSetTeamTable.permissionSetId })
-    .from(PermissionSetTeamTable)
-    .where(and(
-      eq(PermissionSetTeamTable.organizationId, input.organizationId),
-      inArray(PermissionSetTeamTable.permissionSetId, setIds),
-      isNull(PermissionSetTeamTable.removedAt),
-    )))
-    .map((row) => row.permissionSetId))
-  const archiveIds = setIds.filter((setId) => !stillLinked.has(setId))
-  if (archiveIds.length === 0) return
-
-  await tx
-    .update(PermissionSetTable)
-    .set({ archivedAt: input.at, archivedByOrgMembershipId: input.actorMemberId })
-    .where(and(
-      eq(PermissionSetTable.organizationId, input.organizationId),
-      inArray(PermissionSetTable.id, archiveIds),
-      isNull(PermissionSetTable.defaultKey),
-      isNull(PermissionSetTable.archivedAt),
-    ))
-}
-
 async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
   return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
   let teamId: TeamId
@@ -492,7 +440,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
 
     await archiveTeamPermissionSets(tx, {
       organizationId: payload.organization.id,
-      teamId: team.id,
+      teamIds: [team.id],
       actorMemberId: payload.currentMember.id,
       at: removedAt,
     })

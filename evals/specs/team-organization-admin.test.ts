@@ -273,9 +273,30 @@ test("team Admin grants are live, scoped, protected, and cleared across SCIM lif
   if (!nextTeam) throw new Error("Missing second SCIM team");
   await patchTeam(nextTeam.id, { grantsOrganizationAdmin: true });
   await canReadAdmin(inherited, 200);
+  const heldBy = async (session: DenSession) => {
+    const result = await request(session, "/v1/org");
+    expect(result.response.status, result.text).toBe(200);
+    const held = record(record(result.body).currentMember).permissions;
+    return Array.isArray(held) ? held.filter((key): key is string => typeof key === "string") : [];
+  };
+  // members.update is not an Admin permission here, so only the SCIM team's own permissions can grant it.
+  const scimTeamSet = await request(owner, "/v1/permissions/sets", "POST", { teamId: nextTeam.id, permissions: [{ key: "members.update", status: "allow" }] });
+  expect(scimTeamSet.response.status, scimTeamSet.text).toBe(201);
+  const heldBeforeRemoval = (await heldBy(inherited)).includes("members.update");
+  expect(heldBeforeRemoval).toBe(true);
   expect((await request(owner, "/v1/scim", "DELETE")).response.status).toBe(204);
   await canReadAdmin(inherited, 403);
   expect((await context()).teams.find((team) => team.id === nextTeam.id)).toMatchObject({ grantsOrganizationAdmin: false, managedByScim: false, memberIds: [inheritedId] });
+  const heldAfterRemoval = (await heldBy(inherited)).includes("members.update");
+  const scimTeamSetAfter = await request(owner, `/v1/permissions/sets/${text(record(record(scimTeamSet.body).set).id)}`);
+  const archivedAt = record(record(scimTeamSetAfter.body).set).archivedAt;
+  expect(heldAfterRemoval).toBe(false);
+  expect(typeof archivedAt).toBe("string");
+  evidence.recordAssertionEvidence(
+    "After the SCIM provider is deleted, a former SCIM member no longer gets the team's permissions",
+    `The SCIM-created Provider Removal team's permissions allow members.update; its SCIM member held it before removal: ${heldBeforeRemoval}. After DELETE /v1/scim the team is kept with the same member but is no longer an Admin team, its permission set is archived (archivedAt ${String(archivedAt)}), and the former SCIM member holds members.update: ${heldAfterRemoval}.`,
+    heldBeforeRemoval && !heldAfterRemoval && typeof archivedAt === "string",
+  );
   await canReadAdmin(direct, 200);
   expect((await context(inherited)).currentMember.directRole).toBe("member");
   evidence.recordAssertionEvidence("SCIM controls membership but never derives roles from group names", "An IdP group named super-admin grants nothing until approved, then only Admin (super-admin no longer exists as a role). PATCH/PUT removals revoke immediately. Mapping disable/re-enable, group deletion, and provider removal clear designation; retained teams and direct roles do not retain inherited authority.", true);

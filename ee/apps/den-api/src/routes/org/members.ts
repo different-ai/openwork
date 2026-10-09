@@ -73,14 +73,16 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       organizationId: payload.organization.id,
       memberId,
       nextRole: role,
-      // The target's role, the caller's permissions and the Admin default set may all have changed
-      // since the check above; decide again on the locked row, reading through the transaction.
+      // The target's role, the caller's permissions (members.update included) and the Admin default
+      // set may all have changed since the checks above; decide again on the locked row, reading
+      // through the transaction.
       authorize: (member, tx) => roleAssignmentDenialInTransaction({
         tx,
         organizationId: payload.organization.id,
         callerMemberId: payload.currentMember.id,
         target: roleAssignmentTargetFromRole(member.id, member.role),
         nextRole: role,
+        requiredPermission: "members.update",
       }),
     })
     if (!updated.ok) {

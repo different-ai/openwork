@@ -1,6 +1,7 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { withOrganizationTeamMutation } from "./organization-team-roles.js"
+import { archiveTeamPermissionSets } from "./permissions/team-set-archive.js"
 import { appendDomainChanges } from "./audit/domain/legacy.js"
 import { scimConnectionDeletedEvent } from "./audit/domain/scim.js"
 import type { AuditChangeCapture } from "./audit/request-capture.js"
@@ -339,8 +340,12 @@ async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typ
     if (groupRows.length > 0) {
       const teamIds = groupRows.flatMap((group) => group.teamId ? [group.teamId] : [])
       if (teamIds.length > 0 && provider.groupMappingMode === "create_teams") {
+        // The teams and their members are retained as ordinary teams, but nothing the identity
+        // provider projected keeps authority: clear the Admin designation and stop the teams'
+        // permission sets applying until the owner sets them again.
         await db.update(TeamTable).set({ grantsOrganizationAdmin: false })
           .where(and(eq(TeamTable.organizationId, connection.organizationId), inArray(TeamTable.id, teamIds)))
+        await archiveTeamPermissionSets(db, { organizationId: connection.organizationId, teamIds, actorMemberId: null, at: new Date() })
       }
       await db
         .delete(ScimGroupMemberTable)

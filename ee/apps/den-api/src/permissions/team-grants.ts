@@ -14,10 +14,11 @@ import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
 import { ORGANIZATION_ADMIN_ROLE, organizationRoleValueIncludes } from "../organization-role-hierarchy.js"
 import { permissionDeniedResponse, type PermissionDeniedResponse } from "./check.js"
-import type { MemberPermissions } from "./effective.js"
+import { permissionDeniedMessage, type MemberPermissions } from "./effective.js"
 import { resolvePermissionsForMember } from "./resolve.js"
 import {
   adminGrantDenial,
+  decideRequiredPermission,
   decideRoleAssignment,
   firstMissingPermission,
   roleAssignmentNeedsAdminDefaultKeys,
@@ -198,8 +199,17 @@ export async function roleAssignmentDenialInTransaction(input: {
   callerMemberId: MemberId
   target: RoleAssignmentTarget | null
   nextRole: string
+  /**
+   * The permission the route required (members.update for a role change), re-checked against the
+   * caller resolved through `tx` before the role rules; a caller who lost it is refused.
+   */
+  requiredPermission?: PermissionKey
 }): Promise<RoleAssignmentDenial | null> {
   const caller = await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.callerMemberId, database: input.tx })
+  const permissionDenial = decideRequiredPermission({ actor: caller, requiredPermission: input.requiredPermission })
+  if (permissionDenial) {
+    return { reason: "permission_not_held", message: permissionDeniedMessage(permissionDenial.requiredPermission), requiredPermission: permissionDenial.requiredPermission }
+  }
   const decision = {
     caller,
     callerMemberId: input.callerMemberId,

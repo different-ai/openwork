@@ -182,6 +182,9 @@ test("direct member removal re-checks Remove members against the permissions res
   // Invitation cancellation and SCIM deprovisioning pass no required permission: they authorize separately.
   assert.equal(decideRequiredPermission({ actor: caller({ keys: [] }), requiredPermission: undefined }), null)
   assert.equal(decideRequiredPermission({ actor: null, requiredPermission: undefined }), null)
+  // A role change passes members.update: a caller who lost Change member roles is refused in the transaction.
+  assert.deepEqual(decideRequiredPermission({ actor: caller({ keys: ADMIN_DEFAULTS.filter((key) => key !== "members.update") }), requiredPermission: "members.update" }), { reason: "permission_not_held", requiredPermission: "members.update" })
+  assert.equal(decideRequiredPermission({ actor: caller({ keys: ["members.update"] }), requiredPermission: "members.update" }), null)
 })
 
 test("an admin assignment decided in the transaction uses the Admin default set read there", () => {

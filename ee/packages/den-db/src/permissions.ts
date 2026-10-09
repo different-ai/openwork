@@ -6,6 +6,7 @@ import {
   type PermissionDefaultSetKey,
   type PermissionKey,
 } from "@openwork/types/den/permissions"
+import { alias } from "drizzle-orm/mysql-core"
 import type { createDenDb } from "./client"
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "./drizzle"
 import {
@@ -299,16 +300,51 @@ export type AuthoritativeTeamMembership = {
   grantsOrganizationAdmin: boolean
 }
 
+/** What decides whether one team membership carries authority (listAuthoritativeTeamMemberships). */
+export type TeamMembershipScimFacts = {
+  /** A scim_group still maps this team. */
+  teamHasScimGroup: boolean
+  /** That group's provider's group mapping mode, or null when the provider no longer exists. */
+  groupMappingMode: string | null
+  /** The identity provider still lists this member in that group (a live scim_group_member link to this membership). */
+  listedByIdentityProvider: boolean
+  /**
+   * A scim_group_member row links this membership as a SCIM projection, but its group no longer
+   * exists, no longer maps this team, or its provider no longer exists.
+   */
+  orphanedScimProjection: boolean
+}
+
+/**
+ * Whether a team membership carries authority. A membership the identity
+ * provider projected stops counting once its group or provider is gone, even
+ * if cleanup left the row behind. Otherwise a team no SCIM group maps counts
+ * (manual teams, and teams whose SCIM provider was deleted); a mapped team
+ * counts when its provider only mirrors group metadata, or creates teams and
+ * still lists this member. A mapped team whose provider is missing fails closed.
+ */
+export function isAuthoritativeTeamMembership(facts: TeamMembershipScimFacts): boolean {
+  if (facts.orphanedScimProjection) return false
+  if (!facts.teamHasScimGroup) return true
+  if (facts.groupMappingMode === "metadata_only") return true
+  if (facts.groupMappingMode === "create_teams") return facts.listedByIdentityProvider
+  return false
+}
+
+const ProjectionLinkTable = alias(ScimGroupMemberTable, "scim_projection_link")
+const ProjectionGroupTable = alias(ScimGroupTable, "scim_projection_group")
+const ProjectionProviderTable = alias(ScimProviderTable, "scim_projection_provider")
+
 /**
  * Team memberships that carry authority: Admin-team status (effective admin)
- * and team permission sets. A SCIM-mapped team projection is not itself
- * authority: a membership counts when the team has no SCIM group, its
- * provider only mirrors group metadata, or the provider creates teams and the
- * identity provider still lists this member in the group. Orphaned
- * projections (provider gone) and members added by hand to an IdP-managed
- * team fail closed. Active (not removed) members only. Never cache: IdP
- * removals and designation changes apply on the next check. `lock: "share"`
- * reads the latest committed memberships inside a transaction.
+ * and team permission sets (isAuthoritativeTeamMembership). A SCIM-mapped
+ * team projection is not itself authority: a membership counts when the team
+ * has no SCIM group, its provider only mirrors group metadata, or the provider
+ * creates teams and the identity provider still lists this member in the
+ * group. Orphaned projections (group or provider gone) and members added by
+ * hand to an IdP-managed team fail closed. Active (not removed) members only.
+ * Never cache: IdP removals and designation changes apply on the next check.
+ * `lock: "share"` reads the latest committed memberships inside a transaction.
  */
 export async function listAuthoritativeTeamMemberships(
   database: PermissionDatabase,
@@ -316,10 +352,17 @@ export async function listAuthoritativeTeamMemberships(
 ): Promise<AuthoritativeTeamMembership[]> {
   const { organizationId } = input
   const query = database.select({
+    teamMemberId: TeamMemberTable.id,
     memberId: MemberTable.id,
     teamId: TeamTable.id,
     teamName: TeamTable.name,
     grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin,
+    scimGroupId: ScimGroupTable.id,
+    groupMappingMode: ScimProviderTable.groupMappingMode,
+    listedMemberId: ScimGroupMemberTable.id,
+    projectionLinkId: ProjectionLinkTable.id,
+    projectionGroupTeamId: ProjectionGroupTable.teamId,
+    projectionProviderId: ProjectionProviderTable.id,
   })
     .from(TeamTable)
     .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
@@ -341,17 +384,38 @@ export async function listAuthoritativeTeamMemberships(
       eq(ScimGroupMemberTable.orgMembershipId, MemberTable.id),
       eq(ScimGroupMemberTable.remoteUserId, MemberTable.userId),
     ))
+    // Any SCIM projection link to this membership, live or not, with its own group and provider.
+    .leftJoin(ProjectionLinkTable, eq(ProjectionLinkTable.teamMemberId, TeamMemberTable.id))
+    .leftJoin(ProjectionGroupTable, eq(ProjectionGroupTable.id, ProjectionLinkTable.groupId))
+    .leftJoin(ProjectionProviderTable, and(
+      eq(ProjectionProviderTable.providerId, ProjectionGroupTable.providerId),
+      eq(ProjectionProviderTable.organizationId, organizationId),
+    ))
     .where(and(
       eq(TeamTable.organizationId, organizationId),
       input.memberId !== undefined ? eq(MemberTable.id, input.memberId) : undefined,
       input.adminTeamsOnly ? eq(TeamTable.grantsOrganizationAdmin, true) : undefined,
-      or(
-        isNull(ScimGroupTable.id),
-        eq(ScimProviderTable.groupMappingMode, "metadata_only"),
-        and(eq(ScimProviderTable.groupMappingMode, "create_teams"), isNotNull(ScimGroupMemberTable.id)),
-      ),
     ))
-  return input.lock ? await query.for(input.lock) : await query
+  const rows = input.lock ? await query.for(input.lock) : await query
+
+  // The left joins can repeat a membership; fold its rows into one set of facts.
+  const byMembership = new Map<string, { membership: AuthoritativeTeamMembership; facts: TeamMembershipScimFacts }>()
+  for (const row of rows) {
+    const entry = byMembership.get(row.teamMemberId) ?? {
+      membership: { memberId: row.memberId, teamId: row.teamId, teamName: row.teamName, grantsOrganizationAdmin: row.grantsOrganizationAdmin },
+      facts: { teamHasScimGroup: false, groupMappingMode: null, listedByIdentityProvider: false, orphanedScimProjection: false },
+    }
+    if (row.scimGroupId !== null) {
+      entry.facts.teamHasScimGroup = true
+      entry.facts.groupMappingMode = row.groupMappingMode
+    }
+    if (row.listedMemberId !== null) entry.facts.listedByIdentityProvider = true
+    if (row.projectionLinkId !== null && (row.projectionGroupTeamId !== row.teamId || row.projectionProviderId === null)) {
+      entry.facts.orphanedScimProjection = true
+    }
+    byMembership.set(row.teamMemberId, entry)
+  }
+  return [...byMembership.values()].flatMap(({ membership, facts }) => isAuthoritativeTeamMembership(facts) ? [membership] : [])
 }
 
 type DefaultSetRow = { id: PermissionSetId; organizationId: OrganizationId; defaultKey: PermissionDefaultSetKey }
