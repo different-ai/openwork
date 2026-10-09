@@ -320,6 +320,36 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
     expect(within.status, summary(within)).toBe(200);
   });
 
+  await step("Tess, who may view permissions but not any team, sees how many people a set applies to but not their names or emails; the owner sees who they are", async () => {
+    const tessTeam = await world.request(world.tess, "GET", `/v1/permissions/sets/${supportSetId}`);
+    const tessAdmins = await world.request(world.tess, "GET", `/v1/permissions/sets/${adminSetId}`);
+    const ownerTeam = await world.request(world.owner, "GET", `/v1/permissions/sets/${supportSetId}`);
+    const ownerAdmins = await world.request(world.owner, "GET", `/v1/permissions/sets/${adminSetId}`);
+    const tessKeys = await permissionsOf(world, world.tess);
+    const teamApplies = field(field(tessTeam.body, "set"), "appliesTo");
+    const adminApplies = field(field(tessAdmins.body, "set"), "appliesTo");
+    const ownerTeamMembers = rows(field(field(field(ownerTeam.body, "set"), "appliesTo"), "members"));
+    const ownerDirectAdmins = rows(field(field(field(ownerAdmins.body, "set"), "appliesTo"), "directAdmins"));
+    const leaked = [tessTeam.text, tessAdmins.text].some((text) => ["Maya Member", "permissions-maya+", "Adam Admin", "permissions-adam+"].some((identity) => text.includes(identity)));
+    const ok = !tessKeys.includes("teams.view") && tessTeam.status === 200 && tessAdmins.status === 200
+      && field(teamApplies, "members") === null && field(teamApplies, "memberCount") === 1
+      && field(adminApplies, "directAdmins") === null && field(adminApplies, "directAdminCount") === 1 && !leaked
+      && ownerTeamMembers.map((person) => person.memberId).join(",") === world.ids.maya
+      && ownerDirectAdmins.map((person) => person.memberId).join(",") === world.ids.adam;
+    evidence.recordAssertionEvidence(
+      "Permission set rosters (names and emails) need View any team; counts don't",
+      `Tess holds teams.view: ${tessKeys.includes("teams.view")}; Tess GET Support Permissions → ${tessTeam.status} members ${JSON.stringify(field(teamApplies, "members"))}, memberCount ${String(field(teamApplies, "memberCount"))}; Tess GET Admin permissions → ${tessAdmins.status} directAdmins ${JSON.stringify(field(adminApplies, "directAdmins"))}, directAdminCount ${String(field(adminApplies, "directAdminCount"))}; names or emails in Tess's responses: ${leaked}; owner sees ${ownerTeamMembers.map((person) => String(person.name)).join(", ")} in Support and ${ownerDirectAdmins.map((person) => String(person.name)).join(", ")} as admins`,
+      ok,
+    );
+    expect(tessKeys).not.toContain("teams.view");
+    expect(tessTeam.status, summary(tessTeam)).toBe(200);
+    expect(teamApplies).toMatchObject({ kind: "team", members: null, memberCount: 1 });
+    expect(adminApplies).toMatchObject({ kind: "admins", directAdmins: null, directAdminCount: 1 });
+    expect(leaked).toBe(false);
+    expect(ownerTeamMembers.map((person) => person.memberId)).toEqual([world.ids.maya]);
+    expect(ownerDirectAdmins.map((person) => person.memberId)).toEqual([world.ids.adam]);
+  });
+
   await step("then Maya's permissions explain where each one comes from", async () => {
     const restored = await world.request(world.owner, "PUT", `/v1/permissions/sets/${supportSetId}/permissions`, { changes: [{ key: "teams.view", status: "allow" }] });
     expect(restored.status, summary(restored)).toBe(200);

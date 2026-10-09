@@ -6913,7 +6913,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List configured gateway catalog models
    *
-   * Refreshes and returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires the View Gateway providers permission and enabled Gateway management.
+   * Returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. Callers who also hold Manage Gateway providers first refresh the stored models from the catalog; View-only callers get the stored models without any refresh or write. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires the View Gateway providers permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderIdModels<ThrowOnError extends boolean = false>(
     parameters: {
@@ -8130,7 +8130,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get a permission set
    *
-   * Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. Archived team sets are still readable. Requires permissions.view and the Permissions feature.
+   * Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people are only included when the caller also holds teams.view; otherwise only the counts are. Archived team sets are still readable. Requires permissions.view and the Permissions feature.
    */
   public getV1PermissionsSetsByPermissionSetId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10395,7 +10395,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Review a changed External MCP OAuth issuer
    *
-   * Organization-admin-only. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.
+   * Requires the Manage connections permission. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirming an issuer also needs a recent sign-in. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.
    */
   public postV1McpConnectionsByConnectionIdOauthIssuerReview<ThrowOnError extends boolean = false>(
     parameters: {

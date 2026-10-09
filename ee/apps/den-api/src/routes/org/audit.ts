@@ -17,6 +17,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
 import { appLogger } from "../../observability/logger.js"
+import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { permissionDeniedResponse, permissionFailureHeaders, type OrgRouteVariables } from "./shared.js"
 
@@ -131,8 +132,11 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
       const rejection = await db.transaction(async (tx) => {
         const { entitlement } = await requireAuditFeature(tx, organization.organization.id)
         const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1)
-        // The route marker checked audit.manage, so only re-check the member is still active here.
         if (!member) return "forbidden"
+        // Re-check Manage audit settings through this transaction (read-only, share locks), so a
+        // permission revoked after the route check is seen before capture state changes.
+        const permissions = await resolvePermissionsForMember({ organizationId: organization.organization.id, memberId: member.id, database: tx })
+        if (!permissions.has("audit.manage")) return "forbidden"
         if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
         if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
         const initialization = await initializeAuditPolicyInTx(tx, organization.organization.id, env.auditCaptureEnabled)

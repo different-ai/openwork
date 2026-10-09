@@ -390,6 +390,38 @@ test.skipIf(skip)(name("2. a refused raw better-auth mutation records a denied a
   );
 });
 
+test.skipIf(skip)(name("2b. a raw better-auth custom-role mutation is still refused with 403 and recorded as a denied attempt in the caller's organization although better-auth no longer serves it"), STEP, async ({ evidence, place }) => {
+  const w = await world(place);
+  const { cookie } = await signIn(w, w.member.email, w.member.password);
+  const markA = await watermark(w, w.orgA);
+  const markB = await watermark(w, w.orgB);
+  const own = await raw(w.den, "/api/auth/organization/create-role", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ role: "auditor", permission: { member: ["delete"] }, organizationId: w.orgA }) });
+  expect(own.status, own.text).toBe(403);
+  expect(own.body).toEqual({ error: "forbidden", message: "Custom organization roles are not supported." });
+  const attempts = await pollEvents(w, w.orgA, markA, "auth.organization.role.create.attempted");
+  expect(attempts.map((event) => event.action), summary(attempts)).toEqual(["auth.organization.role.create.attempted"]);
+  const [attempt] = attempts;
+  expect(attempt?.outcome).toBe("denied");
+  expect(attempt?.reasonCode).toBe("raw_endpoint_refused");
+  expect(attempt?.category).toBe("security");
+  expect(attempt?.actor).toEqual({ type: "user", id: w.memberA.userId, memberId: w.memberA.memberId });
+  const intents = (await tenantEvents(w, w.orgA, markA)).filter((event) => event.action.endsWith(".requested"));
+  expect(summary(intents), "a refusal writes no intent").toBe("(none)");
+
+  const foreign = await raw(w.den, "/api/auth/organization/delete-role", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ roleName: "auditor", organizationId: w.orgB }) });
+  expect(foreign.status).toBe(403);
+  await sleep(500);
+  const inB = await tenantEvents(w, w.orgB, markB);
+  expect(summary(inB), "never attributed to an organization the caller is not a member of").toBe("(none)");
+  const anonymous = await raw(w.den, "/api/auth/organization/update-role", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ roleName: "auditor", organizationId: w.orgA }) });
+  expect(anonymous.status).toBe(403);
+  evidence.recordAssertionEvidence(
+    "A member's cookie POST /api/auth/organization/create-role naming organization A answers 403 (custom roles are not supported) and records auth.organization.role.create.attempted (denied, raw_endpoint_refused, security, member actor, no intent) in A; delete-role naming B (not a member) answers 403 and records nothing in B; an anonymous update-role answers 403",
+    `A: ${summary(attempts)}; B: ${summary(inB)}; anonymous=${anonymous.status}`,
+    true,
+  );
+});
+
 test.skipIf(skip)(name("3. an invitee rejecting an invitation records invitation.rejected in the invitation's organization with the invitee as actor"), STEP, async ({ evidence, place }) => {
   const w = await world(place);
   const invited = await call(w.den, "/v1/invitations", { method: "POST", headers: orgHeaders(w.admin, w.orgB), body: { email: w.member.email, role: "member" } });

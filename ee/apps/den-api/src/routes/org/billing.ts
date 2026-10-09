@@ -9,7 +9,9 @@ import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { requirePermission } from "./shared.js"
+import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
+
+const INFERENCE_SUBSCRIPTION_EXISTS_PORTAL_REQUIRED_MESSAGE = "OpenWork Models is already subscribed for this organization. Updating its payment method needs the “Open the billing portal” permission, so ask someone who has it, such as the owner."
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
 const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat", "web"]).optional() })
@@ -198,7 +200,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe Checkout session created successfully.", stripeCheckoutResponseSchema),
         401: jsonResponse("The caller must be signed in to start billing.", unauthorizedSchema),
-        403: jsonResponse("Billing access is denied.", z.union([forbiddenSchema, managedModelsPolicyErrorSchema])),
+        403: jsonResponse("Billing access is denied. When an OpenWork Models subscription already exists, the billing portal URL returned instead of a checkout needs the Open the billing portal permission and a recent sign-in.", z.union([forbiddenSchema, managedModelsPolicyErrorSchema])),
         503: jsonResponse("Managed Models policy is unavailable.", managedModelsPolicyErrorSchema),
         404: jsonResponse("OpenWork Web is not available for this organization.", openWorkWebUnavailableSchema),
       },
@@ -268,7 +270,17 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         // The organization already has an OpenWork Models subscription Stripe
         // is still collecting on (typically past due after a failed renewal).
         // A second Checkout would charge them twice, so hand them the billing
-        // portal where the payment method can be fixed instead.
+        // portal where the payment method can be fixed instead. The portal URL
+        // is a live Stripe session that can change billing, so it needs the
+        // same check as POST /v1/billing/stripe/portal (billing_portal.use with
+        // a recent sign-in); Start a subscription alone never returns it.
+        const portalAccess = await requirePermission(c, "billing_portal.use")
+        if (!portalAccess.ok) {
+          const failure = portalAccess.response.error === "forbidden"
+            ? { ...portalAccess.response, message: INFERENCE_SUBSCRIPTION_EXISTS_PORTAL_REQUIRED_MESSAGE }
+            : portalAccess.response
+          return c.json(failure, orgAccessFailureStatus(failure), permissionFailureHeaders(failure))
+        }
         const portal = await createInferencePortalSession({
           organizationId: payload.organization.id,
           returnUrl: billingReturnUrl(c),

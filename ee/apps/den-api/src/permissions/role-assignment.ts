@@ -96,21 +96,25 @@ export function decideRoleAssignment(
 export const ADMIN_REMOVAL_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can remove an admin from the organization."
 
 /**
- * Removing someone who holds the admin role directly. With the Permissions
- * feature on, `members.delete` can be granted to non-admins through team
- * sets, so removing a direct admin also needs the actor to be the owner or an
- * effective admin (the same rule as demoting one). Pending-invitation
- * placeholders hold no access yet and stay governed by the invitation rules.
- * With the feature off only admins hold `members.delete`, so nothing changes.
- * Null means allowed.
+ * Removing an admin: someone who holds the admin role directly, or is an
+ * effective admin through an Admin team (authoritative membership, the same
+ * rule permission resolution uses). With the Permissions feature on,
+ * `members.delete` and `teams.manage_admin` can be granted to non-admins
+ * through team sets, so removing an admin also needs the actor to be the
+ * owner or an effective admin (the same rule as demoting one).
+ * Pending-invitation placeholders hold no access yet and stay governed by the
+ * invitation rules. With the feature off only admins hold `members.delete`,
+ * so nothing changes. Null means allowed.
  */
 export function decideMemberRemoval(input: {
   actor: Pick<MemberPermissions, "featureEnabled" | "isOwner" | "isAdmin">
   targetIsDirectAdmin: boolean
+  /** The target is a member of an Admin team through a membership that carries authority. */
+  targetIsAdminViaTeam: boolean
   targetIsPendingInvitation: boolean
 }): { reason: "admin_removal_requires_admin"; message: string } | null {
   if (!input.actor.featureEnabled || input.actor.isOwner || input.actor.isAdmin) return null
-  if (!input.targetIsDirectAdmin || input.targetIsPendingInvitation) return null
+  if (!(input.targetIsDirectAdmin || input.targetIsAdminViaTeam) || input.targetIsPendingInvitation) return null
   return { reason: "admin_removal_requires_admin", message: ADMIN_REMOVAL_REQUIRES_ADMIN_MESSAGE }
 }
 

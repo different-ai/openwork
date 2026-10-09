@@ -472,7 +472,9 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     listResets(scope: GatewayUsageScope, own: boolean, options: GatewayUsageResetListOptions = {}) {
       return transaction(async (tx, now) => {
-        await activeUsageMember(tx, scope)
+        // Organization-wide listings read other members' requests: share-lock the caller's
+        // active membership so a concurrent removal can't land between this check and the read.
+        await activeUsageMember(tx, scope, !own)
         return readGatewayUsageResetPage(tx, scope, own, options, now)
       })
     },

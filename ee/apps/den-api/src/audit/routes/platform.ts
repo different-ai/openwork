@@ -108,6 +108,13 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/api/auth/scim/get-provider-connection", "scim_raw.provider_connection.read", "platform.auth", "scim_connection", null, "Blocked: always 401/403."),
   handler("POST", "/api/auth/scim/delete-provider-connection", "tenant_change", "scim_raw.provider_connection.delete", "platform.auth.raw_mutation", "scim_connection", `Den-shadowed raw better-auth route; use DELETE /v1/scim. ${RAW_REFUSED}`),
 
+  // Raw better-auth custom-role management. dynamicAccessControl is off, so better-auth no
+  // longer registers these endpoints; Den shadows them (routes/auth/raw-role-refusals.ts) so
+  // denied attempts stay in the tenant security audit (always 403).
+  handler("POST", "/api/auth/organization/create-role", "tenant_change", "auth.organization.role.create", "platform.auth.raw_mutation", "role", `Den-shadowed raw better-auth route; custom organization roles are not supported (permission sets are managed through /v1/permissions). ${RAW_REFUSED}`),
+  handler("POST", "/api/auth/organization/update-role", "tenant_change", "auth.organization.role.update", "platform.auth.raw_mutation", "role", `Den-shadowed raw better-auth route; custom organization roles are not supported (permission sets are managed through /v1/permissions). ${RAW_REFUSED}`),
+  handler("POST", "/api/auth/organization/delete-role", "tenant_change", "auth.organization.role.delete", "platform.auth.raw_mutation", "role", `Den-shadowed raw better-auth route; custom organization roles are not supported (permission sets are managed through /v1/permissions). ${RAW_REFUSED}`),
+
   // Auth helpers
   platform("GET", "/v1/auth/login-options", "auth.login_options.read", "platform.auth", "login_options", null, "Public, bot-protected; reveals account sign-in methods."),
   platform("GET", "/v1/orgs/sso/resolve", "auth.sso.resolve", "platform.auth", "login_options", null, "Public, bot-protected email -> SSO routing."),

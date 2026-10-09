@@ -1,5 +1,6 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
+import { listAuthoritativeTeamMemberships } from "@openwork-ee/den-db/permissions"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -1988,11 +1989,12 @@ export async function removeOrganizationMember(input: {
   // Every removal path (members DELETE, invitation cancel, SCIM deprovisioning)
   // appends member.removed here when the request's change capture is active.
   const capture = currentAuditChangeCapture(input.organizationId)
-  // Resolved before the transaction (see acceptInvitation). Fails closed for a removed or missing actor.
-  const actorPermissions = input.removedByOrgMemberId
-    ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.removedByOrgMemberId })
-    : null
-  const actorMayManageAdminTeams = actorPermissions?.has("teams.manage_admin") ?? false
+  // Resolved before the transaction too (see acceptInvitation): this resolution may seed the default
+  // permission sets through its own connection. The decision below re-resolves read-only through the
+  // transaction. Fails closed for a removed or missing actor.
+  if (input.removedByOrgMemberId) {
+    await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.removedByOrgMemberId })
+  }
   const removed = await withOrganizationMembershipUsageMutation(input.organizationId, async (tx): Promise<MemberMutationResult> => {
     const activeRows = await tx
       .select({ member: MemberTable, userId: AuthUserTable.id })
@@ -2021,10 +2023,21 @@ export async function removeOrganizationMember(input: {
     const member = memberRow.member
     const removedAt = new Date()
 
+    // Re-checked under the target's row lock through this transaction (read-only, share locks), so a
+    // permission or Admin-team change committed after the route check is seen before the removal.
+    const actorPermissions = input.removedByOrgMemberId
+      ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.removedByOrgMemberId, database: tx })
+      : null
+    const actorMayManageAdminTeams = actorPermissions?.has("teams.manage_admin") ?? false
+
     if (actorPermissions) {
+      const targetIsDirectAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE)
+      const targetIsAdminViaTeam = !targetIsDirectAdmin && actorPermissions.featureEnabled && !actorPermissions.isOwner && !actorPermissions.isAdmin
+        && (await listAuthoritativeTeamMemberships(tx, { organizationId: input.organizationId, memberId: member.id, adminTeamsOnly: true, lock: "share" })).length > 0
       const adminRemovalDenial = decideMemberRemoval({
         actor: actorPermissions,
-        targetIsDirectAdmin: organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE),
+        targetIsDirectAdmin,
+        targetIsAdminViaTeam,
         targetIsPendingInvitation: member.userId === null,
       })
       if (adminRemovalDenial) {

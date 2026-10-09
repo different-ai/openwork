@@ -166,8 +166,18 @@ const appliesToSummarySchema = z.discriminatedUnion("kind", [
 
 const appliesToDetailSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone"), memberCount: z.number().int() }),
-  z.object({ kind: z.literal("admins"), directAdmins: z.array(permissionPersonSchema), adminTeams: z.array(adminTeamSummarySchema) }),
-  z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), members: z.array(permissionPersonSchema) }),
+  z.object({
+    kind: z.literal("admins"),
+    directAdminCount: z.number().int(),
+    directAdmins: z.array(permissionPersonSchema).nullable().describe("Names and emails of members with the admin role. Null unless the caller holds teams.view; directAdminCount is always returned."),
+    adminTeams: z.array(adminTeamSummarySchema),
+  }),
+  z.object({
+    kind: z.literal("team"),
+    team: teamReferenceSchema.nullable(),
+    memberCount: z.number().int(),
+    members: z.array(permissionPersonSchema).nullable().describe("Names and emails of the team's members. Null unless the caller holds teams.view; memberCount is always returned."),
+  }),
 ]).meta({ ref: "PermissionSetAppliesTo" })
 
 const permissionSetSummarySchema = z.object({
@@ -491,7 +501,17 @@ function historyQuery(organizationId: OrganizationId, permissionSetId: Permissio
     ))
 }
 
-async function loadPermissionSetDetail(organizationId: OrganizationId, set: PermissionSetRow) {
+/**
+ * Who a set applies to includes people's names and emails (team rosters, the
+ * members with the admin role). Those are only returned to callers who may
+ * see any team's members (teams.view, the one roster view permission);
+ * everyone else holding permissions.view gets the counts.
+ */
+async function mayViewRosters(c: PermissionRouteContext): Promise<boolean> {
+  return (await callerPermissions(c))?.has("teams.view") ?? false
+}
+
+async function loadPermissionSetDetail(organizationId: OrganizationId, set: PermissionSetRow, includeIdentities: boolean) {
   const [rows, links] = await Promise.all([
     historyQuery(organizationId, set.id),
     readTeamLinks(db, organizationId, [set.id]),
@@ -505,14 +525,24 @@ async function loadPermissionSetDetail(organizationId: OrganizationId, set: Perm
     appliesTo = { kind: "everyone", memberCount: members.length }
   } else if (set.defaultKey === "admin") {
     const [members, adminTeams] = await Promise.all([listActiveMembers(organizationId), listAdminTeams(organizationId)])
+    const directAdmins = members.filter(isDirectAdmin).map(({ memberId, name, email }) => ({ memberId, name, email }))
     appliesTo = {
       kind: "admins",
-      directAdmins: members.filter(isDirectAdmin).map(({ memberId, name, email }) => ({ memberId, name, email })),
+      directAdminCount: directAdmins.length,
+      directAdmins: includeIdentities ? directAdmins : null,
       adminTeams,
     }
   } else {
     const active = set.archivedAt === null ? team : null
-    appliesTo = { kind: "team", team, members: active ? await listTeamMembers(organizationId, active.id) : [] }
+    if (!active) {
+      appliesTo = { kind: "team", team, memberCount: 0, members: includeIdentities ? [] : null }
+    } else if (includeIdentities) {
+      const members = await listTeamMembers(organizationId, active.id)
+      appliesTo = { kind: "team", team, memberCount: members.length, members }
+    } else {
+      const counts = await countTeamMembers(organizationId, [active.id])
+      appliesTo = { kind: "team", team, memberCount: counts.get(active.id) ?? 0, members: null }
+    }
   }
 
   return {
@@ -762,7 +792,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         },
       }, result.auditEventIds)
 
-      return c.json({ set: await loadPermissionSetDetail(organizationId, result.set) }, 201)
+      return c.json({ set: await loadPermissionSetDetail(organizationId, result.set, await mayViewRosters(c)) }, 201)
     },
   )
 
@@ -771,7 +801,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "Get a permission set",
-      description: "Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. Archived team sets are still readable. Requires permissions.view and the Permissions feature.",
+      description: "Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people are only included when the caller also holds teams.view; otherwise only the counts are. Archived team sets are still readable. Requires permissions.view and the Permissions feature.",
       responses: {
         200: jsonResponse("Permission set returned successfully.", permissionSetResponseSchema),
         400: jsonResponse("The permission set id was invalid.", invalidRequestSchema),
@@ -791,7 +821,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const existing = await readPermissionSet(db, organizationId, permissionSetId)
       if (!existing) return c.json({ error: "permission_set_not_found" as const }, 404)
       if (existing.defaultKey !== null) await ensureCurrentDefaultPermissionSets(organizationId)
-      return c.json({ set: await loadPermissionSetDetail(organizationId, existing) })
+      return c.json({ set: await loadPermissionSetDetail(organizationId, existing, await mayViewRosters(c)) })
     },
   )
 
@@ -897,7 +927,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         }, result.auditEventIds)
       }
 
-      return c.json({ set: await loadPermissionSetDetail(organizationId, result.set) })
+      return c.json({ set: await loadPermissionSetDetail(organizationId, result.set, await mayViewRosters(c)) })
     },
   )
 

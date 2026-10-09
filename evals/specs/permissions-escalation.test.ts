@@ -483,6 +483,26 @@ test("with Permissions on, permissions granted through a team cannot mint a last
     expect(adam.role).toBe("admin");
   });
 
+  await step("holding Remove members and Manage Admin teams through her team, Tess cannot remove Maya, who is an admin only through the Ops admins team", async () => {
+    const tess = await memberContext(world, world.tess);
+    const remove = await world.request(world.tess, "DELETE", `/v1/members/${world.ids.maya}`);
+    const maya = await memberContext(world, world.maya);
+    const stored = await rosterRole(world, world.ids.maya);
+    const held = tess.permissions.includes("members.delete") && tess.permissions.includes("teams.manage_admin");
+    const ok = held && tess.role === "member" && remove.status === 403
+      && field(remove.body, "message") === "Only the owner or an admin can remove an admin from the organization."
+      && stored === "member" && adminDefaults.every((key) => maya.permissions.includes(key));
+    evidence.recordAssertionEvidence(
+      "Removing someone who is an admin through an Admin team needs the owner or an admin, just like a direct admin",
+      `Tess (role ${tess.role}) holds members.delete and teams.manage_admin: ${held}; DELETE /v1/members/:maya → ${said(remove)}: “${String(field(remove.body, "message"))}”; Maya is still a member (stored role ${stored}) holding every Admin permission: ${adminDefaults.every((key) => maya.permissions.includes(key))}`,
+      ok,
+    );
+    expect(held).toBe(true);
+    expect(remove.status, summary(remove)).toBe(403);
+    expect(remove.body).toMatchObject({ error: "forbidden", message: "Only the owner or an admin can remove an admin from the organization." });
+    expect(stored).toBe("member");
+  });
+
   await step("Tess cannot add Nora to the Ops admins team or make her own team an Admin team", async () => {
     const add = await world.request(world.tess, "PATCH", `/v1/teams/${opsAdmins}`, { memberIds: [world.ids.maya, world.ids.nora] });
     const promoteTeam = await world.request(world.tess, "PATCH", `/v1/teams/${world.teams.editors}`, { grantsOrganizationAdmin: true });

@@ -29,8 +29,9 @@ const appliesToSummarySchema = z.discriminatedUnion("kind", [
 
 const appliesToDetailSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone"), memberCount: z.number() }),
-  z.object({ kind: z.literal("admins"), directAdmins: z.array(personSchema), adminTeams: z.array(adminTeamSchema) }),
-  z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), members: z.array(personSchema) }),
+  // People's names and emails come only with teams.view; the counts always do.
+  z.object({ kind: z.literal("admins"), directAdminCount: z.number(), directAdmins: z.array(personSchema).nullable(), adminTeams: z.array(adminTeamSchema) }),
+  z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), memberCount: z.number(), members: z.array(personSchema).nullable() }),
 ]);
 
 const setSummarySchema = z.object({

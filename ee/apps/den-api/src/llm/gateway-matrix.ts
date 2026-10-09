@@ -93,13 +93,24 @@ function catalogCompatible(catalog: ModelsDevProvider, provider: GatewayProvider
   return catalog.id === provider.provider_id && isSupportedGatewayNpm(catalog.npm) && catalog.npm === readProviderConfigNpm(provider.provider_config)
 }
 
+export type GatewayCatalogRefreshOptions = {
+  /** False computes the catalog warning only and never writes (callers without Manage Gateway providers). Defaults to true. */
+  write?: boolean
+  /**
+   * Re-checks, inside the write transaction after the provider row lock, that
+   * the caller may still change the provider (read only through `tx`). False
+   * skips the write and returns the stored configuration.
+   */
+  mayWrite?: (tx: GatewayTx) => Promise<boolean>
+}
+
 /**
  * Sync the provider's stored models with the models.dev catalog. Runs only on
  * provider/group writes and the explicit models endpoint, never on reads.
  * Nearly every call is a no-op, so the diff is checked without locking first;
  * the provider row lock is taken only when there is something to write.
  */
-export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: ProviderAuditCapture | null) {
+export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: ProviderAuditCapture | null, options: GatewayCatalogRefreshOptions = {}) {
   if (audit && (audit.context.scope !== provider.id || audit.context.organizationId !== provider.organization_id)) throw new Error("audit_provider_scope_mismatch")
   // Audit policy is only read when the refresh writes or fails; no-op refreshes record nothing.
   const resolveCapture = async (): Promise<ProviderAuditCapture | null> => audit === undefined
@@ -120,6 +131,7 @@ export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: P
     const preview = resolveGatewayCatalog(catalog, snapshot.model_ids, snapshot.provider_config, false)
     const stored = await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, snapshot.id))
     if (!gatewayModelsChanged(stored, preview.models)) return { provider: snapshot, catalogWarning: preview.catalogWarning }
+    if (options.write === false) return { provider: snapshot, catalogWarning: preview.catalogWarning }
     const writeCapture = capture = await resolveCapture()
     return await db.transaction(async (tx) => {
       if (writeCapture) await recheckAuditEntitlement(tx, provider.organization_id)
@@ -130,6 +142,7 @@ export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: P
       const lockedCatalog = litellm ? liteLlmCatalogProvider(current) : catalog
       if (!catalogCompatible(lockedCatalog, current)) return { provider: current, catalogWarning: catalogSdkChangedWarning }
       const resolved = resolveGatewayCatalog(lockedCatalog, current.model_ids, current.provider_config, false)
+      if (options.mayWrite && !(await options.mayWrite(tx))) return { provider: current, catalogWarning: resolved.catalogWarning }
       return providerAuditMutation(tx, writeCapture, async () => {
         if (await writeGatewayModels(tx, current, resolved.models)) {
           current.updated_at = new Date()

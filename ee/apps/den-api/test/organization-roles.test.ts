@@ -136,16 +136,27 @@ test("with Permissions off the role-assignment rules change nothing", () => {
 
 test("with Permissions on only the owner or an admin can remove a direct admin", () => {
   const teamGranted = caller({ keys: ["members.delete", "teams.manage_admin"] })
-  const denial = decideMemberRemoval({ actor: teamGranted, targetIsDirectAdmin: true, targetIsPendingInvitation: false })
+  const direct = { targetIsDirectAdmin: true, targetIsAdminViaTeam: false, targetIsPendingInvitation: false }
+  const denial = decideMemberRemoval({ actor: teamGranted, ...direct })
   assert.equal(denial?.reason, "admin_removal_requires_admin")
   assert.equal(denial?.message, "Only the owner or an admin can remove an admin from the organization.")
-  assert.equal(decideMemberRemoval({ actor: caller({ isAdmin: true }), targetIsDirectAdmin: true, targetIsPendingInvitation: false }), null)
-  assert.equal(decideMemberRemoval({ actor: caller({ isOwner: true }), targetIsDirectAdmin: true, targetIsPendingInvitation: false }), null)
+  assert.equal(decideMemberRemoval({ actor: caller({ isAdmin: true }), ...direct }), null)
+  assert.equal(decideMemberRemoval({ actor: caller({ isOwner: true }), ...direct }), null)
   // Members, and pending admin invitations (cancelled under the invitation rules), are unaffected.
-  assert.equal(decideMemberRemoval({ actor: teamGranted, targetIsDirectAdmin: false, targetIsPendingInvitation: false }), null)
-  assert.equal(decideMemberRemoval({ actor: teamGranted, targetIsDirectAdmin: true, targetIsPendingInvitation: true }), null)
+  assert.equal(decideMemberRemoval({ actor: teamGranted, ...direct, targetIsDirectAdmin: false }), null)
+  assert.equal(decideMemberRemoval({ actor: teamGranted, ...direct, targetIsPendingInvitation: true }), null)
   // Feature off: unchanged (only admins hold members.delete).
-  assert.equal(decideMemberRemoval({ actor: caller({ featureEnabled: false }), targetIsDirectAdmin: true, targetIsPendingInvitation: false }), null)
+  assert.equal(decideMemberRemoval({ actor: caller({ featureEnabled: false }), ...direct }), null)
+})
+
+test("with Permissions on removing someone who is admin through an Admin team needs the owner or an admin too", () => {
+  const teamGranted = caller({ keys: ["members.delete", "teams.manage_admin"] })
+  const viaTeam = { targetIsDirectAdmin: false, targetIsAdminViaTeam: true, targetIsPendingInvitation: false }
+  assert.equal(decideMemberRemoval({ actor: teamGranted, ...viaTeam })?.reason, "admin_removal_requires_admin")
+  assert.equal(decideMemberRemoval({ actor: caller({ isAdmin: true }), ...viaTeam }), null)
+  assert.equal(decideMemberRemoval({ actor: caller({ isOwner: true }), ...viaTeam }), null)
+  // Feature off: unchanged.
+  assert.equal(decideMemberRemoval({ actor: caller({ featureEnabled: false, keys: ["members.delete", "teams.manage_admin"] }), ...viaTeam }), null)
 })
 
 test("with Permissions on only the owner or an admin can make an Admin team or add people to one", () => {

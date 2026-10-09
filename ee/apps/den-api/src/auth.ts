@@ -365,6 +365,8 @@ const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] =
   ["/organization/delete", "Workspace deletion through Better Auth is disabled."],
   ["/organization/update-member-role", "Use the Den member role API to change organization roles."],
   ["/organization/remove-member", "Use the Den member API to remove organization members."],
+  // Not registered by better-auth (dynamicAccessControl is off): Den serves and audits
+  // these refusals itself (routes/auth/raw-role-refusals.ts) with the same messages.
   ["/organization/create-role", "Custom organization roles are not supported."],
   ["/organization/update-role", "Custom organization roles are not supported."],
   ["/organization/delete-role", "Custom organization roles are not supported."],

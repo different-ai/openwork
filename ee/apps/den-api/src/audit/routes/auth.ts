@@ -20,7 +20,10 @@ import type { AuditRouteClass, AuditRouteDeclaration, AuditRouteMethod } from ".
 // GET /api/auth/scim/get-provider-connection, GET /api/auth/scim/list-provider-connections,
 // POST /api/auth/scim/v2/Users, PUT|PATCH|DELETE /api/auth/scim/v2/Users/:userId,
 // GET|POST /api/auth/scim/v2/Groups, GET|PUT|PATCH|DELETE /api/auth/scim/v2/Groups/:groupId,
-// GET /api/auth/scim/v2/ResourceTypes, GET /api/auth/scim/v2/Schemas.
+// GET /api/auth/scim/v2/ResourceTypes, GET /api/auth/scim/v2/Schemas,
+// POST /api/auth/organization/create-role | update-role | delete-role (no longer registered by
+// better-auth now that dynamicAccessControl is off; Den refuses and audits them,
+// routes/auth/raw-role-refusals.ts).
 
 const CREDENTIAL = "Security-relevant credential event."
 const TOKEN = "Security-relevant: issues credentials; token values are never recorded."

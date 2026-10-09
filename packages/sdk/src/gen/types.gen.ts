@@ -2444,7 +2444,11 @@ export type PermissionSetAppliesTo =
     }
   | {
       kind: "admins";
-      directAdmins: Array<PermissionPerson>;
+      directAdminCount: number;
+      /**
+       * Names and emails of members with the admin role. Null unless the caller holds teams.view; directAdminCount is always returned.
+       */
+      directAdmins: Array<PermissionPerson> | null;
       adminTeams: Array<{
         id: string;
         name: string;
@@ -2454,7 +2458,11 @@ export type PermissionSetAppliesTo =
   | {
       kind: "team";
       team: PermissionSetTeam | null;
-      members: Array<PermissionPerson>;
+      memberCount: number;
+      /**
+       * Names and emails of the team's members. Null unless the caller holds teams.view; memberCount is always returned.
+       */
+      members: Array<PermissionPerson> | null;
     };
 
 export type PermissionSetDetail = {
@@ -23127,7 +23135,7 @@ export type PostV1McpConnectionsByConnectionIdOauthIssuerReviewErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can review OAuth issuers.
+   * The caller needs the Manage connections permission, and a recent sign-in to confirm an issuer.
    */
   403: ForbiddenError;
   /**

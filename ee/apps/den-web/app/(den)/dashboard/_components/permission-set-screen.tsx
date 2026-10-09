@@ -112,14 +112,17 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
   }
   if (appliesTo.kind === "admins") {
     const people = appliesTo.directAdmins;
+    if (!people && appliesTo.adminTeams.length === 0) {
+      return <p className="text-[13px] text-gray-600" data-testid="permission-set-applies-to">Applies to {plural(appliesTo.directAdminCount, "admin")} and no Admin teams.</p>;
+    }
     return (
       <details className="group text-[13px] text-gray-600" data-testid="permission-set-applies-to">
         <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
           <ChevronRight className="size-3.5 text-gray-400 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
-          Applies to {plural(people.length, "admin")} and {plural(appliesTo.adminTeams.length, "Admin team")}
+          Applies to {plural(appliesTo.directAdminCount, "admin")} and {plural(appliesTo.adminTeams.length, "Admin team")}
         </summary>
         <ul className="mt-2 flex flex-col gap-1 pl-5">
-          {people.map((person) => <li key={person.memberId}>{person.name} <span className="text-gray-500">{person.email}</span></li>)}
+          {people?.map((person) => <li key={person.memberId}>{person.name} <span className="text-gray-500">{person.email}</span></li>)}
           {appliesTo.adminTeams.map((team) => (
             <li key={team.id}>
               {ready.access.canViewTeams ? <Link className="underline-offset-2 hover:underline" href={getTeamRoute(ready.orgSlug, team.id)}>{team.name}</Link> : team.name} team <span className="text-gray-500">{plural(team.memberCount, "member")}</span>
@@ -131,15 +134,19 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
   }
   const team = appliesTo.team;
   const teamName = team?.name ?? "A deleted team";
+  const members = appliesTo.members;
+  if (!members) {
+    return <p className="text-[13px] text-gray-600" data-testid="permission-set-applies-to">Applies to the {teamName} team, {plural(appliesTo.memberCount, "member")}.</p>;
+  }
   return (
     <details className="group text-[13px] text-gray-600" data-testid="permission-set-applies-to">
       <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
         <ChevronRight className="size-3.5 text-gray-400 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
-        Applies to the {teamName} team, {plural(appliesTo.members.length, "member")}
+        Applies to the {teamName} team, {plural(appliesTo.memberCount, "member")}
       </summary>
       <ul className="mt-2 flex flex-col gap-1 pl-5">
-        {appliesTo.members.length === 0 ? <li className="text-gray-500">Nobody is in this team yet.</li> : null}
-        {appliesTo.members.map((person) => <li key={person.memberId}>{person.name} <span className="text-gray-500">{person.email}</span></li>)}
+        {members.length === 0 ? <li className="text-gray-500">Nobody is in this team yet.</li> : null}
+        {members.map((person) => <li key={person.memberId}>{person.name} <span className="text-gray-500">{person.email}</span></li>)}
         {team && ready.access.canViewTeams ? <li><Link className="underline-offset-2 hover:underline" href={getTeamRoute(ready.orgSlug, team.id)}>Open the {teamName} team</Link></li> : null}
       </ul>
     </details>

@@ -49,6 +49,7 @@ import { exchangePreclaimAssertion, JWT_BEARER_GRANT_TYPE } from "../../workspac
 import { withAgentAuthMetadata } from "../../agent-auth-metadata.js"
 import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
+import { registerRawRoleRefusalRoutes } from "./raw-role-refusals.js"
 import { registerScimAuthRoutes } from "./scim.js"
 
 const logger = appLogger.child({ component: "auth" })
@@ -806,6 +807,7 @@ async function handleAuthRequest(c: Context) {
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerScimAuthRoutes(app)
+  registerRawRoleRefusalRoutes(app)
   app.use("/api/auth/sso/saml2/callback/*", samlResponsePolicyMiddleware)
   app.use("/api/auth/sso/saml2/sp/acs/*", samlResponsePolicyMiddleware)
   // Better Auth uses this configured base URL for the callback `iss` value.

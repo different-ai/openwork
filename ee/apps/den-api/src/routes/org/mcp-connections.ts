@@ -125,6 +125,7 @@ import {
   diagnoseExternalMcpToolCall,
   externalMcpToolCallInspectionForError,
 } from "../../capability-sources/external-mcp-tool-inspection.js"
+import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
 import { resolvePluginArchResourceRole, type PluginArchActorContext } from "./plugin-system/access.js"
 import {
   getFreshPrivilegedSessionRequiredResponse,
@@ -2105,21 +2106,29 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Review a changed External MCP OAuth issuer",
-      description: "Organization-admin-only. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.",
+      description: "Requires the Manage connections permission. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirming an issuer also needs a recent sign-in. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.",
       responses: {
         200: jsonResponse("Issuer review result.", issuerReviewResponseSchema),
         400: jsonResponse("Invalid issuer review request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can review OAuth issuers.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage connections permission, and a recent sign-in to confirm an issuer.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
         409: jsonResponse("The connection changed or the requested issuer is not currently advertised.", connectionConflictSchema),
         502: jsonResponse("Live OAuth discovery failed.", requirementsDiscoveryFailedSchema),
       },
     }),
+    // Issuer review is deliberately an admin action (Manage connections, an Admin default), not
+    // owner-only: it was admin-only before Permissions and only re-trusts an issuer the resource
+    // itself advertises. connections.manage is not sensitive, so confirming checks the recent
+    // sign-in explicitly below.
     orgPermissionRoute("connections.manage"),
     paramValidator(connectionParamsSchema),
     jsonValidator(issuerReviewBodySchema),
     async (c) => {
+      if (c.req.valid("json").action === "confirm") {
+        const fresh = ensureFreshPrivilegedSession(c)
+        if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
+      }
       const payload = c.get("organizationContext")
       const { connectionId } = c.req.valid("param")
       const externalMcpConnectionId = normalizeDenTypeId("externalMcpConnection", connectionId)
