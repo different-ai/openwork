@@ -440,9 +440,10 @@ export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], u
  * Management details include people (who created each credential set, whose each member credential
  * is, LiteLLM people needing attention) and upstream configuration (the upstream base URL, OAuth
  * client, Entra tenant and IAM Identity Center settings). `managerDetails` (default false) returns
- * them; pass it only for callers holding Manage Gateway providers. View-only callers get createdBy,
- * oauthTenantId, awsSso and settings.upstreamBaseUrl omitted, and null memberName/memberEmail,
- * attention name/email, oauthClientId and litellm.baseUrl.
+ * them; pass it only for callers holding Manage Gateway providers. View-only callers get no
+ * per-person rows at all: credentials is replaced by credentialCounts and LiteLLM attention entries
+ * are dropped (attentionCount stays); createdBy, oauthTenantId, awsSso and settings.upstreamBaseUrl
+ * are omitted, and oauthClientId and litellm.baseUrl are null.
  */
 export type GatewaySummaryOptions = { managerDetails?: boolean }
 export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true, options?: GatewaySummaryOptions): Promise<GatewayProviderDetails>
@@ -560,9 +561,16 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const modelGroups: GatewayModelGroup[] = groups.map((group) => ({ id: group.id, name: group.name, description: group.description, status: group.status,
     modelIds: (modelsByGroupId.get(group.id) ?? []).map((model) => model.model_id) }))
   const status = await liteLlmStatus(provider)
-  const litellm = status && !identities ? { ...status, baseUrl: null, attention: status.attention.map((entry) => ({ ...entry, name: null, email: null })) } : status
+  const litellm = status && !identities ? { ...status, baseUrl: null, attention: [] } : status
   const settings = publicProviderSettings(provider.settings)
   if (!identities) delete settings.upstreamBaseUrl
   return { ...summary, ...(litellm ? { litellm } : {}), settings, modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
-    credentials: credentials.map(({ credential, memberName, memberEmail }) => ({ id: credential.id, credentialSetId: credential.credential_set_id, subject: credential.subject, orgMembershipId: credential.org_membership_id, memberName: identities ? memberName : null, memberEmail: identities ? memberEmail : null, kind: credential.kind, status: credential.status, expiresAt: credential.expires_at?.toISOString() ?? null })) }
+    ...(identities
+      ? { credentials: credentials.map(({ credential, memberName, memberEmail }) => ({ id: credential.id, credentialSetId: credential.credential_set_id, subject: credential.subject, orgMembershipId: credential.org_membership_id, memberName, memberEmail, kind: credential.kind, status: credential.status, expiresAt: credential.expires_at?.toISOString() ?? null })) }
+      : { credentialCounts: {
+        total: credentials.length,
+        active: credentials.filter(({ credential }) => credential.status === "active").length,
+        revoked: credentials.filter(({ credential }) => credential.status === "revoked").length,
+        refreshFailed: credentials.filter(({ credential }) => credential.status === "refresh_failed").length,
+      } }) }
 }

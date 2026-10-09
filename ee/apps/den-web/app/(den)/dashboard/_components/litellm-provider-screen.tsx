@@ -363,7 +363,9 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
                 <span className="text-[12px] text-amber-700">{liteLlmAttentionLabel(entry.reason)}</span>
               </li>
             ))}
-            {status.attentionCount > status.attention.length ? <li className={`${ROW} text-[12px] text-gray-500`}>{status.attentionCount - status.attention.length} more</li> : null}
+            {status.attention.length === 0
+              ? <li className={`${ROW} text-[12px] text-gray-500`} data-testid="litellm-attention-hidden">{`${status.attentionCount} ${status.attentionCount === 1 ? "person" : "people"}. Names are hidden because you can't manage this provider.`}</li>
+              : status.attentionCount > status.attention.length ? <li className={`${ROW} text-[12px] text-gray-500`}>{status.attentionCount - status.attention.length} more</li> : null}
           </ul>
         </section>
       ) : null}

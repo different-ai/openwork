@@ -31,6 +31,7 @@ import {
 } from "../../middleware/index.js"
 import {
   ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE,
+  resolveTeamActorInTransaction,
   teamGrantDecisionInTransaction,
   teamGrantsForbiddenResponse,
   TEAM_GRANTS_FORBIDDEN_MESSAGE,
@@ -38,7 +39,9 @@ import {
 import { ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE, decideAdminTeamChange } from "../../permissions/role-assignment.js"
 import { archiveTeamPermissionSets } from "../../permissions/team-set-archive.js"
 import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError, type AgentErrorEnvelope } from "../../agent-error-envelope.js"
-import type { PermissionDeniedResponse } from "../../permissions/check.js"
+import { permissionDeniedResponse, type PermissionDeniedResponse } from "../../permissions/check.js"
+import type { MemberPermissions } from "../../permissions/effective.js"
+import type { PermissionKey } from "@openwork/types/den/permissions"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
@@ -122,17 +125,17 @@ type TeamGrantsFailure = PermissionDeniedResponse | (AgentErrorEnvelope & { erro
  * both. SCIM writes team membership through scim-groups.ts, not these routes,
  * so identity-provider membership is exempt. Null means allowed.
  */
-async function teamGrantsDenial(tx: TeamMutationTransaction, payload: ResourceOrganizationContext, input: {
+async function teamGrantsDenial(tx: TeamMutationTransaction, payload: ResourceOrganizationContext, actor: MemberPermissions, input: {
   teamId: TeamId | null
   grantsOrganizationAdmin: boolean
   adminDefaultsOnly?: boolean
   adminTeamChange: { makesAdminTeam: boolean; addsMembersToAdminTeam: boolean } | null
   message: string
 }): Promise<TeamGrantsFailure | null> {
-  const { actor, decision } = await teamGrantDecisionInTransaction({
+  const decision = await teamGrantDecisionInTransaction({
     tx,
     organizationId: payload.organization.id,
-    actorMemberId: payload.currentMember.id,
+    actor,
     teamId: input.teamId,
     grantsOrganizationAdmin: input.grantsOrganizationAdmin,
     adminDefaultsOnly: input.adminDefaultsOnly,
@@ -150,15 +153,28 @@ function teamGrantsFailureHeaders(response: TeamGrantsFailure): Record<string, s
   return "requiredPermission" in response ? { "WWW-Authenticate": INSUFFICIENT_SCOPE_CHALLENGE } : {}
 }
 
+/**
+ * The route checked these keys against the request's permissions (with the recent sign-in for
+ * sensitive ones); re-check them against the actor resolved inside the write transaction
+ * (resolveTeamActorInTransaction), so a revocation committed since is seen before the write.
+ */
+function heldInTransaction(actor: MemberPermissions, keys: readonly PermissionKey[]): PermissionDeniedResponse | null {
+  const missing = keys.find((key) => !actor.has(key))
+  return missing ? permissionDeniedResponse(missing) : null
+}
+
 async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
   return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   if (input.grantsOrganizationAdmin !== undefined) {
     const rolePermission = await requirePermission(c, "teams.manage_admin")
     if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
   }
+  const actor = await resolveTeamActorInTransaction(tx, payload.organization.id, payload.currentMember.id)
+  const notHeld = heldInTransaction(actor, input.grantsOrganizationAdmin !== undefined ? ["teams.manage", "teams.manage_admin"] : ["teams.manage"])
+  if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
   if (input.grantsOrganizationAdmin === true) {
     // A new team has no team permission set yet, so it grants only the Admin defaults.
-    const denied = await teamGrantsDenial(tx, payload, {
+    const denied = await teamGrantsDenial(tx, payload, actor, {
       teamId: null,
       grantsOrganizationAdmin: true,
       adminTeamChange: { makesAdminTeam: true, addsMembersToAdminTeam: input.memberIds.length > 0 },
@@ -267,13 +283,17 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   if (managedByScim && (input.name !== undefined || input.memberIds !== undefined)) {
     return c.json({ error: "scim_managed_team", message: "Manage this team through the SCIM identity provider." }, 409)
   }
-  if (input.grantsOrganizationAdmin !== undefined || (team.grantsOrganizationAdmin && input.memberIds !== undefined)) {
+  const touchesAdminTeam = input.grantsOrganizationAdmin !== undefined || (team.grantsOrganizationAdmin && input.memberIds !== undefined)
+  if (touchesAdminTeam) {
     const rolePermission = await requirePermission(c, "teams.manage_admin")
     if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
   }
+  const actor = await resolveTeamActorInTransaction(tx, payload.organization.id, payload.currentMember.id)
+  const notHeld = heldInTransaction(actor, touchesAdminTeam ? ["teams.manage", "teams.manage_admin"] : ["teams.manage"])
+  if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
   const nextGrantsOrganizationAdmin = input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin
   if (nextGrantsOrganizationAdmin && !team.grantsOrganizationAdmin) {
-    const denied = await teamGrantsDenial(tx, payload, {
+    const denied = await teamGrantsDenial(tx, payload, actor, {
       teamId: team.id,
       grantsOrganizationAdmin: true,
       adminDefaultsOnly: true,
@@ -305,7 +325,7 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       .where(eq(TeamMemberTable.teamId, team.id)))
       .map((row) => row.id))
     if (memberIds.some((memberId) => !currentMemberIds.has(memberId))) {
-      const denied = await teamGrantsDenial(tx, payload, {
+      const denied = await teamGrantsDenial(tx, payload, actor, {
         teamId: team.id,
         grantsOrganizationAdmin: nextGrantsOrganizationAdmin,
         adminTeamChange: nextGrantsOrganizationAdmin ? { makesAdminTeam: false, addsMembersToAdminTeam: true } : null,
@@ -372,11 +392,13 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "team_not_found" }, 404)
   }
 
+  // Locked before the actor's permission inputs, in the same order as updateTeam.
   const teamRows = await tx
     .select()
     .from(TeamTable)
     .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, payload.organization.id)))
     .limit(1)
+    .for("update")
 
   const team = teamRows[0]
   if (!team) {
@@ -389,6 +411,9 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     const rolePermission = await requirePermission(c, "teams.manage_admin")
     if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
   }
+  const actor = await resolveTeamActorInTransaction(tx, payload.organization.id, payload.currentMember.id)
+  const notHeld = heldInTransaction(actor, team.grantsOrganizationAdmin ? ["teams.manage", "teams.manage_admin"] : ["teams.manage"])
+  if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
 
     const removedAt = new Date()
     await invalidateTeamInferenceOAuth(tx, team.id)

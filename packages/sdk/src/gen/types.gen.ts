@@ -2282,6 +2282,9 @@ export type GatewayProviderDetails = {
     id: string;
   }>;
   oauthCallbackUrl?: string;
+  /**
+   * Per-person credential rows. Only for callers who hold Manage Gateway providers.
+   */
   credentials?: Array<{
     /**
      * Den TypeID with 'ipc_' prefix and a 26-character base32 suffix.
@@ -2299,6 +2302,15 @@ export type GatewayProviderDetails = {
     status: "active" | "revoked" | "refresh_failed";
     expiresAt: string | null;
   }>;
+  /**
+   * Credential counts by status, returned instead of credentials to callers who may only view providers.
+   */
+  credentialCounts?: {
+    total: number;
+    active: number;
+    revoked: number;
+    refreshFailed: number;
+  };
 };
 
 export type GatewayProviderSummary = {

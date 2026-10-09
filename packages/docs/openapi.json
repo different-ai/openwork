@@ -10442,6 +10442,7 @@
             "type": "string"
           },
           "credentials": {
+            "description": "Per-person credential rows. Only for callers who hold Manage Gateway providers.",
             "type": "array",
             "items": {
               "type": "object",
@@ -10542,6 +10543,38 @@
                 "expiresAt"
               ]
             }
+          },
+          "credentialCounts": {
+            "description": "Credential counts by status, returned instead of credentials to callers who may only view providers.",
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "active": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "revoked": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "refreshFailed": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "total",
+              "active",
+              "revoked",
+              "refreshFailed"
+            ]
           }
         },
         "required": [

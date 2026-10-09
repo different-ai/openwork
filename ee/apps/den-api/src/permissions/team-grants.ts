@@ -126,33 +126,45 @@ export type TeamGrantDecision =
  * plus the Admin defaults when `grantsOrganizationAdmin`). Granting admin with
  * an empty Admin default set needs the owner or an effective admin
  * (adminGrantDenial). The actor and every set are read through `tx` under
- * share locks (lockTeamGrantInputs), so a concurrent permission set edit
- * either commits first and is seen, or waits for the membership write.
- * Returns the actor so callers can apply further rules to the same snapshot.
+ * share locks (lockTeamGrantInputs, taken by resolveTeamActorInTransaction),
+ * so a concurrent permission set edit either commits first and is seen, or
+ * waits for the membership write.
  */
 export async function teamGrantDecisionInTransaction(input: {
   tx: PermissionDatabase
   organizationId: OrganizationId
-  actorMemberId: MemberId
+  /** The actor from resolveTeamActorInTransaction in this same transaction. */
+  actor: MemberPermissions
   /** The team members join; null for a team being created (no sets yet). */
   teamId: TeamId | null
   grantsOrganizationAdmin: boolean
   /** Only the Admin defaults count (making an existing team an Admin team). */
   adminDefaultsOnly?: boolean
-}): Promise<{ actor: MemberPermissions; decision: TeamGrantDecision }> {
-  await lockTeamGrantInputs(input.tx, input.organizationId, input.actorMemberId)
-  const actor = await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.actorMemberId, database: input.tx })
-  if (!actor.featureEnabled || actor.isOwner) return { actor, decision: { ok: true } }
+}): Promise<TeamGrantDecision> {
+  const { actor } = input
+  if (!actor.featureEnabled || actor.isOwner) return { ok: true }
   const teamKeys = input.teamId && !input.adminDefaultsOnly
     ? await teamSetPermissionKeys(input.tx, input.organizationId, input.teamId, { lock: "share" })
     : new Set<PermissionKey>()
   if (input.grantsOrganizationAdmin) {
     const adminDenial = adminGrantDenial(actor, await adminDefaultPermissionKeys(input.organizationId, input.tx, { lock: "share" }))
-    if (adminDenial === "requires_admin") return { actor, decision: { ok: false, reason: "requires_admin" } }
-    if (adminDenial) return { actor, decision: { ok: false, reason: "permission_missing", requiredPermission: adminDenial } }
+    if (adminDenial === "requires_admin") return { ok: false, reason: "requires_admin" }
+    if (adminDenial) return { ok: false, reason: "permission_missing", requiredPermission: adminDenial }
   }
   const missing = firstMissingPermission(actor, teamKeys)
-  return { actor, decision: missing ? { ok: false, reason: "permission_missing", requiredPermission: missing } : { ok: true } }
+  return missing ? { ok: false, reason: "permission_missing", requiredPermission: missing } : { ok: true }
+}
+
+/**
+ * The actor of a team write, resolved once per transaction through `tx`
+ * after lockTeamGrantInputs, so every check in that transaction (teams.manage,
+ * teams.manage_admin, the Admin-team rule and safety rule 9.3) reads the same
+ * locked snapshot. Callers hold the organization row and, when editing or
+ * deleting a team, that team's row FOR UPDATE first.
+ */
+export async function resolveTeamActorInTransaction(tx: PermissionDatabase, organizationId: OrganizationId, actorMemberId: MemberId): Promise<MemberPermissions> {
+  await lockTeamGrantInputs(tx, organizationId, actorMemberId)
+  return resolvePermissionsForMember({ organizationId, memberId: actorMemberId, database: tx })
 }
 
 /** 403 body for a team grant the caller does not fully hold. */

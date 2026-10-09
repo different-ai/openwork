@@ -209,7 +209,10 @@ export interface GatewayProviderSummary {
   oauthClientId?: string | null;
   oauthCallbackUrl?: string;
   hasOauthClientSecret?: boolean;
+  /** Per-person credential rows; only for callers who hold Manage Gateway providers. */
   credentials?: GatewayProviderCredentialSummary[];
+  /** Credential counts by status, returned instead of `credentials` to callers who may only view providers. */
+  credentialCounts?: GatewayProviderCredentialCounts;
   /** Only the caller's ow_gw_ key, in provider-scoped env slots. */
   apiKey?: string;
   apiKeys?: Record<string, string>;
@@ -255,6 +258,13 @@ export interface GatewayLiteLlmSyncResult {
   warnings: string[];
   /** issued mode: keys OpenWork created or refreshed in this sync. */
   issued?: { people: number; keys: number; notInLiteLlm: number; noKeyToMirror: number; noModels: number; errors: number; removed: number };
+}
+
+export interface GatewayProviderCredentialCounts {
+  total: number;
+  active: number;
+  revoked: number;
+  refreshFailed: number;
 }
 
 export interface GatewayProviderDetails extends GatewayProviderSummary {
