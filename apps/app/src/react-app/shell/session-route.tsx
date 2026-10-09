@@ -24,6 +24,7 @@ import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
+import { observeSendStep } from "@/app/lib/send-step-diagnostics";
 import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
@@ -1609,7 +1610,7 @@ export function SessionRoute() {
                 ? opencodeClient
                 : createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined,
                   { token: selectedWorkspaceServerToken, mode: "openwork" }, { desktopTransport: "main" });
-              if (unwrap(await promptClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              if (unwrap(await observeSendStep("archive_validation", () => promptClient.session.get({ sessionID: targetSessionId }))).time.archived) {
                 throw new Error("This session is archived. Restore it before sending.");
               }
               assertCurrent();
@@ -1682,7 +1683,7 @@ export function SessionRoute() {
                     return;
                   }
 
-                  const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+                  const parts = await observeSendStep("attachments_preparation", () => draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint));
                   assertCurrent();
                   const system = await buildOpenworkSessionSystemContext(client, {
                     workspaceId: selectedWorkspaceId,
@@ -1692,7 +1693,7 @@ export function SessionRoute() {
                   });
                   assertCurrent();
                   onPrepared?.(v2AcknowledgementText(parts));
-                  const result = await promptClient.session.promptAsync({
+                  const prompt = () => promptClient.session.promptAsync({
                     sessionID: targetSessionId,
                     messageID: draft.messageId,
                     parts,
@@ -1701,6 +1702,9 @@ export function SessionRoute() {
                     ...(sendVariant ? { variant: sendVariant } : {}),
                     system,
                   });
+                  const result = await (isOpencodeV2BaseUrl(opencodeBaseUrl)
+                    ? prompt()
+                    : observeSendStep("engine_prompt_admission", prompt));
                   if (result.error) {
                     if (isPromptAdmissionUnknown(result.error)) throw result.error;
                     throw new Error(serializeSDKError(result.error));
@@ -1980,7 +1984,7 @@ export function SessionRoute() {
                 ? workspaceOpencodeClient
                 : createClient(endpoint.opencodeBaseUrl, workspaceRoot || undefined,
                   { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" });
-              if (unwrap(await promptClient.session.get({ sessionID: targetSessionId })).time.archived) {
+              if (unwrap(await observeSendStep("archive_validation", () => promptClient.session.get({ sessionID: targetSessionId }))).time.archived) {
                 throw new Error("This session is archived. Restore it before sending.");
               }
               assertCurrent();
@@ -2038,7 +2042,7 @@ export function SessionRoute() {
                     if (result.error) throw new Error(serializeSDKError(result.error));
                     return;
                   }
-                  const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
+                  const parts = await observeSendStep("attachments_preparation", () => draftToParts(draft, workspaceRoot, targetSessionId, endpoint));
                   assertCurrent();
                   const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                     workspaceId: workspace.id,
@@ -2048,7 +2052,7 @@ export function SessionRoute() {
                   });
                   assertCurrent();
                   onPrepared?.(v2AcknowledgementText(parts));
-                  const result = await promptClient.session.promptAsync({
+                  const prompt = () => promptClient.session.promptAsync({
                     sessionID: targetSessionId,
                     messageID: draft.messageId,
                     parts,
@@ -2057,6 +2061,9 @@ export function SessionRoute() {
                     ...(sendVariant ? { variant: sendVariant } : {}),
                     system,
                   });
+                  const result = await (isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
+                    ? prompt()
+                    : observeSendStep("engine_prompt_admission", prompt));
                   if (result.error) {
                     if (isPromptAdmissionUnknown(result.error)) throw result.error;
                     throw new Error(serializeSDKError(result.error));
