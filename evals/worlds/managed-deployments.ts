@@ -28,8 +28,8 @@ export async function managedDeployments(seed: Seed) {
   const disabledOrg = await createOrg(den, names.disabled);
   const viewport = { width: 1440, height: 1000 };
 
-  // Each browser gets its own Better Auth cookie session with its own active
-  // workspace, so no step depends on the workspace switcher.
+  // Workspace switching needs Better Auth's cookie session, not the desktop
+  // bearer that seed.web({ signedInAs }) stores.
   async function signedInBrowser(person: DenSession, organizationId: string, startPath: string) {
     const browser = await seed.web({ den, startPath: "/", headless: true, viewport });
     const signedIn = await seed.api(person, "/api/auth/sign-in/email", {
@@ -52,11 +52,11 @@ export async function managedDeployments(seed: Seed) {
     return browser;
   }
 
-  const offWeb = await signedInBrowser(den.admin, disabledOrg.id, "/dashboard/deployments");
-  const web = await signedInBrowser(den.admin, enabledOrgId, "/dashboard/deployments");
-  const memberWeb = await signedInBrowser(den.members.member, enabledOrgId, "/dashboard");
+  // One browser and one cookie session: local placement shares a Chrome
+  // profile, so a second session would overwrite this one's cookie.
+  const web = await signedInBrowser(den.admin, disabledOrg.id, "/dashboard/deployments");
   return {
-    den, web, offWeb, memberWeb, names, enabledOrgId, disabledOrgId: disabledOrg.id, baseUrl: den.ref.webUrl,
+    den, web, names, enabledOrgId, disabledOrgId: disabledOrg.id, baseUrl: den.ref.webUrl,
     async [Symbol.asyncDispose]() { await disabledOrg[Symbol.asyncDispose](); },
   };
 }
