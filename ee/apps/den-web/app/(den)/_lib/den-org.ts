@@ -728,6 +728,10 @@ export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
 }
 
+export function getAgentPermissionsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/agent-permissions`;
+}
+
 export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
 }

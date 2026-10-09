@@ -71,6 +71,10 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/desktop-policies/by-key/:externalKey", "tenant_read", "desktop_policy.read_by_key", "desktop_policy.management", "desktop_policy", "externalKey"),
   member("PUT", "/v1/desktop-policies/by-key/:externalKey", "tenant_change", "desktop_policy.upsert_by_key", "desktop_policy.management", "desktop_policy", "externalKey"),
   member("DELETE", "/v1/desktop-policies/by-key/:externalKey", "tenant_change", "desktop_policy.delete_by_key", "desktop_policy.management", "desktop_policy", "externalKey"),
+  member("GET", "/v1/agent-permissions", "tenant_read", "agent_permission.list", "agent_permission.management", "agent_permission_policy", null),
+  member("PUT", "/v1/agent-permissions/everyone", "tenant_change", "agent_permission.everyone.update", "agent_permission.management", "agent_permission_policy", null),
+  member("PUT", "/v1/agent-permissions/teams/:teamId", "tenant_change", "agent_permission.team.update", "agent_permission.management", "team", "teamId"),
+  member("DELETE", "/v1/agent-permissions/teams/:teamId", "tenant_change", "agent_permission.team.delete", "agent_permission.management", "team", "teamId"),
   member("GET", "/v1/me/desktop-config", "tenant_read", "desktop_policy.effective.read", "desktop_policy.management", "desktop_policy", null),
 
   // Members and invitations

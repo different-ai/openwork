@@ -1,7 +1,9 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
+import { agentPermissionEngineV2Rules, type AgentPermissionRule, type EngineV2PermissionRule } from "./agent-permission-engine.js";
+import type { OrganizationMcpServers } from "./organization-mcp-names.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkAgentPermissionsV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { pathToFileURL } from "node:url";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
@@ -53,6 +55,12 @@ export interface ManagedOpencodeV2ServerOptions {
   bootTimeoutMs?: number;
   contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
   permissions?: () => Promise<EnginePermissionRule[]>;
+  /**
+   * The signed-in member's agent permissions, which the engine and the agent
+   * permissions plugin apply, with the organization MCP servers OpenWork
+   * registered, which they leave alone.
+   */
+  agentPermissions?: () => Promise<{ rules: AgentPermissionRule[]; organizationMcp: OrganizationMcpServers }>;
 }
 
 export interface OpencodeV2Health {
@@ -80,6 +88,8 @@ export interface ManagedOpencodeV2Server {
   setProviders(specs: OpencodeV2ProviderSpec[], disabledProviderIds?: string[]): Promise<void>;
   /** Extra absolute skill directories registered through native config `skills`. */
   setSkills(directories: string[]): Promise<void>;
+  /** Rewrites the config when what it is read from changed, e.g. the organization MCP servers OpenWork registers. */
+  refreshConfig(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -111,6 +121,9 @@ export function renderOpencodeV2Config(input: {
   mcpResultsPluginDirectory?: string;
   contextPluginDirectory?: string;
   contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
+  agentPermissionRules?: AgentPermissionRule[];
+  organizationMcp?: OrganizationMcpServers;
+  agentPermissionsPluginDirectory?: string;
 }): Record<string, unknown> {
   const disabled = new Set(input.disabledProviderIds ?? []);
   const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id));
@@ -177,12 +190,17 @@ export function renderOpencodeV2Config(input: {
       options: { providers: filters },
     }] : []),
     ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
+    ...(input.agentPermissionRules?.length && input.agentPermissionsPluginDirectory ? [{
+      package: pathToFileURL(input.agentPermissionsPluginDirectory).href,
+      options: { rules: input.agentPermissionRules, organizationMcp: input.organizationMcp ?? {} },
+    }] : []),
   ];
+  const permissions: EngineV2PermissionRule[] = [...(input.permissions ?? []), ...agentPermissionEngineV2Rules(input.agentPermissionRules ?? [])];
   return {
     $schema: "https://opencode.ai/config.json",
     providers: providerConfig,
     ...(plugins.length ? { plugins } : {}),
-    ...(input.permissions ? { permissions: input.permissions } : {}),
+    ...(input.permissions || permissions.length ? { permissions } : {}),
     ...(input.skills.length ? { skills: [...input.skills] } : {}),
   };
 }
@@ -199,6 +217,7 @@ export async function createManagedOpencodeV2Server(
   const providerFiltersPluginDirectory = join(instanceRoot, "provider-filters-plugin");
   const mcpResultsPluginDirectory = join(instanceRoot, "mcp-results-plugin");
   const contextPluginDirectory = join(instanceRoot, "context-plugin");
+  const agentPermissionsPluginDirectory = join(instanceRoot, "agent-permissions-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   let url = "";
@@ -341,6 +360,22 @@ export async function createManagedOpencodeV2Server(
     return next;
   }
 
+  // The agent permissions plugin is written and loaded only for a member who
+  // has agent permissions; everyone else's engine config stays as it was.
+  let agentPermissionsPluginWritten = false;
+  async function agentPermissionsConfig(read: NonNullable<ManagedOpencodeV2ServerOptions["agentPermissions"]>) {
+    const { rules, organizationMcp } = await read();
+    if (rules.length === 0) return {};
+    if (!agentPermissionsPluginWritten) {
+      await mkdir(agentPermissionsPluginDirectory, { recursive: true, mode: 0o700 });
+      await writeFile(join(agentPermissionsPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+      await writeFile(join(agentPermissionsPluginDirectory, "server.js"),
+        `export { default } from ${JSON.stringify(pathToFileURL(openworkAgentPermissionsV2PluginPath()).href)};\n`, { mode: 0o600 });
+      agentPermissionsPluginWritten = true;
+    }
+    return { agentPermissionRules: rules, organizationMcp, agentPermissionsPluginDirectory };
+  }
+
   async function writeConfigNow(): Promise<void> {
     const target = join(configDir, "opencode.json");
     const next = `${JSON.stringify(renderOpencodeV2Config({
@@ -352,6 +387,7 @@ export async function createManagedOpencodeV2Server(
       contextPluginDirectory,
       contextTools: options.contextTools,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
+      ...(options.agentPermissions ? await agentPermissionsConfig(options.agentPermissions) : {}),
       skills,
     }), null, 2)}\n`;
     // The engine watches this file and reloads its model catalog on every
@@ -412,6 +448,7 @@ export async function createManagedOpencodeV2Server(
       skills = [...directories];
       await writeConfig();
     },
+    refreshConfig: writeConfig,
     close,
   };
 

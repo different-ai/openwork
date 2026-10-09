@@ -8,6 +8,7 @@ import { externalFetch } from "./server-fetch.js";
 import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
+import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
 /** Org-managed providers: Den-imported (lpr_), Gateway (ipr_) and hosted OpenWork Models. */
@@ -184,10 +185,11 @@ class ManagedDesktopPolicy {
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
-    // While only model access is enforced, cache a policy only when it restricts models, so
-    // organizations without it keep exactly the engine config and reload behaviour they had.
+    // While only model access and agent permissions are enforced, cache a policy only when it carries
+    // one of them, so other organizations keep exactly the engine config and reload behaviour they had.
     const restrictsModelAccess = policy.allowCustomProviders === false;
-    const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess
+    const hasAgentPermissions = (policy.agentPermissions?.rules.length ?? 0) > 0;
+    const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess || hasAgentPermissions
       ? await writeManagedDesktopPolicy(this.config, policy)
       : await clearManagedDesktopPolicy(this.config);
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
@@ -268,6 +270,30 @@ class ManagedDesktopPolicy {
     if (!isRecord(body)) return;
     const model = isRecord(body.model) ? body.model : body;
     if (typeof model.providerID === "string") await this.assert("model", { providerID: model.providerID });
+  }
+  /**
+   * Refuses a member adding a local skill or MCP server their agent
+   * permissions block. Only a policy verified for this sign-in counts: without
+   * one it waits for Den. When Den cannot verify it, it refuses only where
+   * agent permissions were last in force on this computer, so members of
+   * organizations that do not use them are never held up.
+   */
+  async assertAgentPermission(action: "skill" | "mcp", name: string): Promise<void> {
+    if (!this.session) return;
+    const generation = this.generation;
+    const policy = this.knownPolicy() ?? await this.current().catch((error: unknown) => {
+      if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
+      return null;
+    });
+    this.identityChanged(generation);
+    if (!policy) {
+      const stored = agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy);
+      this.identityChanged(generation);
+      if (stored.length === 0) return;
+      throw new ApiError(403, "policy_unavailable", "Your organization's agent permissions could not be verified. Try again when connected.");
+    }
+    const denial = agentPermissionDenial(agentPermissionRulesOf(policy), action, [name]);
+    if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
   /** The policy to enforce now: verified for this sign-in, else the last one verified for it; never waits on Den. */
   private knownPolicy(): DesktopConfig | null {

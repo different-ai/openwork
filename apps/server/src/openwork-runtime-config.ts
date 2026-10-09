@@ -1,4 +1,6 @@
 import { legacyExecutionPermissions } from "./managed-policy-rules.js";
+import { agentPermissionRulesOf, mergeAgentPermissionsIntoV1Permission } from "./agent-permission-engine.js";
+import { organizationMcpServers } from "./organization-mcp-names.js";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopCapabilityConfig } from "@openwork/types/den/desktop-policies-runtime";
 import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
 import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
@@ -30,6 +32,7 @@ import {
   openworkSpreadsheetsPluginPath,
   openworkChromeDevtoolsPluginPath,
   openworkPdfAttachmentsPluginPath,
+  openworkAgentPermissionsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -69,6 +72,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   }
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   const permissions = legacyExecutionPermissions(runtimeConfig.managedPolicy?.execution);
+  // The member's agent permissions: their restrictive part is written here as
+  // a fallback, and the agent permissions plugin applies all of them in order
+  // once every config document has merged (this file's keys are sorted).
+  const agentPermissionRules = agentPermissionRulesOf(runtimeConfig.managedPolicy);
   const { managedPolicy: _managedPolicy, ...engineConfig } = runtimeConfig;
   const provider = materializeLegacyFastProviders(runtimeProviderMap(runtimeConfig));
   return {
@@ -77,7 +84,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       ...Object.keys(provider).filter((id) => /^(?:lpr_|ipr_|openwork$)/i.test(id)),
       ...(runtimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
     ] } : {}),
-    permission: { ...engineConfig.permission, ...permissions },
+    permission: mergeAgentPermissionsIntoV1Permission({ ...engineConfig.permission, ...permissions }, agentPermissionRules, { fallbackOnly: true }),
     default_agent: runtimeConfig.default_agent ?? "openwork",
     agent: {
       openwork: {
@@ -85,7 +92,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         mode: "primary",
         temperature: 0.2,
         prompt: OPENWORK_AGENT_PROMPT,
-        permission: {
+        permission: mergeAgentPermissionsIntoV1Permission({
           ...permissions,
           skill: {
             // OpenWork supplies its own current skill routing and no longer
@@ -96,7 +103,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
             "agent-creator": "deny",
             "plugin-creator": "deny",
           },
-        },
+        }, agentPermissionRules, { fallbackOnly: true }),
       },
     },
     plugin: [
@@ -115,6 +122,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkTitleRecoveryPluginPath(),
       openworkGatewayQuotaPluginPath(),
       ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin)),
+      ...(agentPermissionRules.length > 0 ? [[openworkAgentPermissionsPluginPath(), {
+        rules: agentPermissionRules,
+        organizationMcp: organizationMcpServers(runtimeMcpMap(runtimeConfig)),
+      }]] : []),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))

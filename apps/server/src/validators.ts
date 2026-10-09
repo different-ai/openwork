@@ -1,10 +1,9 @@
 import { ApiError } from "./errors.js";
+import { isOrganizationMcpName } from "./organization-mcp-names.js";
 
 const SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const COMMAND_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 const MCP_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
-const RESERVED_USER_MCP_NAMES = new Set(["openwork-cloud"]);
-const RESERVED_USER_MCP_PREFIXES = ["openwork-connect-", "openwork-direct-"];
 
 export function validateSkillName(name: string): void {
   if (!name || name.length < 1 || name.length > 64 || !SKILL_NAME_REGEX.test(name)) {
@@ -43,8 +42,7 @@ export function validateMcpName(name: string): void {
 
 export function validateUserMcpName(name: string): void {
   validateMcpName(name);
-  if (RESERVED_USER_MCP_NAMES.has(name.toLowerCase())
-    || RESERVED_USER_MCP_PREFIXES.some((prefix) => name.toLowerCase().startsWith(prefix))) {
+  if (isOrganizationMcpName(name)) {
     throw new ApiError(409, "reserved_mcp_name", `${name} is reserved for OpenWork Connect`);
   }
 }

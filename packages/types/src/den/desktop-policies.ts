@@ -371,6 +371,29 @@ export const brandAccentColorValues = [
 
 export type BrandAccentColor = (typeof brandAccentColorValues)[number];
 
+/**
+ * The member's agent permissions as ordered OpenCode permission rules, last
+ * match wins. ./agent-permissions.ts owns the catalog and checks each rule
+ * strictly where it is enforced; a value import from it here would break the
+ * Den web build, which cannot resolve relative `.js` imports.
+ */
+export const desktopAgentPermissionsSchema = z
+  .object({
+    rules: z
+      .array(
+        z.object({
+          action: z.string().min(1).max(64),
+          resource: z.string().min(1).max(500),
+          effect: z.enum(["allow", "ask", "deny"]),
+          source: z.string().min(1).max(255),
+        }),
+      )
+      .max(2_000),
+  })
+  .meta({ ref: "DenDesktopAgentPermissions" });
+
+export type DesktopAgentPermissionRule = z.infer<typeof desktopAgentPermissionsSchema>["rules"][number];
+
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
     execution: effectiveDesktopExecutionPolicySchema.optional(),
@@ -386,6 +409,8 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     connectEnabled: z.boolean().optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
+    /** The member's agent permissions, present when the organization has them on. */
+    agentPermissions: desktopAgentPermissionsSchema.optional(),
   })
   .meta({ ref: "DenDesktopConfig" });
 
@@ -778,6 +803,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
   const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
+  const agentPermissions = desktopAgentPermissionsSchema.safeParse(raw?.agentPermissions);
 
   return {
     ...policy,
@@ -791,6 +817,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
+    ...(agentPermissions.success ? { agentPermissions: agentPermissions.data } : {}),
   };
 }
 

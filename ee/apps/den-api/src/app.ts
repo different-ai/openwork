@@ -409,6 +409,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Permissions", description: "Organization permissions: the permission catalog, Member, Admin and team permission sets, their history, and each member's effective permissions." },
       { name: "API Keys", description: "Organization API key management routes." },
       { name: "Desktop Policies", description: "Desktop app policies applied to the organization, members, or teams." },
+      { name: "Agent Permissions", description: "What agents may do on members' computers, set for everyone and per team." },
       { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
       { name: "Inference", description: "Organization inference settings." },
       { name: "Inference Providers", description: "Organization inference Gateway providers, model groups, credential sets, access grants, member connections, and usage." },

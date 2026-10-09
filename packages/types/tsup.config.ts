@@ -16,6 +16,7 @@ export default defineConfig({
     "skill-created-app": "src/skill-created-app.ts",
     "connection-action-app": "src/connection-action-app.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
+    "den/agent-permissions": "src/den/agent-permissions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/permissions": "src/den/permissions.ts",
     "den/connect-diagnostics": "src/den/connect-diagnostics.ts",

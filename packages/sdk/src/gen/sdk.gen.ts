@@ -5,6 +5,7 @@ import { buildClientParams, type Client, type Options as Options2, type TDataSha
 import type {
   ActivateAutomationErrors,
   ActivateAutomationResponses,
+  AgentPermissionPolicyWrite,
   AppendGoogleSheetsValuesErrors,
   AppendGoogleSheetsValuesResponses,
   ArchiveAutomationErrors,
@@ -51,6 +52,8 @@ import type {
   DeleteV1AdminAdminsByAdminIdResponses,
   DeleteV1AdminUsersByUserIdErrors,
   DeleteV1AdminUsersByUserIdResponses,
+  DeleteV1AgentPermissionsTeamsByTeamIdErrors,
+  DeleteV1AgentPermissionsTeamsByTeamIdResponses,
   DeleteV1ConfigObjectsByConfigObjectIdAccessByGrantIdErrors,
   DeleteV1ConfigObjectsByConfigObjectIdAccessByGrantIdResponses,
   DeleteV1ConfigObjectsByConfigObjectIdPluginsByPluginIdErrors,
@@ -196,6 +199,8 @@ import type {
   GetV1AdminUsersByUserIdInferenceUsageResponses,
   GetV1AdminUsersErrors,
   GetV1AdminUsersResponses,
+  GetV1AgentPermissionsErrors,
+  GetV1AgentPermissionsResponses,
   GetV1ApiKeysErrors,
   GetV1ApiKeysResponses,
   GetV1AppsByAppIdResponses,
@@ -912,6 +917,10 @@ import type {
   PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses,
   PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessErrors,
   PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessResponses,
+  PutV1AgentPermissionsEveryoneErrors,
+  PutV1AgentPermissionsEveryoneResponses,
+  PutV1AgentPermissionsTeamsByTeamIdErrors,
+  PutV1AgentPermissionsTeamsByTeamIdResponses,
   PutV1CapabilitiesMicrosoft365DriveFilesErrors,
   PutV1CapabilitiesMicrosoft365DriveFilesResponses,
   PutV1DesktopPoliciesByKeyByExternalKeyErrors,
@@ -2371,7 +2380,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get current user's desktop config
    *
-   * Returns the authenticated desktop app restrictions for the caller's active organization.
+   * Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules when the organization has agent permissions on.
    */
   public getV1MeDesktopConfig<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
@@ -4815,6 +4824,109 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/desktop-policies",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List agent permissions
+   *
+   * Returns what agents may do on members' computers: everyone's settings and each team's overrides, every team listed by name. A permission a team leaves out inherits everyone's. Members who can view desktop policies can read; canEdit says whether the caller can change them.
+   */
+  public getV1AgentPermissions<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1AgentPermissionsResponses,
+      GetV1AgentPermissionsErrors,
+      ThrowOnError
+    >({ url: "/v1/agent-permissions", ...options });
+  }
+
+  /**
+   * Set everyone's agent permissions
+   *
+   * Replaces the agent permissions that apply to every member. A permission left out allows, so members' own settings apply. Members' apps pick up the change the next time they refresh their organization's settings. Requires the desktop_policies.manage permission with a recent sign-in, and the Enterprise plan.
+   */
+  public putV1AgentPermissionsEveryone<ThrowOnError extends boolean = false>(
+    parameters: {
+      agentPermissionPolicyWrite: AgentPermissionPolicyWrite;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "agentPermissionPolicyWrite", map: "body" }] }]);
+    return (options?.client ?? this.client).put<
+      PutV1AgentPermissionsEveryoneResponses,
+      PutV1AgentPermissionsEveryoneErrors,
+      ThrowOnError
+    >({
+      url: "/v1/agent-permissions/everyone",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Remove a team's agent permissions
+   *
+   * Removes one team's overrides, so its members get everyone's agent permissions. Idempotent. Requires the desktop_policies.manage permission with a recent sign-in, and the Enterprise plan.
+   */
+  public deleteV1AgentPermissionsTeamsByTeamId<ThrowOnError extends boolean = false>(
+    parameters: {
+      teamId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "teamId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1AgentPermissionsTeamsByTeamIdResponses,
+      DeleteV1AgentPermissionsTeamsByTeamIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/agent-permissions/teams/{teamId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Set a team's agent permissions
+   *
+   * Replaces one team's overrides. A team's decision replaces everyone's for its members (the strictest wins when a member is in several teams that set one), and its allowed and blocked patterns add to everyone's. A permission left out inherits everyone's; saving no permissions removes the team's overrides. Requires the desktop_policies.manage permission with a recent sign-in, and the Enterprise plan.
+   */
+  public putV1AgentPermissionsTeamsByTeamId<ThrowOnError extends boolean = false>(
+    parameters: {
+      teamId: string;
+      agentPermissionPolicyWrite: AgentPermissionPolicyWrite;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "teamId" },
+            { key: "agentPermissionPolicyWrite", map: "body" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1AgentPermissionsTeamsByTeamIdResponses,
+      PutV1AgentPermissionsTeamsByTeamIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/agent-permissions/teams/{teamId}",
       ...options,
       ...params,
       headers: {

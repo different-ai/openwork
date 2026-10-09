@@ -207,6 +207,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  agentPermissions: {
+    label: "Agent permissions",
+    description: "Organization admins choose what agents can do on members' computers: run commands, edit files, open websites and use local skills and MCP servers, for everyone or per team.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   platformAuditReads: {
     label: "Platform audit: read-only requests",
     description: "Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.",

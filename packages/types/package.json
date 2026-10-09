@@ -101,6 +101,11 @@
       "development": "./src/den/permissions.ts",
       "default": "./src/den/permissions.ts"
     },
+    "./den/agent-permissions": {
+      "types": "./src/den/agent-permissions.ts",
+      "development": "./src/den/agent-permissions.ts",
+      "default": "./src/den/agent-permissions.ts"
+    },
     "./den/desktop-policies": {
       "types": "./src/den/desktop-policies.ts",
       "development": "./src/den/desktop-policies.ts",
@@ -192,6 +197,12 @@
       "development": "./src/den/desktop-policies.ts",
       "bun": "./src/den/desktop-policies.ts",
       "default": "./dist/den/desktop-policies.js"
+    },
+    "./den/agent-permissions-runtime": {
+      "types": "./src/den/agent-permissions.ts",
+      "development": "./src/den/agent-permissions.ts",
+      "bun": "./src/den/agent-permissions.ts",
+      "default": "./dist/den/agent-permissions.js"
     }
   },
   "files": [
