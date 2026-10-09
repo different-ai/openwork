@@ -77,6 +77,11 @@ export const runnerTurnSchema = z.object({
   title: z.string().optional(),
   /** What the model provider said when the turn failed, for logs and support; never shown to the person as is. */
   errorDetail: z.string().optional(),
+  /**
+   * What a caller-sent turn with no transcript yet was sent with: a message waiting behind the answer in progress, or
+   * stopped before it started. Older runners omit it.
+   */
+  prompt: z.string().optional(),
 })
 export type RunnerTurn = z.infer<typeof runnerTurnSchema>
 
@@ -294,10 +299,12 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     /**
      * Sends one turn with a fresh member-scoped MCP token. Re-sending the same
      * messageId never starts a second turn; it resumes an interrupted one.
+     * `interrupt`: the conversation's answer in progress wraps up at its next safe point instead of this waiting behind
+     * it (runners from before it refuse the field, so callers send it only where it is turned on).
      */
     async sendTurn(
       actor: HeadlessRunnerActor,
-      input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[]; readOnly?: boolean },
+      input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[]; readOnly?: boolean; interrupt?: boolean },
     ): Promise<RunnerResult<{ state: string }>> {
       const ttlMs = Math.min(input.ttlMs ?? deps.maxTokenTtlMs, deps.maxTokenTtlMs)
       const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
@@ -306,6 +313,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         prompt: input.prompt,
         ...(input.model ? { model: input.model } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+        ...(input.interrupt ? { interrupt: true } : {}),
         credentials: { mcpToken: token, ...(input.readOnly ? { readOnly: true } : {}) },
       })
       if (status !== 202) return { ok: false, status, error: errorCode(payload, `headless_send_${status}`) }

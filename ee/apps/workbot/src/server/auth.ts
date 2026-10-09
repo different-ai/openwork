@@ -4,7 +4,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { Config } from "./config.js"
 import { DenSignedOutError, type Den, type DenSession } from "./den.js"
-import { createSealer, MAX_COOKIE_VALUE, randomToken, tokensSchema, type Tokens } from "./sealed.js"
+import { createSealer, MAX_COOKIE_VALUE, randomToken, sessionSchema, type Tokens } from "./sealed.js"
 
 /**
  * A signed-in person, entirely in their browser's cookie (see sealed.ts): their Den tokens and the id of this
@@ -16,7 +16,6 @@ export type Session = { id: string; userId: string; organizationId: string; toke
 export type Member = { session: Session; accessToken: string; den: DenSession }
 export type AppEnv = { Variables: { member: Member } }
 
-const sessionSchema = z.object({ id: z.string(), userId: z.string(), organizationId: z.string(), tokens: tokensSchema, createdAt: z.number() })
 const loginSchema = z.object({ state: z.string(), verifier: z.string(), returnTo: z.string(), createdAt: z.number() })
 const SESSION_PURPOSE = "workbot-session-v1"
 const LOGIN_PURPOSE = "workbot-login-v1"

@@ -1,3 +1,4 @@
+import { createSealer, sessionSchema } from "../../ee/apps/workbot/src/server/sealed.ts";
 import { execFile, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
@@ -33,6 +34,7 @@ import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES, type 
  */
 
 import { workbotProbeAuthorizeUrl } from "./workbot-auth.ts";
+import { startWorkbotDemoReads, verifyWorkbotDemoReads } from "./workbot-demo-reads.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const WORKBOT_WORLD = "preview-workbot";
@@ -65,8 +67,9 @@ export type WorkbotWorldOptions = {
   features?: Record<string, boolean>;
 };
 
+/** `--natural` is accepted for older preview launch commands; all Workbot chats now use natural replies. */
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
-  for (const arg of argv) if (arg !== "--live" && arg !== "--calendar") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar)`);
+  for (const arg of argv) if (arg !== "--live" && arg !== "--calendar" && arg !== "--natural") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar, --natural)`);
   return { live: argv.includes("--live"), calendar: argv.includes("--calendar") };
 }
 
@@ -146,6 +149,7 @@ export interface WorkbotWorld {
   /** Den web as browsers see it, and as this process reaches it. */
   denWebPublic: string;
   runnerUrl: string;
+  demoReadsUrl?: string;
   secrets: { runnerToken: string; sessionSecret: string; upstreamKey: string };
   live: boolean;
   model: string;
@@ -244,6 +248,10 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   const name = `${receiptName(WORKBOT_WORLD, resolveStage(process.env))}-${randomUUID().slice(0, 8)}`;
   const data = join(REPO_ROOT, "tmp", "worlds", name);
   await mkdir(data, { recursive: true });
+  // Seeded app reads are local fixtures, not ordinary external MCP reads: Den requires write scope for the latter.
+  // Keep the greeting read-only and expose only this world's allowlisted fixture reads alongside Den's tools.
+  const demo = await bootDemoWorkspace(stack, den);
+  const runnerMcp = await startWorkbotDemoReads(stack, { denUrl: `${den.ref.apiUrl}/mcp/agent`, demoUrl: demo.baseUrl });
   await startService(stack, {
     label: "workbot-runner", match: "src/server.ts",
     cwd: join(REPO_ROOT, "ee/apps/headless-runner"),
@@ -251,7 +259,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
     health: `${runnerUrl}/health`,
     env: {
       HEADLESS_API_TOKEN: secrets.runnerToken, HEADLESS_PORT: String(runnerPort), HEADLESS_DB_PATH: join(data, "runner.sqlite"),
-      ...runner.env, HEADLESS_MCP_URL: `${den.ref.apiUrl}/mcp/agent`,
+      ...runner.env, HEADLESS_MCP_URL: runnerMcp,
       HEADLESS_FILES: "disk", HEADLESS_FILES_DIR: join(data, "files"),
       ...options.runnerEnv,
     },
@@ -279,12 +287,11 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   // --calendar: a real provider (Anthropic, fixture key) so the Calendar's model pickers show logos and choices.
   if (options.calendar) await publishCalendarModels(den.admin, orgId);
   // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
-  const demo = await bootDemoWorkspace(stack, den);
   await connectDemoWorkspace(den, demo);
   const app = options.live ? await seedOrderCalculator(stack, den) : null;
   return {
     den, orgId, workbotUrl, workbotInternal, denWebPublic: preview?.den ?? den.ref.webUrl, runnerUrl, secrets,
-    live: options.live, model: runner.model, computer: runner.computer, demo, app,
+    live: options.live, model: runner.model, computer: runner.computer, demo, app, demoReadsUrl: runnerMcp,
   };
 }
 
@@ -369,11 +376,25 @@ export async function signInWorkbot(world: WorkbotWorld, options: { denInternal?
   const me = await call("/v1/workbot/me");
   const who: unknown = await me.json().catch(() => null);
   if (!me.ok || !record(who) || who.enabled !== true) throw new Error(`Workbot does not see Alex with Workbot on: HTTP ${me.status}`);
-  return { call, cookie: cookieHeader(workbotJar) };
+  // The probe owns this synthetic sign-in and its sealing secret; keep its access token private, only for proving that
+  // fixture reads work with a real read-only run token. Never expose it as a world output.
+  const sealed = [...workbotJar].find(([key]) => key.startsWith("workbot_session") || key === "__Host-workbot")?.[1];
+  const session = createSealer(world.secrets.sessionSecret).open("workbot-session-v1", sealed, sessionSchema);
+  return { call, cookie: cookieHeader(workbotJar), accessToken: session?.tokens.accessToken };
 }
 
 export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?: string } = {}) {
-  const { call } = await signInWorkbot(world, options);
+  const { call, accessToken } = await signInWorkbot(world, options);
+  if (world.demoReadsUrl) {
+    if (!accessToken) throw new Error("Missing the demo probe's signed-in access token");
+    const response = await fetch(`${world.den.ref.apiUrl}/v1/workbot/run-token`, {
+      method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ readOnly: true }), signal: AbortSignal.timeout(30_000),
+    });
+    const token: unknown = await response.json();
+    if (!response.ok || !record(token) || typeof token.token !== "string") throw new Error(`Could not mint read-only probe token: HTTP ${response.status}`);
+    await verifyWorkbotDemoReads(world.demoReadsUrl, token.token);
+  }
   // Live: leave the conversation untouched, so the person's first open is a real first open (Workbot says hello).
   if (world.live) return { reply: "the conversation is left empty for your first open" };
   const sent = await call("/v1/workbot/messages", { method: "POST", body: JSON.stringify({ id: `probe${randomUUID().replaceAll("-", "").slice(0, 16)}`, text: "Hello from the world check." }) });

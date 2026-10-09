@@ -25,10 +25,25 @@ Workbot ── + owner header ────┘   (src/worker/index.ts)  └─ ce
 
 1. Run celld ≥ 0.6.2 on at least two nodes sharing one bucket, behind one private address (see celld's docs for the
    bucket, TLS and peer network).
-2. `celld deploy` from `ee/apps/headless-runner`, with the same `HEADLESS_*` settings the Node runner has, and
+2. `celld deploy` a bundle (`tsx scripts/celld-bundle.ts <out> <vars.json>`), with the same `HEADLESS_*` settings the Node runner has, and
    `HEADLESS_FILES=s3`. Keep `wrangler.jsonc`'s `name` and class name: celld derives every cell's identity from
    them.
 3. Point `DEN_HEADLESS_RUNNER_URL` (den-api) and `WORKBOT_RUNNER_URL` (Workbot) at it. Tokens stay the same.
+
+**Keep the runner current.** Nodes only run what was last deployed to the bucket; they never build from the repo. In
+production, `.github/workflows/celld-runner-deploy.yml` does it on every `dev` push that changes the runner or a
+package bundled into it: a real turn on a throwaway prefix first, then the fleet, then it waits until every node
+adopted the version. A Workbot or den-api change that needs a new runner field must not be turned on before that run
+is green; older runners refuse unknown fields.
+
+**Hosts with temporary disks (Render, Fargate, most containers): set `CELLD_DURABILITY=bucket` on every node.**
+celld's default (`fleet`) acknowledges a write once another node has it on its local disk, before it reaches the
+bucket. If every node stops at once (for example, all lose their bucket leases during one storage outage) and their
+disks do not survive, celld cannot prove no acknowledged write was lost and refuses to open the affected cells. That
+is correct, but leaves conversations unavailable. On a host that also restarts a process at the same private IP,
+recovery waits until those IPs change. `bucket` mode acknowledges only after the bucket write, so
+any node can always recover. Keep `fleet` only with persistent disks for `CELLD_WATCH` and stable node identities.
+Also consider `CELLD_TTL_MS=30000` so a short storage outage does not fence every node.
 
 **Switching starts every conversation fresh**: conversations on the Node runner stay in its SQLite file and are not
 copied. A Slack or Automation run in flight at the switch ends as `unknown_session`. Pointing the URLs back at the

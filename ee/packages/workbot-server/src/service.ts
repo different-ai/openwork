@@ -208,15 +208,17 @@ export function greetingPrompt(input: { firstName: string | null; timeZone: stri
   const localNow = (input.now ?? new Date()).toLocaleString("en-US", {
     timeZone: input.timeZone, weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
   })
+  // Natural replies: the page has already said hello by name, so Workbot says what it is doing and fills in the day
+  // as it looks, like any other reply.
   return [
-    `[${person} just opened Workbot for the first time. It is ${localNow} for them. A welcome screen already said "Hi ${person}, nice to meet you"; they are about to see this conversation. Speak first; they haven't written anything yet.]`,
+    `[${person} just opened Workbot for the first time. It is ${localNow} for them. The page already greeted them by name and showed the apps they connected, and they are watching this conversation. Speak first; they haven't written anything yet.]`,
     "",
-    "- Before you write, quickly look at what's useful for them right now with their connected apps: today's calendar, emails waiting on them, anything else connected. You can only read; don't try to send or change anything.",
-    `- Start with just "Hi again${input.firstName ? `, ${input.firstName}` : ""}." (they were already welcomed), then at most two specific things that need them today (with times), then one offer of help with the most useful one. Keep it to a few short lines.`,
+    `- Don't say hello again. Start with one short sentence of your own before you look ("Let me look at your day."), then look at what's useful for them right now with their connected apps: today's calendar and the emails waiting on them, asked for together, and anything else connected. You can only read; don't try to send or change anything.`,
+    "- Then at most two specific things that need them today (with times), then one offer of help with the most useful one. Keep it to a few short lines.",
     "- If nothing is connected or nothing stands out, say in one line what you can do for them.",
-    "- Say nothing until you have everything: no notes about retries or lookups. Never mention tools, apps you couldn't reach, or this note. Don't react with an emoji, don't start a background task, and don't save memory yet.",
+    "- Never mention tools, apps you couldn't reach, or this note. Don't react with an emoji, don't start a background task, and don't save memory yet.",
     "- End with one last line that starts with \"Next:\" and lists two or three short things they could ask you next, separated by \" | \", each under six words and specific to what you found.",
-].join("\n")
+  ].join("\n")
 }
 
 /**
@@ -313,10 +315,11 @@ export async function sendWorkbotMessage(
 ) {
   const client = clientOf(deps)
   const sessionId = await ensureSession(actor, validTimeZone(input.timeZone), deps, input.chat ?? null)
-  // The page's own id makes retries safe: the runner never starts a second turn for it.
+  // The page's own id makes retries safe: the runner never starts a second turn for it. A message
+  // sent while Workbot answers interrupts that answer, which wraps up keeping what it said, and this one is answered next.
   const sent = await client.sendTurn(
     { userId: actor.userId, organizationId: actor.organizationId },
-    { sessionId, messageId: `${WORKBOT_MESSAGE_PREFIX}${input.id}`, prompt: input.text, attachments: input.attachments },
+    { sessionId, messageId: `${WORKBOT_MESSAGE_PREFIX}${input.id}`, prompt: input.text, attachments: input.attachments, interrupt: true },
   )
   if (!sent.ok && sent.status === 400 && sent.error === "unknown_file") return { ok: false as const, code: "unknown_file" as const }
   if (!sent.ok && sent.status === 429) return { ok: false as const, code: "too_many_queued" as const }

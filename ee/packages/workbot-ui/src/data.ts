@@ -41,7 +41,8 @@ const stepSchema = z.object({
 });
 export type WorkbotStep = z.infer<typeof stepSchema>;
 const partSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("text"), text: z.string() }),
+  /** `step`: the model call the words came from, so the page keeps one bubble per call. Older servers omit it. */
+  z.object({ kind: z.literal("text"), text: z.string(), step: z.number().optional() }),
   z.object({ kind: z.literal("steps"), steps: z.array(stepSchema) }),
 ]);
 export type WorkbotPart = z.infer<typeof partSchema>;
@@ -123,7 +124,13 @@ export function useWorkbotThread(input: { turns: number; awaiting: boolean; live
 
 /** Reply text streamed for one turn's model call `step`, before that call is stored. */
 /** A model call in progress: its text so far, and whether it has started a step (its computer, or anything else). */
-export type LiveText = { step: number; text: string; working?: { on: "computer" | "other"; since: number } };
+export type LiveText = {
+  step: number;
+  text: string;
+  working?: { on: "computer" | "other"; since: number };
+  /** What earlier model calls of this turn wrote, kept until the conversation's next read has it. */
+  earlier?: Array<{ step: number; text: string }>;
+};
 
 const liveEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("changed"), messageId: z.string(), status: z.string().optional() }),
@@ -189,11 +196,13 @@ export function useWorkbotLive(enabled: boolean) {
         const previous = current[value.messageId];
         if (previous && value.step < previous.step) return current;
         const sameStep = previous?.step === value.step;
+        // A finished model call's words stay until the conversation's next read has them, so they never blink out.
+        const earlier = !sameStep && previous?.text ? [...(previous.earlier ?? []), { step: previous.step, text: previous.text }].slice(-3) : (previous?.earlier ?? []);
         if (value.type === "working") {
-          return { ...current, [value.messageId]: { step: value.step, text: sameStep ? previous.text : "", working: { on: value.on, since: Date.now() } } };
+          return { ...current, [value.messageId]: { step: value.step, text: sameStep ? previous.text : "", earlier, working: { on: value.on, since: Date.now() } } };
         }
         const text = value.reset || !sameStep ? value.delta : previous.text + value.delta;
-        return { ...current, [value.messageId]: { step: value.step, text, ...(sameStep && previous.working && !value.reset ? { working: previous.working } : {}) } };
+        return { ...current, [value.messageId]: { step: value.step, text, earlier, ...(sameStep && previous.working && !value.reset ? { working: previous.working } : {}) } };
       });
     };
 
@@ -350,7 +359,7 @@ const connectionsSchema = z.object({
   connections: z.array(z.object({
     id: z.string(),
     name: z.string(),
-    app: z.enum(["gmail", "slack", "microsoft"]),
+    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft"]),
     ready: z.boolean(),
     connectUrl: z.string().nullable(),
   })),

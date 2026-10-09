@@ -18,7 +18,7 @@ test("a member understands Workbot and keeps chatting while a real background jo
     await probe.eventually(async () => (await probe.dom("button:not([disabled])")).elements.some((button) => button.text === "Get started"), { within: 30_000, label: "The connection choice is ready" });
     await user.click("Get started");
     await user.see({ text: "You're all connected" });
-    expect(world.witness().greetingRequests).toBe(0);
+    await probe.eventually(async () => world.witness().greetingRequests > 0, { within: 30_000, label: "With all apps connected, the greeting starts while the member reads the next screen" });
     await user.click("Start chatting");
     await user.see({ text: world.hello }, { timeoutMs: 60_000 });
     await user.see(composer, { editable: true });

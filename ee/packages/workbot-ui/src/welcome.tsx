@@ -38,7 +38,12 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
   const getStarted = () => {
     // Nothing set up to connect (or the list isn't back yet and failed): straight to the conversation.
     if (list.length === 0) finish();
-    else leaveTo(() => setStep("connect"));
+    else {
+      // Natural replies: with everything already connected there is nothing left to choose, so Workbot starts looking
+      // at their day while they read the next screen.
+      if (list.every((connection) => connection.ready)) onBegin();
+      leaveTo(() => setStep("connect"));
+    }
   };
 
   return (
@@ -154,7 +159,7 @@ function ConnectStep(props: {
   );
 }
 
-const APP_NAMES: Record<WorkbotConnection["app"], string> = { gmail: "Gmail", slack: "Slack", microsoft: "Microsoft 365" };
+const APP_NAMES: Record<WorkbotConnection["app"], string> = { gmail: "Gmail", googleCalendar: "Google Calendar", slack: "Slack", microsoft: "Microsoft 365" };
 
 /** One part of a step, rising in after the parts before it. */
 function Rise({ order, children }: { order: number; children: ReactNode }) {

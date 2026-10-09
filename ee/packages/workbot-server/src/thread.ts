@@ -60,7 +60,11 @@ export type WorkbotStep = {
   /** What it did, in its own plain words: the updates it gave while working on its computer. */
   updates: string[]
 }
-export type WorkbotPart = { kind: "text"; text: string } | { kind: "steps"; steps: WorkbotStep[] }
+/**
+ * What Workbot said and did, in order. A text part is one model call's words, `step` being that call (counted from 0
+ * within the turn): the page keeps one bubble per call, from its first streamed word to its stored copy.
+ */
+export type WorkbotPart = { kind: "text"; text: string; step: number } | { kind: "steps"; steps: WorkbotStep[] }
 
 /**
  * A bigger job this message handed to a background task: the page keeps it in view where it started, so the person
@@ -301,9 +305,13 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     // A background task's own work stays out of the conversation; its report shows instead.
     if (!turn.messageId.startsWith(WORKBOT_MESSAGE_PREFIX) || turn.kind === "task") continue
     const messages = byTurn.get(turn.messageId) ?? []
-    const user = messages.find((message) => message.role === "user")
-    // Queued follow-ups join the transcript only when they start; the page shows its own copy until then.
-    if (!user || user.role !== "user") continue
+    // A message joins the transcript only when its turn starts; until then (waiting behind the answer in progress, or
+    // stopped before it started) the runner sends what it was sent with, so it stays in the conversation through a
+    // reload, a chat switch or Stop.
+    const stored = messages.find((message) => message.role === "user")
+    const waiting = turn.kind === undefined && !isGreetingRunnerId(turn.messageId) && turn.prompt !== undefined ? { role: "user" as const, text: turn.prompt, attachments: undefined } : null
+    const user = stored?.role === "user" ? stored : waiting
+    if (!user) continue
     const results = new Map(messages.flatMap((message) => (message.role === "tool" ? [[message.callId, message] as const] : [])))
 
     const parts: WorkbotPart[] = []
@@ -314,12 +322,9 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       if (message.role !== "assistant") continue
       modelSteps += 1
       const text = message.text.trim()
-      // Workbot's hello is one finished message: what it said to itself between lookups ("retrying that") stays out.
-      if (text && !(greeting && message.toolCalls.length > 0)) {
-        const last = parts.at(-1)
-        if (last?.kind === "text") last.text = `${last.text}\n\n${text}`
-        else parts.push({ kind: "text", text })
-      }
+      // Each model call's words are their own bubble, the same one the page streamed, so two never become one once
+      // stored. The greeting follows the same streaming contract as other replies.
+      if (text) parts.push({ kind: "text", text, step: modelSteps - 1 })
       for (const call of message.toolCalls) {
         if (call.name === "react") {
           const result = results.get(call.id)

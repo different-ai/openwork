@@ -353,10 +353,12 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
                     // A hello that failed before writing anything leaves the drawn greeting in its place, the same
                     // as one that couldn't start; its turn then adds only the line saying it didn't work.
                     const helloFailed = hello?.greeting === true && hello.status === "failed" && !hello.parts.some((part) => part.kind === "text");
-                    // A side chat has no greeting: the person spoke first.
-                    const spoken = side || starting || (hello?.greeting === true && !helloFailed);
+                    const followed = starting || (hello?.greeting === true && !helloFailed);
+                    // A side chat has no greeting: the person spoke first. In the main chat the drawn hello stays while
+                    // Workbot fills in their day.
+                    const spoken = side;
                     // Workbot's own hello carries the time; the drawn greeting brings its own.
-                    return { at: spoken ? 0 : at, joined: helloFailed, node: <Intro name={data.name} organizationName={data.organizationName} firstName={firstName} at={at} spoken={spoken} /> };
+                    return { at: spoken ? 0 : at, joined: helloFailed, node: <Intro name={data.name} organizationName={data.organizationName} firstName={firstName} at={at} spoken={spoken} followed={followed} /> };
                   })()
             }
           />
@@ -566,7 +568,8 @@ function Timestamp({ at }: { at: number }) {
  * Who Workbot is and its greeting: on the first open, and afterwards at the top of the conversation, so the hello
  * the person read doesn't vanish when they reply (DESIGN P11).
  */
-function Intro(props: { name: string; organizationName: string; firstName: string | null; at: number; spoken?: boolean }) {
+/** `followed`: Workbot's own hello comes after the drawn one, so that hello asks the question instead. */
+function Intro(props: { name: string; organizationName: string; firstName: string | null; at: number; spoken?: boolean; followed?: boolean }) {
   const apps = useConnectedApps().map((app) => app.name);
   const seeing = apps.length === 0 ? null : apps.length === 1 ? apps[0] : `${apps.slice(0, -1).join(", ")} and ${apps.at(-1)}`;
   const hour = new Date(props.at).getHours();
@@ -587,11 +590,13 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
               {hello}{props.firstName ? ` ${props.firstName}` : ""}.{seeing ? ` I can already see your ${seeing}.` : ""}
             </p>
           </div>
-          <div className="flex">
-            <p className="max-w-[520px] rounded-[20px] rounded-tl-md bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)]">
-              What can I take off your plate today?
-            </p>
-          </div>
+          {props.followed ? null : (
+            <div className="flex">
+              <p className="max-w-[520px] rounded-[20px] rounded-tl-md bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)]">
+                What can I take off your plate today?
+              </p>
+            </div>
+          )}
         </div>
       )}
     </>
@@ -696,12 +701,14 @@ function Conversation(props: {
   // One indicator, at the end of the thread, says a reply is on its way and none of it shows yet. Background tasks
   // show their progress on their own cards, and streamed text or a running step already shows Workbot at work, so
   // neither keeps the dots. Uploading files say so instead.
-  const typing = useSettled(
-    props.starting
-      || props.pending.some((entry) => !known.has(entry.id) && !entry.failed && !entry.uploads.some((upload) => upload.status === "uploading"))
-      || props.turns.some((turn) => awaitingReply(turn, props.live[turn.id] ?? null)),
-    350,
-  );
+  // Each message keeps its own waiting place where its answer will appear (TurnView, PendingView); only a hello that
+  // hasn't reached the conversation yet shows its dots here.
+  const typing = useSettled(props.starting, 350);
+  // A follow-up interrupts the answer before it: the newest message is answered next.
+  const unsent = props.pending.filter((entry) => !known.has(entry.id) && !entry.failed);
+  const lastPending = unsent.at(-1)?.id ?? null;
+  // Only the newest of Workbot's words may still be revealing, so two messages are never being written at once.
+  const newestText = [...props.turns].reverse().find((turn) => turn.parts.some((part) => part.kind === "text") || Boolean(props.live[turn.id]?.text))?.id ?? null;
   // Local previews keep a just-sent image on screen while its kept copy loads.
   const localUrls = useMemo(() => {
     const urls: Record<string, string | null> = {};
@@ -775,18 +782,32 @@ function Conversation(props: {
                       turn={row.turn}
                       live={props.live[row.turn.id] ?? null}
                       latest={row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
+                      newestText={row.turn.id === newestText}
                       previews={previews.current}
                       onRetry={() => row.turn && props.onRetryTurn(row.turn)}
                       onSuggestion={props.onSuggestion}
                     />
                   ) : row.pending ? (
-                    <PendingView entry={row.pending} onRetry={() => row.pending && props.onRetry(row.pending)} />
+                    <PendingView
+                      entry={row.pending}
+                      onRetry={() => row.pending && props.onRetry(row.pending)}
+                      waiting={row.pending.id === lastPending}
+                    />
                   ) : null}
                 </li>
               );
             })}
           </ol>
-          {typing ? <div className="pt-3"><TypingBubble /></div> : null}
+          {typing ? (
+            <div className="flex flex-col gap-1">
+              <Gap />
+              <div className="flex flex-col">
+                <WaitingSlot>
+                  <TypingDots />
+                </WaitingSlot>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -976,23 +997,33 @@ function CopyAnswer({ text }: { text: string }) {
  * grey bubbles on the right read as two sides of one conversation. It hugs short replies and stops at a readable
  * width; wide tables and code scroll inside it.
  */
-function AssistantBubble({ children }: { children: ReactNode }) {
+function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {
   return (
-    <div className="flex py-[3px]">
+    <div className="flex items-end gap-1 py-[3px]">
       <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-card-shadow)] sm:max-w-[600px]">
         {children}
       </div>
+      {trailing}
     </div>
   );
 }
 
 /**
- * Workbot writing a reply that doesn't show yet: one small reply bubble with three dots that darken in turn at the
- * end of the thread, like a messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
+ * The place Workbot's next words will take, one message line tall (a one-line bubble: its line of text, padding and
+ * spacing). It shows the typing dots, the app step running right now, or nothing for a moment; its height never
+ * changes, so whatever comes next replaces what was there without moving the conversation (DESIGN P11).
  */
-function TypingBubble() {
+function WaitingSlot({ children }: { children?: ReactNode }) {
+  return <div className="flex h-12.5 shrink-0 flex-col">{children}</div>;
+}
+
+/**
+ * Workbot writing a reply that doesn't show yet: one small reply bubble with three dots that darken in turn, like a
+ * messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
+ */
+function TypingDots() {
   return (
-    <div className="workbot-row-enter flex pt-1.5 pl-1" role="status" aria-label="Workbot is processing">
+    <div className="workbot-row-enter flex py-[3px]" role="status" aria-label="Workbot is processing">
       <div className="flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-card-shadow)]">
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
@@ -1036,7 +1067,8 @@ function pendingAttachments(entry: Pending): { attachments: WorkbotAttachment[];
   return { attachments, urls };
 }
 
-function PendingView({ entry, onRetry }: { entry: Pending; onRetry: () => void }) {
+/** `waiting`: this message's answer comes next, so it shows the waiting dots its turn will show. */
+function PendingView({ entry, onRetry, waiting }: { entry: Pending; onRetry: () => void; waiting: boolean }) {
   const { attachments, urls } = pendingAttachments(entry);
   const uploading = entry.uploads.some((upload) => upload.status === "uploading");
   return (
@@ -1046,12 +1078,21 @@ function PendingView({ entry, onRetry }: { entry: Pending; onRetry: () => void }
       <UserBubble text={entry.text} muted={Boolean(entry.failed)} action={entry.failed ? undefined : <EditButton disabled />} />
       {entry.failed ? (
         <ErrorLine align="end" action={{ label: "Send again", onClick: onRetry }}>{entry.failed}</ErrorLine>
-      ) : (
+      ) : uploading || waiting ? (
+        // The rows its turn will show, so nothing moves when the turn arrives.
         <>
           <Gap />
-          {uploading ? <QuietLine label="Uploading your files" /> : null}
+          <div className="flex flex-col">
+            {uploading ? (
+              <QuietLine label="Uploading your files" />
+            ) : (
+              <WaitingSlot>
+                <TypingDots />
+              </WaitingSlot>
+            )}
+          </div>
         </>
-      )}
+      ) : null}
     </>
   );
 }
@@ -1121,16 +1162,16 @@ function QuietLine({ label }: { label: string }) {
  * Streamed text arrives in bursts; this reveals it at a steady pace that speeds up when it falls behind,
  * so the reply reads as written rather than jumping a sentence at a time.
  */
-function useSmoothText(target: string) {
-  const [shown, setShown] = useState(0);
-  const shownRef = useRef(0);
-  const previous = useRef("");
+function useSmoothText(target: string, instant = false) {
+  const [shown, setShown] = useState(() => (instant ? target.length : 0));
+  const shownRef = useRef(instant ? target.length : 0);
+  const previous = useRef(instant ? target : "");
   useEffect(() => {
     const goal = target.length;
     // A new piece of text (the next step's) starts from its beginning; more of the same text continues.
     if (!target.startsWith(previous.current.slice(0, shownRef.current))) shownRef.current = 0;
     previous.current = target;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (instant || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       shownRef.current = goal;
       setShown(goal);
       return;
@@ -1139,26 +1180,29 @@ function useSmoothText(target: string) {
     const tick = () => {
       const current = shownRef.current;
       if (current >= goal) return;
-      // A steady pace, as if written: about 45 frames (¾ s) to catch up with whatever has arrived, never slower
-      // than 2 characters a frame. A reply that arrives in one burst still reads as written, not pasted.
-      shownRef.current = Math.min(goal, current + Math.max(2, Math.ceil((goal - current) / 45)));
+      // A steady pace, as if written: about 15 frames (¼ s) to catch up with whatever has arrived, never slower than 2
+      // characters a frame, so a reply stops typing soon after Workbot does.
+      shownRef.current = Math.min(goal, current + Math.max(2, Math.ceil((goal - current) / 15)));
       setShown(shownRef.current);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [target]);
-  return target.slice(0, Math.min(shown, target.length));
+  }, [target, instant]);
+  return instant ? target : target.slice(0, Math.min(shown, target.length));
 }
 
-function StreamingText({ text }: { text: string }) {
-  const shown = useSmoothText(text);
+/** `instant` shows the text in full (older words, and answers already done). A bubble keeps one line's height from its first frame. */
+function StreamingText({ text, instant = false }: { text: string; instant?: boolean }) {
+  const shown = useSmoothText(text, instant);
   return (
-    <div className="workbot-streaming">
+    <div className="workbot-streaming min-h-6">
       <WorkbotMarkdown text={shown} />
     </div>
   );
 }
+
+
 
 /** An app the turn used, for the "Using …" line: Workbot's computer or a connected app. */
 type UsedApp = { key: string; name: string; computer: boolean };
@@ -1268,14 +1312,6 @@ function AppLogos({ apps }: { apps: UsedApp[] }) {
 }
 
 
-/**
- * The hello as it is written: nothing while it is still looking things up (a call that starts a lookup, or a short
- * line that could be a note to itself), and never its closing "Next:" line, which becomes buttons when it's done.
- */
-function helloSoFar(text: string, working: LiveText["working"] | null) {
-  if (working || (text.length < 40 && !text.includes("\n"))) return "";
-  return withoutNextLine(text);
-}
 
 /** An answer as it is written, without a closing "Next:" line, which becomes buttons once the answer is done. */
 function withoutNextLine(text: string) {
@@ -1293,8 +1329,8 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   const working = turn.status === "working" || turn.status === "queued";
   // The model call in progress (not stored yet): its text so far, and whether it has started a step.
   const current = working && live && live.step >= turn.modelSteps ? live : null;
-  // Workbot's hello streams only its message, never its notes between lookups.
-  const liveText = turn.greeting ? helloSoFar(current?.text ?? "", current?.working ?? null) : withoutNextLine(current?.text ?? "");
+  // Live text is trimmed like the stored text, so a finished bubble carries on instead of starting over.
+  const liveText = withoutNextLine((current?.text ?? "").trimStart());
   const last = turn.parts.at(-1);
   // Its computer starting before the step is stored: the card shows right away, after what it just said.
   const startingCard = working && !turn.greeting && current?.working?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
@@ -1302,12 +1338,6 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   return { working, liveText, startingCard, lastIsLive };
 }
 
-/** Workbot owes this reply and none of it shows yet (a hello's lookups stay hidden, so they don't count as showing). */
-function awaitingReply(turn: WorkbotTurn, live: LiveText | null) {
-  if (turn.status !== "working") return false;
-  const { liveText, startingCard, lastIsLive } = replyProgress(turn, live);
-  return !liveText && !startingCard && (Boolean(turn.greeting) || !lastIsLive);
-}
 
 /** True only once `flag` has held for `ms`: the typing bubble doesn't flash for a beat between two steps. */
 function useSettled(flag: boolean, ms: number) {
@@ -1323,6 +1353,9 @@ function useSettled(flag: boolean, ms: number) {
   return flag && settled;
 }
 
+/** One thing a turn shows: a model call's words (one bubble each) or the steps between them. */
+type TurnItem = { kind: "text"; key: string; text: string } | { kind: "steps"; key: string; steps: WorkbotStep[]; live: boolean };
+
 function TurnView(props: {
   canChange: boolean;
   onEdit: (turn: WorkbotTurn, text: string) => void;
@@ -1330,23 +1363,56 @@ function TurnView(props: {
   turn: WorkbotTurn;
   live: LiveText | null;
   latest: boolean;
+  /** This turn holds the newest of Workbot's words in the conversation: the only ones still revealing. */
+  newestText: boolean;
   previews: Record<string, string | null>;
   onRetry: () => void;
   onSuggestion: (text: string) => void;
 }) {
   const { turn } = props;
   const { working, liveText, startingCard, lastIsLive } = replyProgress(turn, props.live);
-  // An answer watched while it was written keeps revealing at the same pace once it's stored, instead of the whole
-  // text snapping in when the turn ends. Answers already done when the page opened show at once.
+  // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
+  // page opened show at once.
   const watched = useRef(working);
   if (working) watched.current = true;
   const parts = turn.parts;
-  const last = parts.at(-1);
-  // The stored last text is revealed in the live slot after the list, so its reveal carries on when it's stored.
-  const lastText = parts.reduce((found, part, index) => (part.kind === "text" ? index : found), -1);
-  const tailIsStored = !working && watched.current && lastText !== -1 && lastText === parts.length - 1;
-  const storedTail = tailIsStored && last?.kind === "text" ? last.text : null;
-  const tail: string | null = working ? liveText || null : storedTail;
+  const live = working && props.live && props.live.step >= turn.modelSteps ? props.live : null;
+  // One bubble per model call, keyed by that call from its first streamed word to its stored copy, so a bubble never
+  // swaps, jumps to its full length or starts over when the conversation is read again (DESIGN P11). Words streamed for
+  // an earlier call stay until the stored copy arrives.
+  const items: TurnItem[] = [];
+  parts.forEach((part, index) => {
+    if (part.kind === "text") items.push({ kind: "text", key: `text-${part.step ?? `part-${index}`}`, text: part.text });
+    else items.push({ kind: "steps", key: `steps-${index}`, steps: part.steps, live: working && index === parts.length - 1 && lastIsLive });
+  });
+  if (working && props.live) {
+    for (const entry of props.live.earlier ?? []) {
+      const text = withoutNextLine(entry.text.trimStart());
+      if (entry.step >= turn.modelSteps && text) items.push({ kind: "text", key: `text-${entry.step}`, text });
+    }
+  }
+  if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
+  // The newest message is answered next; a follow-up interrupts the older answer, which only finishes its step.
+  const answering = props.latest && working;
+  // The place Workbot's next words will take, one message line tall: the typing dots, or the app step running right now
+  // ("Using Gmail"), then the words themselves, each replacing the last without moving the conversation. Once it has
+  // shown, it keeps its place until the words arrive.
+  const tail = items.at(-1);
+  const runningApps = answering && tail?.kind === "steps" && tail.live && tail.steps.every((step) => step.icon === "app") ? tail : null;
+  if (runningApps) items.pop();
+  const lastText = items.reduce((found, item, index) => (item.kind === "text" ? index : found), -1);
+  const waiting = answering && !liveText && !startingCard && !lastIsLive;
+  const fresh = items.length === 0 && !runningApps;
+  const settled = useSettled(waiting && !fresh, 350);
+  const dots = waiting && (fresh || settled);
+  const running = runningApps !== null;
+  const [held, setHeld] = useState(false);
+  useEffect(() => {
+    if (dots || running) setHeld(true);
+    else if (!answering || liveText) setHeld(false);
+  }, [dots, running, answering, liveText]);
+  const slot = answering && !liveText && (dots || held || running);
+  const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
@@ -1355,33 +1421,21 @@ function TurnView(props: {
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
-      {parts.length > 0 || liveText || startingCard || turn.status === "queued" ? <Gap /> : null}
+      {items.length > 0 || startingCard || slot ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
-        {parts.map((part, index) => {
-          if (part.kind === "text") {
-            if (tailIsStored && index === lastText) return null;
-            return (
-              <AssistantBubble key={index}>
-                <WorkbotMarkdown text={part.text} />
-              </AssistantBubble>
-            );
-          }
-          // Its hello looks things up out of sight; once it's done, one quiet line says what it read.
-          if (turn.greeting && working) return null;
-          return <StepsSegment key={index} steps={part.steps} live={working && index === parts.length - 1 && lastIsLive} />;
-        })}
-        {/* One slot for the text being written, kept when the answer is stored, so the reveal carries on. */}
-        {tail ? (
-          <AssistantBubble>
-            <StreamingText text={tail} />
-          </AssistantBubble>
-        ) : null}
+        {items.map((item, index) =>
+          item.kind === "text" ? (
+            // Natural replies: Copy sits beside the last bubble, so a finished answer doesn't add a row under itself.
+            <AssistantBubble key={item.key} trailing={turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
+              <StreamingText text={item.text} instant={!(props.newestText && index === lastText && watched.current)} />
+            </AssistantBubble>
+          ) : (
+            <StepsSegment key={item.key} steps={item.steps} live={item.live} />
+          ),
+        )}
         {startingCard ? <StepsSegment steps={[{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [] }]} live /> : null}
-        {turn.status === "queued" ? <QuietLine label="Up next" /> : null}
-        {turn.status === "done" && lastText !== -1 ? (
-          <CopyAnswer text={parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n")} />
-        ) : null}
+        {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
       </div>
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {turn.tasks.length ? <TaskCards tasks={turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
@@ -1404,7 +1458,7 @@ function TurnView(props: {
       {turn.status === "failed" ? (
         <ErrorLine action={props.latest && (turn.greeting || turn.retryable) ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
       ) : null}
-      {turn.status === "stopped" ? <p className="pl-1 pt-1.5 text-[13px] leading-4 text-[var(--wb-muted)]">Stopped</p> : null}
+      {/* Natural replies: an answer cut short by a follow-up or by Stop just ends where it was. */}
     </>
   );
 }
