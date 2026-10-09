@@ -752,10 +752,9 @@ export class Runner {
           store.setTurnStatus(sessionId, messageId, "completed")
           return
         }
-        const outcomes: ToolResult[] = []
-        for (const call of result.toolCalls) {
-          signal.throwIfAborted()
-          const outcome: ToolResult = call.inputError
+        // What one call does and returns.
+        const runCall = async (call: (typeof result.toolCalls)[number]): Promise<ToolResult> =>
+          call.inputError
             ? { output: call.inputError, isError: true }
             : kind === "report"
               ? { output: "report_only_turn: Report delivery cannot execute tools. The person must request any further action.", isError: true }
@@ -783,6 +782,7 @@ export class Runner {
                     isError: true,
                   }))
                 : { output: `Unknown tool: ${call.name}`, isError: true }
+        const record = (call: (typeof result.toolCalls)[number], outcome: ToolResult) =>
           store.appendMessage(sessionId, messageId, {
             role: "tool",
             callId: call.id,
@@ -792,7 +792,25 @@ export class Runner {
             ...(outcome.images?.length ? { images: outcome.images } : {}),
             ...(outcome.documents?.length ? { documents: outcome.documents } : {}),
           })
-          outcomes.push(outcome)
+        const outcomes: ToolResult[] = []
+        if (readOnly && result.toolCalls.length > 1) {
+          // A read-only turn can't change anything, so its calls (lookups in the person's apps) run at the same time.
+          signal.throwIfAborted()
+          const settled = await Promise.all(result.toolCalls.map(runCall))
+          result.toolCalls.forEach((call, index) => {
+            const outcome = settled[index]
+            if (!outcome) return
+            record(call, outcome)
+            outcomes.push(outcome)
+          })
+        } else {
+          // Anything else runs in order, each call recorded as soon as it returns.
+          for (const call of result.toolCalls) {
+            signal.throwIfAborted()
+            const outcome = await runCall(call)
+            record(call, outcome)
+            outcomes.push(outcome)
+          }
         }
         if (reactions && reactionEndsTurn(result.toolCalls, outcomes)) {
           store.setTurnStatus(sessionId, messageId, "completed")

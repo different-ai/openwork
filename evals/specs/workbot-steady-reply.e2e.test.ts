@@ -115,10 +115,12 @@ natural("a member's follow-up changes Workbot's answer instead of waiting behind
     const movement = await world.movement();
     expect(movement?.down, `the conversation moved down ${movement?.down} times (${movement?.downPx}px)`).toBe(0);
     expect((await probe.dom(dots)).elements).toHaveLength(0);
+    // Copy sits beside the finished answer's last bubble instead of adding a row under it.
+    expect((await probe.dom("ol[aria-label='Conversation'] > li:last-child div.items-end button[aria-label='Copy answer']")).elements).toHaveLength(1);
     await user.screenshot();
     evidence.recordAssertionEvidence(
       "A follow-up is answered like a person would",
-      "The answer about the week stopped where it was, with no Stopped label and nothing waiting Up next; the answer about today came under the correction, and the conversation never moved back down.",
+      "The answer about the week stopped where it was, with no Stopped label and nothing waiting Up next; the answer about today came under the correction with Copy beside its last bubble, and the conversation never moved back down.",
       true,
     );
   });

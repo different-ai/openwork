@@ -306,9 +306,13 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     // A background task's own work stays out of the conversation; its report shows instead.
     if (!turn.messageId.startsWith(WORKBOT_MESSAGE_PREFIX) || turn.kind === "task") continue
     const messages = byTurn.get(turn.messageId) ?? []
-    const user = messages.find((message) => message.role === "user")
-    // Queued follow-ups join the transcript only when they start; the page shows its own copy until then.
-    if (!user || user.role !== "user") continue
+    // A message joins the transcript only when its turn starts; until then (waiting behind the answer in progress, or
+    // stopped before it started) the runner sends what it was sent with, so it stays in the conversation through a
+    // reload, a chat switch or Stop.
+    const stored = messages.find((message) => message.role === "user")
+    const waiting = turn.kind === undefined && !isGreetingRunnerId(turn.messageId) && turn.prompt !== undefined ? { role: "user" as const, text: turn.prompt, attachments: undefined } : null
+    const user = stored?.role === "user" ? stored : waiting
+    if (!user) continue
     const results = new Map(messages.flatMap((message) => (message.role === "tool" ? [[message.callId, message] as const] : [])))
 
     const parts: WorkbotPart[] = []

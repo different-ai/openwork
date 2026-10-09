@@ -164,10 +164,15 @@ export function createApp(input: {
     const busy = windowed
       ? store.activeTurn(session.id, { conversation: true }) !== null
       : turns.some((turn) => ACTIVE.has(turn.status) && turn.kind !== "task")
+    // A message waiting its turn (or stopped before it started) has no transcript yet: its text comes with the turn.
+    const waiting = store.waitingPrompts(session.id, turns.filter((turn) => turn.kind === undefined && (turn.status === "queued" || turn.status === "aborted")).map((turn) => turn.messageId))
     return c.json({
       session,
       status: busy ? "busy" : "idle",
-      turns,
+      turns: turns.map((turn) => {
+        const prompt = waiting.get(turn.messageId)
+        return prompt === undefined ? turn : { ...turn, prompt }
+      }),
       ...(windowed ? { hasEarlier: windowed.hasEarlier } : {}),
       // Image and PDF data stay in the store; callers poll this, so they get counts instead.
       messages: scoped.slice(-query.data.limit).map((entry) => {

@@ -77,6 +77,11 @@ export const runnerTurnSchema = z.object({
   title: z.string().optional(),
   /** What the model provider said when the turn failed, for logs and support; never shown to the person as is. */
   errorDetail: z.string().optional(),
+  /**
+   * What a caller-sent turn with no transcript yet was sent with: a message waiting behind the answer in progress, or
+   * stopped before it started. Older runners omit it.
+   */
+  prompt: z.string().optional(),
 })
 export type RunnerTurn = z.infer<typeof runnerTurnSchema>
 

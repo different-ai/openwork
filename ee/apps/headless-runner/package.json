@@ -18,7 +18,7 @@
     "worker:typecheck": "wrangler types && tsc -p tsconfig.worker.json --noEmit",
     "worker:e2e": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts",
     "worker:e2e:celld": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts --celld",
-    "test:interrupt": "tsx --test scripts/interrupt.test.ts"
+    "test:conversation": "tsx --test scripts/conversation.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",

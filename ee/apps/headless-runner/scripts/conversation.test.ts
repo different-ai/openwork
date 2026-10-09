@@ -128,3 +128,44 @@ test("messages already waiting are answered together with the follow-up that int
   const answer = requests.at(-1)
   assert.ok(answer?.messages.some((message) => message.role === "user" && message.text.endsWith("Second")), "the answer sees the waiting message too")
 })
+
+test("a read-only turn's lookups run at the same time", async () => {
+  let running = 0
+  let most = 0
+  let calls = 0
+  const model: ModelClient = {
+    async complete() {
+      calls += 1
+      return calls === 1
+        ? { text: "Let me look at your day.", toolCalls: [{ id: "calendar", name: "slow_lookup", input: { app: "calendar" } }, { id: "mail", name: "slow_lookup", input: { app: "mail" } }], usage }
+        : { text: "A design review at 3:30, and two emails need you.", toolCalls: [], usage }
+    },
+  }
+  const mcp: McpConnector = async () => ({
+    tools: [{ name: "slow_lookup", description: "A lookup that takes a moment", inputSchema: { type: "object" } }],
+    async call(_name, input, signal) {
+      running += 1
+      most = Math.max(most, running)
+      await sleep(120, signal)
+      running -= 1
+      return { output: `found in ${String(input.app)}`, isError: false }
+    },
+    async close() {},
+  })
+  using world = setup(model, mcp)
+  world.runner.send({ sessionId: world.session, messageId: "hello", prompt: "Look at my day", credentials: { mcpToken: "token", readOnly: true } })
+  await world.runner.idle()
+
+  assert.equal(most, 2, "both lookups ran together")
+  assert.equal(world.store.getTurn(world.session, "hello")?.status, "completed")
+  const results = world.store.turnMessages(world.session, "hello").flatMap(({ message }) => (message.role === "tool" ? [message.callId] : []))
+  assert.deepEqual(results, ["calendar", "mail"], "results are stored in the order the calls were made")
+})
+
+test("a message waiting its turn comes back with its text until it starts", () => {
+  using world = setup({ async complete() { return { text: "", toolCalls: [], usage } } })
+  world.store.admitTurn({ sessionId: world.session, messageId: "waiting", prompt: "Actually, just today.", model: null })
+  assert.equal(world.store.waitingPrompts(world.session, ["waiting"]).get("waiting"), "Actually, just today.")
+  world.store.startTranscript(world.session, "waiting")
+  assert.equal(world.store.waitingPrompts(world.session, ["waiting"]).size, 0, "once it starts, its transcript has the text")
+})

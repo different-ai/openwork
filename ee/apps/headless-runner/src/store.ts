@@ -709,6 +709,21 @@ export class Store {
     return { turns, hasEarlier: rows.length > limit }
   }
 
+  /**
+   * What caller-sent turns with no transcript yet were sent with: a message waiting behind the answer in progress, or
+   * one stopped before it started. Its transcript only starts when it runs, so a reader shows it from this.
+   */
+  waitingPrompts(sessionId: string, messageIds: string[]): Map<string, string> {
+    if (messageIds.length === 0) return new Map()
+    const rows = this.db
+      .prepare(
+        `SELECT message_id, prompt FROM turns WHERE session_id = ? AND kind IS NULL AND message_id IN (${messageIds.map(() => "?").join(", ")})
+         AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.session_id = turns.session_id AND messages.message_id = turns.message_id)`,
+      )
+      .all(sessionId, ...messageIds)
+    return new Map(z.array(z.object({ message_id: z.string(), prompt: z.string() })).parse(rows).map((row) => [row.message_id, row.prompt]))
+  }
+
   /** The transcript of the given turns only. */
   messagesForTurns(sessionId: string, messageIds: string[]): StoredMessage[] {
     if (messageIds.length === 0) return []

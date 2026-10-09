@@ -1001,12 +1001,13 @@ function CopyAnswer({ text }: { text: string }) {
  * grey bubbles on the right read as two sides of one conversation. It hugs short replies and stops at a readable
  * width; wide tables and code scroll inside it.
  */
-function AssistantBubble({ children }: { children: ReactNode }) {
+function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {
   return (
-    <div className="flex py-[3px]">
+    <div className="flex items-end gap-1 py-[3px]">
       <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-card-shadow)] sm:max-w-[600px]">
         {children}
       </div>
+      {trailing}
     </div>
   );
 }
@@ -1428,6 +1429,7 @@ function TurnView(props: {
     else if (!answering || liveText) setHeld(false);
   }, [dots, running, answering, liveText]);
   const slot = answering && !liveText && (dots || held || running);
+  const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
   return (
     <>
       <SentAttachments attachments={turn.attachments} localUrls={props.previews} />
@@ -1441,7 +1443,8 @@ function TurnView(props: {
       <div className="group/answer flex flex-col">
         {items.map((item, index) =>
           item.kind === "text" ? (
-            <AssistantBubble key={item.key}>
+            // Natural replies: Copy sits beside the last bubble, so a finished answer doesn't add a row under itself.
+            <AssistantBubble key={item.key} trailing={natural && turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
               <StreamingText text={item.text} instant={!(props.newestText && index === lastText && watched.current)} />
             </AssistantBubble>
           ) : (
@@ -1452,9 +1455,7 @@ function TurnView(props: {
         {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
         {/* Natural replies answer the newest message next, so nothing waits "Up next". */}
         {turn.status === "queued" && !natural ? <QuietLine label="Up next" /> : null}
-        {turn.status === "done" && lastText !== -1 ? (
-          <CopyAnswer text={parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n")} />
-        ) : null}
+        {turn.status === "done" && lastText !== -1 && !natural ? <CopyAnswer text={copyText} /> : null}
       </div>
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {turn.tasks.length ? <TaskCards tasks={turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
