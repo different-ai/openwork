@@ -1978,6 +1978,10 @@ export type LlmProviderResponse = {
     memberCredential?: {
       state: "missing" | "active" | "blocked" | "stale" | "error";
     };
+    /**
+     * True when providerConfig and model configs are the non-secret view: the caller can't edit the provider and isn't granted it.
+     */
+    configRedacted?: boolean;
     [key: string]: unknown;
   };
 };
@@ -2021,6 +2025,10 @@ export type LlmProviderCatalogResponse = {
 
 export type LlmProviderListResponse = {
   llmProviders: Array<{
+    /**
+     * True when providerConfig and model configs are the non-secret view: the caller can't edit the provider and isn't granted it.
+     */
+    configRedacted?: boolean;
     [key: string]: unknown;
   }>;
 };
@@ -2192,6 +2200,9 @@ export type GatewayProviderDetails = {
     id: string;
     name: string;
     createdAt?: string;
+    /**
+     * Who created the set. Omitted unless the caller holds Manage Gateway providers.
+     */
     createdBy?: {
       /**
        * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
@@ -17539,6 +17550,9 @@ export type GetV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses 
       id: string;
       name: string;
       createdAt?: string;
+      /**
+       * Who created the set. Omitted unless the caller holds Manage Gateway providers.
+       */
       createdBy?: {
         /**
          * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
@@ -17656,6 +17670,9 @@ export type PostV1InferenceProvidersByInferenceProviderIdCredentialSetsResponses
       id: string;
       name: string;
       createdAt?: string;
+      /**
+       * Who created the set. Omitted unless the caller holds Manage Gateway providers.
+       */
       createdBy?: {
         /**
          * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
@@ -17842,6 +17859,9 @@ export type PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCreden
       id: string;
       name: string;
       createdAt?: string;
+      /**
+       * Who created the set. Omitted unless the caller holds Manage Gateway providers.
+       */
       createdBy?: {
         /**
          * Den TypeID with 'om_' prefix and a 26-character base32 suffix.

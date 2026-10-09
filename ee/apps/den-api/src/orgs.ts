@@ -65,7 +65,10 @@ import {
   shouldRevokeSessionsForRoleChange,
 } from "./organization-role-hierarchy.js"
 import { resolvePermissionsForMember } from "./permissions/resolve.js"
-import { decideMemberRemoval, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
+import { decideMemberRemoval, decideRequiredPermission, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
+import { permissionDeniedMessage } from "./permissions/effective.js"
+import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
+import type { PermissionKey } from "@openwork/types/den/permissions"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
 
@@ -1722,8 +1725,11 @@ export async function updateOrganizationMemberRole(input: {
   organizationId: OrgId
   memberId: MemberRow["id"]
   nextRole: string
-  /** Re-decides who may assign the role against the member row locked in the transaction. Null allows. */
-  authorize?: (member: MemberRow) => RoleAssignmentDenial | null
+  /**
+   * Re-decides who may assign the role against the member row locked in the transaction, reading
+   * through `tx` (see roleAssignmentDenialInTransaction). Null allows.
+   */
+  authorize?: (member: MemberRow, tx: PermissionDatabase) => Promise<RoleAssignmentDenial | null>
 }): Promise<MemberRoleUpdateResult> {
   // Organization row is locked FOR UPDATE first; the change event is appended last.
   const capture = currentAuditChangeCapture(input.organizationId)
@@ -1740,7 +1746,7 @@ export async function updateOrganizationMemberRole(input: {
       return memberNotFound()
     }
 
-    const denial = input.authorize?.(memberRow.member) ?? null
+    const denial = input.authorize ? await input.authorize(memberRow.member, tx) : null
     if (denial) {
       return { ok: false, error: "role_assignment_denied", denial, message: denial.message }
     }
@@ -1984,6 +1990,12 @@ export async function removeOrganizationMember(input: {
   organizationId: OrgId
   memberId: MemberRow["id"]
   removedByOrgMemberId?: MemberRow["id"]
+  /**
+   * The permission the route required of `removedByOrgMemberId` (members DELETE passes
+   * members.delete), re-checked against the permissions resolved inside the transaction.
+   * Invitation cancellation and SCIM deprovisioning authorize separately and omit it.
+   */
+  requiredPermission?: PermissionKey
 }): Promise<MemberMutationResult> {
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
   // Every removal path (members DELETE, invitation cancel, SCIM deprovisioning)
@@ -2029,6 +2041,10 @@ export async function removeOrganizationMember(input: {
       ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.removedByOrgMemberId, database: tx })
       : null
     const actorMayManageAdminTeams = actorPermissions?.has("teams.manage_admin") ?? false
+    const permissionDenial = decideRequiredPermission({ actor: actorPermissions, requiredPermission: input.requiredPermission })
+    if (permissionDenial) {
+      return { ok: false, error: "forbidden", message: permissionDeniedMessage(permissionDenial.requiredPermission) }
+    }
 
     if (actorPermissions) {
       const targetIsDirectAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE)

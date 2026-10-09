@@ -19,7 +19,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../llm/custom-provider.js"
 import { probeEndpoint, verifyModels } from "../../llm/endpoint-probe.js"
-import { redactLlmProviderConfig } from "../../llm/llm-provider-config-redaction.js"
+import { viewOnlyLlmModelConfig, viewOnlyLlmProviderConfig } from "../../llm/llm-provider-config-redaction.js"
 import {
   ProviderCredentialError,
   bedrockCredentialError,
@@ -187,8 +187,9 @@ const providerCatalogResponseSchema = z.object({
   provider: z.object({}).passthrough(),
 }).meta({ ref: "LlmProviderCatalogResponse" })
 
+const configRedactedSchema = z.boolean().optional().describe("True when providerConfig and model configs are the non-secret view: the caller can't edit the provider and isn't granted it.")
 const llmProviderListResponseSchema = z.object({
-  llmProviders: z.array(z.object({}).passthrough()),
+  llmProviders: z.array(z.object({ configRedacted: configRedactedSchema }).passthrough()),
 }).meta({ ref: "LlmProviderListResponse" })
 
 const memberCredentialConnectionSchema = z.object({
@@ -197,6 +198,7 @@ const memberCredentialConnectionSchema = z.object({
 const llmProviderResponseSchema = z.object({
   llmProvider: z.object({
     memberCredential: memberCredentialConnectionSchema.optional(),
+    configRedacted: configRedactedSchema,
   }).passthrough(),
 }).meta({ ref: "LlmProviderResponse" })
 
@@ -765,7 +767,8 @@ async function loadLlmProviders(input: {
   // Custom provider configurations keep arbitrary fields, so they can carry inline
   // credentials. Only callers who can edit the provider (llm_providers.update or its
   // creator) or who are granted it (and so already receive the full configuration from
-  // /connect) see it as stored; View-only callers get secret-bearing fields removed.
+  // /connect) see it as stored; View-only callers get an allowlist of non-secret fields
+  // and configRedacted: true.
   const accessibleProviderIdSet = new Set(accessibleProviderIds)
   const mayReadStoredConfig = (provider: LlmProviderRow) => input.canUpdateAll
     || provider.createdByOrgMembershipId === input.currentMemberId
@@ -775,7 +778,8 @@ async function loadLlmProviders(input: {
     const storedConfig = mayReadStoredConfig(provider)
     return {
     ...provider,
-    providerConfig: storedConfig ? provider.providerConfig : redactLlmProviderConfig(provider.providerConfig ?? {}),
+    providerConfig: storedConfig ? provider.providerConfig : viewOnlyLlmProviderConfig(provider.providerConfig ?? {}),
+    configRedacted: !storedConfig,
     ...(input.scope === "usable" ? {
       hasMyCredential: provider.credentialMode === "per_member" && myCredentialProviderIds.has(provider.id),
     } : {}),
@@ -786,7 +790,7 @@ async function loadLlmProviders(input: {
       .map((model) => ({
         id: model.modelId,
         name: model.name,
-        config: storedConfig ? model.modelConfig : redactLlmProviderConfig(model.modelConfig ?? {}),
+        config: storedConfig ? model.modelConfig : viewOnlyLlmModelConfig(model.modelConfig ?? {}),
         createdAt: model.createdAt,
       }))
       .sort((left, right) => left.name.localeCompare(right.name)),
@@ -1112,7 +1116,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/llm-providers/by-key/:externalKey",
-    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by stable key", description: "Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.", responses: {
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by stable key", description: "Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).", responses: {
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -1132,7 +1136,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/llm-providers/:llmProviderId",
-    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by id", description: "Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.", responses: {
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by id", description: "Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).", responses: {
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -1331,7 +1335,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List organization LLM providers",
-      description: "Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with secret-bearing providerConfig and model config fields removed.",
+      description: "Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).",
       responses: {
         200: jsonResponse("Accessible organization LLM providers returned successfully.", llmProviderListResponseSchema),
         400: jsonResponse("The provider list path parameters were invalid.", invalidRequestSchema),

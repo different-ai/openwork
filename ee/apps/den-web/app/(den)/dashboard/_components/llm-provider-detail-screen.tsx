@@ -482,7 +482,9 @@ export function LlmProviderDetailScreen({
                         Custom provider payload
                     </h2>
                     <p className="mt-2 text-[15px] text-gray-500">
-                        The raw provider config saved for this custom source.
+                        {provider.configRedacted
+                            ? "The non-secret parts of this provider's config. Only people who can edit the provider see the rest."
+                            : "The raw provider config saved for this custom source."}
                     </p>
                     <pre className="mt-6 overflow-x-auto rounded-[24px] bg-[#0f172a] p-5 text-[13px] leading-6 text-slate-100">
                         {JSON.stringify(provider.providerConfig, null, 2)}

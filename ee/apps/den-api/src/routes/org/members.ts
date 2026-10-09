@@ -9,7 +9,7 @@ import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, transferOrganizationOwnership, updateOrganizationMemberRole } from "../../orgs.js"
-import { roleAssignmentDecider, roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentTarget, roleAssignmentTargetFromRole } from "../../permissions/team-grants.js"
+import { roleAssignmentDecider, roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenialInTransaction, roleAssignmentTarget, roleAssignmentTargetFromRole } from "../../permissions/team-grants.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOwner, idParamSchema, memberPermissionsForRequest, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
@@ -73,8 +73,15 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       organizationId: payload.organization.id,
       memberId,
       nextRole: role,
-      // The target's role may have changed since it was read above; decide again on the locked row.
-      authorize: (member) => decideRoleChange(roleAssignmentTargetFromRole(member.id, member.role)),
+      // The target's role, the caller's permissions and the Admin default set may all have changed
+      // since the check above; decide again on the locked row, reading through the transaction.
+      authorize: (member, tx) => roleAssignmentDenialInTransaction({
+        tx,
+        organizationId: payload.organization.id,
+        callerMemberId: payload.currentMember.id,
+        target: roleAssignmentTargetFromRole(member.id, member.role),
+        nextRole: role,
+      }),
     })
     if (!updated.ok) {
       if (updated.error === "role_assignment_denied") {
@@ -198,6 +205,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       organizationId: payload.organization.id,
       memberId,
       removedByOrgMemberId: payload.currentMember.id,
+      requiredPermission: "members.delete",
     })
     if (!removed.ok) {
       if (removed.error === "forbidden") return c.json({ error: removed.error, message: removed.message }, 403)

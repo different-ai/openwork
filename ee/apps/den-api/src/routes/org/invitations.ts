@@ -18,7 +18,7 @@ import { runPostOrganizationMemberChangeHooks } from "../../organization-member-
 import { ORGANIZATION_ADMIN_ROLE, ORGANIZATION_MEMBER_ROLE, ORGANIZATION_OWNER_ROLE } from "../../organization-role-hierarchy.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
 import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
-import { roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, type RoleAssignmentDenial } from "../../permissions/team-grants.js"
+import { roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, roleAssignmentDenialInTransaction, type RoleAssignmentDenial } from "../../permissions/team-grants.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -91,16 +91,32 @@ type InvitationRoleValidation =
   | { ok: false; error: "permission"; response: PermissionCheckFailure }
   | { ok: false; error: "role_assignment"; denial: RoleAssignmentDenial }
 
-/** Whether the caller may invite someone as an admin (role-assignment rules), read once per request. */
+/**
+ * Whether the caller may invite someone as an admin (role-assignment rules). With the root
+ * database it is the quick pre-transaction check, read once per request. With the invitation's
+ * write transaction it decides again through it: the caller's permissions are re-resolved and the
+ * Admin default set is re-read under share locks, so a concurrent Admin permissions edit
+ * serializes with the write (roleAssignmentDenialInTransaction).
+ */
 type AdminInvitationCheck = (database: PermissionDatabase) => Promise<RoleAssignmentDenial | null | "organization_not_found">
 
 function adminInvitationCheck(c: PermissionRouteContext): AdminInvitationCheck {
-  let decision: Promise<RoleAssignmentDenial | null | "organization_not_found"> | null = null
-  return (database) => {
-    decision ??= (async () => {
-      const payload = c.get("organizationContext")
+  let preTransaction: Promise<RoleAssignmentDenial | null | "organization_not_found"> | null = null
+  return async (database) => {
+    const payload = c.get("organizationContext")
+    if (!payload) return "organization_not_found"
+    if (database !== db) {
+      return roleAssignmentDenialInTransaction({
+        tx: database,
+        organizationId: payload.organization.id,
+        callerMemberId: payload.currentMember.id,
+        target: null,
+        nextRole: ORGANIZATION_ADMIN_ROLE,
+      })
+    }
+    preTransaction ??= (async () => {
       const caller = await memberPermissionsForRequest(c)
-      if (!payload || !caller) return "organization_not_found"
+      if (!caller) return "organization_not_found"
       return roleAssignmentDenial({
         organizationId: payload.organization.id,
         caller,
@@ -110,7 +126,7 @@ function adminInvitationCheck(c: PermissionRouteContext): AdminInvitationCheck {
         database,
       })
     })()
-    return decision
+    return preTransaction
   }
 }
 
@@ -272,6 +288,16 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         if (!seatEligibility.allowed) {
           return { status: "payment_required" as const, seatEligibility }
         }
+      }
+
+      // The admin role was allowed before the transaction; decide again through it so a permission
+      // or Admin permissions change committed since is seen before the invitation is written.
+      if (splitRoles(assignedRole).map((value) => normalizeRoleName(value)).includes(ORGANIZATION_ADMIN_ROLE)) {
+        const denial = await adminCheck(tx)
+        if (denial === "organization_not_found") {
+          return { status: "role_error" as const, validation: { ok: false as const, error: "permission" as const, response: { error: "organization_not_found" as const } } }
+        }
+        if (denial) return { status: "role_error" as const, validation: { ok: false as const, error: "role_assignment" as const, denial } }
       }
 
       const now = new Date()

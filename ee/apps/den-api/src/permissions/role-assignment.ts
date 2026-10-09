@@ -93,6 +93,22 @@ export function decideRoleAssignment(
   return null
 }
 
+/**
+ * The permission a route required, re-checked inside its write transaction
+ * against the caller's permissions resolved there. A route that passes no
+ * `requiredPermission` (invitation cancellation, SCIM deprovisioning) has its
+ * own authorization and is not checked here; a required permission with no
+ * caller fails closed. Null means allowed.
+ */
+export function decideRequiredPermission(input: {
+  actor: Pick<MemberPermissions, "has"> | null
+  requiredPermission: PermissionKey | undefined
+}): { reason: "permission_not_held"; requiredPermission: PermissionKey } | null {
+  if (!input.requiredPermission) return null
+  if (input.actor?.has(input.requiredPermission)) return null
+  return { reason: "permission_not_held", requiredPermission: input.requiredPermission }
+}
+
 export const ADMIN_REMOVAL_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can remove an admin from the organization."
 
 /**

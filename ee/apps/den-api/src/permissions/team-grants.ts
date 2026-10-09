@@ -15,6 +15,7 @@ import { appLogger } from "../observability/logger.js"
 import { ORGANIZATION_ADMIN_ROLE, organizationRoleValueIncludes } from "../organization-role-hierarchy.js"
 import { permissionDeniedResponse, type PermissionDeniedResponse } from "./check.js"
 import type { MemberPermissions } from "./effective.js"
+import { resolvePermissionsForMember } from "./resolve.js"
 import {
   decideRoleAssignment,
   roleAssignmentNeedsAdminDefaultKeys,
@@ -50,13 +51,14 @@ export const ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE = "You can't make this an Admin
 export async function adminDefaultPermissionKeys(
   organizationId: OrganizationId,
   database: PermissionDatabase = db,
+  options: { lock?: "share" } = {},
 ): Promise<Set<PermissionKey>> {
-  const sets = await getDefaultPermissionSets(database, organizationId)
+  const sets = await getDefaultPermissionSets(database, organizationId, options)
   if (!sets.admin) {
     logger.error("admin default permission set missing", { organization_id: organizationId })
     throw new DefaultPermissionSetsMissingError(organizationId)
   }
-  const states = await readPermissionSetStates(database, [sets.admin.id])
+  const states = await readPermissionSetStates(database, [sets.admin.id], options)
   return allowedKeys(states.get(sets.admin.id))
 }
 
@@ -122,6 +124,35 @@ export async function roleAssignmentTarget(
 }
 
 export type RoleAssignmentDecider = (target: RoleAssignmentTarget | null) => RoleAssignmentDenial | null
+
+/**
+ * Who may assign `nextRole`, decided inside the write transaction `tx`: the
+ * caller's permissions are re-resolved through it and the Admin default set is
+ * re-read with share locks on its permission_set row and permission rows. An
+ * Admin permissions edit locks that row FOR UPDATE first (lockPermissionSet),
+ * so it and this decision serialize: the role write either sees the edit or
+ * commits before it. Use after a pre-transaction check (roleAssignmentDecider)
+ * that gives the quick 403.
+ */
+export async function roleAssignmentDenialInTransaction(input: {
+  tx: PermissionDatabase
+  organizationId: OrganizationId
+  callerMemberId: MemberId
+  target: RoleAssignmentTarget | null
+  nextRole: string
+}): Promise<RoleAssignmentDenial | null> {
+  const caller = await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.callerMemberId, database: input.tx })
+  const decision = {
+    caller,
+    callerMemberId: input.callerMemberId,
+    target: input.target,
+    nextIsAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_ADMIN_ROLE),
+  }
+  const adminDefaultKeys = roleAssignmentNeedsAdminDefaultKeys(decision)
+    ? await adminDefaultPermissionKeys(input.organizationId, input.tx, { lock: "share" })
+    : null
+  return decideRoleAssignment({ ...decision, adminDefaultKeys })
+}
 
 /**
  * Who may assign `nextRole` (src/permissions/role-assignment.ts), as a

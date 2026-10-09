@@ -5388,7 +5388,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by stable key
    *
-   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.
+   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).
    */
   public getV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5497,7 +5497,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by id
    *
-   * Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.
+   * Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).
    */
   public getV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5660,7 +5660,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List organization LLM providers
    *
-   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with secret-bearing providerConfig and model config fields removed.
+   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).
    */
   public getV1LlmProviders<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -6641,7 +6641,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List organization inference gateway providers
    *
-   * Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires the View Gateway providers permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned.
+   * Defaults to scope=usable: returns active providers granted to the caller through active model groups and credential sets, with usable model aliases and any member authorization requests. A granted provider can remain discoverable with no usable models. scope=manageable requires the View Gateway providers permission and enabled Gateway management, and returns provider details including disabled providers; credential secrets are never returned, and people's names and emails only to callers who also hold Manage Gateway providers.
    */
   public getV1InferenceProviders<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -6778,7 +6778,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get inference gateway provider
    *
-   * Returns management details for an organization provider, including public settings, model groups, credential-set status, access grants and credential metadata without secrets. Requires the View Gateway providers permission and enabled Gateway management.
+   * Returns management details for an organization provider, including public settings, model groups, credential-set status, access grants and credential metadata without secrets. The names and emails of credential-set creators, credential holders and LiteLLM people needing attention are only returned to callers who also hold Manage Gateway providers; otherwise createdBy is omitted and those fields are null. Requires the View Gateway providers permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -7089,7 +7089,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List gateway credential sets
    *
-   * Returns credential-set configuration status, creator metadata and OAuth client metadata without stored secrets. Member credential readiness is evaluated for the caller. Requires the View Gateway providers permission and enabled Gateway management.
+   * Returns credential-set configuration status, creator metadata and OAuth client metadata without stored secrets. The creator (createdBy) is only returned to callers who also hold Manage Gateway providers. Member credential readiness is evaluated for the caller. Requires the View Gateway providers permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderIdCredentialSets<ThrowOnError extends boolean = false>(
     parameters: {

@@ -12,6 +12,7 @@ import {
 import {
   decideAdminTeamChange,
   decideMemberRemoval,
+  decideRequiredPermission,
   decideRoleAssignment,
   firstMissingPermission,
   roleAssignmentNeedsAdminDefaultKeys,
@@ -168,4 +169,25 @@ test("with Permissions on only the owner or an admin can make an Admin team or a
   assert.equal(decideAdminTeamChange({ actor: caller({ isAdmin: true }), makesAdminTeam: true, addsMembersToAdminTeam: true }), null)
   assert.equal(decideAdminTeamChange({ actor: caller({ isOwner: true }), makesAdminTeam: true, addsMembersToAdminTeam: true }), null)
   assert.equal(decideAdminTeamChange({ actor: caller({ featureEnabled: false }), makesAdminTeam: true, addsMembersToAdminTeam: true }), null)
+})
+
+test("direct member removal re-checks Remove members against the permissions resolved in its transaction", () => {
+  // members DELETE passes members.delete: a caller who lost it after the route check is refused.
+  assert.deepEqual(decideRequiredPermission({ actor: caller({ keys: [] }), requiredPermission: "members.delete" }), { reason: "permission_not_held", requiredPermission: "members.delete" })
+  assert.equal(decideRequiredPermission({ actor: caller({ keys: ["members.delete"] }), requiredPermission: "members.delete" }), null)
+  assert.equal(decideRequiredPermission({ actor: caller({ isOwner: true }), requiredPermission: "members.delete" }), null)
+  // A required permission with no resolved caller fails closed.
+  assert.equal(decideRequiredPermission({ actor: null, requiredPermission: "members.delete" })?.reason, "permission_not_held")
+  // Invitation cancellation and SCIM deprovisioning pass no required permission: they authorize separately.
+  assert.equal(decideRequiredPermission({ actor: caller({ keys: [] }), requiredPermission: undefined }), null)
+  assert.equal(decideRequiredPermission({ actor: null, requiredPermission: undefined }), null)
+})
+
+test("an admin assignment decided in the transaction uses the Admin default set read there", () => {
+  // The caller held every Admin default key before; the owner then added billing.manage to Admin permissions.
+  const held = caller({ keys: ADMIN_DEFAULTS })
+  assert.equal(decideRoleAssignment({ caller: held, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: ADMIN_DEFAULTS }), null)
+  const denial = decideRoleAssignment({ caller: held, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [...ADMIN_DEFAULTS, "billing.manage"] })
+  assert.equal(denial?.reason, "admin_permissions_missing")
+  assert.equal(denial?.requiredPermission, "billing.manage")
 })

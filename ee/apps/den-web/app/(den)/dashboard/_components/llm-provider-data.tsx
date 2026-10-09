@@ -49,6 +49,8 @@ export type DenLlmProvider = {
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
+  /** providerConfig and model configs are the non-secret view (the caller can't edit the provider and isn't granted it). */
+  configRedacted: boolean;
   accessibleVia: {
     orgMembershipIds: string[];
     teamIds: string[];
@@ -211,6 +213,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
     canManage: value.canManage === true,
+    configRedacted: value.configRedacted === true,
     accessibleVia: {
       orgMembershipIds: asStringList(value.accessibleVia.orgMembershipIds),
       teamIds: asStringList(value.accessibleVia.teamIds),
