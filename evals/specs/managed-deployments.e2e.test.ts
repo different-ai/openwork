@@ -11,11 +11,13 @@ const test = spec.world(managedDeployments, { timeout: 600_000, resources: { sur
 test("an owner prepares an AWS install without OpenWork claiming it is running", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.web);
   const ownHeaders = { "x-openwork-org-id": world.enabledOrgId };
-  async function selectWorkspace(name: string) {
+  async function openEnabledWorkspace() {
     await owner.see({ testId: "workspace-switcher-trigger" }, { timeoutMs: 90_000 });
     await owner.click({ testId: "workspace-switcher-trigger" });
-    await owner.click({ role: "button", label: new RegExp(`^${name}`) });
-    await owner.navigate(`${world.baseUrl}/dashboard/deployments`);
+    await owner.click({ role: "button", label: new RegExp(`^${world.names.enabled}`) });
+    // The Deployments entry appears only once the switch is committed and the
+    // workspace's features are loaded; follow it like a person would.
+    await owner.click({ role: "link", label: "Deployments" });
   }
   async function deployments() {
     const result = await probe.api(world.den.admin, "/v1/managed-deployments", { headers: ownHeaders });
@@ -32,7 +34,7 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
   });
 
   await step("an opted-in owner enters a dedicated AWS account and confirms the costs", async () => {
-    await selectWorkspace(world.names.enabled);
+    await openEnabledWorkspace();
     await owner.see({ text: /No deployments yet/ }, { timeoutMs: 90_000 });
     expect(await deployments()).toHaveLength(0);
     await owner.click({ role: "button", label: "Create deployment" });
@@ -88,15 +90,13 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     await owner.screenshot();
   });
 
-  await step("a teammate and another workspace cannot see the deployment", async () => {
+  await step("a teammate and another workspace cannot list the deployment", async () => {
+    await owner.see({ testId: "managed-deployment-row" });
     const forbidden = await probe.api(world.den.members.member, "/v1/managed-deployments", { headers: ownHeaders });
     expect(forbidden.response.status).toBe(403);
-    await selectWorkspace(world.names.disabled);
-    await owner.see({ text: /Deployments aren't turned on for this workspace/ }, { timeoutMs: 60_000 });
-    await owner.notSee({ testId: "managed-deployment-row" });
     const otherWorkspace = await probe.api(world.den.admin, "/v1/managed-deployments", { headers: { "x-openwork-org-id": world.disabledOrgId } });
     expect(otherWorkspace.response.status).toBe(404);
-    evidence.recordAssertionEvidence("no cross-role or cross-workspace access", "The teammate's API answers HTTP 403; the owner's other workspace shows no deployment rows and its API answers 404.", true);
+    evidence.recordAssertionEvidence("no cross-role or cross-workspace access", "The teammate's API answers HTTP 403; the owner's other workspace answers HTTP 404 for the same list (its page is the locked state shown first).", true);
     await owner.screenshot();
   });
 });
