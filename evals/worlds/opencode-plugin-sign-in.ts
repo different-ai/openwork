@@ -124,10 +124,13 @@ export async function opencodePluginSignIn(seed: Seed) {
   const configured = await run(["service", "set", "port", String(await allocateFreePort())]);
   if (configured.status !== 0) throw new Error(`Configuring the OpenCode service failed: ${configured.stdout}${configured.stderr}`);
 
-  /** Start `opencode auth login openwork` and resolve once it has printed the link and code. */
-  function startLogin(method: "browser" | "code"): Promise<PluginLogin> {
+  /**
+   * Start `opencode auth login openwork`, exactly as typed (no --method), and
+   * resolve once it has printed the link and code.
+   */
+  function startLogin(): Promise<PluginLogin> {
     return new Promise((ready, fail) => {
-      const child = spawn(binary, ["auth", "login", "openwork", "--method", method], { env, cwd: home });
+      const child = spawn(binary, ["auth", "login", "openwork"], { env, cwd: home });
       children.add(child);
       let output = "";
       let announced = false;

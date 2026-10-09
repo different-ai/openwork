@@ -14,10 +14,9 @@ opencode plugin add opencode-openwork
 opencode auth login openwork
 ```
 
-`opencode auth login openwork` offers two ways to sign in:
+OpenCode opens OpenWork in your browser. Sign in, pick your organization and approve; OpenCode finishes signing in on its own.
 
-- **Browser** (default). OpenCode opens OpenWork in your browser. Sign in, pick your organization and approve; OpenCode finishes signing in on its own.
-- **Code** (`--method code`), for SSH and machines without a browser. Open the link on any device and confirm the code shown in your terminal.
+On SSH or a machine without a browser, open the printed link on any device and confirm the code shown in your terminal. The terminal finishes on its own; the browser tab can be closed.
 
 Inside OpenCode, `/connect` → **OpenWork Cloud** does the same.
 

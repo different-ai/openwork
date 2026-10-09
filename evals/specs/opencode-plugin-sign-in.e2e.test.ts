@@ -13,7 +13,7 @@ test("a person signs OpenCode in to OpenWork from the browser and lands back on 
 
   await step("before: with the plugin sign-in switched off, OpenCode still signs in as the OpenWork CLI", async () => {
     await world.setPluginSignIn(false);
-    const login = await world.startLogin("code");
+    const login = await world.startLogin();
     await person.navigate(login.verificationUrl);
     await person.see({ text: "Sign in OpenWork CLI?" }, { timeoutMs: 90_000 });
     await person.see({ testId: "device-user-code", text: login.userCode });
@@ -32,7 +32,7 @@ test("a person signs OpenCode in to OpenWork from the browser and lands back on 
 
   const login = await (async () => {
     await world.setPluginSignIn(true);
-    return world.startLogin("browser");
+    return world.startLogin();
   })();
 
   await step("the browser names OpenCode and shows the code from the terminal", async () => {
@@ -87,7 +87,7 @@ test("a person signs OpenCode in to OpenWork from the browser and lands back on 
   });
 
   await step("a return address that is not on this machine is ignored", async () => {
-    const tampered = await world.startLogin("code");
+    const tampered = await world.startLogin();
     const url = new URL(tampered.verificationUrl);
     url.searchParams.set("return_to", "https://example.com/openwork/callback");
     await person.navigate(url.toString());

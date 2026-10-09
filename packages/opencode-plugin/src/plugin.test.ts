@@ -148,7 +148,7 @@ function createHost(options: Record<string, unknown> = {}) {
 function signedIn(): OAuthCredential {
   return {
     type: "oauth",
-    methodID: "code",
+    methodID: "browser",
     access: SESSION_TOKEN,
     refresh: SESSION_TOKEN,
     expires: Date.parse("2026-10-15T00:00:00.000Z"),
@@ -177,7 +177,7 @@ test("signed out: registers the OpenWork Cloud sign-in and injects nothing", asy
   const cleanup = await createPlugin({ fetch: den.fetch }).setup(host.ctx)
   await settle()
   assert.equal(host.integrationName, "OpenWork Cloud")
-  assert.deepEqual(host.methods.map((method) => method.method.id), ["browser", "code"])
+  assert.deepEqual(host.methods.map((method) => method.method.id), ["browser"])
   assert.equal(host.providers().size, 0)
   assert.equal(host.mcp().size, 0)
   assert.deepEqual(den.calls, [], "no Den traffic while signed out")
