@@ -59,8 +59,12 @@ export function appStepUnrecorded(part: DynamicToolUIPart | undefined): boolean 
   return field(field(result, "structuredContent"), "unrecorded") === true;
 }
 
-/** Correlate by the server-issued preparation id, keeping separate Apps and retries separate. */
-export function appCreationRuns(messages: UIMessage[], creationRequested = false): AppCreationRun[] {
+/**
+ * Correlate by the server-issued preparation id, keeping separate Apps and retries separate.
+ * Discovery alone only counts as App creation while the turn is live: once it
+ * ends without prepare_app, those searches were never building an App.
+ */
+export function appCreationRuns(messages: UIMessage[], creationRequested = false, live = false): AppCreationRun[] {
   const runs: AppCreationRun[] = [];
   const byPreparation = new Map<string, AppCreationRun>();
   const parts = new Map<string, DynamicToolUIPart>();
@@ -125,6 +129,7 @@ export function appCreationRuns(messages: UIMessage[], creationRequested = false
     next.attempts = [...(run.discoveries ?? []), run.preparation, ...(run.attempts ?? []), ...(next.attempts ?? [])];
     runs.splice(index, 1);
   }
+  if (!live && discovery && !discovery.preparation) runs.splice(runs.indexOf(discovery), 1);
   for (const run of runs) {
     const calls = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...(run.attempts ?? []), ...run.builds];
     run.executions = [...parts.values()].filter(part => part.callProviderMetadata?.openwork?.codeMode && calls.some(call => call.toolCallId.startsWith(`${part.toolCallId}:app:`)));
