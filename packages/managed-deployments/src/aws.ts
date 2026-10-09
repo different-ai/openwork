@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser"
 import { z } from "zod"
-import { awsRegionSchema, type AwsTarget } from "./schema.js"
+import { awsRegionSchema, type AwsTarget } from "./schema.ts"
 
 /**
  * AWS adapter: bootstrap (CloudFormation), naming shared with the Terraform
