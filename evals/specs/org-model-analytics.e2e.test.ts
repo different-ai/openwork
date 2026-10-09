@@ -113,7 +113,7 @@ test("organization model analytics aggregate session dimensions without cross-or
     JSON.stringify(otherModels),
     Array.isArray(otherModels.usage30d) && otherModels.usage30d.length === 0,
   );
-  await user.see({ text: "Understand how your team works in OpenWork" }, { timeoutMs: 60_000 });
+  await user.see({ role: "heading", label: "Usage & adoption" }, { timeoutMs: 60_000 });
   await user.click({ role: "button", label: "Refresh analytics" });
   await user.see({ text: /^prov\/model-a\s+1$/ }, { timeoutMs: 30_000 });
   await user.see({ text: /^prov\/model-b\s+1$/ });
@@ -125,19 +125,19 @@ test("organization model analytics aggregate session dimensions without cross-or
   const unavailable = await denFetch(den.admin, "/v1/telemetry/analytics", { headers: auth(den.admin, primaryOrgId) });
   expect(unavailable.response.status).toBe(500);
   await user.reload();
-  await user.see({ text: "Could not load analytics." }, { timeoutMs: 60_000 });
+  await user.see({ text: "Couldn't load analytics" }, { timeoutMs: 60_000 });
   await user.notSee({ text: "No model usage yet" });
   await user.notSee({ text: "No usage events yet" });
   await world.analyticsStoreUnavailable(false);
   await user.click({ role: "button", label: "Refresh analytics" });
   await user.see({ text: "prov/model-a" }, { timeoutMs: 30_000 });
-  await user.notSee({ text: "Could not load analytics." });
+  await user.notSee({ text: "Couldn't load analytics" });
   evidence.recordAssertionEvidence("An analytics outage is shown as an error and can recover without inventing zero usage", "An analytics storage outage returned HTTP 500 and produced the error state with no empty charts; Refresh restored the previously ingested models after recovery", true);
   await user.click({ role: "link", label: "Models & usage" });
-  await user.see({ text: "Understand your team’s OpenWork Models activity, consumption, and shared limits." });
+  await user.see({ role: "heading", label: "Models & usage" });
   await user.notSee({ role: "button", label: "Subscribe" });
   await user.click({ role: "link", label: /^Usage & adoption$/ });
-  await user.see({ text: "Understand how your team works in OpenWork" });
+  await user.see({ role: "heading", label: "Usage & adoption" });
   await user.see({ text: "prov/model-b" });
   evidence.recordAssertionEvidence("Shared navigation connects adoption and Models analytics", "Both views are reachable through the shared navigation and returning preserves access to the same organization’s model analytics", true);
 });

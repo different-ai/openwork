@@ -125,7 +125,6 @@ export function LibraryUsageScreen() {
   return (
     <div className={analyticsPageClass} data-testid="library-usage">
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="library" title="Plugins & connectors"
-        description="See what your team uses, what fails, and what nobody uses, so you know what to keep."
         caption={since ? <span data-testid="library-usage-since">{since}</span> : undefined} />
 
       {!available ? (

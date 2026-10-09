@@ -76,7 +76,6 @@ export function WorkflowRunsScreen() {
 
   return <div className={analyticsPageClass}>
     <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="workflows" title="Workflow Runs"
-      description="Workflows are repeatable tasks you and your team can save, share, and run again. See their recent activity here."
       caption="Saved and one-off Workflow activity"
       action={entitled ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}>
         <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh runs

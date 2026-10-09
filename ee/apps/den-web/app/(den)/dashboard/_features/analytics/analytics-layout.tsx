@@ -12,9 +12,15 @@ import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
 export const analyticsSurfaceClass = "rounded-2xl border border-[#e3e7ee] bg-white";
 export const analyticsPageClass = "mx-auto grid w-full max-w-[1160px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8";
 
-export function AnalyticsPageHeader({ orgSlug, active, title, description, action, caption }: {
+/**
+ * The header every Analytics view shares: the title (the tab already says what
+ * the page is, so no description, DESIGN.md P2), one short state line, and the
+ * tab strip. The state line always takes its height so the tabs never move
+ * between views.
+ */
+export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }: {
   orgSlug?: string | null; active: "adoption" | "models" | "library" | "workflows";
-  title: string; description: string; action?: ReactNode; caption?: ReactNode;
+  title: string; action?: ReactNode; caption?: ReactNode;
 }) {
   const { runtimeConfig } = useDenFlow();
   const { orgContext } = useOrgDashboard();
@@ -30,9 +36,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, description, actio
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="max-w-2xl">
         <h1 className="text-[28px] font-semibold tracking-[-0.04em] text-[#07192C]">{title}</h1>
-        {/* Two reserved lines keep the shared tab strip below at the same position on every Analytics page. */}
-        <p className="mt-1.5 min-h-12 text-sm leading-6 text-[#637291]">{description}</p>
-        {caption ? <div className="mt-2 text-xs text-[#637291]">{caption}</div> : null}
+        <div className="mt-2 min-h-4 text-xs leading-4 text-[#637291]">{caption}</div>
       </div>
       {action}
     </div>

@@ -31,7 +31,6 @@ export function ModelsAnalyticsScreen() {
 
   return <div className={analyticsPageClass}>
     <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="models" title="Models & usage"
-      description="Understand your team’s OpenWork Models activity, consumption, and shared limits."
       caption="Task analytics needs your team’s opt-in" />
     {!runtimeConfigLoaded ? <p role="status">Loading model usage…</p> : !hosted ? (
       <div className={analyticsSurfaceClass}><AnalyticsEmptyState title="OpenWork Models is available on OpenWork Cloud">
