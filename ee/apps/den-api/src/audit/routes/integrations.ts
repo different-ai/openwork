@@ -247,6 +247,9 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read("/v1/telemetry/adoption", "telemetry.adoption.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
   read("/v1/telemetry/analytics", "telemetry.analytics.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
 
+  // Skill usage (skillUsage feature)
+  read("/v1/skill-usage", "skill_usage.read", "skill_usage.reporting", res("capability_usage_event"), "Aggregates only: per-skill load counts, distinct member counts and last use; no member identities."),
+
   // Legacy LLM providers
   read("/v1/llm-provider-catalog", "llm_provider_catalog.list", LLM, res("llm_provider_catalog")),
   read("/v1/llm-provider-catalog/:providerId", "llm_provider_catalog.read", LLM, res("llm_provider_catalog", "providerId")),

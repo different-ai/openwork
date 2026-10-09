@@ -1,6 +1,7 @@
 export * from "./auth"
 export * from "./managed-deployments"
 export * from "./audit"
+export * from "./capability-usage"
 export * from "./dashboards"
 export * from "./desktop-policies"
 export * from "./diagnostics"

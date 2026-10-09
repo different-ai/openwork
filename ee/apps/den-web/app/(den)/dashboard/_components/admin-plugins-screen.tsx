@@ -5,10 +5,11 @@ import { Popover } from "@base-ui/react/popover";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowDownWideNarrow, Check, ChevronDown, Plus, Search, X } from "lucide-react";
+import { ArrowDownWideNarrow, BarChart3, Check, ChevronDown, Plus, Search, X } from "lucide-react";
 import { DenPageHeader } from "../../_components/ui/page-header";
-import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
+import { getNewPluginRoute, getPluginRoute, getSkillUsageRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useSkillUsageAvailable } from "../_features/skill-usage/use-skill-usage";
 import { managedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
@@ -195,6 +196,7 @@ export function AdminPluginsScreen() {
   const plugins = usePluginDirectory({ q, teamId, memberId, ownerId });
   const firstPage = plugins.data?.pages[0];
   const legacyMember = orgContext?.members.find((member) => member.id === memberId);
+  const skillUsage = useSkillUsageAvailable();
 
   function setFilters(next: { name: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -215,7 +217,7 @@ export function AdminPluginsScreen() {
 
   return (
     <ItemPage testId="admin-plugins" wide>
-      <DenPageHeader title={<>Plugins{firstPage?.total != null ? <span className="ml-2 text-[14px] font-normal tracking-normal text-gray-500" data-testid="plugin-directory-total">{firstPage.total.toLocaleString()}</span> : null}</>} action={<LinkButton variant="primary" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>} />
+      <DenPageHeader title={<>Plugins{firstPage?.total != null ? <span className="ml-2 text-[14px] font-normal tracking-normal text-gray-500" data-testid="plugin-directory-total">{firstPage.total.toLocaleString()}</span> : null}</>} action={<div className="flex items-center gap-2">{skillUsage ? <LinkButton href={getSkillUsageRoute(orgSlug)} data-testid="skill-usage-link"><BarChart3 className="h-4 w-4" aria-hidden />Skill usage</LinkButton> : null}<LinkButton variant="primary" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton></div>} />
       <div className="flex flex-wrap items-center gap-2" data-testid="plugin-directory-toolbar">
         <label className="flex h-9 min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 focus-within:ring-2 focus-within:ring-gray-300">
           <Search className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />

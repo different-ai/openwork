@@ -12,6 +12,7 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import type { CapabilityUsageVia } from "@openwork-ee/den-db/schema"
 import { isAuthoredMcpAppVersion, MCP_APP_LAUNCH_TOOL_NAME, mcpAppServerPath } from "@openwork/types/mcp-app"
 import {
   listExternalMcpConnections,
@@ -28,6 +29,7 @@ import {
 import { EXTERNAL_MCP_PRESETS } from "../capability-sources/external-mcp-presets.js"
 import { getConnectedAccount, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { db } from "../db.js"
+import { recordSkillUse } from "../capability-usage.js"
 import { organizationBuildsMcpApps } from "../mcp-app-rollout.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
@@ -1584,6 +1586,8 @@ export async function executeMarketplaceCapability(input: {
   liveRuntime?: { timeZone?: string }
   /** MCP callers record the run as workflow.execute; route and Automation callers omit it. */
   auditWorkflowExecution?: MarketplaceWorkflowAudit
+  /** Agent-facing callers name how a served skill reached the agent so it counts in Skill usage; others omit it. */
+  usageVia?: CapabilityUsageVia
 }): Promise<MarketplaceCapabilityExecuteResult> {
   const liveRuntime = input.liveRuntime === undefined ? undefined : artifactRunInputSchema.safeParse(input.liveRuntime)
   if (liveRuntime && (!liveRuntime.success || input.body !== undefined)) {
@@ -1765,6 +1769,15 @@ export async function executeMarketplaceCapability(input: {
     || row.configObject.objectType === "custom"
     || row.configObject.objectType === "agent"
   ) {
+    if (input.usageVia && row.configObject.objectType === "skill") {
+      recordSkillUse({
+        organizationId,
+        orgMembershipId: input.member.orgMembershipId,
+        pluginId: row.plugin.id,
+        configObjectId: row.configObject.id,
+        via: input.usageVia,
+      })
+    }
     return {
       ok: true,
       result: {

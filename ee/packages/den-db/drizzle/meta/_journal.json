@@ -946,6 +946,13 @@
       "when": 1791528001798,
       "tag": "0135_restore_legacy_analytics",
       "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "5",
+      "when": 1791528391963,
+      "tag": "0136_capability_usage",
+      "breakpoints": true
     }
   ]
 }

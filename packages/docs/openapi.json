@@ -846,6 +846,7 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "dashboardActivity",
+              "skillUsage",
               "modelsAnalytics",
               "auditLogs",
               "orgManagedDashboards",
@@ -1052,6 +1053,9 @@
                     "dashboardActivity": {
                       "type": "boolean"
                     },
+                    "skillUsage": {
+                      "type": "boolean"
+                    },
                     "modelsAnalytics": {
                       "type": "boolean"
                     },
@@ -1108,6 +1112,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
+                    "skillUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -1464,6 +1469,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "skillUsage": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "modelsAnalytics": {
                       "type": "object",
                       "properties": {
@@ -2256,6 +2317,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
+                    "skillUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -2661,6 +2723,9 @@
                     "dashboardActivity": {
                       "type": "boolean"
                     },
+                    "skillUsage": {
+                      "type": "boolean"
+                    },
                     "modelsAnalytics": {
                       "type": "boolean"
                     },
@@ -2717,6 +2782,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
+                    "skillUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -3073,6 +3139,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "skillUsage": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "modelsAnalytics": {
                       "type": "object",
                       "properties": {
@@ -3865,6 +3987,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
+                    "skillUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -8119,6 +8242,87 @@
           "message"
         ]
       },
+      "SkillUsageRow": {
+        "type": "object",
+        "properties": {
+          "skillId": {
+            "type": "string"
+          },
+          "skillName": {
+            "type": "string"
+          },
+          "pluginId": {
+            "type": "string"
+          },
+          "pluginName": {
+            "type": "string"
+          },
+          "uses": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "people": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lastUsedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "skillId",
+          "skillName",
+          "pluginId",
+          "pluginName",
+          "uses",
+          "people",
+          "lastUsedAt"
+        ]
+      },
+      "SkillUsageReport": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "trackingSince": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillUsageRow"
+            }
+          }
+        },
+        "required": [
+          "days",
+          "trackingSince",
+          "skills"
+        ]
+      },
       "OrganizationScimConnection": {
         "type": "object",
         "properties": {
@@ -9115,6 +9319,7 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "dashboardActivity",
+              "skillUsage",
               "modelsAnalytics",
               "auditLogs",
               "orgManagedDashboards",
@@ -24430,6 +24635,9 @@
                         "dashboardActivity": {
                           "type": "boolean"
                         },
+                        "skillUsage": {
+                          "type": "boolean"
+                        },
                         "modelsAnalytics": {
                           "type": "boolean"
                         },
@@ -24486,6 +24694,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
+                        "skillUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -24842,6 +25051,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "skillUsage": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "modelsAnalytics": {
                           "type": "object",
                           "properties": {
@@ -25634,6 +25899,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
+                        "skillUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -25784,6 +26050,9 @@
                         "dashboardActivity": {
                           "type": "boolean"
                         },
+                        "skillUsage": {
+                          "type": "boolean"
+                        },
                         "modelsAnalytics": {
                           "type": "boolean"
                         },
@@ -25840,6 +26109,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
+                        "skillUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -26196,6 +26466,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "skillUsage": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "modelsAnalytics": {
                           "type": "object",
                           "properties": {
@@ -26988,6 +27314,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
+                        "skillUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -49474,6 +49801,51 @@
             "schema": {
               "type": "string",
               "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/skill-usage": {
+      "get": {
+        "operationId": "getV1SkillUsage",
+        "tags": [
+          "Plugins"
+        ],
+        "summary": "Read how often the organization's skills are used",
+        "description": "Lists every active skill in the organization's plugins with how many times agents loaded it over the last `days` days (7, 30 or 90; default 30), how many members it was loaded for, and when it was last loaded. Skills nobody used come back with zeros. Repeated loads of the same skill by the same member within 15 minutes count once. Counts cover skills served through the OpenWork MCP gateway since the skillUsage feature was turned on; `trackingSince` is the first recorded use. Aggregates only. Workspace owners and admins only.",
+        "responses": {
+          "200": {
+            "description": "Skill usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillUsageReport"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "schema": {
+              "default": "30",
+              "type": "string",
+              "enum": [
+                "7",
+                "30",
+                "90"
+              ]
             }
           }
         ],

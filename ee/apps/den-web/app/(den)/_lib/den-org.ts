@@ -734,6 +734,10 @@ export function getIntegrationsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/integrations`;
 }
 
+export function getSkillUsageRoute(orgSlug?: string | null): string {
+  return `${getPluginsRoute(orgSlug)}?view=usage`;
+}
+
 export function getPluginSourcesRoute(orgSlug?: string | null): string {
   return `${getPluginsRoute(orgSlug)}?view=sources`;
 }

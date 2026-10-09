@@ -95,6 +95,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  skillUsage: {
+    label: "Skill usage",
+    description: "Organization admins see how often each skill is used, by how many people, and which ones nobody uses, so they can decide what to keep.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   modelsAnalytics: {
     label: "OpenWork Models task analytics",
     description: "Organization admins can opt in to task analytics for OpenWork Models.",

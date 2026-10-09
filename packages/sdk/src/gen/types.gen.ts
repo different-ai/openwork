@@ -169,6 +169,7 @@ export type AdminFeature = {
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "dashboardActivity"
+    | "skillUsage"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -227,6 +228,7 @@ export type AdminOrganizationsPageResponse = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
+      skillUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -298,6 +300,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      skillUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -501,6 +512,7 @@ export type AdminOverviewResponse = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
+      skillUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -572,6 +584,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      skillUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1674,6 +1695,22 @@ export type InferenceProviderMissingError = {
   message: string;
 };
 
+export type SkillUsageRow = {
+  skillId: string;
+  skillName: string;
+  pluginId: string;
+  pluginName: string;
+  uses: number;
+  people: number;
+  lastUsedAt: string | null;
+};
+
+export type SkillUsageReport = {
+  days: number;
+  trackingSince: string | null;
+  skills: Array<SkillUsageRow>;
+};
+
 export type OrganizationScimConnection = {
   id: string;
   providerId: string;
@@ -1903,6 +1940,7 @@ export type CapabilityDisabledError = {
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "dashboardActivity"
+    | "skillUsage"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -5861,6 +5899,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
+      skillUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -5932,6 +5971,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      skillUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6123,6 +6171,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
+      skillUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -6194,6 +6243,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      skillUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -13532,6 +13590,24 @@ export type GetV1InferenceAnalyticsConsumptionResponses = {
 
 export type GetV1InferenceAnalyticsConsumptionResponse =
   GetV1InferenceAnalyticsConsumptionResponses[keyof GetV1InferenceAnalyticsConsumptionResponses];
+
+export type GetV1SkillUsageData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: "7" | "30" | "90";
+  };
+  url: "/v1/skill-usage";
+};
+
+export type GetV1SkillUsageResponses = {
+  /**
+   * Skill usage
+   */
+  200: SkillUsageReport;
+};
+
+export type GetV1SkillUsageResponse = GetV1SkillUsageResponses[keyof GetV1SkillUsageResponses];
 
 export type PostV1InferenceAnalyticsLangfuseTestData = {
   body: {

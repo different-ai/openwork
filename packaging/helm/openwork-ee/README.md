@@ -335,6 +335,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `driveResumableUploads` | `DEN_FEATURE_DRIVE_RESUMABLE_UPLOADS` | default off | Members upload larger workspace files to Google Drive and prepare upload sessions for external clients. |
 | `implicitCloudSkills` | `DEN_FEATURE_IMPLICIT_CLOUD_SKILLS` | default off | Agents discover organization skills automatically without waiting for Cloud before starting a task. |
 | `dashboardActivity` | `DEN_FEATURE_DASHBOARD_ACTIVITY` | default off | Organization admins see recent additions and skill updates on their dashboard instead of Quick add. |
+| `skillUsage` | `DEN_FEATURE_SKILL_USAGE` | default off | Organization admins see how often each skill is used, by how many people, and which ones nobody uses, so they can decide what to keep. |
 | `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
 | `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
 | `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |

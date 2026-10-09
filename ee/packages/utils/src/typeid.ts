@@ -122,6 +122,7 @@ export const idTypesMapNameToPrefix = {
   auditEventResource: "aer",
   auditUsageFact: "auf",
   platformAuditEvent: "pae",
+  capabilityUsageEvent: "cue",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix
