@@ -3,7 +3,7 @@
 // checksummed bundle of exactly the files the runner may execute.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,10 +16,23 @@ const output = resolve(outputArgument ?? resolve(root, "dist/managed-deployments
 mkdirSync(output, { recursive: true });
 execFileSync(process.execPath, [resolve(root, "infra/managed-deployments/aws/bootstrap/template.mjs"), resolve(output, "cloudformation.json")], { stdio: "inherit" });
 
+// Only regular files inside the repository. Symlinks are refused outright so a
+// link can never pull an operator's local files into a public release.
+const realRoot = realpathSync(root);
+function assertRegularInsideRoot(path) {
+  const absolute = resolve(realRoot, path);
+  const info = lstatSync(absolute);
+  if (info.isSymbolicLink() || !(info.isFile() || info.isDirectory())) throw new Error(`Refusing to package ${path}: not a regular file or directory.`);
+  const real = realpathSync(absolute);
+  if (real !== absolute || !real.startsWith(realRoot + "/")) throw new Error(`Refusing to package ${path}: resolves outside the release source tree.`);
+  return info;
+}
 function files(directory, accept) {
+  assertRegularInsideRoot(directory);
   return readdirSync(resolve(root, directory)).flatMap((name) => {
     const path = join(directory, name);
-    if (statSync(resolve(root, path)).isDirectory()) return name === ".terraform" || name === "build" || name === "__pycache__" ? [] : files(path, accept);
+    const info = assertRegularInsideRoot(path);
+    if (info.isDirectory()) return name === ".terraform" || name === "build" || name === "__pycache__" ? [] : files(path, accept);
     return accept(name) ? [path] : [];
   });
 }
@@ -36,6 +49,7 @@ const stage = mkdtempSync(resolve(tmpdir(), "openwork-managed-release-"));
 try {
   const checksums = {};
   for (const file of included) {
+    assertRegularInsideRoot(file);
     const destination = resolve(stage, file);
     mkdirSync(dirname(destination), { recursive: true });
     copyFileSync(resolve(root, file), destination);

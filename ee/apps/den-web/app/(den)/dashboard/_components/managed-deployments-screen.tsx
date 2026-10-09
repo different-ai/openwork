@@ -30,6 +30,7 @@ const STEP_LABELS: Record<z.infer<typeof deploymentStepSchema>, string> = {
 const FAILURE_LABELS: Record<string, string> = {
   release_verification_failed: "The release could not be verified. Open the installer logs in AWS.",
   infrastructure_failed: "Infrastructure installation failed. Open the installer logs in AWS, then retry.",
+  certificate_failed: "AWS could not issue the HTTPS certificate. Make sure the domain's CAA records allow amazon.com, then retry.",
   service_unhealthy: "Services did not start. Check the ECS service events in AWS, then retry.",
   health_check_failed: "HTTPS or the database could not be verified. Check DNS for the domain, then retry.",
   runner_failed: "The AWS account or hosted zone did not match. Check the deployment details.",

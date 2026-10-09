@@ -63,6 +63,38 @@ class BootstrapTests(unittest.TestCase):
                 bootstrap.download_bundle("http://release.example.test/bundle", "a" * 64, Path(directory))
 
 
+class SigningTests(unittest.TestCase):
+    def test_stdlib_signature_matches_botocore(self):
+        from botocore.auth import SigV4Auth
+        from botocore.awsrequest import AWSRequest
+        from botocore.credentials import Credentials
+        credentials = ("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "session-token")
+        proof = "enroll:run:challenge"
+        request = AWSRequest(method="POST", url="https://sts.us-east-1.amazonaws.com/", data=bootstrap.STS_BODY,
+                             headers={"Content-Type": bootstrap.STS_CONTENT_TYPE, "x-openwork-proof": proof})
+        SigV4Auth(Credentials(*credentials), "sts", "us-east-1").add_auth(request)
+        amz_date = request.headers["X-Amz-Date"]
+        now = datetime.datetime.strptime(amz_date, "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
+        ours = bootstrap.signed_identity(proof, "us-east-1", credentials, now)
+        self.assertEqual(ours["authorization"], request.headers["Authorization"])
+        self.assertEqual(ours["x-amz-date"], amz_date)
+        self.assertIn("SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-openwork-proof", ours["authorization"])
+
+    def test_installer_imports_only_the_standard_library(self):
+        import ast, sys
+        for path in ["bootstrap/bootstrap.py", "runner/runner.py"]:
+            tree = ast.parse((ROOT / path).read_text())
+            modules = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+            modules |= {node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
+            self.assertTrue(modules <= set(sys.stdlib_module_names), f"{path}: {sorted(modules - set(sys.stdlib_module_names))}")
+
+    def test_buildspec_installs_nothing(self):
+        template = json.loads((ROOT / "bootstrap/cloudformation.json").read_text())
+        buildspec = json.loads(template["Resources"]["Runner"]["Properties"]["Source"]["BuildSpec"])
+        self.assertNotIn("install", buildspec["phases"])
+        self.assertNotIn("pip", json.dumps(buildspec["phases"]["build"]["commands"][:2]))
+
+
 class RunnerTests(unittest.TestCase):
     def test_data_bearing_resources_are_never_replaced_automatically(self):
         plan = {"resource_changes": [
@@ -80,6 +112,16 @@ class RunnerTests(unittest.TestCase):
         with patch.dict(os.environ, {"DOMAIN_NAME": "den.example.test"}):
             with self.assertRaises(ValueError):
                 runner.verify_health({"web_url": "https://attacker.example.test", "api_url": "https://api.den.example.test"}, attempts=1, delay=0)
+
+
+    def test_failed_certificates_are_replaced_on_retry(self):
+        state = {"values": {"root_module": {"child_modules": [{"resources": [
+            {"address": "module.platform.aws_acm_certificate.this[0]", "mode": "managed", "type": "aws_acm_certificate", "values": {"arn": "arn:cert"}}]}]}}}
+        with patch.object(runner.subprocess, "check_output", return_value=json.dumps(state)), \
+             patch.object(runner, "aws", return_value={"Certificate": {"Status": "FAILED"}}):
+            states = runner.certificate_states("terraform", Path("."))
+        self.assertEqual(states, {"module.platform.aws_acm_certificate.this[0]": "FAILED"})
+        self.assertIn("FAILED", runner.UNRECOVERABLE_CERTIFICATE_STATES)
 
 
 class HealthAgentTests(unittest.TestCase):
@@ -152,7 +194,8 @@ class TemplateTests(unittest.TestCase):
         self.assertNotIn("*", actions)
         self.assertFalse(any(action.endswith(":*") for action in actions))
         destructive = [action for action in actions if any(word in action.split(":")[1] for word in ("Delete", "Terminate", "Remove", "Detach"))]
-        self.assertEqual(destructive, ["s3:DeleteObject"])  # Terraform's own state lock file only.
+        # Terraform's state lock file, and replacing a certificate ACM failed to issue.
+        self.assertEqual(sorted(destructive), ["acm:DeleteCertificate", "s3:DeleteObject"])
         self.assertNotIn("codebuild:StartBuild", actions)
 
     def test_buildspec_cannot_be_overridden_or_role_borrowed(self):

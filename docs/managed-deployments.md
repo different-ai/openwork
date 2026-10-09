@@ -17,6 +17,10 @@ feature (cloud only, off by default). Design and contract:
 - One of the supported regions. Expect roughly $100–150 a month at the small
   size (two Fargate services, `db.t4g.micro` RDS MySQL, an Application Load
   Balancer, one NAT gateway, public IPv4 addresses). AWS bills the customer.
+- If the domain (or a parent domain) has CAA records, they must allow
+  `amazon.com`, or AWS cannot issue the HTTPS certificate. The installer
+  reports this as a certificate failure; fix the record and retry, and the
+  retry requests a new certificate.
 - Brand-new AWS accounts sometimes start with a CodeBuild build quota of zero.
   If the stack fails with "CodeBuild is not yet available in this new AWS
   account", request the CodeBuild concurrent-build quota increase and retry.

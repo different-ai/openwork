@@ -8911,6 +8911,7 @@ export type GetV1ManagedDeploymentsResponses = {
           errorCode?:
             | "release_verification_failed"
             | "infrastructure_failed"
+            | "certificate_failed"
             | "service_unhealthy"
             | "health_check_failed"
             | "runner_failed";
@@ -9081,6 +9082,7 @@ export type PostV1ManagedDeploymentsResponses = {
         errorCode?:
           | "release_verification_failed"
           | "infrastructure_failed"
+          | "certificate_failed"
           | "service_unhealthy"
           | "health_check_failed"
           | "runner_failed";
@@ -9308,6 +9310,7 @@ export type PostV1ManagedDeploymentsByDeploymentIdLaunchResponses = {
           errorCode?:
             | "release_verification_failed"
             | "infrastructure_failed"
+            | "certificate_failed"
             | "service_unhealthy"
             | "health_check_failed"
             | "runner_failed";
@@ -9417,6 +9420,7 @@ export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsData = {
     errorCode?:
       | "release_verification_failed"
       | "infrastructure_failed"
+      | "certificate_failed"
       | "service_unhealthy"
       | "health_check_failed"
       | "runner_failed";

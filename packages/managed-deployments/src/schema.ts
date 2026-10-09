@@ -40,7 +40,7 @@ export const deploymentEventInputSchema = z.object({
   sequence: z.number().int().min(1).max(100),
   step: deploymentStepSchema,
   outcome: z.enum(["succeeded", "failed"]),
-  errorCode: z.enum(["release_verification_failed", "infrastructure_failed", "service_unhealthy", "health_check_failed", "runner_failed"]).optional(),
+  errorCode: z.enum(["release_verification_failed", "infrastructure_failed", "certificate_failed", "service_unhealthy", "health_check_failed", "runner_failed"]).optional(),
 }).strict()
 export const deploymentEventSchema = deploymentEventInputSchema.extend({ receivedAt: z.string().datetime() })
 export type DeploymentEventInput = z.infer<typeof deploymentEventInputSchema>

@@ -3,7 +3,9 @@
 Only small progress codes go to the control plane. Logs and credentials stay in
 this customer-owned CodeBuild process. This file is embedded in the template.
 """
+import datetime
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -12,9 +14,39 @@ import tarfile
 import tempfile
 import urllib.request
 
-import boto3
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
+# Standard library only: nothing is downloaded from a package index while the
+# installer holds AWS credentials.
+STS_BODY = "Action=GetCallerIdentity&Version=2011-06-15"
+STS_CONTENT_TYPE = "application/x-www-form-urlencoded; charset=utf-8"
+
+
+def container_credentials():
+    """CodeBuild's role credentials from the container credentials endpoint."""
+    uri = os.environ["AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"]
+    with urllib.request.urlopen("http://169.254.170.2" + uri, timeout=10) as response:
+        data = json.load(response)
+    return data["AccessKeyId"], data["SecretAccessKey"], data["Token"]
+
+
+def signed_identity(proof, region, credentials, now=None):
+    """SigV4-sign (never send) an STS GetCallerIdentity POST carrying the proof header."""
+    access_key, secret_key, token = credentials
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    amz_date, day = now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
+    host = f"sts.{region}.amazonaws.com"
+    headers = {"content-type": STS_CONTENT_TYPE, "host": host, "x-amz-date": amz_date,
+               "x-amz-security-token": token, "x-openwork-proof": proof}
+    names = sorted(headers)
+    canonical = "\n".join(["POST", "/", "", "".join(f"{name}:{headers[name]}\n" for name in names), ";".join(names),
+                           hashlib.sha256(STS_BODY.encode()).hexdigest()])
+    scope = f"{day}/{region}/sts/aws4_request"
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()])
+    key = ("AWS4" + secret_key).encode()
+    for part in (day, region, "sts", "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    return {"authorization": f"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={';'.join(names)}, Signature={signature}",
+            "x-amz-date": amz_date, "x-amz-security-token": token, "x-openwork-proof": proof}
 
 
 def post(origin, path, payload, token=None):
@@ -28,15 +60,8 @@ def post(origin, path, payload, token=None):
 
 
 def enroll():
-    region = os.environ["AWS_REGION"]
-    session = boto3.Session(region_name=region)
-    request = AWSRequest(method="POST", url=f"https://sts.{region}.amazonaws.com/",
-                         data="Action=GetCallerIdentity&Version=2011-06-15",
-                         headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-                                  "x-openwork-proof": "enroll:" + os.environ["RUN_ID"] + ":" + os.environ["CHALLENGE"]})
-    SigV4Auth(session.get_credentials().get_frozen_credentials(), "sts", region).add_auth(request)
-    headers = {key.lower(): str(value) for key, value in request.headers.items()}
-    headers.pop("content-type")
+    proof = "enroll:" + os.environ["RUN_ID"] + ":" + os.environ["CHALLENGE"]
+    headers = signed_identity(proof, os.environ["AWS_REGION"], container_credentials())
     return post(os.environ["CONTROL_PLANE_ORIGIN"], run_path() + "/enroll", {"headers": headers})["token"]
 
 

@@ -32,8 +32,9 @@ const iamRole = (pattern) => sub(`arn:\${AWS::Partition}:iam::\${AWS::AccountId}
 // Create, read and update the deployment's networking, containers, database,
 // load balancer and certificate. Many of these AWS create/describe APIs do not
 // support resource-level permissions; the account is dedicated to OpenWork and
-// requests are limited to the selected region. There are no delete actions
-// except deregistering superseded task definitions during updates.
+// requests are limited to the selected region. The only delete actions are
+// deregistering superseded task definitions and replacing a certificate that
+// failed validation (an in-use certificate cannot be deleted).
 const infrastructureActions = [
   "ec2:Describe*", "ec2:CreateVpc", "ec2:ModifyVpcAttribute", "ec2:CreateSubnet", "ec2:ModifySubnetAttribute",
   "ec2:CreateInternetGateway", "ec2:AttachInternetGateway", "ec2:AllocateAddress", "ec2:CreateNatGateway",
@@ -50,7 +51,7 @@ const infrastructureActions = [
   "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:RegisterTargets",
   "rds:CreateDBInstance", "rds:CreateDBSubnetGroup", "rds:ModifyDBInstance", "rds:ModifyDBSubnetGroup", "rds:Describe*",
   "rds:AddTagsToResource", "rds:ListTagsForResource",
-  "acm:RequestCertificate", "acm:DescribeCertificate", "acm:AddTagsToCertificate", "acm:ListTagsForCertificate",
+  "acm:RequestCertificate", "acm:DescribeCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate", "acm:ListTagsForCertificate",
   "servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:Get*", "servicediscovery:List*", "servicediscovery:CreateService",
   "servicediscovery:UpdateService", "servicediscovery:TagResource",
   "events:DescribeRule", "events:ListTargetsByRule", "events:ListTagsForResource",
@@ -128,7 +129,7 @@ const template = {
     Runner: { Type: "AWS::CodeBuild::Project", Properties: {
       Name: sub("${AWS::StackName}-runner"), ServiceRole: get("RunnerRole", "Arn"), ConcurrentBuildLimit: 1, TimeoutInMinutes: 120,
       Artifacts: { Type: "NO_ARTIFACTS" }, Environment: { Type: "LINUX_CONTAINER", ComputeType: "BUILD_GENERAL1_SMALL", Image: "aws/codebuild/standard:7.0", PrivilegedMode: false, EnvironmentVariables: Object.entries(environment).map(([Name, Value]) => ({ Name, Value, Type: "PLAINTEXT" })) },
-      Source: { Type: "NO_SOURCE", BuildSpec: JSON.stringify({ version: "0.2", phases: { install: { commands: ["python3 -m pip install --disable-pip-version-check boto3==1.43.110 botocore==1.43.110"] }, build: { commands: ["set -eu", "umask 077", "cat > /tmp/openwork-bootstrap.py <<'OPENWORK_BOOTSTRAP'\n" + bootstrap + "\nOPENWORK_BOOTSTRAP", "python3 /tmp/openwork-bootstrap.py"] } } }) },
+      Source: { Type: "NO_SOURCE", BuildSpec: JSON.stringify({ version: "0.2", phases: { build: { commands: ["set -eu", "umask 077", "cat > /tmp/openwork-bootstrap.py <<'OPENWORK_BOOTSTRAP'\n" + bootstrap + "\nOPENWORK_BOOTSTRAP", "python3 /tmp/openwork-bootstrap.py"] } } }) },
       LogsConfig: { CloudWatchLogs: { Status: "ENABLED" } },
     } },
     LauncherRole: { Type: "AWS::IAM::Role", Properties: { AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }] }, Policies: [{ PolicyName: "LaunchRunner", PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: "codebuild:StartBuild", Resource: get("Runner", "Arn") }, ...overrideDenies, { Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Resource: sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}*:*") }] } }] } },

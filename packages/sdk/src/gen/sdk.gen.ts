@@ -3289,6 +3289,7 @@ export class DenClient extends HeyApiClient {
       errorCode?:
         | "release_verification_failed"
         | "infrastructure_failed"
+        | "certificate_failed"
         | "service_unhealthy"
         | "health_check_failed"
         | "runner_failed";

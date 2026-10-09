@@ -60,7 +60,8 @@ or GCP project) live in the deployment's `target`, never in the contract.
   cannot override the buildspec, image or privileged mode, and the runner cannot
   start or edit builds. In the dedicated account, grant `codebuild:StartBuild`
   on the installer project only to administrators.
-- The runner role has no delete permissions except Terraform's own lock file and
+- The runner role has no delete permissions except Terraform's own lock file, a
+  certificate that failed validation (so a retry can request a new one), and
   superseded ECS task definitions. Plans that delete or replace databases,
   secrets, storage or the VPC are refused.
 - Health reports contain only check ids, states, numbers and codes. No logs,
