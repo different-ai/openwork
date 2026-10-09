@@ -12,6 +12,7 @@ import { useMcpClient } from "../../mcp/use-mcp-client";
 import { SetupFrame } from "./setup-frame";
 import { SetupFacts, SetupPanelBody } from "./setup-frame-parts";
 import { TemporaryAuthNotice } from "./temporary-auth-notice";
+import { MemberAuthCheckError } from "./member-auth-guard";
 
 function SessionStatusPanel({ mode }: { mode: "checking" | "redirecting" }) {
   const status = mode === "checking"
@@ -52,7 +53,7 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const routingRef = useRef(false);
-  const { user, runtimeConfigLoaded, sessionHydrated, desktopAuthRequested, setupPending, authError, webAuthRequested, resolveUserLandingRoute } = useDenFlow();
+  const { user, runtimeConfigLoaded, sessionHydrated, memberAuthCheckStatus, desktopAuthRequested, setupPending, authError, webAuthRequested, resolveUserLandingRoute } = useDenFlow();
   const hasResolvedSession = runtimeConfigLoaded && sessionHydrated && Boolean(user) && !authError && (!desktopAuthRequested || setupPending) && !webAuthRequested;
 
   useEffect(() => {
@@ -79,7 +80,7 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
   }, [hasResolvedSession, pathname, resolveUserLandingRoute, router]);
 
   if (agentSignIn) {
-    return <AgentSignInScreen status={!runtimeConfigLoaded || !sessionHydrated ? "checking" : hasResolvedSession ? "redirecting" : null} />;
+    return <AgentSignInScreen status={memberAuthCheckStatus === "error" ? "error" : !runtimeConfigLoaded || !sessionHydrated ? "checking" : hasResolvedSession ? "redirecting" : null} />;
   }
 
   return (
@@ -91,7 +92,9 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
     >
       <div data-testid="auth-landing-frame">
         <div data-testid="auth-landing-form">
-          {!runtimeConfigLoaded || !sessionHydrated ? (
+          {memberAuthCheckStatus === "error" ? (
+            <MemberAuthCheckError />
+          ) : !runtimeConfigLoaded || !sessionHydrated ? (
             <SessionStatusPanel mode="checking" />
           ) : hasResolvedSession ? (
             <SessionStatusPanel mode="redirecting" />
@@ -112,7 +115,7 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
  * the panel keeps "Signing in for" above the sign-in so the person never
  * loses track of why they are here.
  */
-function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | null }) {
+function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "error" | null }) {
   const [oauthQuery, setOauthQuery] = useState("");
   useEffect(() => {
     setOauthQuery(window.location.search.replace(/^\?/, ""));
@@ -130,7 +133,9 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | nu
         <div data-testid="auth-landing-form">
           <SetupPanelBody>
             <SetupFacts rows={[{ label: "Signing in for", value: <McpAppFact client={client} /> }]} />
-            {status ? (
+            {status === "error" ? (
+              <MemberAuthCheckError />
+            ) : status ? (
               <SessionStatusPanel mode={status} />
             ) : (
               <AuthPanel

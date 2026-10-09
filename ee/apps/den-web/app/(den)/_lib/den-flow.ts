@@ -3,6 +3,7 @@ import { denApiCredentials, denBrowserEndpoint } from "./den-api-origin";
 import { getAuthResumeUrl } from "./auth-resume";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
 import { getRuntimeConfig } from "./runtime-config";
+import { getSafeMemberReturnTo } from "./member-auth-routing";
 
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";
@@ -180,7 +181,7 @@ export function getSocialProviderLabel(provider: SocialAuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
 }
 
-export function getSocialCallbackUrl(authCallbackBaseUrl = ""): string {
+export function getSocialCallbackUrl(authCallbackBaseUrl = "", requestedReturnTo?: string | null): string {
   try {
     const origin = authCallbackBaseUrl || (typeof window !== "undefined" ? window.location.origin : "");
     if (!origin) {
@@ -200,6 +201,10 @@ export function getSocialCallbackUrl(authCallbackBaseUrl = ""): string {
         if (value) {
           callbackUrl.searchParams.set(key, value);
         }
+      }
+      const returnTo = getSafeMemberReturnTo(requestedReturnTo === undefined ? params.get("returnTo") : requestedReturnTo);
+      if (returnTo) {
+        callbackUrl.searchParams.set("returnTo", returnTo);
       }
     }
     return callbackUrl.toString();
