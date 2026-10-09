@@ -16,6 +16,6 @@ Gateway collection still requires its existing rollout capability, subscription,
 
 ## Deployment
 
-`0128_remove_legacy_analytics.sql` is a no-op (`SELECT 1`). Drizzle decides what to run by migration timestamp only, so changing its body is safe for databases on either side of it.
+`0128_remove_legacy_analytics.sql` is a no-op (`SELECT 1`). Drizzle decides what to run by migration timestamp only, so databases that already applied it do not run it again. Bootstrap also checks every receipt's hash, so `ee/packages/den-db/scripts/superseded-migrations.ts` accepts the hash of the body released in v0.18.57.
 
 `ee/packages/den-db/tests/analytics-retirement.test.ts` checks that the migration runs no destructive statement, runs it against disposable storage, and compares every retained table definition against the preceding schema snapshot.
