@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { receiptMatchesMigration } from "../scripts/superseded-migrations.ts";
 
 const migrationUrl = new URL("../drizzle/0128_remove_legacy_analytics.sql", import.meta.url);
 
@@ -51,5 +53,19 @@ describe("legacy analytics migration keeps every row", () => {
     for (const [name, table] of Object.entries(after)) expect(table, name).toEqual(before[name]);
     for (const name of ["gateway_request_logs", "gateway_usage_rollups", "inference_usage_ledger_entries", "models_analytics_event", "models_analytics_settings", "workflow_run"])
       expect(after[name], name).toBeDefined();
+  });
+
+  test("databases that applied the original 0128 still pass the migration history check", () => {
+    const migrations = readMigrationFiles({ migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
+    const migration = migrations[127];
+    if (!migration) throw new Error("missing 0128");
+    expect(migration.folderMillis).toBe(1791246307322);
+    // sha256 of 0128_remove_legacy_analytics.sql as released in v0.18.57.
+    expect(receiptMatchesMigration("4a23d428e3b5c4e23fe147a2fd73cfedd3d73384c0f41e11327d203a05e802dc", migration)).toBe(true);
+    expect(receiptMatchesMigration(migration.hash, migration)).toBe(true);
+    expect(receiptMatchesMigration("0".repeat(64), migration)).toBe(false);
+    const other = migrations[126];
+    if (!other) throw new Error("missing 0127");
+    expect(receiptMatchesMigration("4a23d428e3b5c4e23fe147a2fd73cfedd3d73384c0f41e11327d203a05e802dc", other)).toBe(false);
   });
 });
