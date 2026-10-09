@@ -78,6 +78,8 @@ import {
   SsoProviderTable,
   TeamMemberTable,
   TeamTable,
+  TelemetryEventTable,
+  TelemetrySessionDimensionTable,
   WorkerBundleTable,
   WorkerInstanceTable,
   WorkerTable,
@@ -531,6 +533,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId))
         await tx.delete(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId))
         await tx.delete(WorkerTable).where(eq(WorkerTable.org_id, organizationId))
+        await tx.delete(TelemetryEventTable).where(eq(TelemetryEventTable.org_id, organizationId))
+        await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))
         await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
 
         await tx.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, organizationId))

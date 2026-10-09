@@ -10,8 +10,8 @@ import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
-import { formatUsageCost, StackedDailyChart } from "../_features/gateway-usage/stacked-daily-chart";
-import { useSeriesColors } from "../_features/gateway-usage/use-series-colors";
+import { formatUsageCost, StackedDailyChart } from "../_features/analytics/stacked-daily-chart";
+import { useSeriesColors } from "../_features/analytics/use-series-colors";
 import { useGatewayUsage } from "./gateway-usage-data";
 import { GatewayUsageCoverageNotice } from "./gateway-usage-coverage-notice";
 

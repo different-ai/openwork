@@ -209,9 +209,9 @@ function isMissingTable(error: unknown): boolean {
   return isMissingTable(record.cause)
 }
 
-// --- activity (sign-in session days UNION Gateway request days) ---
+// --- activity (sign-in session days UNION session.active telemetry days) ---
 // Matches den-api /v1/admin/overview: a user is "active" on a day if they
-// have a sign-in session day or a Gateway request that day.
+// have a sign-in session day or a session.active telemetry event that day.
 
 async function activeUserCount(days: number): Promise<number> {
   const interval = intLiteral(days)
@@ -220,10 +220,10 @@ async function activeUserCount(days: number): Promise<number> {
         SELECT s.user_id AS uid FROM session s
          WHERE s.updated_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)
         UNION
-        SELECT m.user_id FROM gateway_request_logs t
-          JOIN member m ON m.id = t.org_membership_id
+        SELECT m.user_id FROM telemetry_event t
+          JOIN member m ON m.id = t.member_id
          WHERE m.user_id IS NOT NULL
-           AND t.started_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)
+           AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)
       ) activity`)
     return n(result[0]?.count)
   } catch (error) {
@@ -235,16 +235,19 @@ async function activeUserCount(days: number): Promise<number> {
 }
 
 /**
- * "Real" active users have made an AI Gateway request in the window.
- * Returns 0 when Gateway request storage is unavailable.
+ * "Real" active users: executed at least one task in a session in the
+ * window — task.* telemetry with a session id, not just sign-ins or
+ * heartbeat pings. Returns 0 when the telemetry table is missing.
  */
 async function taskActiveUserCount(days: number): Promise<number> {
   const interval = intLiteral(days)
   try {
-    const result = await rows(sql`SELECT COUNT(DISTINCT m.user_id) AS count FROM gateway_request_logs t
-        JOIN member m ON m.id = t.org_membership_id
+    const result = await rows(sql`SELECT COUNT(DISTINCT m.user_id) AS count FROM telemetry_event t
+        JOIN member m ON m.id = t.member_id
        WHERE m.user_id IS NOT NULL
-         AND t.started_at >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
+         AND t.event_type IN ('task.started', 'task.completed', 'task.failed')
+         AND t.session_id IS NOT NULL
+         AND t.event_timestamp >= DATE_SUB(NOW(), INTERVAL ${interval} DAY)`)
     return n(result[0]?.count)
   } catch (error) {
     if (!isMissingTable(error)) throw error
@@ -256,8 +259,8 @@ async function activityDays(): Promise<Row[]> {
   try {
     return await rows(sql`SELECT s.user_id AS uid, DATE(s.updated_at) AS day FROM session s
         UNION
-        SELECT m.user_id, DATE(t.started_at) FROM gateway_request_logs t
-          JOIN member m ON m.id = t.org_membership_id
+        SELECT m.user_id, DATE(t.event_timestamp) FROM telemetry_event t
+          JOIN member m ON m.id = t.member_id
          WHERE m.user_id IS NOT NULL`)
   } catch (error) {
     if (!isMissingTable(error)) throw error
@@ -280,12 +283,12 @@ async function lastActiveByUser(userIds: string[]): Promise<Map<string, number>>
   )
   for (const row of sessionRows) merge(row.user_id, row.last)
   try {
-    const gatewayRows = await rows(
-      sql`SELECT m.user_id AS user_id, MAX(t.started_at) AS last FROM gateway_request_logs t
-           JOIN member m ON m.id = t.org_membership_id
+    const telemetryRows = await rows(
+      sql`SELECT m.user_id AS user_id, MAX(t.event_timestamp) AS last FROM telemetry_event t
+           JOIN member m ON m.id = t.member_id
           WHERE m.user_id IN (${idList(userIds)}) GROUP BY m.user_id`,
     )
-    for (const row of gatewayRows) merge(row.user_id, row.last)
+    for (const row of telemetryRows) merge(row.user_id, row.last)
   } catch (error) {
     if (!isMissingTable(error)) throw error
   }
@@ -434,7 +437,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or Gateway request; realActive = made at least one Gateway request",
+          note: "active = sign-in session day or any telemetry event; realActive = executed at least one task in a session (task.* events with a session id)",
         }
       }),
   )
@@ -642,7 +645,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
     "den_retention",
     {
       description:
-        "Weekly cohort retention: users grouped by ISO signup week, with the percentage active in each week after signup (activity = sign-in session days + Gateway requests).",
+        "Weekly cohort retention: users grouped by ISO signup week, with the percentage active in each week after signup (activity = sign-in session days + session.active telemetry).",
       inputSchema: z.object({
         weeks: z.number().int().min(2).max(26).default(8).describe("How many signup-week cohorts"),
       }),
@@ -840,7 +843,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
     "den_query",
     {
       description:
-        "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, session, organization, member, invitation, team, org_subscriptions, gateway_request_logs, worker, audit_event. Avoid encrypted columns (scim_provider.scim_token, sso_provider.*_config, llm_provider.api_key, config_object_version payloads, inference upstream keys).",
+        "Escape hatch: run a single read-only SQL statement (SELECT/WITH/SHOW/DESCRIBE/EXPLAIN) against the Den database. Useful tables: user, session, organization, member, invitation, team, org_subscriptions, telemetry_event, worker, audit_event. Avoid encrypted columns (scim_provider.scim_token, sso_provider.*_config, llm_provider.api_key, config_object_version payloads, inference upstream keys).",
       inputSchema: z.object({
         sql: z.string().min(1).describe("A single read-only SQL statement"),
         limit: z.number().int().min(1).max(MAX_ROW_LIMIT).optional().describe("Row limit appended when the query has none"),

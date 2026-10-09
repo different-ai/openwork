@@ -181,6 +181,10 @@
       "description": "Controlled egress diagnostics for self-hosted deployments."
     },
     {
+      "name": "Telemetry",
+      "description": "Telemetry event ingestion and adoption analytics."
+    },
+    {
       "name": "Webhooks",
       "description": "Signed inbound webhooks from third-party providers."
     },
@@ -6346,6 +6350,9 @@
               "orgControls": {
                 "type": "boolean"
               },
+              "analytics": {
+                "type": "boolean"
+              },
               "auditLogs": {
                 "type": "boolean"
               }
@@ -6354,6 +6361,7 @@
               "sso",
               "desktopPolicies",
               "orgControls",
+              "analytics",
               "auditLogs"
             ]
           }
@@ -6933,6 +6941,403 @@
           "kind",
           "reason",
           "message"
+        ]
+      },
+      "WorkflowRunListResponse": {
+        "type": "object",
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "Den TypeID with 'wfr_' prefix and a 26-character base32 suffix.",
+                  "format": "typeid",
+                  "type": "string",
+                  "minLength": 30,
+                  "maxLength": 30
+                },
+                "source": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "succeeded",
+                    "failed"
+                  ]
+                },
+                "errorKind": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "errorMessage": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "toolCallCount": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "toolCalls": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ]
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "durationMs": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "startedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                "finishedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                },
+                "orgMembershipId": {
+                  "anyOf": [
+                    {
+                      "description": "Den TypeID with 'om_' prefix and a 26-character base32 suffix.",
+                      "format": "typeid",
+                      "type": "string",
+                      "minLength": 29,
+                      "maxLength": 29
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "workflow": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "configObjectId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 160
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "graph": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "nodes": {
+                                  "type": "array",
+                                  "items": {
+                                    "oneOf": [
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "input"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          },
+                                          "fields": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "kind",
+                                          "label",
+                                          "fields"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "tool"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          },
+                                          "namespace": {
+                                            "type": "string"
+                                          },
+                                          "tool": {
+                                            "type": "string"
+                                          },
+                                          "scriptPath": {
+                                            "type": "string"
+                                          },
+                                          "assignsTo": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "parallelGroup": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "kind",
+                                          "label",
+                                          "namespace",
+                                          "tool",
+                                          "scriptPath",
+                                          "assignsTo",
+                                          "parallelGroup"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "search"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "kind",
+                                          "label"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "branch"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "kind",
+                                          "label"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "loop"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "kind",
+                                          "label"
+                                        ]
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "return"
+                                          },
+                                          "label": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "kind",
+                                          "label"
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                "edges": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": {
+                                        "type": "string"
+                                      },
+                                      "to": {
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "flow",
+                                          "data"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "from",
+                                      "to",
+                                      "label",
+                                      "kind"
+                                    ]
+                                  }
+                                },
+                                "parseError": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "nodes",
+                                "edges",
+                                "parseError"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "configObjectId",
+                        "title",
+                        "graph"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "source",
+                "status",
+                "errorKind",
+                "errorMessage",
+                "toolCallCount",
+                "toolCalls",
+                "durationMs",
+                "startedAt",
+                "finishedAt",
+                "createdAt",
+                "orgMembershipId",
+                "workflow"
+              ]
+            }
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pass as cursor to fetch the next page; null on the last page."
+          }
+        },
+        "required": [
+          "runs",
+          "nextCursor"
         ]
       },
       "DashboardElement": {
@@ -22529,6 +22934,212 @@
           "scopes_supported",
           "bearer_methods_supported"
         ]
+      },
+      "TelemetryDimensionListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "sessionCount": {
+                  "type": "number"
+                },
+                "lastSeenAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                }
+              },
+              "required": [
+                "type",
+                "value",
+                "label",
+                "sessionCount",
+                "lastSeenAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "TelemetryAdoptionResponse": {
+        "type": "object",
+        "properties": {
+          "members": {
+            "type": "number"
+          },
+          "pendingInvites": {
+            "type": "number"
+          },
+          "activeMembers7d": {
+            "type": "number"
+          },
+          "activeMembers30d": {
+            "type": "number"
+          },
+          "weeklyTrend": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "members",
+          "pendingInvites",
+          "activeMembers7d",
+          "activeMembers30d",
+          "weeklyTrend"
+        ]
+      },
+      "TelemetryAnalyticsResponse": {
+        "type": "object",
+        "properties": {
+          "members": {
+            "type": "number"
+          },
+          "pendingInvites": {
+            "type": "number"
+          },
+          "activeMembers7d": {
+            "type": "number"
+          },
+          "activeMembers30d": {
+            "type": "number"
+          },
+          "sessions7d": {
+            "type": "number"
+          },
+          "sessions30d": {
+            "type": "number"
+          },
+          "tasksCompleted7d": {
+            "type": "number"
+          },
+          "tasksFailed7d": {
+            "type": "number"
+          },
+          "tasksCompleted30d": {
+            "type": "number"
+          },
+          "tasksFailed30d": {
+            "type": "number"
+          },
+          "avgTaskDurationMs30d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "weekly": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "weekStart": {
+                  "type": "string"
+                },
+                "activeMembers": {
+                  "type": "number"
+                },
+                "sessions": {
+                  "type": "number"
+                },
+                "tasksCompleted": {
+                  "type": "number"
+                },
+                "tasksFailed": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "weekStart",
+                "activeMembers",
+                "sessions",
+                "tasksCompleted",
+                "tasksFailed"
+              ]
+            }
+          },
+          "models": {
+            "type": "object",
+            "properties": {
+              "usage30d": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "sessions": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "sessions"
+                  ]
+                }
+              },
+              "selection30d": {
+                "type": "object",
+                "properties": {
+                  "default": {
+                    "type": "number"
+                  },
+                  "manual": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "default",
+                  "manual"
+                ]
+              }
+            },
+            "required": [
+              "usage30d",
+              "selection30d"
+            ]
+          }
+        },
+        "required": [
+          "members",
+          "pendingInvites",
+          "activeMembers7d",
+          "activeMembers30d",
+          "sessions7d",
+          "sessions30d",
+          "tasksCompleted7d",
+          "tasksFailed7d",
+          "tasksCompleted30d",
+          "tasksFailed30d",
+          "avgTaskDurationMs30d",
+          "weekly",
+          "models"
+        ]
       }
     }
   },
@@ -37223,6 +37834,88 @@
         ]
       }
     },
+    "/v1/workflow-runs": {
+      "get": {
+        "operationId": "getV1WorkflowRuns",
+        "tags": [
+          "Workflow Runs"
+        ],
+        "summary": "List Workflow runs",
+        "description": "Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.",
+        "responses": {
+          "200": {
+            "description": "Workflow runs returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The Workflow run list query was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in to list Workflow runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Workflow run analytics requires an Enterprise plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnterprisePlanRequiredError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "Opaque cursor returned as nextCursor by the previous page. Omit for the first page."
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/workflows": {
       "get": {
         "operationId": "getV1Workflows",
@@ -48117,6 +48810,224 @@
                 },
                 "required": [
                   "enabled"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/inference/analytics/events": {
+      "post": {
+        "operationId": "postV1InferenceAnalyticsEvents",
+        "tags": [
+          "Inference"
+        ],
+        "summary": "Report task analytics events for the calling member's OpenWork Models calls",
+        "description": "Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.",
+        "responses": {
+          "202": {
+            "description": "Accepted event ids.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "acceptedIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "acceptedIds"
+                  ]
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Task analytics are not enabled for this organization; nothing was recorded."
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign-in required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "task.started",
+                            "task.completed",
+                            "task.failed",
+                            "task.cancelled",
+                            "tool.executed",
+                            "skill.loaded",
+                            "model.call"
+                          ]
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "taskId": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "callId": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "durationMs": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "completed",
+                            "failed",
+                            "cancelled"
+                          ]
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 255
+                        },
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 255
+                        },
+                        "inputTokens": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "outputTokens": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "cacheReadTokens": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "cacheWriteTokens": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "costUsd": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "usageComplete": {
+                          "type": "boolean"
+                        },
+                        "tool": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "skill": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "skillVersion": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "mcp": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+                        },
+                        "metadata": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 128
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type",
+                        "timestamp",
+                        "sessionId",
+                        "taskId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "events"
                 ],
                 "additionalProperties": false
               }
@@ -89845,6 +90756,321 @@
             }
           }
         }
+      }
+    },
+    "/v1/telemetry/ingest": {
+      "post": {
+        "operationId": "postV1TelemetryIngest",
+        "tags": [
+          "Telemetry"
+        ],
+        "summary": "Ingest telemetry events",
+        "description": "Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.",
+        "responses": {
+          "204": {
+            "description": "Events accepted."
+          },
+          "400": {
+            "description": "Invalid event payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "events": {
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        },
+                        "source": {
+                          "type": "string",
+                          "maxLength": 32
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "maxLength": 128
+                        },
+                        "durationMs": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 86400000
+                        },
+                        "success": {
+                          "type": "boolean"
+                        },
+                        "dimensions": {
+                          "maxItems": 8,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              "value": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 255
+                              },
+                              "metadata": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "label"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "timestamp"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "events"
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/telemetry/dimensions": {
+      "get": {
+        "operationId": "getV1TelemetryDimensions",
+        "tags": [
+          "Telemetry"
+        ],
+        "summary": "List telemetry dimension values",
+        "description": "Returns unique analytics dimension values for the active organization, such as project labels for the project selector.",
+        "responses": {
+          "200": {
+            "description": "Telemetry dimensions returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryDimensionListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid dimension query.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/telemetry/adoption": {
+      "get": {
+        "operationId": "getV1TelemetryAdoption",
+        "tags": [
+          "Telemetry"
+        ],
+        "summary": "Get adoption metrics",
+        "description": "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.",
+        "responses": {
+          "200": {
+            "description": "Adoption metrics returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryAdoptionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/telemetry/analytics": {
+      "get": {
+        "operationId": "getV1TelemetryAnalytics",
+        "tags": [
+          "Telemetry"
+        ],
+        "summary": "Get usage analytics",
+        "description": "Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks.",
+        "responses": {
+          "200": {
+            "description": "Analytics returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryAnalyticsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid analytics query.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Usage analytics requires an Enterprise plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnterprisePlanRequiredError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dimensionType",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          {
+            "in": "query",
+            "name": "dimensionValue",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     }
   }
