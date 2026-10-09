@@ -8,7 +8,10 @@ const releaseSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
   apiOrigin: z.string().url().refine((value) => {
     const url = new URL(value)
-    return url.protocol === "https:" && url.pathname === "/" && !url.username && !url.password && !url.search && !url.hash
+    // HTTPS in every real environment. Plain HTTP only on loopback (local Den
+    // and tests); a customer's installer can never reach loopback anyway.
+    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1"
+    return (url.protocol === "https:" || (url.protocol === "http:" && loopback)) && url.pathname === "/" && !url.username && !url.password && !url.search && !url.hash
   }).transform((value) => new URL(value).origin),
 })
 export type ManagedDeploymentRelease = z.infer<typeof releaseSchema>
