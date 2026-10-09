@@ -64,7 +64,7 @@ jobs:
             // packages/docs/openapi.json and packages/sdk/src/gen.
             const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/features/", "packages/sdk/"]
             // The workflow itself is listed so changes to this check exercise it.
-            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", "scripts/den-contract.mjs", "scripts/den-contract-database.mjs", "scripts/den-contract-hook.mjs", "scripts/features-sync.mjs", "scripts/tests/den-contract-database.test.mjs", "scripts/tests/den-contract-hook.test.mjs", ".github/workflows/ci-tests.yml"])
+            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", "scripts/den-contract.mjs", "scripts/den-contract-database.mjs", "scripts/den-contract-hook.mjs", "scripts/features-sync.mjs", "scripts/tests/den-contract-database.test.mjs", "scripts/tests/den-contract-hook.test.mjs", "scripts/tests/den-contract-format.test.mjs", ".github/workflows/ci-tests.yml"])
             const touchesDenContract = (name) => Boolean(name) && (denContractFiles.has(name) || denContractPrefixes.some((prefix) => name.startsWith(prefix)))
             const denContract = lane === "full" && files.some((file) => touchesDenContract(file.filename) || touchesDenContract(file.previous_filename))
             core.setOutput("den_contract", denContract ? "true" : "false")
@@ -577,7 +577,7 @@ jobs:
       - name: Build den-api workspace dependencies
         run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
       - name: Test contract generation guards
-        run: node --test scripts/tests/den-contract-hook.test.mjs scripts/tests/den-contract-database.test.mjs
+        run: node --test scripts/tests/den-contract-hook.test.mjs scripts/tests/den-contract-database.test.mjs scripts/tests/den-contract-format.test.mjs
       # den:contract owns schema preparation and cleanup, just as locally.
       - name: Regenerate the OpenAPI snapshot and SDK
         run: pnpm den:contract

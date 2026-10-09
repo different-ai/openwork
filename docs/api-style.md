@@ -23,9 +23,12 @@ and never connects to a remote database. For alternate local credentials/ports,
 set `OPENWORK_CONTRACT_MYSQL_URL` (default `mysql://root:password@127.0.0.1:3306`). Commit both generated outputs with
 the source change; there is no repair-bot commit or second CI run.
 
-`openapi.json` uses one path/schema per line, retains route-registration order,
-and ends with a newline. This allows unrelated edits to merge without expanding
-nested schemas into tens of thousands of lines or reordering SDK methods.
+`openapi.json` is fully indented JSON (one value per line), keeps
+route-registration order, and ends with a newline. Git treats edits on
+neighbouring lines as a conflict, so long lines made unrelated PRs collide,
+most often when two PRs each added a feature flag (the flag list is copied into
+several schemas). One value per line lets those edits merge; the file is long,
+but it is marked generated in `.gitattributes` so reviews collapse it.
 It is still generated JSON: do not edit it by hand.
 
 For automatic generation during commits, opt in with `pnpm hooks:install`.
