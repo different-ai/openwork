@@ -235,7 +235,7 @@ export function ManagedDeploymentsScreen() {
           {loading ? (
             <div className="space-y-2" aria-busy="true"><DenSkeleton className="h-12 w-full" /><DenSkeleton className="h-12 w-full" /></div>
           ) : deployments.length === 0 && !error ? (
-            <p className="text-[13px] text-gray-500">No deployments yet. Create one in a dedicated AWS account with a public Route 53 domain.</p>
+            <p className="text-[13px] text-gray-500">No deployments yet. Create one in your AWS account with a public Route 53 domain.</p>
           ) : (
             <ul className="divide-y divide-gray-100" aria-label="Deployments">
               {deployments.map((item) => {
@@ -442,7 +442,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
               </DenSelect>
             </div>
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Name</span><DenInput value={name} onChange={(event) => setName(event.target.value)} required maxLength={80} /></label>
-            <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Dedicated AWS account ID</span><DenInput value={accountId} onChange={(event) => setAccountId(event.target.value)} required inputMode="numeric" placeholder="123456789012" /></label>
+            <label className="block space-y-1 text-[13px]"><span className="text-gray-700">AWS account ID</span><DenInput value={accountId} onChange={(event) => setAccountId(event.target.value)} required inputMode="numeric" placeholder="123456789012" /></label>
             <div className="space-y-1 text-[13px]">
               <label htmlFor="deployment-region" className="text-gray-700">Region</label>
               <DenSelect id="deployment-region" value={region} onChange={(event) => setRegion(event.target.value)}>

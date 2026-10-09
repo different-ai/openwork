@@ -49,7 +49,7 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     expect(await deployments()).toHaveLength(0);
     await owner.click({ role: "button", label: "Create deployment" });
     await owner.see({ role: "heading", label: "Create deployment" });
-    await owner.type({ label: "Dedicated AWS account ID" }, "123456789012");
+    await owner.type({ label: "AWS account ID" }, "123456789012");
     await owner.type({ label: "Address" }, "openwork.example.test");
     await owner.type({ label: "Route 53 hosted zone ID for that address" }, "ZTEST123");
     await owner.type({ label: "First administrator email" }, "admin@example.test");
@@ -103,20 +103,36 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
   await step("three deployments are listed together with independent AWS approvals", async () => {
     const targets = [
       { name: "Staging", accountId: "123456789013", domain: "staging.example.test" },
-      { name: "Sandbox", accountId: "123456789014", domain: "sandbox.example.test" },
+      // Sandbox runs in the customer's existing VPC and ECS cluster.
+      { name: "Sandbox", accountId: "123456789014", domain: "sandbox.example.test", existing: true },
     ];
+    const existingNetwork = {
+      vpcId: "vpc-0a1b2c3d4e5f60718", serviceSubnetIds: ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0aaaaaaaaaaaaaaa2"],
+      loadBalancerSubnetIds: ["subnet-0bbbbbbbbbbbbbbb1", "subnet-0bbbbbbbbbbbbbbb2"], ecsClusterArn: "arn:aws:ecs:us-east-1:123456789014:cluster/platform",
+    };
     for (const target of targets) {
       await owner.click({ role: "button", label: "Create deployment" });
       await owner.see({ role: "heading", label: "Create deployment" });
       await owner.type({ label: "Name" }, target.name, { replace: true });
-      await owner.type({ label: "Dedicated AWS account ID" }, target.accountId, { replace: true });
+      await owner.type({ label: "AWS account ID" }, target.accountId, { replace: true });
       await owner.type({ label: "Address" }, target.domain, { replace: true });
       await owner.type({ label: "Route 53 hosted zone ID for that address" }, "ZTEST123", { replace: true });
       await owner.type({ label: "First administrator email" }, "admin@example.test", { replace: true });
+      if (target.existing) {
+        await owner.click({ testId: "network-existing" });
+        await owner.type({ label: "VPC ID" }, existingNetwork.vpcId, { replace: true });
+        await owner.type({ label: /^Private subnet IDs/ }, existingNetwork.serviceSubnetIds.join(", "), { replace: true });
+        await owner.type({ label: /^Public subnet IDs/ }, existingNetwork.loadBalancerSubnetIds.join(", "), { replace: true });
+        await owner.type({ label: /^ECS cluster ARN/ }, existingNetwork.ecsClusterArn, { replace: true });
+      }
       await owner.click({ role: "checkbox", label: /^I control this AWS account/ });
       await owner.click({ testId: "create-deployment-submit" });
       await owner.see({ role: "heading", label: target.name }, { timeoutMs: 60_000 });
     }
+    const sandbox = (await deployments()).find((item) => item.name === "Sandbox");
+    expect(sandbox?.target.network).toEqual({ mode: "existing", ...existingNetwork });
+    await owner.see({ text: `${existingNetwork.vpcId} · cluster platform` });
+    expect((await deployments()).filter((item) => item.target.network.mode === "dedicated")).toHaveLength(2);
     const before = await deployments();
     expect(before).toHaveLength(3);
     expect(new Set(before.map((item) => item.id)).size).toBe(3);
@@ -147,7 +163,7 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     }
     expect(after.every((item) => item.run?.state === "awaiting_approval" && item.run.events.length === 0 && item.installedVersion === null)).toBe(true);
     await owner.notSee({ text: "Operational" });
-    evidence.recordAssertionEvidence("three independent customer-cloud installs", "Production, Staging and Sandbox remain listed after reload, with three distinct deployment/run IDs and account-bound AWS approvals. Preparing each leaves Production unchanged; none falsely claims to be running.", true);
+    evidence.recordAssertionEvidence("three independent customer-cloud installs", "Production, Staging (dedicated networks) and Sandbox (an existing VPC and ECS cluster, entered in the form) remain listed after reload, with three distinct deployment/run IDs and account-bound AWS approvals. Preparing each leaves Production unchanged; none falsely claims to be running.", true);
     await owner.screenshot();
   });
 
