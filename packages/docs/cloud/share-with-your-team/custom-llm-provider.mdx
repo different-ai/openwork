@@ -138,6 +138,52 @@ Pick the model and it's live in the session footer:
 
 Add more entries under `models` to expose other routes the gateway supports (e.g. `openai/gpt-5.4`, `google/gemini-2.5-flash`).
 
+### Functional example: Cheaper Inference
+
+[Cheaper Inference](https://cheaperinference.com) is another hosted, OpenAI-compatible LLM gateway. One API key reaches models from OpenAI, Anthropic, Google, DeepSeek, and others. Model IDs are bare names, such as `gpt-5.4-mini`. The full list is on the [models page](https://cheaperinference.com/markets).
+
+Create a key at [cheaperinference.com/signup](https://cheaperinference.com/signup). The [docs](https://cheaperinference.com/docs) cover the API.
+
+Add a legacy provider, switch to **Custom provider**, and paste the key into **API key / credential**. Then click **Advanced: edit as JSON** and use this JSON:
+
+```json
+{
+  "id": "cheaperinference",
+  "name": "Cheaper Inference",
+  "npm": "@ai-sdk/openai-compatible",
+  "env": [
+    "CHEAPER_INFERENCE_API_KEY"
+  ],
+  "doc": "https://cheaperinference.com/docs",
+  "api": "https://api.cheaperinference.com/v1",
+  "models": [
+    {
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 mini",
+      "attachment": false,
+      "reasoning": true,
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2026-03-17",
+      "last_updated": "2026-03-17",
+      "open_weights": false,
+      "limit": {
+        "context": 400000,
+        "input": 272000,
+        "output": 128000
+      },
+      "modalities": {
+        "input": ["text"],
+        "output": ["text"]
+      }
+    }
+  ]
+}
+```
+
+Add more entries under `models` for other model IDs, such as `claude-sonnet-5` or `deepseek-v4-flash`.
+
 ## When to use a cloud provider
 
 Use a cloud provider when a whole org or team should share the setup. For your own computer only, [add the provider in the desktop app](/start-here/connect-your-stack/add-a-custom-llm) instead.
