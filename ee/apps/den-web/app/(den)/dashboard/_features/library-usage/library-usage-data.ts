@@ -30,18 +30,18 @@ export type LibraryUsageFilter = "all" | "unused" | "failing";
 
 /** Words for each view, so every view reads the same way. */
 export const libraryUsageCopy: Record<LibraryUsageKind, {
-  label: string; noun: string; plural: string; usesSub: string; emptyTitle: string; emptyBody: string; emptyAction: string;
+  label: string; noun: string; plural: string; emptyTitle: string; emptyBody: string; emptyAction: string;
 }> = {
   plugins: {
-    label: "Plugins", noun: "plugin", plural: "plugins", usesSub: "Skill loads and Workflow runs",
+    label: "Plugins", noun: "plugin", plural: "plugins",
     emptyTitle: "No plugins yet", emptyBody: "Create a plugin with skills or Workflows to see how your team uses it.", emptyAction: "Create a plugin",
   },
   skills: {
-    label: "Skills", noun: "skill", plural: "skills", usesSub: "Loaded by an agent",
+    label: "Skills", noun: "skill", plural: "skills",
     emptyTitle: "No skills yet", emptyBody: "Add a plugin with skills to see how often people use them.", emptyAction: "Create a plugin",
   },
   connectors: {
-    label: "Connectors", noun: "connector", plural: "connectors", usesSub: "Tool calls through OpenWork",
+    label: "Connectors", noun: "connector", plural: "connectors",
     emptyTitle: "No connectors yet", emptyBody: "Add a connector to see which tools your team calls and which calls fail.", emptyAction: "Add a connector",
   },
 };

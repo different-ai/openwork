@@ -152,10 +152,10 @@ export function LibraryUsageScreen() {
                 </div>
               ) : (
                 <div className={`grid gap-3.5 sm:grid-cols-2 ${tracksFailures ? "lg:grid-cols-4" : "lg:grid-cols-3"}`} data-testid="library-usage-summary">
-                  <StatCard icon={<Blocks className="text-[#6F3DFF]" />} tone="violet" title="In use" value={`${summary.used} of ${summary.total}`} sub={`Used at least once in ${days} days`} />
-                  <StatCard icon={<Zap className="text-[#1D63FF]" />} tone="blue" title="Uses" value={summary.uses.toLocaleString()} sub={copy.usesSub} />
+                  <StatCard icon={<Blocks className="text-[#6F3DFF]" />} tone="violet" title="In use" value={`${summary.used} of ${summary.total}`} />
+                  <StatCard icon={<Zap className="text-[#1D63FF]" />} tone="blue" title="Uses" value={summary.uses.toLocaleString()} />
                   {tracksFailures ? <StatCard icon={<TriangleAlert className="text-[#B42318]" />} tone="amber" title="Failed" value={(summary.failures ?? 0).toLocaleString()} sub={summary.uses > 0 ? `${Math.round(((summary.failures ?? 0) / summary.uses) * 100)}% of uses` : "Nothing has run yet"} /> : null}
-                  <StatCard icon={<CircleOff className="text-[#B7791F]" />} tone="amber" title="Not used" value={`${summary.unused}`} sub="Worth reviewing" />
+                  <StatCard icon={<CircleOff className="text-[#B7791F]" />} tone="amber" title="Not used" value={`${summary.unused}`} />
                 </div>
               )}
 
