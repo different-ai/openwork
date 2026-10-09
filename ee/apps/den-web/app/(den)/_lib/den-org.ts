@@ -249,6 +249,7 @@ export type DenOrgEntitlements = {
   sso: boolean;
   desktopPolicies: boolean;
   orgControls: boolean;
+  analytics: boolean;
   auditLogs: boolean;
 };
 
@@ -544,7 +545,13 @@ export function getAuditLogsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/audit-logs`;
 }
 
+export function getAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/analytics`;
+}
 
+export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/models`;
+}
 
 export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
@@ -552,6 +559,10 @@ export function getMembersRoute(orgSlug?: string | null): string {
 
 export function getTeamRoute(orgSlug: string | null | undefined, teamId: string): string {
   return `${getMembersRoute(orgSlug)}/teams/${encodeURIComponent(teamId)}`;
+}
+
+export function getWorkflowRunsRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/workflow-runs`;
 }
 
 export function getAutomationsRoute(orgSlug?: string | null): string {
@@ -1095,13 +1106,14 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
 
 function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
   if (!isRecord(value)) {
-    return { sso: true, desktopPolicies: true, orgControls: true, auditLogs: false };
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false };
   }
 
   return {
     sso: value.sso !== false,
     desktopPolicies: value.desktopPolicies !== false,
     orgControls: value.orgControls !== false,
+    analytics: value.analytics !== false,
     auditLogs: value.auditLogs === true,
   };
 }

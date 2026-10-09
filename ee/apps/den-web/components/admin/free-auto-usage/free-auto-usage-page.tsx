@@ -11,8 +11,8 @@ import { DenPageHeader } from "../../../app/(den)/_components/ui/page-header";
 import { DenSegmented } from "../../../app/(den)/_components/ui/segmented";
 import { DenSelect } from "../../../app/(den)/_components/ui/select";
 import { DenTable, type DenTableColumn } from "../../../app/(den)/_components/ui/table";
-import { StackedDailyChart } from "../../../app/(den)/dashboard/_features/gateway-usage/stacked-daily-chart";
-import { useSeriesColors } from "../../../app/(den)/dashboard/_features/gateway-usage/use-series-colors";
+import { StackedDailyChart } from "../../../app/(den)/dashboard/_features/analytics/stacked-daily-chart";
+import { useSeriesColors } from "../../../app/(den)/dashboard/_features/analytics/use-series-colors";
 import {
   FREE_AUTO_RANGES,
   organizationsCsv,

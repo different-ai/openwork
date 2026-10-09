@@ -939,6 +939,13 @@
       "when": 1791507341644,
       "tag": "0134_managed_deployments",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "5",
+      "when": 1791528001798,
+      "tag": "0135_restore_legacy_analytics",
+      "breakpoints": true
     }
   ]
 }

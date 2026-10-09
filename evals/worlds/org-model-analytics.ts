@@ -1,35 +1,24 @@
-import { allocateFreePort } from "@openwork/cdp";
-import type { Place, Seed } from "@openwork/env";
+import { queryDenDatabase, type Seed } from "@openwork/env";
+import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
-export async function orgModelAnalyticsWorld(seed: Seed, { place }: { place: Place }) {
-  // This journey only reads stored Gateway usage, never calls an upstream.
-  // Match the Gateway admin world: local URLs satisfy deployment validation;
-  // the remote provisioner supplies its own Gateway URLs.
-  const gatewayUrl = `http://127.0.0.1:${await allocateFreePort()}`;
-  const den = await seed.den({
-    web: true,
-    schema: "migrate",
-    org: { name: "Gateway reporting" },
-    env: {
-      DEN_ORG_MODE: "multi_org", DEN_PLAN_GATING_ENABLED: "false", GATEWAY_ENABLED: "true",
-      ...(place.kind === "local" ? { NODE_ENV: "test", OPENWORK_DEV_MODE: "1", DB_MODE: "mysql", GATEWAY_PROXY_BASE_URL: gatewayUrl, GATEWAY_PUBLIC_BASE_URL: gatewayUrl } : {}),
-      PROVISIONER_MODE: "stub", RESEND_API_KEY: "", STRIPE_SECRET_KEY: "", SENTRY_DSN: "",
-    },
-  });
-  const provider = await seed.api(den.admin, "/v1/inference-providers", {
-    method: "POST",
-    body: JSON.stringify({
-      name: "Reporting provider", providerId: "openrouter", modelIds: ["openai/gpt-4o-mini"],
-      credential: { kind: "api_key", secret: "reporting-fixture-not-a-real-key" }, allMembers: true,
-    }),
-  });
-  if (provider.response.status !== 201) throw new Error(`Reporting provider setup failed: HTTP ${provider.response.status}`);
-  const web = await seed.web({
-    den,
-    signedInAs: den.admin,
-    startPath: "/dashboard/ai-gateway",
-    headless: true,
-    viewport: { width: 1440, height: 1100 },
-  });
-  return { den, web };
+export async function orgModelAnalyticsWorld(seed: Seed) {
+  const den = await seed.den({ web: true, org: { name: "Analytics team" }, env: { DEN_ORG_MODE: "multi_org", DEN_PLAN_GATING_ENABLED: "false" } });
+  const web = await seed.web({ den, signedInAs: den.admin,
+    startPath: "/dashboard/analytics", headless: true, viewport: { width: 1440, height: 1100 } });
+  return { den, web, async analyticsStoreUnavailable(unavailable: boolean) {
+    // This world owns the disposable store. Preserve its rows while making
+    // analytics reads fail, leaving authentication and subscription storage up.
+    const sql = unavailable ? "RENAME TABLE telemetry_event TO telemetry_event_unavailable" : "RENAME TABLE telemetry_event_unavailable TO telemetry_event";
+    if (den.placement?.kind === "daytona") {
+      const script = `import { createConnection } from "/workspace/ee/packages/den-db/node_modules/mysql2/promise.js";
+        const connection = await createConnection("mysql://root:password@127.0.0.1:3306/openwork_den");
+        try { await connection.query(${JSON.stringify(sql)}); } finally { await connection.end(); }`;
+      const encoded = Buffer.from(script).toString("base64");
+      const result = await execInSandbox(defaultDaytonaExec, den.placement.sandboxId, `printf %s ${encoded} | base64 -d | node --input-type=module`, { timeoutMs: 15_000, context: "Arrange analytics storage availability" });
+      if (result.code !== 0) throw new Error("Could not arrange analytics storage availability");
+    } else {
+      if (!den.database) throw new Error("Analytics outage proof requires its own isolated database");
+      await queryDenDatabase(den.database.url, sql);
+    }
+  } };
 }

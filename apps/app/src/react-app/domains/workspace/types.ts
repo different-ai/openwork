@@ -3,6 +3,7 @@ import type { ComposerAttachment, WorkspacePreset } from "../../../app/types";
 export type CreateWorkspaceScreen = "chooser" | "local";
 
 export type CreateWorkspaceOptions = {
+  projectLabel?: string | null;
   /** Saved as the first session's composer draft after the workspace is created. */
   firstTaskPrompt?: string | null;
   /** Seeded into the first session's composer with the draft, then sent by auto-send. */
@@ -33,6 +34,7 @@ export type CreateWorkspaceModalProps = {
   importingConfig?: boolean;
   submitting?: boolean;
   localError?: string | null;
+  showProjectLabel?: boolean;
   showClose?: boolean;
   defaultPreset?: WorkspacePreset;
   title?: string;
