@@ -82,7 +82,8 @@ type ComposerProps = {
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   attachments: ComposerAttachment[];
-  onAttachFiles: (files: File[]) => void;
+  /** `draftOffset` is the caret position in the draft; omitted, the chips are appended. */
+  onAttachFiles: (files: File[], draftOffset?: number) => void;
   onRemoveAttachment: (id: string) => void;
   attachmentsEnabled: boolean;
   /** True while the draft's attachments are being compressed/uploaded during a send; chips show a spinner overlay. */
@@ -111,7 +112,7 @@ type ComposerProps = {
   onInsertMention: (kind: ComposerMentionKind, value: string, draft?: string) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
-  onPasteText: (text: string) => void;
+  onPasteText: (text: string, draftOffset?: number) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
   pastedText: PastedTextChip[];
   onExpandPastedText: (id: string) => void;
@@ -1169,7 +1170,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     syncAttachmentChipStatus(root, props.attachmentsUploading ? "uploading" : "ready");
   }, [props.attachmentsUploading, props.attachments]);
 
-  const addAttachments = async (inputFiles: File[]) => {
+  const addAttachments = async (inputFiles: File[], draftOffset?: number) => {
     if (!inputFiles.length) return;
     if (!props.attachmentsEnabled) {
       toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
@@ -1180,7 +1181,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     // endpoint or provider) with their own errors instead of a composer rule.
     // Oversized images are compressed at send time (see image-compression.ts)
     // so the chip appears instantly instead of blocking on canvas work here.
-    props.onAttachFiles(inputFiles);
+    props.onAttachFiles(inputFiles, draftOffset);
   };
 
   const panelRoundedClass =
@@ -1363,7 +1364,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 const files = Array.from(event.clipboardData?.files ?? []);
                 if (files.length) {
                   event.preventDefault();
-                  void addAttachments(files);
+                  void addAttachments(files, editorRef.current?.draftOffsetAtSelection() ?? undefined);
                   return;
                 }
 

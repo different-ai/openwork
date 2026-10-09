@@ -119,3 +119,67 @@ test(`a member (${resolveEvalEngine()}): my sent message shows my file, connecto
     await user.screenshot();
   });
 });
+
+const secondLine = "Then list the open questions.";
+
+test(`a member (${resolveEvalEngine()}): a screenshot and long text I paste between two lines stay there in my message`, async ({ world, user, probe, step, evidence }) => {
+  // Reads the draft or the sent message in document order as named pieces.
+  const order = async (scope: string) => {
+    const selectors = ['[data-lexical-text="true"]', ".whitespace-pre-wrap", '[data-composer-badge="pasted"]', "img"];
+    const { elements } = await probe.dom(selectors.map((selector) => `${scope} ${selector}`).join(", "));
+    const pieces = elements.map((element) => element.tag === "img" ? "screenshot"
+      : element.text.includes("Pasted text") ? "pasted text"
+        : element.text.includes(world.attachPrompt) ? "first line"
+          : element.text.includes(secondLine) ? "second line" : "");
+    return pieces.filter((piece, index) => piece && piece !== pieces[index - 1]).join(" → ");
+  };
+  const expected = "first line → screenshot → pasted text → second line";
+
+  await step("before: the draft has two lines and the caret sits on the empty line between them", async () => {
+    await user.type("composer", world.attachPrompt);
+    await user.press("Shift+Enter");
+    await user.press("Shift+Enter");
+    await user.type("composer", secondLine);
+    await user.press("Home");
+    await user.press("ArrowLeft");
+    const draft = await order('[contenteditable="true"]');
+    evidence.recordAssertionEvidence("The draft has two lines", draft, draft === "first line → second line");
+    expect(draft).toBe("first line → second line");
+    await user.screenshot();
+  });
+
+  await step("after: the pasted screenshot and the collapsed pasted text sit on that line, between the two lines", async () => {
+    await world.pasteImageIntoComposer("pasted-screenshot.png");
+    await probe.eventually(() => order('[contenteditable="true"]'), {
+      within: 10_000, label: "the screenshot chip appears", until: (value) => value.includes("screenshot"),
+    });
+    await world.pasteIntoComposer(pasted);
+    const draft = await probe.eventually(() => order('[contenteditable="true"]'), {
+      within: 10_000, label: "the pasted-text chip appears", until: (value) => value.includes("pasted text"),
+    });
+    await user.notSee({ text: pastedTail });
+    evidence.recordAssertionEvidence("The pasted items stay where the caret was", draft, draft === expected);
+    expect(draft).toBe(expected);
+    await user.screenshot();
+  });
+
+  await step("after: the sent message keeps the screenshot and pasted text between the two lines", async () => {
+    await user.click("Run task");
+    await user.see({ text: world.attachReply }, { timeoutMs: 90_000 });
+    const sent = await probe.eventually(() => order('[data-message-role="user"]'), {
+      within: 15_000, label: "the sent message shows both pasted items", until: (value) => value.includes("screenshot") && value.includes("pasted text"),
+    });
+    evidence.recordAssertionEvidence("The sent message keeps the composed order", sent, sent === expected);
+    expect(sent).toBe(expected);
+    await user.screenshot();
+  });
+
+  await step("then the model received the pasted text between the two lines", async () => {
+    await user.see({ text: world.attachReply });
+    const body = world.providerBodies().filter((request) => request.includes(world.attachPrompt)).at(-1) ?? "";
+    const positions = [world.attachPrompt, pastedTail, secondLine].map((text) => body.indexOf(text));
+    const between = positions.every((position, index) => position >= 0 && (index === 0 || position > (positions[index - 1] ?? -1)));
+    evidence.recordAssertionEvidence("The model request keeps the composed order", `first line at ${positions[0]}, pasted text ends at ${positions[1]}, second line at ${positions[2]}`, between);
+    expect(between).toBe(true);
+  });
+});
