@@ -933,13 +933,19 @@ const LOCAL_RUNTIME_UNREACHABLE = Object.freeze({
   message: "Can't reach OpenWork on your desktop. Make sure OpenWork is running.",
 })
 
+/** Codes the local OpenWork server answers with when its engine is down or not started. */
+const LOCAL_ENGINE_DOWN_CODES = new Set(["opencode_unreachable", "opencode_engine_unreachable", "engine_v2_preview_not_running"])
+
+/** True only when the local runtime gave no answer, or said its engine is down; an engine's own error is not that. */
 function isLocalRuntimeUnreachable(error) {
   if (error?.code === "runtime_unavailable" || error?.name === "TimeoutError") return true
-  // A 5xx while creating the session: the local proxy or engine is down or broken.
-  if (typeof error?.status === "number") return error.status >= 500
-  // No response at all: connection refused, reset, or timed out.
-  return /fetch failed|request failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|other side closed/i
-    .test(`${serializedError(error)} ${serializedError(error?.body ?? "")}`)
+  // The session client keeps the server's code, or its whole body when the body uses `error`.
+  if (LOCAL_ENGINE_DOWN_CODES.has(error?.code) || LOCAL_ENGINE_DOWN_CODES.has(error?.body?.error)) return true
+  if (typeof error?.status === "number") return false
+  // No response at all: the session client's network failure, or a raw fetch that was refused, reset or timed out.
+  if (error?.code === "request_failed") return true
+  return /fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|other side closed/i
+    .test(`${serializedError(error)} ${serializedError(error?.cause ?? "")}`)
 }
 
 /** The failure Den stores when a remote command could not start a local session. */
@@ -947,13 +953,17 @@ export function classifyRemoteSessionCommandError(error) {
   if (error?.code === "workspace_unavailable") {
     return { code: "workspace_unavailable", message: serializedError(error).slice(0, REMOTE_SESSION_MESSAGE_LIMIT) }
   }
+  const detail = serializedError(error)
   // Once a session exists the task started; only a failure to start it is about reachability.
   if (Reflect.get(Object(error), "sessionId") === undefined && isLocalRuntimeUnreachable(error)) {
-    return { ...LOCAL_RUNTIME_UNREACHABLE }
+    return {
+      code: LOCAL_RUNTIME_UNREACHABLE.code,
+      message: `${LOCAL_RUNTIME_UNREACHABLE.message}${detail ? ` (details: ${detail.slice(0, 300)})` : ""}`,
+    }
   }
   return {
     code: "execution_failed",
-    message: (serializedError(error) || "Remote session creation failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT),
+    message: (detail || "Remote session creation failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT),
   }
 }
 

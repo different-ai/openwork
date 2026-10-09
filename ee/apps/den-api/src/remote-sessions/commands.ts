@@ -116,6 +116,8 @@ export interface RemoteSessionCommandStore {
    */
   report(input: ReportInput): Promise<RemoteSessionReportResult>
   get(input: { commandId: string; organizationId: string; createdByUserId: string }): Promise<RemoteSessionCommand | null>
+  /** The owner's command that most recently delivered or failed after `since`, or null. */
+  latestSettled(input: { organizationId: string; ownerMemberId: string; since: number }): Promise<RemoteSessionCommand | null>
   listPendingForRunner(input: {
     organizationId: string
     ownerMemberId: string
@@ -367,6 +369,16 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     const existing = await db.select({ id: RemoteSessionCommandTable.id })
       .from(RemoteSessionCommandTable).where(scope).limit(1)
     return existing[0] ? "conflict" : "not_found"
+  },
+
+  async latestSettled(input) {
+    const rows = await db.select().from(RemoteSessionCommandTable).where(and(
+      eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+      eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
+      inArray(RemoteSessionCommandTable.status, ["delivered", "failed"]),
+      gt(RemoteSessionCommandTable.updated_at, new Date(input.since)),
+    )).orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id)).limit(1)
+    return rows[0] ? mapCommand(rows[0]) : null
   },
 
   async get(input) {

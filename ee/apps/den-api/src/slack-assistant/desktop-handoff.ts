@@ -146,7 +146,7 @@ export function nextHandoffStep(
 ): HandoffStep {
   if (!command) return { action: "close", outcome: "abandoned" }
   if (command.status === "failed")
-    return { action: "post", notice: { kind: "undeliverable", message: command.error?.message ?? null }, outcome: "undeliverable" }
+    return { action: "post", notice: { kind: "undeliverable", message: command.error?.message ?? null, code: command.error?.code ?? null }, outcome: "undeliverable" }
   if (
     command.status === "expired" ||
     (command.status === "pending" && command.expiresAt <= now) ||

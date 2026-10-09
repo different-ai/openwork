@@ -964,6 +964,38 @@ const desktopRuntimeUnreachableFields = {
   note: "OpenWork is not running on that desktop, so the task did not start. Tell the person to make sure OpenWork is running there; do not create the same task again until they say it is.",
 }
 
+/** After a desktop reported OpenWork unreachable, new desktop tasks for it fail at once for this long instead of queueing. */
+const DESKTOP_UNREACHABLE_HOLD_MS = 2 * 60_000
+
+/**
+ * The owner's latest settled command failed because OpenWork was not running on the desktop, and nothing has
+ * delivered since: queueing again would fail the same way. A delivered command (or its progress) clears it.
+ */
+async function recentDesktopUnreachable(
+  deps: RemoteSessionExecuteDeps,
+  input: RemoteSessionExecuteInput,
+  ownerMemberId: string,
+  computerId: string | null,
+): Promise<RemoteSessionToolResult | null> {
+  const latest = await deps.commandStore.latestSettled({
+    organizationId: input.organizationId,
+    ownerMemberId,
+    since: Date.now() - DESKTOP_UNREACHABLE_HOLD_MS,
+  })
+  if (latest?.status !== "failed" || latest.error?.code !== DESKTOP_RUNTIME_UNREACHABLE_CODE) return null
+  if (computerId && latest.claimedByRunnerId && automationRunnerRowId({
+    organizationId: latest.organizationId,
+    ownerMemberId: latest.ownerMemberId,
+    runnerId: latest.claimedByRunnerId,
+  }) !== computerId) return null
+  return errorResult({
+    target: "desktop",
+    error: DESKTOP_RUNTIME_UNREACHABLE_CODE,
+    message: "Can't reach OpenWork on your desktop. Make sure OpenWork is running.",
+    ...desktopRuntimeUnreachableFields,
+  })
+}
+
 /** Added to a desktop create that a Slack run made: Den posts the outcome there, so the run should not wait. */
 const postedInThreadFields = {
   resultPostedInThread: true,
@@ -1123,6 +1155,8 @@ export async function executeRemoteSessionCapability(
       }
       const resolved = resolveDesktopTarget(body, targets.computers, Date.now())
       if (!resolved.ok) return errorResult({ error: resolved.error, message: resolved.message, retryable: false })
+      const unreachable = await recentDesktopUnreachable(deps, input, targets.ownerMemberId, resolved.computerId)
+      if (unreachable) return unreachable
       const command = await deps.commandStore.enqueue({
         organizationId: input.organizationId,
         ownerMemberId: targets.ownerMemberId,
@@ -1158,6 +1192,8 @@ export async function executeRemoteSessionCapability(
           message: "No desktop is connected for your account. Open the OpenWork desktop app and try again.",
         })
       }
+      const unreachable = await recentDesktopUnreachable(deps, input, presence.ownerMemberId, null)
+      if (unreachable) return unreachable
       const command = await deps.commandStore.enqueue({
         organizationId: input.organizationId,
         ownerMemberId: presence.ownerMemberId,
