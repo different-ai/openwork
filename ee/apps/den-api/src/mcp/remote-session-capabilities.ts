@@ -957,6 +957,13 @@ export type RemoteSessionExecuteInput = {
   headlessRunTokenId?: string | null
 }
 
+/** The desktop took the command but its local OpenWork server or engine did not answer. */
+const DESKTOP_RUNTIME_UNREACHABLE_CODE = "openwork_unreachable"
+const desktopRuntimeUnreachableFields = {
+  retryable: false,
+  note: "OpenWork is not running on that desktop, so the task did not start. Tell the person to make sure OpenWork is running there; do not create the same task again until they say it is.",
+}
+
 /** Added to a desktop create that a Slack run made: Den posts the outcome there, so the run should not wait. */
 const postedInThreadFields = {
   resultPostedInThread: true,
@@ -1067,6 +1074,7 @@ export async function executeRemoteSessionCapability(
         error: command.error,
         expiresAt: command.expiresAt,
         session: command.session,
+        ...(command.status === "failed" && command.error?.code === DESKTOP_RUNTIME_UNREACHABLE_CODE ? desktopRuntimeUnreachableFields : {}),
       })
     }
   }
