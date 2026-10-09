@@ -2438,6 +2438,9 @@ export type PermissionDeniedError = {
 export type PermissionChangedBy = {
   memberId: string;
   name: string | null;
+  /**
+   * Null unless the caller holds teams.view, or when the member has no email.
+   */
   email: string | null;
 };
 
@@ -23330,7 +23333,7 @@ export type PostV1McpConnectionsByConnectionIdOauthIssuerReviewErrors = {
    */
   401: UnauthorizedError;
   /**
-   * The caller needs the Manage connections permission, and a recent sign-in to confirm an issuer.
+   * The caller needs the Manage connections permission, and a recent interactive sign-in (not an API key) to confirm an issuer.
    */
   403: ForbiddenError;
   /**

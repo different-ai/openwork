@@ -153,7 +153,7 @@ const permissionPersonSchema = z.object({
 const permissionChangedBySchema = z.object({
   memberId: z.string(),
   name: z.string().nullable(),
-  email: z.string().nullable(),
+  email: z.string().nullable().describe("Null unless the caller holds teams.view, or when the member has no email."),
 }).meta({ ref: "PermissionChangedBy" })
 
 const adminTeamSummarySchema = z.object({ id: z.string(), name: z.string(), memberCount: z.number().int() })
@@ -473,9 +473,10 @@ async function listActiveSets(organizationId: OrganizationId): Promise<Permissio
 
 type ChangedByRow = { changedByOrgMembershipId: MemberId | null; changedByName: string | null; changedByEmail: string | null }
 
-function changedBy(row: ChangedByRow) {
+/** Who made a change. The email follows the roster rule (mayViewRosters); the name is always returned. */
+function changedBy(row: ChangedByRow, includeEmail: boolean) {
   if (!row.changedByOrgMembershipId) return null
-  return { memberId: row.changedByOrgMembershipId, name: row.changedByName, email: row.changedByEmail }
+  return { memberId: row.changedByOrgMembershipId, name: row.changedByName, email: includeEmail ? row.changedByEmail : null }
 }
 
 const historyColumns = {
@@ -505,7 +506,8 @@ function historyQuery(organizationId: OrganizationId, permissionSetId: Permissio
  * Who a set applies to includes people's names and emails (team rosters, the
  * members with the admin role). Those are only returned to callers who may
  * see any team's members (teams.view, the one roster view permission);
- * everyone else holding permissions.view gets the counts.
+ * everyone else holding permissions.view gets the counts. The same rule gates
+ * the email of whoever changed a permission (detail and history).
  */
 async function mayViewRosters(c: PermissionRouteContext): Promise<boolean> {
   return (await callerPermissions(c))?.has("teams.view") ?? false
@@ -558,7 +560,7 @@ async function loadPermissionSetDetail(organizationId: OrganizationId, set: Perm
       status: state.status,
       locked: state.locked,
       lastChangedAt: state.latest?.createdAt.toISOString() ?? null,
-      lastChangedBy: state.latest ? changedBy(state.latest) : null,
+      lastChangedBy: state.latest ? changedBy(state.latest, includeIdentities) : null,
       lastChangeSource: state.latest?.source ?? null,
     })),
     appliesTo,
@@ -801,7 +803,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "Get a permission set",
-      description: "Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people are only included when the caller also holds teams.view; otherwise only the counts are. Archived team sets are still readable. Requires permissions.view and the Permissions feature.",
+      description: "Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people, and the email of whoever last changed each permission, are only included when the caller also holds teams.view; otherwise only the counts (and the changer's name) are. Archived team sets are still readable. Requires permissions.view and the Permissions feature.",
       responses: {
         200: jsonResponse("Permission set returned successfully.", permissionSetResponseSchema),
         400: jsonResponse("The permission set id was invalid.", invalidRequestSchema),
@@ -936,7 +938,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Permissions"],
       summary: "List permission set history",
-      description: "Lists every recorded change to a set's permissions, newest first: the permission, the status it was set to, where the change came from (user, seed, reconcile, migration) and who made it. Paginated with cursor and limit. Requires permissions.view and the Permissions feature.",
+      description: "Lists every recorded change to a set's permissions, newest first: the permission, the status it was set to, where the change came from (user, seed, reconcile, migration) and who made it. The person's email is only included when the caller also holds teams.view; their name always is. Paginated with cursor and limit. Requires permissions.view and the Permissions feature.",
       responses: {
         200: jsonResponse("History page returned successfully.", permissionHistoryResponseSchema),
         400: jsonResponse("The permission set id, cursor or limit was invalid.", invalidRequestSchema),
@@ -962,6 +964,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         .orderBy(desc(PermissionSetPermissionTable.createdAt), desc(PermissionSetPermissionTable.id))
         .limit(limit + 1)
       const page = keysetPage(rows, limit, (row) => ({ at: row.createdAt, id: row.id }))
+      const includeEmail = await mayViewRosters(c)
 
       return c.json({
         items: page.items.map((row) => ({
@@ -970,7 +973,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
           label: isPermissionKey(row.permissionKey) ? getPermissionDefinition(row.permissionKey).label : null,
           status: row.status,
           source: row.source,
-          changedBy: changedBy(row),
+          changedBy: changedBy(row, includeEmail),
           createdAt: row.createdAt.toISOString(),
         })),
         nextCursor: page.nextCursor,

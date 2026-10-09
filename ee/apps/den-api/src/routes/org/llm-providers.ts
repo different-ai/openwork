@@ -19,6 +19,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../llm/custom-provider.js"
 import { probeEndpoint, verifyModels } from "../../llm/endpoint-probe.js"
+import { redactLlmProviderConfig } from "../../llm/llm-provider-config-redaction.js"
 import {
   ProviderCredentialError,
   bedrockCredentialError,
@@ -44,7 +45,8 @@ import { organizationAllowsManagedModels, repairMemberInferenceAccessIfNeeded } 
 import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
 import { listAccessibleLlmProviderAccess, listGrantedLlmProviderMemberIds } from "./llm-provider-access.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { hasPermission, idParamSchema, orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
+import { hasPermission, idParamSchema, memberPermissionsForRequest, orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
+import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
 
 type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
 type LlmProviderAccessId = typeof LlmProviderAccessTable.$inferSelect.id
@@ -253,6 +255,8 @@ function isRouteFailure(value: unknown): value is RouteFailure {
 /**
  * The provider's creator may always change it. Anyone else needs `key`; holders
  * of `key` (sensitive) also need a recent sign-in, even for their own provider.
+ * Admins always need a recent sign-in, as before Permissions: an admin creator
+ * whose Admin set lacks `key` still steps up. Non-admin creators do not.
  * Returns the failure response, or null when allowed.
  */
 async function authorizeLlmProviderChange(
@@ -268,8 +272,13 @@ async function authorizeLlmProviderChange(
     return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
   }
 
-  if (provider.createdByOrgMembershipId === payload.currentMember.id) return null
-  return c.json({ error: "forbidden", message }, 403)
+  if (provider.createdByOrgMembershipId !== payload.currentMember.id) return c.json({ error: "forbidden", message }, 403)
+  const permissions = await memberPermissionsForRequest(c)
+  if (permissions?.isAdmin || permissions?.isOwner) {
+    const fresh = ensureFreshPrivilegedSession(c)
+    if (!fresh.ok) return c.json(fresh.response, 403)
+  }
+  return null
 }
 
 async function canAccessLlmProvider(input: {
@@ -604,6 +613,8 @@ async function loadLlmProviders(input: {
   currentMemberId: MemberId
   memberTeams: Array<{ id: TeamId }>
   isAdmin: boolean
+  /** Holds llm_providers.update: sees every provider's stored configuration. */
+  canUpdateAll: boolean
   scope: "usable" | "manageable"
 }) {
   const accessibleAccess = await listAccessibleLlmProviderAccess({
@@ -751,8 +762,20 @@ async function loadLlmProviders(input: {
     accessibleViaByProviderId.set(row.llmProviderId, existing)
   }
 
-  return providers.map((provider) => ({
+  // Custom provider configurations keep arbitrary fields, so they can carry inline
+  // credentials. Only callers who can edit the provider (llm_providers.update or its
+  // creator) or who are granted it (and so already receive the full configuration from
+  // /connect) see it as stored; View-only callers get secret-bearing fields removed.
+  const accessibleProviderIdSet = new Set(accessibleProviderIds)
+  const mayReadStoredConfig = (provider: LlmProviderRow) => input.canUpdateAll
+    || provider.createdByOrgMembershipId === input.currentMemberId
+    || accessibleProviderIdSet.has(provider.id)
+
+  return providers.map((provider) => {
+    const storedConfig = mayReadStoredConfig(provider)
+    return {
     ...provider,
+    providerConfig: storedConfig ? provider.providerConfig : redactLlmProviderConfig(provider.providerConfig ?? {}),
     ...(input.scope === "usable" ? {
       hasMyCredential: provider.credentialMode === "per_member" && myCredentialProviderIds.has(provider.id),
     } : {}),
@@ -763,7 +786,7 @@ async function loadLlmProviders(input: {
       .map((model) => ({
         id: model.modelId,
         name: model.name,
-        config: model.modelConfig,
+        config: storedConfig ? model.modelConfig : redactLlmProviderConfig(model.modelConfig ?? {}),
         createdAt: model.createdAt,
       }))
       .sort((left, right) => left.name.localeCompare(right.name)),
@@ -793,7 +816,8 @@ async function loadLlmProviders(input: {
       })),
     },
     accessibleVia: accessibleViaByProviderId.get(provider.id) ?? { orgMembershipIds: [], teamIds: [] },
-  }))
+    }
+  })
 }
 
 async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof llmProviderWriteSchema>, externalKey?: string) {
@@ -1088,17 +1112,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/llm-providers/by-key/:externalKey",
-    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by stable key", description: "Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning.", responses: {
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by stable key", description: "Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.", responses: {
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
     orgPermissionRoute("llm_providers.view"),
     paramValidator(externalKeyParamsSchema),
+    resolveMemberTeamsMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
       const [row] = await db.select().from(LlmProviderTable).where(and(eq(LlmProviderTable.organizationId, payload.organization.id), eq(LlmProviderTable.externalKey, c.req.valid("param").externalKey))).limit(1)
       if (!row) return c.json({ error: "llm_provider_not_found" }, 404)
-      const providers = await loadLlmProviders({ organizationId: payload.organization.id, currentMemberId: payload.currentMember.id, memberTeams: [], isAdmin: true, scope: "manageable" })
+      const providers = await loadLlmProviders({ organizationId: payload.organization.id, currentMemberId: payload.currentMember.id, memberTeams: c.get("memberTeams") ?? [], isAdmin: true, canUpdateAll: await hasPermission(c, "llm_providers.update"), scope: "manageable" })
       const value = providers.find((provider) => provider.id === row.id)
       if (!value) return c.json({ error: "llm_provider_not_found" }, 404)
       return c.json({ llmProvider: { ...value, apiKey: undefined } })
@@ -1107,17 +1132,18 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/llm-providers/:llmProviderId",
-    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by id", description: "Reads a single LLM provider by id.", responses: {
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by id", description: "Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.", responses: {
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
     orgPermissionRoute("llm_providers.view"),
     paramValidator(orgLlmProviderParamsSchema),
+    resolveMemberTeamsMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
       const [row] = await db.select().from(LlmProviderTable).where(and(eq(LlmProviderTable.organizationId, payload.organization.id), eq(LlmProviderTable.id, parseLlmProviderId(c.req.valid("param").llmProviderId)))).limit(1)
       if (!row) return c.json({ error: "llm_provider_not_found" }, 404)
-      const providers = await loadLlmProviders({ organizationId: payload.organization.id, currentMemberId: payload.currentMember.id, memberTeams: [], isAdmin: true, scope: "manageable" })
+      const providers = await loadLlmProviders({ organizationId: payload.organization.id, currentMemberId: payload.currentMember.id, memberTeams: c.get("memberTeams") ?? [], isAdmin: true, canUpdateAll: await hasPermission(c, "llm_providers.update"), scope: "manageable" })
       const value = providers.find((provider) => provider.id === row.id)
       if (!value) return c.json({ error: "llm_provider_not_found" }, 404)
       return c.json({ llmProvider: { ...value, apiKey: undefined } })
@@ -1305,7 +1331,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "List organization LLM providers",
-      description: "Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den.",
+      description: "Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with secret-bearing providerConfig and model config fields removed.",
       responses: {
         200: jsonResponse("Accessible organization LLM providers returned successfully.", llmProviderListResponseSchema),
         400: jsonResponse("The provider list path parameters were invalid.", invalidRequestSchema),
@@ -1343,6 +1369,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         currentMemberId: payload.currentMember.id,
         memberTeams,
         isAdmin: canViewAll,
+        canUpdateAll,
         scope: query.scope,
       })
 

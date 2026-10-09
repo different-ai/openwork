@@ -5388,7 +5388,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by stable key
    *
-   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning.
+   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.
    */
   public getV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5497,7 +5497,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by id
    *
-   * Reads a single LLM provider by id.
+   * Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get providerConfig and model configs with secret-bearing fields removed.
    */
   public getV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5660,7 +5660,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List organization LLM providers
    *
-   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den.
+   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with secret-bearing providerConfig and model config fields removed.
    */
   public getV1LlmProviders<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -6917,7 +6917,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List configured gateway catalog models
    *
-   * Returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. Callers who also hold Manage Gateway providers first refresh the stored models from the catalog; View-only callers get the stored models without any refresh or write. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires the View Gateway providers permission and enabled Gateway management.
+   * Returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. Callers who also hold Manage Gateway providers and have recently signed in (or use an API key) first refresh the stored models from the catalog; everyone else gets the stored models without any refresh or write. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires the View Gateway providers permission and enabled Gateway management.
    */
   public getV1InferenceProvidersByInferenceProviderIdModels<ThrowOnError extends boolean = false>(
     parameters: {
@@ -8134,7 +8134,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get a permission set
    *
-   * Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people are only included when the caller also holds teams.view; otherwise only the counts are. Archived team sets are still readable. Requires permissions.view and the Permissions feature.
+   * Returns one permission set with the status of every catalog permission (allow or deny, whether it is locked on, and who last changed it) and who it applies to: everyone (Member permissions), members with the admin role and Admin teams (Admin permissions), or the linked team and its members. The names and emails of those people, and the email of whoever last changed each permission, are only included when the caller also holds teams.view; otherwise only the counts (and the changer's name) are. Archived team sets are still readable. Requires permissions.view and the Permissions feature.
    */
   public getV1PermissionsSetsByPermissionSetId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -8196,7 +8196,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List permission set history
    *
-   * Lists every recorded change to a set's permissions, newest first: the permission, the status it was set to, where the change came from (user, seed, reconcile, migration) and who made it. Paginated with cursor and limit. Requires permissions.view and the Permissions feature.
+   * Lists every recorded change to a set's permissions, newest first: the permission, the status it was set to, where the change came from (user, seed, reconcile, migration) and who made it. The person's email is only included when the caller also holds teams.view; their name always is. Paginated with cursor and limit. Requires permissions.view and the Permissions feature.
    */
   public getV1PermissionsSetsByPermissionSetIdHistory<ThrowOnError extends boolean = false>(
     parameters: {
@@ -10487,7 +10487,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Review a changed External MCP OAuth issuer
    *
-   * Requires the Manage connections permission. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirming an issuer also needs a recent sign-in. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.
+   * Requires the Manage connections permission. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirming an issuer also needs a recent sign-in and is not available to API keys. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.
    */
   public postV1McpConnectionsByConnectionIdOauthIssuerReview<ThrowOnError extends boolean = false>(
     parameters: {

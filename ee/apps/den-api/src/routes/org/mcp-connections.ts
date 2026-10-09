@@ -2106,12 +2106,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Review a changed External MCP OAuth issuer",
-      description: "Requires the Manage connections permission. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirming an issuer also needs a recent sign-in. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.",
+      description: "Requires the Manage connections permission. Repeats live OAuth discovery and either previews the issuers currently advertised by the MCP resource or explicitly confirms one. Confirming an issuer also needs a recent sign-in and is not available to API keys. Confirmation never trusts an unadvertised issuer. Changing issuers invalidates issuer-bound OAuth clients and credentials so members reconnect cleanly.",
       responses: {
         200: jsonResponse("Issuer review result.", issuerReviewResponseSchema),
         400: jsonResponse("Invalid issuer review request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Manage connections permission, and a recent sign-in to confirm an issuer.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage connections permission, and a recent interactive sign-in (not an API key) to confirm an issuer.", forbiddenSchema),
         404: jsonResponse("Unknown connection.", connectionNotFoundSchema),
         409: jsonResponse("The connection changed or the requested issuer is not currently advertised.", connectionConflictSchema),
         502: jsonResponse("Live OAuth discovery failed.", requirementsDiscoveryFailedSchema),
@@ -2126,6 +2126,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     jsonValidator(issuerReviewBodySchema),
     async (c) => {
       if (c.req.valid("json").action === "confirm") {
+        // The recent sign-in check treats API keys as fresh, so deny them outright: confirming
+        // re-trusts an issuer and needs an interactive, recently signed-in admin. Preview stays open.
+        if (c.get("apiKey")) {
+          return c.json({ error: "forbidden", message: "Confirm an issuer from the dashboard; API keys can't do this." }, 403)
+        }
         const fresh = ensureFreshPrivilegedSession(c)
         if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
       }
@@ -3216,7 +3221,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
       if (connection.credentialMode === "shared") {
         // Connecting a shared credential IS the org-level integration setup —
-        // admin-only, like creating the connection itself.
+        // admin-only, like creating the connection itself. Before Permissions this was
+        // ensureOrganizationAdminRole, which never required a recent sign-in, and
+        // connections.manage is not sensitive, so neither does this.
         const permission = await requirePermission(c, "connections.manage")
         if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
       } else {

@@ -350,6 +350,81 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
     expect(ownerDirectAdmins.map((person) => person.memberId)).toEqual([world.ids.adam]);
   });
 
+  await step("Tess, without “View any team”, sees who changed a permission by name but not their email; the owner sees both", async () => {
+    const tessHistory = await world.request(world.tess, "GET", `/v1/permissions/sets/${supportSetId}/history`);
+    const tessDetail = await world.request(world.tess, "GET", `/v1/permissions/sets/${supportSetId}`);
+    const ownerHistory = await world.request(world.owner, "GET", `/v1/permissions/sets/${supportSetId}/history`);
+    const tessChangers = rows(field(tessHistory.body, "items")).map((item) => field(item, "changedBy")).filter(isRecord);
+    const tessLastChangers = rows(field(field(tessDetail.body, "set"), "permissions")).map((state) => field(state, "lastChangedBy")).filter(isRecord);
+    const ownerChangers = rows(field(ownerHistory.body, "items")).map((item) => field(item, "changedBy")).filter(isRecord);
+    const emailLeaked = [tessHistory.text, tessDetail.text].some((text) => text.includes("@example.test"));
+    const ok = tessHistory.status === 200 && tessDetail.status === 200 && ownerHistory.status === 200
+      && tessChangers.length > 0 && tessChangers.every((person) => person.email === null && typeof person.name === "string")
+      && tessLastChangers.length > 0 && tessLastChangers.every((person) => person.email === null && typeof person.name === "string")
+      && !emailLeaked
+      && ownerChangers.length > 0 && ownerChangers.every((person) => typeof person.email === "string" && String(person.email).endsWith("@example.test"));
+    evidence.recordAssertionEvidence(
+      "The email of whoever changed a permission needs View any team, like rosters; the name doesn't",
+      `Tess GET Support history → ${tessHistory.status}: ${tessChangers.map((person) => `${String(person.name)} <${String(person.email)}>`).join(", ")}; Tess GET Support set → ${tessDetail.status}: lastChangedBy ${tessLastChangers.map((person) => `${String(person.name)} <${String(person.email)}>`).join(", ")}; any email in Tess's responses: ${emailLeaked}; owner GET history: ${ownerChangers.map((person) => `${String(person.name)} <${String(person.email)}>`).join(", ")}`,
+      ok,
+    );
+    expect(tessHistory.status, summary(tessHistory)).toBe(200);
+    expect(tessDetail.status, summary(tessDetail)).toBe(200);
+    expect(tessChangers.length).toBeGreaterThan(0);
+    expect(tessChangers.every((person) => person.email === null && typeof person.name === "string")).toBe(true);
+    expect(tessLastChangers.length).toBeGreaterThan(0);
+    expect(tessLastChangers.every((person) => person.email === null && typeof person.name === "string")).toBe(true);
+    expect(emailLeaked).toBe(false);
+    expect(ownerChangers.every((person) => typeof person.email === "string" && String(person.email).endsWith("@example.test"))).toBe(true);
+  });
+
+  await step("Tess, allowed to view every provider but not edit them, gets a provider without the credential stored in its configuration; the owner who added it still sees it", async () => {
+    const inlineSecret = `inline-secret-${Date.now()}`;
+    const allowView = await world.request(world.owner, "PUT", `/v1/permissions/sets/${editorsSetId}/permissions`, { changes: [{ key: "llm_providers.view", status: "allow" }] });
+    expect(allowView.status, summary(allowView)).toBe(200);
+    const created = await world.request(world.owner, "POST", "/v1/llm-providers", {
+      name: "Inline credential provider",
+      source: "custom",
+      teamIds: [],
+      customConfig: {
+        id: "inline-credential",
+        name: "Inline credential",
+        npm: "@ai-sdk/openai-compatible",
+        env: ["INLINE_API_KEY"],
+        api: "https://inference.eval.invalid/v1",
+        options: { baseURL: "https://inference.eval.invalid/v1", apiKey: inlineSecret, headers: { Authorization: `Bearer ${inlineSecret}` } },
+        models: [{ id: "witness", name: "Witness", options: { apiKey: inlineSecret }, limit: { context: 32000, input: 32000, output: 32000 } }],
+      },
+    });
+    expect(created.status, summary(created)).toBe(201);
+    const providerId = String(field(field(created.body, "llmProvider"), "id") ?? "");
+    const tessKeys = await permissionsOf(world, world.tess);
+    const tessById = await world.request(world.tess, "GET", `/v1/llm-providers/${providerId}`);
+    const tessList = await world.request(world.tess, "GET", "/v1/llm-providers?scope=manageable");
+    const ownerById = await world.request(world.owner, "GET", `/v1/llm-providers/${providerId}`);
+    const tessConfig = field(field(tessById.body, "llmProvider"), "providerConfig");
+    const tessListed = rows(field(tessList.body, "llmProviders")).find((provider) => provider.id === providerId);
+    const leaked = [tessById.text, tessList.text].some((text) => text.includes(inlineSecret));
+    const ok = tessKeys.includes("llm_providers.view") && !tessKeys.includes("llm_providers.update")
+      && tessById.status === 200 && tessList.status === 200 && tessListed !== undefined && !leaked
+      && field(field(tessConfig, "options"), "baseURL") === "https://inference.eval.invalid/v1"
+      && ownerById.status === 200 && ownerById.text.includes(inlineSecret);
+    evidence.recordAssertionEvidence(
+      "A View-only caller gets no inline provider credential",
+      `Tess holds llm_providers.view: ${tessKeys.includes("llm_providers.view")}, llm_providers.update: ${tessKeys.includes("llm_providers.update")}; Tess GET provider → ${tessById.status} providerConfig ${JSON.stringify(tessConfig)}; Tess GET scope=manageable → ${tessList.status}, lists it: ${tessListed !== undefined}; inline secret in Tess's responses: ${leaked}; owner GET provider → ${ownerById.status}, inline secret present: ${ownerById.text.includes(inlineSecret)}`,
+      ok,
+    );
+    expect(tessKeys).toContain("llm_providers.view");
+    expect(tessKeys).not.toContain("llm_providers.update");
+    expect(tessById.status, summary(tessById)).toBe(200);
+    expect(tessList.status, summary(tessList)).toBe(200);
+    expect(tessListed).toBeDefined();
+    expect(leaked).toBe(false);
+    expect(field(field(tessConfig, "options"), "baseURL")).toBe("https://inference.eval.invalid/v1");
+    expect(ownerById.status, summary(ownerById)).toBe(200);
+    expect(ownerById.text).toContain(inlineSecret);
+  });
+
   await step("then Maya's permissions explain where each one comes from", async () => {
     const restored = await world.request(world.owner, "PUT", `/v1/permissions/sets/${supportSetId}/permissions`, { changes: [{ key: "teams.view", status: "allow" }] });
     expect(restored.status, summary(restored)).toBe(200);

@@ -39,7 +39,7 @@ import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValida
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { readSignedSessionCookieToken } from "../../session.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
-import { hasPermission, idParamSchema, orgAccessFailureStatus, permissionDeniedMessage, permissionFailureHeaders, requirePermission } from "./shared.js"
+import { idParamSchema, orgAccessFailureStatus, permissionDeniedMessage, permissionFailureHeaders, requirePermission } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 import { registerOrgGatewayUsageLimitRoutes } from "./gateway-usage-limits.js"
@@ -607,15 +607,15 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
   })
 
   // The management catalog is independent of selected wire models and group memberships.
-  app.get("/v1/inference-providers/:inferenceProviderId/models", route("List configured gateway catalog models", "Returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. Callers who also hold Manage Gateway providers first refresh the stored models from the catalog; View-only callers get the stored models without any refresh or write. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires the View Gateway providers permission and enabled Gateway management.", z.object({ modelIds: universeSchema, catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/models", route("List configured gateway catalog models", "Returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. Callers who also hold Manage Gateway providers and have recently signed in (or use an API key) first refresh the stored models from the catalog; everyone else gets the stored models without any refresh or write. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires the View Gateway providers permission and enabled Gateway management.", z.object({ modelIds: universeSchema, catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       // Admitted by View Gateway providers. The refresh can delete stored models and their
-      // group links, so only callers holding Manage Gateway providers trigger it, re-checked
-      // through the refresh's own write transaction; everyone else gets a read-only response.
-      // (Pre-Permissions every admin could refresh here without a recent sign-in, so neither is
-      // required for the refresh; admins hold both keys by default.)
-      const mayManage = await hasPermission(c, MANAGE)
+      // group links, so it runs only for callers who pass the full Manage Gateway providers
+      // check (including its recent sign-in), re-checked through the refresh's own write
+      // transaction. Everyone else, including managers with a stale session, gets the stored
+      // models read-only.
+      const mayManage = (await requirePermission(c, MANAGE)).ok
       const { provider, catalogWarning } = await refreshGatewayCatalog(
         await getProvider(db, actor, c.req.valid("param").inferenceProviderId),
         undefined,
