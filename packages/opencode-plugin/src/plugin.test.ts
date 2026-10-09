@@ -249,6 +249,28 @@ test("starts from the cache before any network call", async () => {
   await cleanup?.()
 })
 
+test("after switching accounts, the previous account's cached key and MCP token are never published", async () => {
+  const den = createFakeDen()
+  const host = createHost({ apiBaseUrl: API })
+  host.credentials.set("cred_1", signedIn())
+  const warm = await createPlugin({ fetch: den.fetch }).setup(host.ctx)
+  await settle()
+  await warm?.()
+  assert.ok(host.storage.has("inventory"))
+
+  // Another account signed in while OpenCode was closed, and OpenWork is unreachable now.
+  const switched = createHost({ apiBaseUrl: API })
+  for (const [key, value] of host.storage) switched.storage.set(key, value)
+  switched.credentials.set("cred_2", { ...signedIn(), access: "den_session_token_other", refresh: "den_session_token_other" })
+  const cleanup = await createPlugin({ fetch: async () => { throw new TypeError("fetch failed") } }).setup(switched.ctx)
+  assert.equal(switched.providers().size, 0, "nothing published during setup")
+  assert.equal(switched.mcp().size, 0)
+  await settle()
+  assert.equal(switched.providers().size, 0, "nothing published after the failed refresh either")
+  assert.equal(switched.mcp().size, 0)
+  await cleanup?.()
+})
+
 test("a session Den rejects asks the member to sign in again and withdraws everything", async () => {
   const den = createFakeDen()
   den.sessionValid = false

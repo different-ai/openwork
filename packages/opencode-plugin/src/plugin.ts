@@ -70,7 +70,7 @@ export function readOptions(options: Readonly<Record<string, unknown>>): PluginO
 
 // ---- Cached inventory (plugin storage, shared by every Location) ----
 
-interface Inventory {
+export interface Inventory {
   readonly version: 1
   /** Which signed-in credential produced it: id + token hash. */
   readonly connectionKey: string
@@ -96,8 +96,18 @@ function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 16)
 }
 
+function connectionId(connection: ConnectionInfo): string {
+  return connection.type === "credential" ? connection.id : connection.name
+}
+
 function connectionKey(connection: ConnectionInfo, token: string): string {
-  return `${connection.type === "credential" ? connection.id : connection.name}:${hash(token)}`
+  return `${connectionId(connection)}:${hash(token)}`
+}
+
+/** The cache belongs to this signed-in account (the token itself may have been renewed since). */
+export function belongsTo(inventory: Inventory | null, connection: ConnectionInfo | undefined): Inventory | null {
+  if (!inventory || !connection) return null
+  return inventory.connectionKey.startsWith(`${connectionId(connection)}:`) ? inventory : null
 }
 
 /** What the transforms publish. */
@@ -158,7 +168,9 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
 
       // 2. Start from the cache so setup never waits on the network (it blocks the first prompt).
       const initialConnection = await ctx.integration.connection.active(INTEGRATION_ID).catch(() => undefined)
-      snapshot = snapshotFrom(parseInventory(await ctx.storage.get(INVENTORY_KEY).catch(() => undefined)), options, initialConnection)
+      // Never publish another account's gateway key or MCP token after an account switch.
+      const cachedInventory = belongsTo(parseInventory(await ctx.storage.get(INVENTORY_KEY).catch(() => undefined)), initialConnection)
+      snapshot = snapshotFrom(cachedInventory, options, initialConnection)
       applied = { providers: fingerprint([snapshot.providers, snapshot.sourceConnection]), mcp: fingerprint(snapshot.mcp) }
 
       // 3. Transforms publish the current snapshot.
