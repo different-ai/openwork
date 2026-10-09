@@ -30,6 +30,15 @@ Workbot ── + owner header ────┘   (src/worker/index.ts)  └─ ce
    them.
 3. Point `DEN_HEADLESS_RUNNER_URL` (den-api) and `WORKBOT_RUNNER_URL` (Workbot) at it. Tokens stay the same.
 
+**Hosts with temporary disks (Render, Fargate, most containers): set `CELLD_DURABILITY=bucket` on every node.**
+celld's default (`fleet`) acknowledges a write once another node has it on its local disk, before it reaches the
+bucket. If every node stops at once (for example, all lose their bucket leases during one storage outage) and their
+disks do not survive, celld cannot prove no acknowledged write was lost and refuses to open the affected cells. That
+is correct, but leaves conversations unavailable. On a host that also restarts a process at the same private IP,
+recovery waits until those IPs change. `bucket` mode acknowledges only after the bucket write, so
+any node can always recover. Keep `fleet` only with persistent disks for `CELLD_WATCH` and stable node identities.
+Also consider `CELLD_TTL_MS=30000` so a short storage outage does not fence every node.
+
 **Switching starts every conversation fresh**: conversations on the Node runner stay in its SQLite file and are not
 copied. A Slack or Automation run in flight at the switch ends as `unknown_session`. Pointing the URLs back at the
 Node runner (kept with its disk until you are sure) returns to the earlier conversations.
