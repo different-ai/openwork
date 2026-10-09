@@ -125,7 +125,7 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
 
     // Prepare each from its own row while the other approvals stay pending.
     for (const item of added) {
-      await owner.click({ role: "button", label: new RegExp(`^${item.name}AWS`) });
+      await owner.click({ role: "button", label: new RegExp(`^${item.name}\\s*AWS`) });
       await owner.see({ role: "heading", label: item.name });
       await owner.click({ role: "button", label: "Prepare AWS approval" });
       await owner.see({ role: "link", label: "Review and approve in AWS" }, { timeoutMs: 30_000 });
@@ -137,7 +137,7 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     expect(new Set(approvals.map((item) => item.run?.id)).size).toBe(3);
     await owner.reload();
     for (const name of ["Production", ...targets.map((target) => target.name)]) {
-      await owner.see({ role: "button", label: new RegExp(`^${name}AWS`) }, { timeoutMs: 60_000 });
+      await owner.see({ role: "button", label: new RegExp(`^${name}\\s*AWS`) }, { timeoutMs: 60_000 });
     }
     const after = await deployments();
     expect(after).toHaveLength(3);
