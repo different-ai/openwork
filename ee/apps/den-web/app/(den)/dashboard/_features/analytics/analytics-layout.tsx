@@ -14,7 +14,8 @@ export const analyticsPageClass = "mx-auto grid w-full max-w-[1160px] gap-6 px-4
 
 /**
  * The header every Analytics view shares: the title (the tab already says what
- * the page is, so no description, DESIGN.md P2), one short state line, and the
+ * the page is, so no description, DESIGN.md P2), one short line for state only
+ * (for example when counting started), and the
  * tab strip. The state line always takes its height so the tabs never move
  * between views.
  */
@@ -35,7 +36,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
     <p className="text-xs font-medium text-[#637291]">Analytics</p>
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="max-w-2xl">
-        <h1 className="text-[28px] font-semibold tracking-[-0.04em] text-[#07192C]">{title}</h1>
+        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">{title}</h1>
         <div className="mt-2 min-h-4 text-xs leading-4 text-[#637291]">{caption}</div>
       </div>
       {action}

@@ -68,7 +68,6 @@ export function AnalyticsScreen() {
     <div className={analyticsPageClass}>
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="adoption"
         title="Usage & adoption"
-        caption="Activity metadata only, never content"
         action={!locked ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
 
       {locked ? (
