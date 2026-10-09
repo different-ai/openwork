@@ -108,11 +108,11 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     for (const target of targets) {
       await owner.click({ role: "button", label: "Create deployment" });
       await owner.see({ role: "heading", label: "Create deployment" });
-      await owner.type({ label: "Name" }, target.name);
-      await owner.type({ label: "Dedicated AWS account ID" }, target.accountId);
-      await owner.type({ label: "Address" }, target.domain);
-      await owner.type({ label: "Route 53 hosted zone ID for that address" }, "ZTEST123");
-      await owner.type({ label: "First administrator email" }, "admin@example.test");
+      await owner.type({ label: "Name" }, target.name, { replace: true });
+      await owner.type({ label: "Dedicated AWS account ID" }, target.accountId, { replace: true });
+      await owner.type({ label: "Address" }, target.domain, { replace: true });
+      await owner.type({ label: "Route 53 hosted zone ID for that address" }, "ZTEST123", { replace: true });
+      await owner.type({ label: "First administrator email" }, "admin@example.test", { replace: true });
       await owner.click({ role: "checkbox", label: /^I control this AWS account/ });
       await owner.click({ testId: "create-deployment-submit" });
       await owner.see({ role: "heading", label: target.name }, { timeoutMs: 60_000 });
@@ -144,7 +144,7 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     expect(new Set([runId, ...approvals.map((approval) => approval.deployment.run?.id)]).size).toBe(3);
     await owner.reload();
     for (const name of ["Production", ...targets.map((target) => target.name)]) {
-      await owner.see({ role: "heading", label: name }, { timeoutMs: 60_000 });
+      await owner.see({ role: "button", label: new RegExp(`^${name}AWS`) }, { timeoutMs: 60_000 });
     }
     const after = await deployments();
     expect(after).toHaveLength(3);
