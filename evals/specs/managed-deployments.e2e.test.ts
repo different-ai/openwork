@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { eventually, spec } from "@openwork/testkit";
-import { managedDeploymentLaunchSchema, managedDeploymentListSchema } from "@openwork/types/den/managed-deployments";
+import { managedDeploymentListSchema } from "@openwork/types/den/managed-deployments";
 import { managedDeployments } from "../worlds/managed-deployments.ts";
 
 // No paid infrastructure is launched here. This proves the real Den screens,
@@ -123,25 +123,18 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     const added = before.filter((item) => item.id !== deploymentId);
     expect(added.every((item) => item.run === null && item.installedVersion === null)).toBe(true);
 
-    // Prepare both at once: each target must get its own run, stack and account,
-    // without mutating the already-prepared production approval.
-    const approvals = await Promise.all(added.map(async (item) => {
-      const result = await probe.api(world.den.admin, `/v1/managed-deployments/${item.id}/launch`, {
-        method: "POST", headers: ownHeaders, body: JSON.stringify({ kind: "install" }),
-      });
-      expect(result.response.status).toBe(200);
-      const approval = managedDeploymentLaunchSchema.parse(result.body);
-      expect(approval.deployment.id).toBe(item.id);
-      expect(approval.deployment.run?.state).toBe("awaiting_approval");
-      expect(approval.command).toBeNull();
-      const url = new URL(approval.approvalUrl ?? "");
-      const parameters = new URLSearchParams(url.hash.split("?")[1]);
-      expect(parameters.get("param_ExpectedAccountId")).toBe(item.target.accountId);
-      expect(parameters.get("param_RunId")).toBe(approval.deployment.run?.id);
-      expect(parameters.get("stackName")).toBe(`openwork-${item.id.replaceAll("-", "")}`);
-      return approval;
-    }));
-    expect(new Set([runId, ...approvals.map((approval) => approval.deployment.run?.id)]).size).toBe(3);
+    // Prepare each from its own row while the other approvals stay pending.
+    for (const item of added) {
+      await owner.click({ role: "button", label: new RegExp(`^${item.name}AWS`) });
+      await owner.see({ role: "heading", label: item.name });
+      await owner.click({ role: "button", label: "Prepare AWS approval" });
+      await owner.see({ role: "link", label: "Review and approve in AWS" }, { timeoutMs: 30_000 });
+      const current = await deployments();
+      expect(current.find((entry) => entry.id === item.id)?.run?.state).toBe("awaiting_approval");
+      expect(current.find((entry) => entry.id === deploymentId)?.run?.id).toBe(runId);
+    }
+    const approvals = await deployments();
+    expect(new Set(approvals.map((item) => item.run?.id)).size).toBe(3);
     await owner.reload();
     for (const name of ["Production", ...targets.map((target) => target.name)]) {
       await owner.see({ role: "button", label: new RegExp(`^${name}AWS`) }, { timeoutMs: 60_000 });
@@ -150,11 +143,11 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     expect(after).toHaveLength(3);
     expect(after.find((item) => item.id === deploymentId)?.run?.id).toBe(runId);
     for (const approval of approvals) {
-      expect(after.find((item) => item.id === approval.deployment.id)?.run?.id).toBe(approval.deployment.run?.id);
+      expect(after.find((item) => item.id === approval.id)?.run?.id).toBe(approval.run?.id);
     }
     expect(after.every((item) => item.run?.state === "awaiting_approval" && item.run.events.length === 0 && item.installedVersion === null)).toBe(true);
     await owner.notSee({ text: "Operational" });
-    evidence.recordAssertionEvidence("three independent customer-cloud installs", "Production, Staging and Sandbox remain listed after reload, with three distinct deployment/run IDs and account-bound AWS approvals. Preparing two in parallel leaves Production unchanged; none falsely claims to be running.", true);
+    evidence.recordAssertionEvidence("three independent customer-cloud installs", "Production, Staging and Sandbox remain listed after reload, with three distinct deployment/run IDs and account-bound AWS approvals. Preparing each leaves Production unchanged; none falsely claims to be running.", true);
     await owner.screenshot();
   });
 

@@ -136,6 +136,29 @@ test("install opens CloudFormation with pinned release parameters and no credent
   assert.equal([...params.keys()].some((key) => /token|secret|password/i.test(key)), false)
 })
 
+test("multiple installations have independent stacks, roles and account-bound approval links", () => {
+  const inputs = [launch, {
+    ...launch, deploymentId: "00000000-0000-4000-8000-000000000003", runId: "00000000-0000-4000-8000-000000000004",
+    target: { ...target, accountId: "123456789013" }, domainName: "staging.example.com",
+  }, {
+    ...launch, deploymentId: "00000000-0000-4000-8000-000000000005", runId: "00000000-0000-4000-8000-000000000006",
+    target: { ...target, accountId: "123456789014" }, domainName: "sandbox.example.com",
+  }]
+  assert.equal(new Set(inputs.map((input) => stackName(input.deploymentId))).size, 3)
+  assert.equal(new Set(inputs.map((input) => runnerRoleName(input.deploymentId))).size, 3)
+  assert.equal(new Set(inputs.map((input) => healthRoleName(input.deploymentId))).size, 3)
+  for (const input of inputs) {
+    const params = new URLSearchParams(new URL(quickCreateUrl(input)).hash.split("?")[1])
+    assert.equal(params.get("stackName"), stackName(input.deploymentId))
+    assert.equal(params.get("param_RunId"), input.runId)
+    assert.equal(params.get("param_ExpectedAccountId"), input.target.accountId)
+    assert.equal(params.get("param_DomainName"), input.domainName)
+    const command = updateStackCommand(input)
+    assert.ok(command.includes(`--stack-name '${stackName(input.deploymentId)}'`))
+    assert.ok(command.includes(input.target.accountId))
+  }
+})
+
 test("retry and update commands check the account and only update the named installer", () => {
   const command = updateStackCommand(launch)
   assert.ok(command.startsWith('[ "$(aws sts get-caller-identity --query Account --output text)" = \'123456789012\' ]'))
