@@ -5,20 +5,22 @@
 # reaches tools through Den's public /mcp/agent with short-lived member-scoped
 # tokens Den mints per turn. Den and Workbot reach it through ECS Service
 # Connect at http://headless-runner:8795. State is one SQLite file, so it runs
-# as a single task with its data on EFS. Workbot is a public chat app at
-# workbot.domain_name whose turns run on the runner.
+# as a single task with its data on EFS, unless external_url selects an existing
+# celld/S3 fleet. Workbot is a diskless public chat app at workbot.domain_name
+# whose turns run on either backend.
 
 locals {
-  runner_count = local.runner_enabled ? 1 : 0
+  runner_count         = local.runner_managed ? 1 : 0
+  runner_secrets_count = local.runner_enabled ? 1 : 0
   # Workbot needs the runner; den-api's precondition reports the mistake.
   workbot_count = local.workbot_enabled && local.runner_enabled ? 1 : 0
-  efs_count     = local.runner_enabled ? 1 : 0
+  efs_count     = local.runner_managed ? 1 : 0
 
   runner_secret_values = local.runner_enabled ? { for k, v in {
-    HEADLESS_API_TOKEN     = random_password.runner_token[0].result
-    HEADLESS_MODEL_API_KEY = var.headless_model_api_key
-    DAYTONA_API_KEY        = var.headless_computer.provider == "daytona" ? var.daytona_api_key : ""
-    FREESTYLE_API_KEY      = var.headless_computer.provider == "freestyle" ? var.headless_computer_api_key : ""
+    HEADLESS_API_TOKEN     = local.runner_managed ? random_password.runner_token[0].result : var.headless_runner_token
+    HEADLESS_MODEL_API_KEY = local.runner_managed ? var.headless_model_api_key : ""
+    DAYTONA_API_KEY        = local.runner_managed && var.headless_computer.provider == "daytona" ? var.daytona_api_key : ""
+    FREESTYLE_API_KEY      = local.runner_managed && var.headless_computer.provider == "freestyle" ? var.headless_computer_api_key : ""
     WORKBOT_SESSION_SECRET = try(random_password.workbot_session[0].result, "")
   } : k => v if v != "" } : {}
 
@@ -42,7 +44,7 @@ resource "random_password" "workbot_session" {
 }
 
 resource "aws_secretsmanager_secret" "runner" {
-  count = local.runner_count
+  count = local.runner_secrets_count
 
   name_prefix             = "${var.name}-runner-"
   description             = "OpenWork headless runner and Workbot secrets (${var.name})"
@@ -51,7 +53,7 @@ resource "aws_secretsmanager_secret" "runner" {
 }
 
 resource "aws_secretsmanager_secret_version" "runner" {
-  count = local.runner_count
+  count = local.runner_secrets_count
 
   secret_id     = aws_secretsmanager_secret.runner[0].id
   secret_string = jsonencode(local.runner_secret_values)
@@ -94,7 +96,7 @@ resource "aws_vpc_security_group_ingress_rule" "efs_from_tasks" {
 # so service_subnet_ids must be in different zones (the usual layout). Counted
 # by position because subnet ids may only be known after apply.
 resource "aws_efs_mount_target" "agents" {
-  count = local.runner_enabled ? length(var.service_subnet_ids) : 0
+  count = local.runner_managed ? length(var.service_subnet_ids) : 0
 
   file_system_id  = aws_efs_file_system.agents[0].id
   subnet_id       = var.service_subnet_ids[count.index]
@@ -122,26 +124,7 @@ resource "aws_efs_access_point" "runner" {
   }
 }
 
-resource "aws_efs_access_point" "workbot" {
-  count = local.workbot_count
-
-  file_system_id = one(aws_efs_file_system.agents[*].id)
-  tags           = merge(var.tags, { Name = "${var.name}-workbot" })
-
-  posix_user {
-    uid = 1000
-    gid = 1000
-  }
-
-  root_directory {
-    path = "/workbot"
-    creation_info {
-      owner_uid   = 1000
-      owner_gid   = 1000
-      permissions = "750"
-    }
-  }
-}
+# Workbot stores sign-in state in encrypted cookies; it needs no EFS access point.
 
 # den-api and Workbot call the runner over Service Connect.
 resource "aws_vpc_security_group_ingress_rule" "tasks_self_runner" {
@@ -365,17 +348,7 @@ resource "aws_ecs_task_definition" "workbot" {
     cpu_architecture        = var.cpu_architecture
   }
 
-  volume {
-    name = "data"
-    efs_volume_configuration {
-      file_system_id     = one(aws_efs_file_system.agents[*].id)
-      transit_encryption = "ENABLED"
-      authorization_config {
-        access_point_id = one(aws_efs_access_point.workbot[*].id)
-        iam             = "DISABLED"
-      }
-    }
-  }
+  # Stateless: the shared WORKBOT_SESSION_SECRET seals each member's cookie.
 
   container_definitions = jsonencode([
     {
@@ -383,10 +356,8 @@ resource "aws_ecs_task_definition" "workbot" {
       image        = local.workbot_image
       essential    = true
       portMappings = [{ name = "workbot", containerPort = 3020, protocol = "tcp", appProtocol = "http" }]
-      mountPoints  = [{ sourceVolume = "data", containerPath = "/var/data" }]
       environment = [
         { name = "WORKBOT_PORT", value = "3020" },
-        { name = "WORKBOT_DB_PATH", value = "/var/data/workbot.sqlite" },
         { name = "WORKBOT_PUBLIC_URL", value = local.workbot_url },
         { name = "WORKBOT_DEN_API_URL", value = local.api_url },
         { name = "WORKBOT_DEN_WEB_URL", value = local.web_url },
@@ -414,15 +385,15 @@ resource "aws_ecs_service" "workbot" {
   name                  = "workbot"
   cluster               = local.cluster_arn
   task_definition       = aws_ecs_task_definition.workbot[0].arn
-  desired_count         = 1
+  desired_count         = var.workbot.desired_count
   launch_type           = "FARGATE"
   wait_for_steady_state = var.wait_for_steady_state
   propagate_tags        = "SERVICE"
   tags                  = var.tags
 
   health_check_grace_period_seconds  = 60
-  deployment_minimum_healthy_percent = 0
-  deployment_maximum_percent         = 100
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
 
   network_configuration {
     subnets          = var.service_subnet_ids
@@ -436,10 +407,13 @@ resource "aws_ecs_service" "workbot" {
     container_port   = 3020
   }
 
-  # Client only: resolves http://headless-runner.
-  service_connect_configuration {
-    enabled   = true
-    namespace = aws_service_discovery_private_dns_namespace.this.arn
+  # Only the module-managed Node runner uses Service Connect.
+  dynamic "service_connect_configuration" {
+    for_each = local.runner_managed ? [1] : []
+    content {
+      enabled   = true
+      namespace = aws_service_discovery_private_dns_namespace.this.arn
+    }
   }
 
   deployment_circuit_breaker {
@@ -447,5 +421,5 @@ resource "aws_ecs_service" "workbot" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener_rule.workbot_host, aws_efs_mount_target.agents, aws_secretsmanager_secret_version.runner, aws_ecs_service.runner]
+  depends_on = [aws_lb_listener_rule.workbot_host, aws_secretsmanager_secret_version.runner, aws_ecs_service.runner]
 }

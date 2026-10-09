@@ -1,4 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
+import { GOOGLE_DRIVE_UPLOAD_MAX_BYTES } from "@openwork/types/google-drive-upload";
+import { uploadDriveResumableFile } from "./drive-resumable-upload.js";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 
 import { readConnectCloudMcp } from "../connect-state.js";
@@ -26,12 +28,13 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
     extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID,
     action: "drive_upload_file",
     title: "Upload a workspace file to Google Drive",
-    description: "Uploads a workspace file up to 4 MiB to Google Drive through OpenWork Cloud outside model context. OpenWork preserves the file bytes, basename, and source MIME type; it does not convert Office files. Uses the member's default Google Workspace connection. This Drive bridge cannot select a different named connection; do not substitute it for a requested account unless it is confirmed to be the default.",
+    description: "Uploads a workspace file to Google Drive outside model context, preserving bytes, basename and MIME type without Office conversion. Files above 4 MiB use direct resumable transport when enabled for the organization (Google's limit is 5 TiB). connectionId selects the requested Google account; omit only to use the default. Never retry an unconfirmed upload automatically.",
     inputSchema: {
       type: "object",
       properties: {
         path: workspacePathProperty,
         folderId: { type: "string", description: "Optional Google Drive parent folder id." },
+        connectionId: { type: "string", pattern: "^(google-workspace|emc_[A-Za-z0-9]+)$", description: "Selected native Google Workspace connection; omission uses the default. Unavailable selections never fall back to another account." },
       },
       required: ["path"],
       additionalProperties: false,
@@ -111,7 +114,7 @@ function searchRoots(config: ServerConfig, context: Record<string, unknown>, roo
   return candidates.filter((candidate) => roots.some((root) => isWithinRoot(candidate, root)));
 }
 
-async function resolveAuthorizedFile(config: ServerConfig, context: Record<string, unknown>, requested: string) {
+async function resolveAuthorizedFile(config: ServerConfig, context: Record<string, unknown>, requested: string, maxBytes = DIRECT_UPLOAD_MAX_BYTES) {
   const roots = allowedRoots(config);
   if (!roots.length) throw new ApiError(400, "invalid_payload", "No authorized workspace roots are available.");
   const realRoots: string[] = [];
@@ -132,10 +135,10 @@ async function resolveAuthorizedFile(config: ServerConfig, context: Record<strin
       if (!realRoots.some((root) => isWithinRoot(realCandidate, root))) continue;
       const info = await stat(realCandidate);
       if (!info.isFile()) continue;
-      if (info.size < 1 || info.size > DIRECT_UPLOAD_MAX_BYTES) {
-        throw new ApiError(413, "file_too_large", `Direct uploads support files up to ${DIRECT_UPLOAD_MAX_BYTES} bytes.`, {
+      if (info.size < 1 || info.size > maxBytes) {
+        throw new ApiError(413, "file_too_large", `Uploads support non-empty files up to ${maxBytes} bytes.`, {
           size: info.size,
-          maxBytes: DIRECT_UPLOAD_MAX_BYTES,
+          maxBytes,
         });
       }
       return realCandidate;
@@ -149,6 +152,10 @@ async function resolveAuthorizedFile(config: ServerConfig, context: Record<strin
 
 function mimeTypeForPath(path: string) {
   const lower = path.toLowerCase();
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -249,13 +256,45 @@ async function uploadDriveFile(
   context: Record<string, unknown>,
   dependencies: CloudUploadDependencies,
 ) {
-  const path = readString(args, "path");
-  if (!path) throw new ApiError(400, "invalid_payload", "path is required.");
-  const form = new FormData();
-  await appendWorkspaceFiles(form, config, context, [path]);
+  const requestedPath = readString(args, "path");
+  if (!requestedPath) throw new ApiError(400, "invalid_payload", "path is required.");
+  if (args.connectionId !== undefined && (typeof args.connectionId !== "string" || !/^(google-workspace|emc_[A-Za-z0-9]+)$/.test(args.connectionId))) {
+    throw new ApiError(400, "invalid_payload", "connectionId must identify a native Google Workspace connection.");
+  }
   const folderId = readString(args, "folderId");
+  if (folderId && !/^[A-Za-z0-9_-]{1,512}$/.test(folderId)) throw new ApiError(400, "invalid_payload", "folderId is invalid.");
+  const path = await resolveAuthorizedFile(config, context, requestedPath, GOOGLE_DRIVE_UPLOAD_MAX_BYTES);
+  const info = await stat(path);
+  if (info.size > DIRECT_UPLOAD_MAX_BYTES) {
+    dependencies.signal?.throwIfAborted();
+    const endpoint = await cloudUploadEndpoint(config, "/v1/direct-uploads/google-workspace/drive-upload-sessions", dependencies);
+    const name = basename(path);
+    const mimeType = mimeTypeForPath(name);
+    let response: Response;
+    try {
+      response = await (dependencies.fetchImpl ?? externalFetch)(endpoint.url.toString(), {
+        method: "POST", redirect: "error",
+        headers: { authorization: endpoint.authorization, "content-type": "application/json" },
+        body: JSON.stringify({ name, size: info.size, mimeType, folderId: folderId || undefined, connectionId: args.connectionId }),
+        signal: dependencies.signal ? AbortSignal.any([dependencies.signal, AbortSignal.timeout(DIRECT_UPLOAD_TIMEOUT_MS)]) : AbortSignal.timeout(DIRECT_UPLOAD_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ApiError(502, "drive_upload_unconfirmed", "OpenWork Cloud did not confirm upload preparation. Do not retry automatically.");
+    }
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      // A disabled/unavailable new route leaves small-file multipart uploads intact.
+      if (response.status === 404) throw new ApiError(413, "large_upload_unavailable", "This organization currently supports Drive uploads up to 4 MiB. Resumable uploads are not enabled or the server needs an update.");
+      throw new ApiError(response.status, "cloud_upload_failed", isRecord(payload) && typeof payload.message === "string" ? payload.message : `OpenWork Cloud returned HTTP ${response.status}.`);
+    }
+    if (!isRecord(payload) || typeof payload.uploadUrl !== "string" || payload.size !== info.size) throw new ApiError(502, "invalid_upload_session", "OpenWork Cloud returned an invalid upload session.");
+    return uploadDriveResumableFile({ path, size: info.size, mimeType, uploadUrl: payload.uploadUrl, fetch: dependencies.fetchImpl ?? externalFetch, signal: dependencies.signal });
+  }
+  const form = new FormData();
+  await appendWorkspaceFiles(form, config, context, [requestedPath], dependencies.signal);
   if (folderId) form.append("folderId", folderId);
-  return postDirectUpload(config, "/v1/direct-uploads/google-workspace/drive-files", form, dependencies);
+  if (typeof args.connectionId === "string") form.append("connectionId", args.connectionId);
+  return postDirectUpload(config, "/v1/direct-uploads/google-workspace/drive-files", form, dependencies, dependencies.signal);
 }
 
 async function createGmailDraftWithAttachments(

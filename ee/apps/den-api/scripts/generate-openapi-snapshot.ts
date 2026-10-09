@@ -22,9 +22,9 @@ function setEnvDefault(name: string, value: string) {
 }
 
 function seedSnapshotEnv(snapshotVersion: string) {
-  // The snapshot never talks to a database or serves traffic; these values only
-  // satisfy env validation so the Hono app can be imported and asked for its
-  // OpenAPI document.
+  // Schema export serves no traffic, but importing Better Auth registers OAuth
+  // resources in MySQL. `pnpm den:contract` supplies a prepared disposable DB;
+  // these defaults also support direct `pnpm api:snapshot` with a local schema.
   setEnvDefault("OPENWORK_DEV_MODE", "1")
   setEnvDefault("DB_MODE", "mysql")
   setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")

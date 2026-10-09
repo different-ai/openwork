@@ -13,9 +13,14 @@ request schemas are user-facing text for agents, not just for Swagger.
 
 ## Fast contract workflow
 
-Run `pnpm den:contract` after editing Den routes/shared schemas and before
-committing. It builds the MCP App assets once, snapshots the API once, and feeds
-that snapshot directly to SDK generation. Commit both generated outputs with
+Run `pnpm den:contract` after editing Den routes/shared schemas or feature keys
+and before committing. `pnpm features:sync` also runs it after regenerating Helm.
+It builds the MCP App assets once, snapshots the API once, and feeds
+that snapshot directly to SDK generation. Start local MySQL with
+`pnpm dev:den:mysql`; the command creates, prepares and removes its own
+throwaway database, including after a failed export. It ignores `DATABASE_URL`
+and never connects to a remote database. For alternate local credentials/ports,
+set `OPENWORK_CONTRACT_MYSQL_URL` (default `mysql://root:password@127.0.0.1:3306`). Commit both generated outputs with
 the source change; there is no repair-bot commit or second CI run.
 
 `openapi.json` uses one path/schema per line, retains route-registration order,
@@ -24,7 +29,7 @@ nested schemas into tens of thousands of lines or reordering SDK methods.
 It is still generated JSON: do not edit it by hand.
 
 For automatic generation during commits, opt in with `pnpm hooks:install`.
-Unrelated commits skip generation. API/schema or generated-contract commits
+Unrelated commits skip generation. API/schema, feature-registry or generated-contract commits
 regenerate and stage only `packages/docs/openapi.json` and
 `packages/sdk/src/gen/**`. Unstaged/untracked contract inputs or outputs stop the
 hook before it writes anything: finish staging the intended source first. The

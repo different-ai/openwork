@@ -82,7 +82,8 @@ run "runner_workbot_and_slack" {
       model   = "claude-test"
     }
     workbot = {
-      enabled = true
+      enabled       = true
+      desired_count = 2
     }
   }
 
@@ -129,6 +130,17 @@ run "runner_workbot_and_slack" {
   assert {
     condition     = output.workbot_url == "https://chat.openwork.example.com" && contains(keys(aws_route53_record.this), "chat.openwork.example.com")
     error_message = "Workbot gets its public host and DNS record."
+  }
+  assert {
+    condition = alltrue([
+      length(aws_ecs_task_definition.workbot[0].volume) == 0,
+      !contains([for e in jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0].environment : e.name], "WORKBOT_DB_PATH"),
+      !contains(keys(jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0]), "mountPoints"),
+      aws_ecs_service.workbot[0].desired_count == 2,
+      aws_ecs_service.workbot[0].deployment_minimum_healthy_percent == 100,
+      aws_ecs_service.workbot[0].deployment_maximum_percent == 200,
+    ])
+    error_message = "Workbot is diskless, supports multiple replicas and rolls without downtime."
   }
 }
 
@@ -196,4 +208,71 @@ run "daytona_computer_requires_snapshot" {
     daytona_api_key   = "test-daytona-key"
   }
   expect_failures = [aws_ecs_task_definition.runner]
+}
+
+run "external_cells_have_no_node_runner_or_efs" {
+  command = apply
+
+  variables {
+    headless_runner       = { enabled = true, external_url = "https://cells.example.com" }
+    headless_runner_token = "test-fleet-token-at-least-32-characters"
+    workbot               = { enabled = true, desired_count = 2 }
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.runner) == 0 && length(aws_ecs_task_definition.runner) == 0 && length(aws_efs_file_system.agents) == 0 && length(aws_efs_mount_target.agents) == 0
+    error_message = "An external fleet must not provision a Node runner or persistent filesystem."
+  }
+  assert {
+    condition     = length(aws_ecs_service.api.service_connect_configuration) == 0 && length(aws_ecs_service.workbot[0].service_connect_configuration) == 0
+    error_message = "External fleets do not use the module's Service Connect alias."
+  }
+  assert {
+    condition     = local.environment.DEN_HEADLESS_RUNNER_URL == "https://cells.example.com" && contains([for e in jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0].environment : "${e.name}=${e.value}"], "WORKBOT_RUNNER_URL=https://cells.example.com")
+    error_message = "Both callers must use the external fleet endpoint."
+  }
+  assert {
+    condition     = local.runner_secret_values.HEADLESS_API_TOKEN == var.headless_runner_token && !contains(keys(local.runner_secret_values), "HEADLESS_MODEL_API_KEY") && length(random_password.runner_token) == 0
+    error_message = "Use the existing fleet token, not a new token or unused model credentials."
+  }
+  assert {
+    condition     = contains([for s in jsondecode(aws_ecs_task_definition.api.container_definitions)[1].secrets : s.name], "DEN_HEADLESS_RUNNER_TOKEN") && contains([for s in jsondecode(aws_ecs_task_definition.workbot[0].container_definitions)[0].secrets : s.name], "WORKBOT_RUNNER_TOKEN") && !contains([for s in jsondecode(aws_ecs_task_definition.web.container_definitions)[0].secrets : s.name], "DEN_HEADLESS_RUNNER_TOKEN")
+    error_message = "The external token belongs to den-api and Workbot only."
+  }
+}
+
+run "external_cells_require_token" {
+  command = plan
+  variables {
+    headless_runner = { enabled = true, external_url = "https://cells.example.com" }
+  }
+  expect_failures = [aws_ecs_task_definition.api]
+}
+
+run "external_cells_allow_private_single_label_hostname" {
+  command = plan
+  variables {
+    headless_runner       = { enabled = true, external_url = "http://headless-cells:8795" }
+    headless_runner_token = "test-fleet-token-at-least-32-characters"
+  }
+  assert {
+    condition     = local.runner_url == "http://headless-cells:8795"
+    error_message = "A private single-label HTTP hostname is supported."
+  }
+}
+
+run "external_cells_reject_public_http" {
+  command = plan
+  variables {
+    headless_runner = { enabled = true, external_url = "http://cells.example.com" }
+  }
+  expect_failures = [var.headless_runner]
+}
+
+run "workbot_rejects_zero_replicas" {
+  command = plan
+  variables {
+    workbot = { enabled = true, desired_count = 0 }
+  }
+  expect_failures = [var.workbot]
 }

@@ -21,6 +21,8 @@ import type {
   CreateGmailLabelResponses,
   CreateGoogleDriveFolderErrors,
   CreateGoogleDriveFolderResponses,
+  CreateGoogleDriveUploadSessionErrors,
+  CreateGoogleDriveUploadSessionResponses,
   CreateGoogleSpreadsheetErrors,
   CreateGoogleSpreadsheetResponses,
   CreateInstallLinkRequest,
@@ -869,6 +871,8 @@ import type {
   PostV1WorkflowsByConfigObjectIdVersionsResponses,
   PostV1WorkflowsTestErrors,
   PostV1WorkflowsTestResponses,
+  PrepareHostGoogleDriveUploadSessionErrors,
+  PrepareHostGoogleDriveUploadSessionResponses,
   PutApiAuthScimV2GroupsByGroupIdErrors,
   PutApiAuthScimV2GroupsByGroupIdResponses,
   PutApiAuthScimV2UsersByUserIdErrors,
@@ -8462,6 +8466,94 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Prepare a resumable Google Drive file upload for a client with local file transport
+   *
+   * Prepare a Google Drive resumable upload session for an explicitly requested file upload. This does not upload bytes or prove completion. Clients with file transport can PUT local bytes directly to the returned secret uploadUrl, outside model context. Google sessions can remain valid for up to one week; they are not short-lived signed URLs. Do not automatically create another session after an uncertain result. Final PUT returns file metadata. Uses the selected connection.
+   */
+  public createGoogleDriveUploadSession<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      size: number;
+      mimeType?: string;
+      folderId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "size" },
+            { in: "body", key: "mimeType" },
+            { in: "body", key: "folderId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      CreateGoogleDriveUploadSessionResponses,
+      CreateGoogleDriveUploadSessionErrors,
+      ThrowOnError
+    >({
+      url: "/v1/capabilities/google-workspace/drive-upload-sessions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Prepare a Google Drive session for host file transport
+   *
+   * Prepare a Google Drive resumable upload session for an explicitly requested file upload. This does not upload bytes or prove completion. Clients with file transport can PUT local bytes directly to the returned secret uploadUrl, outside model context. Google sessions can remain valid for up to one week; they are not short-lived signed URLs. Do not automatically create another session after an uncertain result. Final PUT returns file metadata. Uses the selected connection.
+   */
+  public prepareHostGoogleDriveUploadSession<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      size: number;
+      mimeType?: string;
+      folderId?: string;
+      connectionId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "size" },
+            { in: "body", key: "mimeType" },
+            { in: "body", key: "folderId" },
+            { in: "body", key: "connectionId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PrepareHostGoogleDriveUploadSessionResponses,
+      PrepareHostGoogleDriveUploadSessionErrors,
+      ThrowOnError
+    >({
+      url: "/v1/direct-uploads/google-workspace/drive-upload-sessions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
    * Send an existing Gmail draft
    *
    * Sends the existing draft unchanged, including To/Cc/Bcc, reply threading and attachments. Create or inspect the draft first. Requires gmail.compose or gmail.modify (gmail.send alone does not authorize drafts.send). A successful response contains the actual sent message id and threadId, not the old draft message ID. Uses only the calling member's selected connected Google account. Perform writes only when explicitly requested by the user; capability discovery or selection is not authorization. Never automatically retry an uncertain write.
@@ -9360,7 +9452,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Upload one multipart workspace file directly to Google Drive
    *
-   * Authenticated host transport for openwork-cloud-uploads. The route immediately forwards the file to Google and does not persist it or expose its bytes to the model.
+   * Authenticated host transport for openwork-cloud-uploads. Uploads one non-empty file up to 4 MiB. Optional multipart connectionId selects a native Google Workspace connection (google-workspace or emc_...); unavailable selections never fall back to the default. The route immediately forwards the file to Google and does not persist it or expose its bytes to the model. Larger files use drive-upload-sessions when enabled.
    */
   public postV1DirectUploadsGoogleWorkspaceDriveFiles<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,

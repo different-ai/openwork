@@ -172,6 +172,10 @@ resource "aws_ecs_task_definition" "api" {
       condition     = !var.workbot.enabled || var.headless_runner.enabled
       error_message = "workbot.enabled needs headless_runner.enabled: every Workbot turn runs on the headless runner."
     }
+    precondition {
+      condition     = !local.runner_enabled || local.runner_managed || length(var.headless_runner_token) >= 32
+      error_message = "headless_runner.external_url needs headless_runner_token matching the fleet's HEADLESS_API_TOKEN (at least 32 characters)."
+    }
   }
 }
 
@@ -240,7 +244,7 @@ resource "aws_ecs_service" "api" {
 
   # Client only: resolves http://headless-runner.
   dynamic "service_connect_configuration" {
-    for_each = local.runner_enabled ? [1] : []
+    for_each = local.runner_managed ? [1] : []
     content {
       enabled   = true
       namespace = aws_service_discovery_private_dns_namespace.this.arn

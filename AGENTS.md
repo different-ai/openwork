@@ -30,9 +30,13 @@ escalate any leak instead of rewriting history.
 
 ## Generated API contracts
 
-After changing Den routes or their shared schemas, run `pnpm den:contract` and
+After changing Den routes, their shared schemas, or the feature registry, run
+`pnpm den:contract` (also run by `pnpm features:sync`) and
 include `packages/docs/openapi.json` and `packages/sdk/src/gen/**` in the same
-commit. The command builds once and generates both outputs from one snapshot.
+commit. The command builds once and generates both outputs from one snapshot. It
+prepares and removes a disposable local MySQL database automatically; start
+MySQL with `pnpm dev:den:mysql`. It never uses `DATABASE_URL`; use
+`OPENWORK_CONTRACT_MYSQL_URL` only for alternate localhost credentials.
 After merging/rebasing `dev`, regenerate rather than choosing ours/theirs for
 conflicted generated files. Never hand-edit them or regenerate a Drizzle migration
 snapshot to resolve an API conflict.

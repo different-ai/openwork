@@ -17,7 +17,7 @@ function fixture() {
   const write = (path, value) => { const file = join(cwd, path); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, value); };
   git("init", "-q");
   git("config", "user.name", "Contract test"); git("config", "user.email", "contract@example.test");
-  for (const path of ["ee/apps/den-api/src/route.ts", "ee/packages/den-db/src/schema.ts", "packages/docs/openapi.json", "packages/sdk/src/gen/sdk.gen.ts", "notes.md"])
+  for (const path of ["ee/apps/den-api/src/route.ts", "ee/packages/den-db/src/schema.ts", "packages/features/src/registry.ts", "packages/docs/openapi.json", "packages/sdk/src/gen/sdk.gen.ts", "notes.md"])
     write(path, "original\n");
   write(".githooks/pre-commit", "#!/bin/sh\nexit 0\n");
   git("add", "."); git("commit", "-qm", "fixture");
@@ -27,6 +27,15 @@ function fixture() {
 test("unrelated commits take the fast path without generating anything", () => {
   const f = fixture(); f.write("notes.md", "updated\n"); f.git("add", "notes.md");
   assert.equal(runContractHook({ cwd: f.cwd, generate: () => assert.fail("must not generate") }), false);
+});
+
+test("a staged feature registry change regenerates the API contract", () => {
+  const f = fixture();
+  f.write("packages/features/src/registry.ts", "new feature\n");
+  f.git("add", "packages/features/src/registry.ts");
+  let ran = false;
+  assert.equal(runContractHook({ cwd: f.cwd, generate: () => { ran = true; } }), true);
+  assert.equal(ran, true);
 });
 
 test("regeneration stages only outputs and preserves unrelated unstaged work", () => {
@@ -46,6 +55,7 @@ test("regeneration stages only outputs and preserves unrelated unstaged work", (
 for (const [name, path] of [
   ["partially staged source", "ee/apps/den-api/src/route.ts"],
   ["unstaged dependency", "ee/packages/den-db/src/schema.ts"],
+  ["unstaged feature registry", "packages/features/src/registry.ts"],
   ["unstaged generated output", "packages/docs/openapi.json"],
   ["untracked API input with spaces", "ee/apps/den-api/src/new route.ts"],
 ]) test(`${name} stops before generation or index changes`, () => {

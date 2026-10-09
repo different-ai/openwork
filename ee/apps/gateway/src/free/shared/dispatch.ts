@@ -8,7 +8,7 @@ import { meterFreeResponse } from "./meter.js"
 import { retryFreeSettlement } from "./settlement.js"
 import { freeError } from "./errors.js"
 import type { FreeProtocol } from "./request.js"
-import type { RequestLogRecorder } from "../../request-log.js"
+import { REQUEST_LOG_UNAVAILABLE_MESSAGE, type RequestLogRecorder } from "../../request-log.js"
 
 /**
  * Check the allowance, send one request to OpenAI with the dedicated free key, and charge
@@ -37,7 +37,7 @@ export async function dispatchFreeCompletion(input: {
   const usageLog = input.startUsageLog?.(requestId, prepared.stream) ?? null
   // Like every Gateway route: no durable accounting record, no upstream call.
   if (usageLog && await usageLog.whenStarted?.() === false) {
-    return freeError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable. No allowance was consumed.")
+    return freeError(503, "request_log_unavailable", `${REQUEST_LOG_UNAVAILABLE_MESSAGE} No allowance was consumed.`)
   }
   let response: Response
   const headerTimeout = setTimeout(() => controller.abort(), config.requestTimeoutMs)

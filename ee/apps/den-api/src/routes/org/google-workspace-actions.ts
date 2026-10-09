@@ -33,13 +33,14 @@ export type GoogleWorkspaceActionDependencies = {
   token: (input: {
     organizationId: NonNullable<OrgRouteVariables["organizationContext"]>["organization"]["id"]
     orgMembershipId: NonNullable<OrgRouteVariables["organizationContext"]>["currentMember"]["id"]
+    connectionId?: string
   }) => Promise<GoogleWorkspaceAccessToken>
   fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response>
 }
 
 /** Reuse the selected credential; require both account grants and current connector permissions. */
 export async function requestGoogleAction(
-  c: Context<{ Variables: OrgRouteVariables }>,
+  c: Pick<Context<{ Variables: OrgRouteVariables }>, "get" | "json" | "req" | "header">,
   dependencies: GoogleWorkspaceActionDependencies,
   scopes: readonly string[],
   url: URL,

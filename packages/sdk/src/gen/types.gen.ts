@@ -165,6 +165,7 @@ export type AdminFeature = {
   key:
     | "installLinks"
     | "mcpConnections"
+    | "driveResumableUploads"
     | "implicitCloudSkills"
     | "dashboardActivity"
     | "modelsAnalytics"
@@ -222,6 +223,7 @@ export type AdminOrganizationsPageResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
@@ -260,6 +262,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      driveResumableUploads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -486,6 +497,7 @@ export type AdminOverviewResponse = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
@@ -524,6 +536,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      driveResumableUploads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1860,6 +1881,7 @@ export type CapabilityDisabledError = {
   capability:
     | "installLinks"
     | "mcpConnections"
+    | "driveResumableUploads"
     | "implicitCloudSkills"
     | "dashboardActivity"
     | "modelsAnalytics"
@@ -2658,6 +2680,18 @@ export type OAuthProviderStatusResponse = {
 
 export type OkResponse = {
   ok: true;
+};
+
+export type GoogleDriveUploadSessionResponse = {
+  ok: true;
+  /**
+   * Secret bearer upload-session URL. Never print, share, persist, or log it. Only upload the authorized file; no Google access token is needed.
+   */
+  uploadUrl: string;
+  method: "PUT";
+  size: number;
+  chunkSize: 8388608;
+  instructions: string;
 };
 
 export type GoogleWorkspaceDriveFileSummary = {
@@ -6045,6 +6079,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
@@ -6083,6 +6118,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      driveResumableUploads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6297,6 +6341,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
     capabilities: {
       installLinks: boolean;
       mcpConnections: boolean;
+      driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
       modelsAnalytics: boolean;
@@ -6335,6 +6380,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      driveResumableUploads: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -20051,6 +20105,147 @@ export type PostV1OauthProvidersByProviderIdDisconnectResponses = {
 
 export type PostV1OauthProvidersByProviderIdDisconnectResponse =
   PostV1OauthProvidersByProviderIdDisconnectResponses[keyof PostV1OauthProvidersByProviderIdDisconnectResponses];
+
+export type CreateGoogleDriveUploadSessionData = {
+  body: {
+    /**
+     * File basename; no file bytes or local paths.
+     */
+    name: string;
+    /**
+     * Exact file size in bytes, up to Google's 5 TiB limit.
+     */
+    size: number;
+    mimeType?: string;
+    folderId?: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/capabilities/google-workspace/drive-upload-sessions";
+};
+
+export type CreateGoogleDriveUploadSessionErrors = {
+  /**
+   * Invalid upload metadata.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization policy blocks the selected connection.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Resumable uploads are disabled.
+   */
+  404: {
+    error: "feature_disabled";
+    feature: "driveResumableUploads";
+  };
+  /**
+   * Connect Google with Drive write access.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Google did not confirm upload preparation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type CreateGoogleDriveUploadSessionError =
+  CreateGoogleDriveUploadSessionErrors[keyof CreateGoogleDriveUploadSessionErrors];
+
+export type CreateGoogleDriveUploadSessionResponses = {
+  /**
+   * Secret upload session; file not yet uploaded.
+   */
+  200: GoogleDriveUploadSessionResponse;
+};
+
+export type CreateGoogleDriveUploadSessionResponse =
+  CreateGoogleDriveUploadSessionResponses[keyof CreateGoogleDriveUploadSessionResponses];
+
+export type PrepareHostGoogleDriveUploadSessionData = {
+  body: {
+    /**
+     * File basename; no file bytes or local paths.
+     */
+    name: string;
+    /**
+     * Exact file size in bytes, up to Google's 5 TiB limit.
+     */
+    size: number;
+    mimeType?: string;
+    folderId?: string;
+    connectionId?: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/direct-uploads/google-workspace/drive-upload-sessions";
+};
+
+export type PrepareHostGoogleDriveUploadSessionErrors = {
+  /**
+   * Invalid upload metadata.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in first.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization policy blocks the selected connection.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Resumable uploads are disabled.
+   */
+  404: {
+    error: "feature_disabled";
+    feature: "driveResumableUploads";
+  };
+  /**
+   * Connect Google with Drive write access.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Google did not confirm upload preparation.
+   */
+  502: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PrepareHostGoogleDriveUploadSessionError =
+  PrepareHostGoogleDriveUploadSessionErrors[keyof PrepareHostGoogleDriveUploadSessionErrors];
+
+export type PrepareHostGoogleDriveUploadSessionResponses = {
+  /**
+   * Secret upload session for host transport.
+   */
+  200: GoogleDriveUploadSessionResponse;
+};
+
+export type PrepareHostGoogleDriveUploadSessionResponse =
+  PrepareHostGoogleDriveUploadSessionResponses[keyof PrepareHostGoogleDriveUploadSessionResponses];
 
 export type SendGmailDraftData = {
   body: {

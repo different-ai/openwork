@@ -20,7 +20,8 @@ locals {
   # Den and Workbot reach the runner at a dotless Service Connect alias: both
   # accept plain http only for loopback or single-label internal hosts.
   runner_enabled  = var.headless_runner.enabled
-  runner_url      = "http://headless-runner:8795"
+  runner_managed  = local.runner_enabled && var.headless_runner.external_url == ""
+  runner_url      = var.headless_runner.external_url != "" ? var.headless_runner.external_url : "http://headless-runner:8795"
   runner_image    = var.headless_runner_image != "" ? var.headless_runner_image : "ghcr.io/different-ai/openwork-headless-runner:${var.openwork_version}"
   workbot_enabled = var.workbot.enabled
   workbot_host    = var.workbot.domain_name != "" ? var.workbot.domain_name : "chat.${var.domain_name}"
