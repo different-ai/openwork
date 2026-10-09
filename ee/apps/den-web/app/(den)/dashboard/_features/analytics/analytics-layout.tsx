@@ -2,26 +2,27 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowUpRight, BarChart3, Puzzle, Sparkles, ScrollText } from "lucide-react";
-import { getAnalyticsRoute, getModelsAnalyticsRoute, getSkillUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
+import { ArrowUpRight, BarChart3, Blocks, CloudOff, Sparkles, ScrollText, type LucideIcon } from "lucide-react";
+import { DenButton } from "../../../_components/ui/button";
+import { getAnalyticsRoute, getModelsAnalyticsRoute, getLibraryUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
-import { useSkillUsageAvailable } from "../skill-usage/use-skill-usage";
+import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
 
 export const analyticsSurfaceClass = "rounded-2xl border border-[#e3e7ee] bg-white";
 export const analyticsPageClass = "mx-auto grid w-full max-w-[1160px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8";
 
 export function AnalyticsPageHeader({ orgSlug, active, title, description, action, caption }: {
-  orgSlug?: string | null; active: "adoption" | "models" | "skills" | "workflows";
+  orgSlug?: string | null; active: "adoption" | "models" | "library" | "workflows";
   title: string; description: string; action?: ReactNode; caption?: ReactNode;
 }) {
   const { runtimeConfig } = useDenFlow();
   const { orgContext } = useOrgDashboard();
-  const skillUsage = useSkillUsageAvailable();
+  const libraryUsage = useLibraryUsageAvailable();
   const pages = [
     { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 },
     ...(runtimeConfig.orgMode === "single_org" ? [] : [{ id: "models", label: "Models & usage", href: getModelsAnalyticsRoute(orgSlug), icon: Sparkles }]),
-    ...(skillUsage ? [{ id: "skills", label: "Skills", href: getSkillUsageRoute(orgSlug), icon: Puzzle }] : []),
+    ...(libraryUsage ? [{ id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks }] : []),
     ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [{ id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText }] : []),
   ];
   return <header className="grid gap-5">
@@ -44,12 +45,24 @@ export function AnalyticsPageHeader({ orgSlug, active, title, description, actio
   </header>;
 }
 
-export function AnalyticsEmptyState({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
-  return <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center">
-    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-[#e7dfff] bg-[#f6f2ff] text-[#6F3DFF]"><BarChart3 className="h-5 w-5" aria-hidden="true" /></div>
+export function AnalyticsEmptyState({ title, children, action, icon: Icon = BarChart3, testId }: {
+  title: string; children: ReactNode; action?: ReactNode; icon?: LucideIcon; testId?: string;
+}) {
+  return <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center" data-testid={testId}>
+    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl border border-[#e7dfff] bg-[#f6f2ff] text-[#6F3DFF]"><Icon className="h-5 w-5" aria-hidden="true" /></div>
     <h3 className="text-sm font-semibold text-[#07192C]">{title}</h3>
     <div className="mt-2 max-w-md text-sm leading-6 text-[#637291]">{children}</div>
     {action ? <div className="mt-4">{action}</div> : null}
+  </div>;
+}
+
+/** The one way an Analytics view says it could not load: what happened, and one way to try again. */
+export function AnalyticsErrorState({ title, onRetry, retrying = false }: { title: string; onRetry: () => void; retrying?: boolean }) {
+  return <div className={analyticsSurfaceClass} role="alert">
+    <AnalyticsEmptyState title={title} icon={CloudOff}
+      action={<DenButton variant="secondary" onClick={onRetry} disabled={retrying}>{retrying ? "Trying again…" : "Try again"}</DenButton>}>
+      Your data is safe. This is usually a short connection problem.
+    </AnalyticsEmptyState>
   </div>;
 }
 

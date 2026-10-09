@@ -9,7 +9,8 @@ import { ProjectFilter } from "./project-filter";
 import { StatCard } from "./stat-card";
 import { TrendChart } from "./trend-chart";
 import { useAnalytics, useProjectOptions } from "./use-analytics";
-import { AnalyticsPageHeader, analyticsPageClass } from "./analytics-layout";
+import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "./analytics-layout";
+import { getMembersRoute } from "../../../_lib/den-org";
 import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
 
@@ -52,6 +53,11 @@ export function AnalyticsScreen() {
   const { data, isLoading, isFetching, isError, refetch } = useAnalytics(!locked, projectValue);
 
   const projectScoped = projectValue.length > 0;
+  // A workspace nobody has used yet gets one clear empty state, not a page of zeros.
+  const noActivity = Boolean(data) && !projectScoped && !isError
+    && (data?.activeMembers30d ?? 0) === 0 && (data?.sessions30d ?? 0) === 0
+    && (data?.tasksCompleted30d ?? 0) + (data?.tasksFailed30d ?? 0) === 0
+    && (data?.weekly ?? []).every((week) => week.activeMembers === 0 && week.sessions === 0);
   const weekly = data?.weekly ?? [];
   const tasks7d = (data?.tasksCompleted7d ?? 0) + (data?.tasksFailed7d ?? 0);
   const modelUsage = data?.models.usage30d ?? [];
@@ -62,19 +68,27 @@ export function AnalyticsScreen() {
     <div className={analyticsPageClass}>
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="adoption"
         title="Usage & adoption" description="Understand how your team works in OpenWork, across models and providers."
-        caption="Enterprise analytics · Activity metadata only"
+        caption="Activity metadata only, never content"
         action={!locked ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
 
       {locked ? (
         <div className="mt-5">
           <EnterprisePlanNotice feature="Usage analytics" />
         </div>
-      ) : isError && !data ? <DenNotice tone="error" message="Could not load analytics. Use Refresh analytics to try again." /> : (
+      ) : isError && !data ? <AnalyticsErrorState title="Couldn't load analytics" onRetry={() => void refetch()} retrying={isFetching} />
+      : noActivity ? (
+        <div className={analyticsSurfaceClass} data-testid="analytics-no-activity">
+          <AnalyticsEmptyState title="No activity yet" icon={Activity}
+            action={<DenButton variant="secondary" href={getMembersRoute(activeOrg?.slug)}>Invite your team</DenButton>}>
+            Usage appears here once members sign in to the OpenWork app and run their first task. It never includes prompts, code, or file contents.
+          </AnalyticsEmptyState>
+        </div>
+      ) : (
       <>
       {isError ? <DenNotice tone="error" message="Could not refresh analytics. Showing the last available data." /> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
       <ProjectFilter options={projectOptions} value={projectValue} onValueChange={setProjectValue} />
-      <span className="text-xs text-[#637291]">Updates automatically · Trends over 12 weeks</span>
+      <span className="text-xs text-[#637291]">Trends over 12 weeks</span>
       </div>
 
       {/* Summary cards */}

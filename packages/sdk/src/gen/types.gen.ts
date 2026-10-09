@@ -169,7 +169,7 @@ export type AdminFeature = {
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "dashboardActivity"
-    | "skillUsage"
+    | "libraryUsage"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -229,7 +229,7 @@ export type AdminOrganizationsPageResponse = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
-      skillUsage: boolean;
+      libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -310,7 +310,7 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      skillUsage: {
+      libraryUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -523,7 +523,7 @@ export type AdminOverviewResponse = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
-      skillUsage: boolean;
+      libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -604,7 +604,7 @@ export type AdminOverviewResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      skillUsage: {
+      libraryUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1779,20 +1779,22 @@ export type InferenceProviderMissingError = {
   message: string;
 };
 
-export type SkillUsageRow = {
-  skillId: string;
-  skillName: string;
-  pluginId: string;
-  pluginName: string;
+export type LibraryUsageRow = {
+  id: string;
+  name: string;
+  detail: string | null;
+  pluginId: string | null;
   uses: number;
   people: number;
+  failures: number | null;
   lastUsedAt: string | null;
 };
 
-export type SkillUsageReport = {
+export type LibraryUsageReport = {
+  kind: "skills" | "plugins" | "connectors";
   days: number;
   trackingSince: string | null;
-  skills: Array<SkillUsageRow>;
+  items: Array<LibraryUsageRow>;
 };
 
 export type OrganizationScimConnection = {
@@ -2024,7 +2026,7 @@ export type CapabilityDisabledError = {
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "dashboardActivity"
-    | "skillUsage"
+    | "libraryUsage"
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
@@ -6300,7 +6302,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
-      skillUsage: boolean;
+      libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -6381,7 +6383,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      skillUsage: {
+      libraryUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6582,7 +6584,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       dashboardActivity: boolean;
-      skillUsage: boolean;
+      libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
@@ -6663,7 +6665,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      skillUsage: {
+      libraryUsage: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -14058,23 +14060,25 @@ export type GetV1InferenceAnalyticsConsumptionResponses = {
 export type GetV1InferenceAnalyticsConsumptionResponse =
   GetV1InferenceAnalyticsConsumptionResponses[keyof GetV1InferenceAnalyticsConsumptionResponses];
 
-export type GetV1SkillUsageData = {
+export type GetV1LibraryUsageByKindData = {
   body?: never;
-  path?: never;
+  path: {
+    kind: "skills" | "plugins" | "connectors";
+  };
   query?: {
     days?: "7" | "30" | "90";
   };
-  url: "/v1/skill-usage";
+  url: "/v1/library-usage/{kind}";
 };
 
-export type GetV1SkillUsageResponses = {
+export type GetV1LibraryUsageByKindResponses = {
   /**
-   * Skill usage
+   * Library usage
    */
-  200: SkillUsageReport;
+  200: LibraryUsageReport;
 };
 
-export type GetV1SkillUsageResponse = GetV1SkillUsageResponses[keyof GetV1SkillUsageResponses];
+export type GetV1LibraryUsageByKindResponse = GetV1LibraryUsageByKindResponses[keyof GetV1LibraryUsageByKindResponses];
 
 export type PostV1InferenceAnalyticsLangfuseTestData = {
   body: {

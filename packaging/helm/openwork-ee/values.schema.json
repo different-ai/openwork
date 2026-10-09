@@ -78,7 +78,7 @@
               ],
               "description": "Dashboard activity: Organization admins see recent additions and skill updates on their dashboard instead of Quick add. Renders DEN_FEATURE_DASHBOARD_ACTIVITY."
             },
-            "skillUsage": {
+            "libraryUsage": {
               "enum": [
                 "",
                 "true",
@@ -86,7 +86,7 @@
                 true,
                 false
               ],
-              "description": "Skill usage: Organization admins see how often each skill is used, by how many people, and which ones nobody uses, so they can decide what to keep. Renders DEN_FEATURE_SKILL_USAGE."
+              "description": "Library usage: Organization admins see in Analytics how often each skill, plugin and connector is used, by how many people, which calls fail, and what nobody uses, so they can decide what to keep. Renders DEN_FEATURE_LIBRARY_USAGE."
             },
             "modelsAnalytics": {
               "enum": [

@@ -846,7 +846,7 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "dashboardActivity",
-              "skillUsage",
+              "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
               "orgManagedDashboards",
@@ -1054,7 +1054,7 @@
                     "dashboardActivity": {
                       "type": "boolean"
                     },
-                    "skillUsage": {
+                    "libraryUsage": {
                       "type": "boolean"
                     },
                     "modelsAnalytics": {
@@ -1116,7 +1116,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
-                    "skillUsage",
+                    "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -1474,7 +1474,7 @@
                         "overrideApplies"
                       ]
                     },
-                    "skillUsage": {
+                    "libraryUsage": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -2378,7 +2378,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
-                    "skillUsage",
+                    "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -2785,7 +2785,7 @@
                     "dashboardActivity": {
                       "type": "boolean"
                     },
-                    "skillUsage": {
+                    "libraryUsage": {
                       "type": "boolean"
                     },
                     "modelsAnalytics": {
@@ -2847,7 +2847,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
-                    "skillUsage",
+                    "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -3205,7 +3205,7 @@
                         "overrideApplies"
                       ]
                     },
-                    "skillUsage": {
+                    "libraryUsage": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -4109,7 +4109,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "dashboardActivity",
-                    "skillUsage",
+                    "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
                     "orgManagedDashboards",
@@ -8436,20 +8436,34 @@
           "message"
         ]
       },
-      "SkillUsageRow": {
+      "LibraryUsageRow": {
         "type": "object",
         "properties": {
-          "skillId": {
+          "id": {
             "type": "string"
           },
-          "skillName": {
+          "name": {
             "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pluginId": {
-            "type": "string"
-          },
-          "pluginName": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "uses": {
             "type": "integer",
@@ -8460,6 +8474,18 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "failures": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "lastUsedAt": {
             "anyOf": [
@@ -8475,18 +8501,27 @@
           }
         },
         "required": [
-          "skillId",
-          "skillName",
+          "id",
+          "name",
+          "detail",
           "pluginId",
-          "pluginName",
           "uses",
           "people",
+          "failures",
           "lastUsedAt"
         ]
       },
-      "SkillUsageReport": {
+      "LibraryUsageReport": {
         "type": "object",
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "skills",
+              "plugins",
+              "connectors"
+            ]
+          },
           "days": {
             "type": "integer",
             "exclusiveMinimum": 0,
@@ -8504,17 +8539,18 @@
               }
             ]
           },
-          "skills": {
+          "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/SkillUsageRow"
+              "$ref": "#/components/schemas/LibraryUsageRow"
             }
           }
         },
         "required": [
+          "kind",
           "days",
           "trackingSince",
-          "skills"
+          "items"
         ]
       },
       "OrganizationScimConnection": {
@@ -9513,7 +9549,7 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "dashboardActivity",
-              "skillUsage",
+              "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
               "orgManagedDashboards",
@@ -26004,7 +26040,7 @@
                         "dashboardActivity": {
                           "type": "boolean"
                         },
-                        "skillUsage": {
+                        "libraryUsage": {
                           "type": "boolean"
                         },
                         "modelsAnalytics": {
@@ -26066,7 +26102,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
-                        "skillUsage",
+                        "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -26424,7 +26460,7 @@
                             "overrideApplies"
                           ]
                         },
-                        "skillUsage": {
+                        "libraryUsage": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -27328,7 +27364,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
-                        "skillUsage",
+                        "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -27480,7 +27516,7 @@
                         "dashboardActivity": {
                           "type": "boolean"
                         },
-                        "skillUsage": {
+                        "libraryUsage": {
                           "type": "boolean"
                         },
                         "modelsAnalytics": {
@@ -27542,7 +27578,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
-                        "skillUsage",
+                        "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -27900,7 +27936,7 @@
                             "overrideApplies"
                           ]
                         },
-                        "skillUsage": {
+                        "libraryUsage": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -28804,7 +28840,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "dashboardActivity",
-                        "skillUsage",
+                        "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
                         "orgManagedDashboards",
@@ -51544,27 +51580,40 @@
         ]
       }
     },
-    "/v1/skill-usage": {
+    "/v1/library-usage/{kind}": {
       "get": {
-        "operationId": "getV1SkillUsage",
+        "operationId": "getV1LibraryUsageByKind",
         "tags": [
           "Plugins"
         ],
-        "summary": "Read how often the organization's skills are used",
-        "description": "Lists every active skill in the organization's plugins with how many times agents loaded it over the last `days` days (7, 30 or 90; default 30), how many members it was loaded for, and when it was last loaded. Skills nobody used come back with zeros. Repeated loads of the same skill by the same member within 15 minutes count once. Counts cover skills served through the OpenWork MCP gateway since the skillUsage feature was turned on; `trackingSince` is the first recorded use. Aggregates only. Workspace owners and admins only.",
+        "summary": "Read how the organization's skills, plugins or connectors are used",
+        "description": "Lists every active skill (`kind=skills`), plugin (`plugins`) or connector (`connectors`) in the organization with how often it was used over the last `days` days (7, 30 or 90; default 30), by how many members, and when it was last used. Items nobody used come back with zeros. Skills count loads of their SKILL.md through the OpenWork MCP gateway; repeated loads by the same member within 15 minutes count once. Plugins count their skills' loads plus their Workflows' runs, and `failures` counts failed runs. Connectors count tool calls made through OpenWork, and `failures` counts calls that failed. `failures` is null for skills. Counts cover use since the libraryUsage feature was turned on; `trackingSince` is the first recorded use. Aggregates only. Workspace owners and admins only.",
         "responses": {
           "200": {
-            "description": "Skill usage",
+            "description": "Library usage",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SkillUsageReport"
+                  "$ref": "#/components/schemas/LibraryUsageReport"
                 }
               }
             }
           }
         },
         "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "skills",
+                "plugins",
+                "connectors"
+              ]
+            },
+            "required": true
+          },
           {
             "in": "query",
             "name": "days",

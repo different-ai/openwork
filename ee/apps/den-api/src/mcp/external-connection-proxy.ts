@@ -1,3 +1,4 @@
+import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import {
@@ -182,7 +183,16 @@ export function createExternalConnectionProxyServer(input: {
         }) }],
       }
     }
-    return runtime.callTool({ ...input.operation, toolName: tool.name, args })
+    const call = runtime.callTool({ ...input.operation, toolName: tool.name, args })
+    // Library usage: one row per direct call, ok or error, never the arguments or result.
+    recordConnectorCall(Promise.resolve(call), {
+      organizationId: connection.organizationId,
+      orgMembershipId: input.operation.member.orgMembershipId,
+      connectionId: connection.id,
+      toolName: tool.name,
+      via: "connection_proxy",
+    }, toolCallFailed)
+    return call
   }
   // An administrator opted this connection into direct exposure: ordinary MCP
   // clients receive the provider's own catalog instead of the bounded

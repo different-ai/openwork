@@ -353,6 +353,7 @@ import type {
   GetV1InstallConfigErrors,
   GetV1InstallConfigResponses,
   GetV1IntegrationsSlackOauthCallbackErrors,
+  GetV1LibraryUsageByKindResponses,
   GetV1LlmProviderCatalogByProviderIdErrors,
   GetV1LlmProviderCatalogByProviderIdResponses,
   GetV1LlmProviderCatalogErrors,
@@ -472,7 +473,6 @@ import type {
   GetV1ScimErrors,
   GetV1ScimResponses,
   GetV1SkillHubsErrors,
-  GetV1SkillUsageResponses,
   GetV1SsoErrors,
   GetV1SsoMetadataErrors,
   GetV1SsoMetadataResponses,
@@ -5161,19 +5161,30 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Read how often the organization's skills are used
+   * Read how the organization's skills, plugins or connectors are used
    *
-   * Lists every active skill in the organization's plugins with how many times agents loaded it over the last `days` days (7, 30 or 90; default 30), how many members it was loaded for, and when it was last loaded. Skills nobody used come back with zeros. Repeated loads of the same skill by the same member within 15 minutes count once. Counts cover skills served through the OpenWork MCP gateway since the skillUsage feature was turned on; `trackingSince` is the first recorded use. Aggregates only. Workspace owners and admins only.
+   * Lists every active skill (`kind=skills`), plugin (`plugins`) or connector (`connectors`) in the organization with how often it was used over the last `days` days (7, 30 or 90; default 30), by how many members, and when it was last used. Items nobody used come back with zeros. Skills count loads of their SKILL.md through the OpenWork MCP gateway; repeated loads by the same member within 15 minutes count once. Plugins count their skills' loads plus their Workflows' runs, and `failures` counts failed runs. Connectors count tool calls made through OpenWork, and `failures` counts calls that failed. `failures` is null for skills. Counts cover use since the libraryUsage feature was turned on; `trackingSince` is the first recorded use. Aggregates only. Workspace owners and admins only.
    */
-  public getV1SkillUsage<ThrowOnError extends boolean = false>(
-    parameters?: {
+  public getV1LibraryUsageByKind<ThrowOnError extends boolean = false>(
+    parameters: {
+      kind: "skills" | "plugins" | "connectors";
       days?: "7" | "30" | "90";
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "days" }] }]);
-    return (options?.client ?? this.client).get<GetV1SkillUsageResponses, unknown, ThrowOnError>({
-      url: "/v1/skill-usage",
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "kind" },
+            { in: "query", key: "days" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1LibraryUsageByKindResponses, unknown, ThrowOnError>({
+      url: "/v1/library-usage/{kind}",
       ...options,
       ...params,
     });

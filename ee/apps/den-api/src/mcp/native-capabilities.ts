@@ -1,3 +1,4 @@
+import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { organizationFeatureEnabled } from "../features.js"
@@ -232,7 +233,7 @@ export async function executeNativeCapability(input: {
       }],
     }
   }
-  return invokeMcpOperation({
+  const call = invokeMcpOperation({
     app: input.app,
     env: input.env,
     operation: resolved.operation,
@@ -245,4 +246,15 @@ export async function executeNativeCapability(input: {
       body: normalizeToolBody(input.body),
     },
   })
+  // Library usage: one row per Google Workspace / Microsoft 365 call, ok or error.
+  if (input.member) {
+    recordConnectorCall(call, {
+      organizationId: input.organizationId,
+      orgMembershipId: input.member.orgMembershipId,
+      connectionId: resolved.connection.id,
+      toolName: parsed.toolName,
+      via: "native",
+    }, toolCallFailed)
+  }
+  return call
 }
