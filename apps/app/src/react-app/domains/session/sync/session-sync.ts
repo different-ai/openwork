@@ -9,6 +9,8 @@ import { gatewayUsageQueryPrefix } from "../../cloud/gateway-usage-state";
 import { mergeReplyMetadata, replyModelFromInfo } from "./reply-model";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
+import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
+import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { perfNow, recordPerfLog } from "@/app/lib/perf-log";
@@ -975,6 +977,7 @@ function upsertPart(messages: UIMessage[], messageId: string, partId: string, ne
 }
 
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
+  observeModelsTaskEvent(workspaceId, event);
   const queryClient = getReactQueryClient();
   const input = entry.input;
 
@@ -1105,6 +1108,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         captureAnalyticsEvent("task_run_errored", {
           duration_ms: Date.now() - runStartedAt,
         });
+        trackTaskFailed(sessionId, Date.now() - runStartedAt);
       }
       notifyDesktopEvent({ type: "task.failed", sessionId, errorText });
       useSessionActivityStore.getState().setError(workspaceId, sessionId, errorText);
@@ -1649,6 +1653,7 @@ function applySessionRunStatus(
       captureAnalyticsEvent("task_run_completed", {
         duration_ms: Date.now() - runStartedAt,
       });
+      trackTaskCompleted(sessionId, Date.now() - runStartedAt);
       notifyDesktopEvent({ type: "task.completed", sessionId });
       entry.titleRecovery?.observe(sessionId);
     }

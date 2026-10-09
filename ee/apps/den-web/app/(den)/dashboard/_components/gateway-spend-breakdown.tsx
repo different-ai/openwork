@@ -7,7 +7,7 @@ import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { getAiGatewayPersonRoute } from "../../_lib/den-org";
-import { formatUsageCost } from "../_features/gateway-usage/stacked-daily-chart";
+import { formatUsageCost } from "../_features/analytics/stacked-daily-chart";
 import { gatewayUsageModelFamily, gatewayUsageTotals, useGatewayUsage, type GatewayUsageTotal } from "./gateway-usage-data";
 import { getProviderIconSlug } from "./llm-provider-data";
 

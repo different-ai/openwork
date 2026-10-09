@@ -24,7 +24,7 @@ import {
   OrganizationTable,
   OrgSubscriptionTable,
   ScimSyncEventTable,
-  GatewayRequestLogTable,
+  TelemetryEventTable,
   WorkerTable,
   AdminAllowlistTable,
 } from "@openwork-ee/den-db/schema"
@@ -736,9 +736,9 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
   const userIds = users.map((user) => user.id)
   const activityWindowStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
   const sessionDayExpr = sql<string>`date_format(${AuthSessionTable.createdAt}, '%Y-%m-%d')`
-  const gatewayDayExpr = sql<string>`date_format(${GatewayRequestLogTable.started_at}, '%Y-%m-%d')`
+  const telemetryDayExpr = sql<string>`date_format(${TelemetryEventTable.event_timestamp}, '%Y-%m-%d')`
 
-  const [workerStatsRows, sessionStatsRows, accountRows, orgMembershipRows, sessionDayRows, gatewayDayRows, inviteStatsRows] = await Promise.all([
+  const [workerStatsRows, sessionStatsRows, accountRows, orgMembershipRows, sessionDayRows, telemetryDayRows, taskDayRows, inviteStatsRows] = await Promise.all([
     db
       .select({
         userId: WorkerTable.created_by_user_id,
@@ -786,13 +786,25 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
     db
       .select({
         userId: MemberTable.userId,
-        day: gatewayDayExpr,
-        lastEventAt: sql<Date | null>`max(${GatewayRequestLogTable.started_at})`,
+        day: telemetryDayExpr,
+        lastEventAt: sql<Date | null>`max(${TelemetryEventTable.event_timestamp})`,
       })
-      .from(GatewayRequestLogTable)
-      .innerJoin(MemberTable, eq(GatewayRequestLogTable.org_membership_id, MemberTable.id))
-      .where(and(inArray(MemberTable.userId, userIds), gte(GatewayRequestLogTable.started_at, activityWindowStart)))
-      .groupBy(MemberTable.userId, gatewayDayExpr)
+      .from(TelemetryEventTable)
+      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
+      .where(and(inArray(MemberTable.userId, userIds), gte(TelemetryEventTable.event_timestamp, activityWindowStart)))
+      .groupBy(MemberTable.userId, telemetryDayExpr)
+      .catch(() => []),
+    db
+      .select({ userId: MemberTable.userId, day: telemetryDayExpr })
+      .from(TelemetryEventTable)
+      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
+      .where(and(
+        inArray(MemberTable.userId, userIds),
+        gte(TelemetryEventTable.event_timestamp, activityWindowStart),
+        inArray(TelemetryEventTable.event_type, ["task.started", "task.completed", "task.failed"]),
+        isNotNull(TelemetryEventTable.session_id),
+      ))
+      .groupBy(MemberTable.userId, telemetryDayExpr)
       .catch(() => []),
     db
       .select({
@@ -862,12 +874,12 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
     memberships.sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  type ActivityStats = { days: Set<string>; lastGatewayAt: number | null }
+  type ActivityStats = { days: Set<string>; lastTelemetryAt: number | null }
   const activityByUser = new Map<UserId, ActivityStats>()
   const getActivity = (userId: UserId): ActivityStats => {
     let stats = activityByUser.get(userId)
     if (!stats) {
-      stats = { days: new Set(), lastGatewayAt: null }
+      stats = { days: new Set(), lastTelemetryAt: null }
       activityByUser.set(userId, stats)
     }
     return stats
@@ -877,7 +889,7 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
       getActivity(row.userId).days.add(row.day)
     }
   }
-  for (const row of gatewayDayRows) {
+  for (const row of telemetryDayRows) {
     if (!row.userId) {
       continue
     }
@@ -886,8 +898,13 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
       stats.days.add(row.day)
     }
     const eventTime = toTimestamp(row.lastEventAt)
-    if (eventTime !== null && (stats.lastGatewayAt === null || eventTime > stats.lastGatewayAt)) {
-      stats.lastGatewayAt = eventTime
+    if (eventTime !== null && (stats.lastTelemetryAt === null || eventTime > stats.lastTelemetryAt)) {
+      stats.lastTelemetryAt = eventTime
+    }
+  }
+  for (const row of taskDayRows) {
+    if (row.userId && row.day) {
+      getActivity(row.userId).days.add(row.day)
     }
   }
 
@@ -904,8 +921,8 @@ async function shapeAdminUserRows(users: AdminUserBaseRow[], includeBilling: boo
     const activity = activityByUser.get(entry.id)
     const activeDayCount = activity ? activity.days.size : 0
     const lastSeenTime = toTimestamp(sessionStats.lastSeenAt)
-    const lastGatewayAt = activity ? activity.lastGatewayAt : null
-    const lastActiveTime = lastGatewayAt === null ? lastSeenTime : lastSeenTime === null ? lastGatewayAt : Math.max(lastSeenTime, lastGatewayAt)
+    const lastTelemetryAt = activity ? activity.lastTelemetryAt : null
+    const lastActiveTime = lastTelemetryAt === null ? lastSeenTime : lastSeenTime === null ? lastTelemetryAt : Math.max(lastSeenTime, lastTelemetryAt)
     const inviteStats = inviteStatsByUser.get(entry.id)
     const signupTime = toTimestamp(entry.createdAt)
     const firstInviteTime = toTimestamp(inviteStats ? inviteStats.firstInviteAt : null)
@@ -1105,10 +1122,10 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
   const recent7dStart = new Date(now - 7 * 24 * 60 * 60 * 1000)
   const recent30dStart = new Date(now - 30 * 24 * 60 * 60 * 1000)
   const sessionDayExpr = sql<string>`date_format(${AuthSessionTable.createdAt}, '%Y-%m-%d')`
-  const gatewayDayExpr = sql<string>`date_format(${GatewayRequestLogTable.started_at}, '%Y-%m-%d')`
+  const telemetryDayExpr = sql<string>`date_format(${TelemetryEventTable.event_timestamp}, '%Y-%m-%d')`
   const signupDayExpr = sql<string>`date_format(${AuthUserTable.createdAt}, '%Y-%m-%d')`
 
-  const [userSummaryRows, organizationTotal, adminRows, workerRows, sessionDayRows, gatewayDayRows, signupRows, inviteRows] = await Promise.all([
+  const [userSummaryRows, organizationTotal, adminRows, workerRows, sessionDayRows, telemetryDayRows, taskDayRows, signupRows, inviteRows] = await Promise.all([
     db
       .select({
         totalUsers: sql<number>`count(*)`,
@@ -1133,11 +1150,23 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
       .where(gte(AuthSessionTable.createdAt, activityWindowStart))
       .groupBy(AuthSessionTable.userId, sessionDayExpr),
     db
-      .select({ userId: MemberTable.userId, day: gatewayDayExpr })
-      .from(GatewayRequestLogTable)
-      .innerJoin(MemberTable, eq(GatewayRequestLogTable.org_membership_id, MemberTable.id))
-      .where(and(isNotNull(MemberTable.userId), gte(GatewayRequestLogTable.started_at, activityWindowStart)))
-      .groupBy(MemberTable.userId, gatewayDayExpr)
+      .select({ userId: MemberTable.userId, day: telemetryDayExpr })
+      .from(TelemetryEventTable)
+      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
+      .where(and(isNotNull(MemberTable.userId), gte(TelemetryEventTable.event_timestamp, activityWindowStart)))
+      .groupBy(MemberTable.userId, telemetryDayExpr)
+      .catch(() => []),
+    db
+      .select({ userId: MemberTable.userId, day: telemetryDayExpr })
+      .from(TelemetryEventTable)
+      .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
+      .where(and(
+        isNotNull(MemberTable.userId),
+        gte(TelemetryEventTable.event_timestamp, activityWindowStart),
+        inArray(TelemetryEventTable.event_type, ["task.started", "task.completed", "task.failed"]),
+        isNotNull(TelemetryEventTable.session_id),
+      ))
+      .groupBy(MemberTable.userId, telemetryDayExpr)
       .catch(() => []),
     db
       .select({ day: signupDayExpr, signups: sql<number>`count(*)` })
@@ -1189,12 +1218,18 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
     rememberActivityDay(row.userId, row.day)
     markDay(activeUsersByDay, row.day, row.userId)
   }
-  for (const row of gatewayDayRows) {
+  for (const row of telemetryDayRows) {
     if (!row.userId || !row.day) {
       continue
     }
     rememberActivityDay(row.userId, row.day)
     markDay(activeUsersByDay, row.day, row.userId)
+  }
+  for (const row of taskDayRows) {
+    if (!row.userId || !row.day) {
+      continue
+    }
+    rememberActivityDay(row.userId, row.day)
     markDay(realActiveUsersByDay, row.day, row.userId)
   }
 

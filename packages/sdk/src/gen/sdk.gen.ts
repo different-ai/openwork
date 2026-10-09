@@ -469,8 +469,16 @@ import type {
   GetV1TeamsByTeamIdPluginAccessErrors,
   GetV1TeamsByTeamIdPluginAccessResponses,
   GetV1TeamsByTeamIdResponses,
+  GetV1TelemetryAdoptionErrors,
+  GetV1TelemetryAdoptionResponses,
+  GetV1TelemetryAnalyticsErrors,
+  GetV1TelemetryAnalyticsResponses,
+  GetV1TelemetryDimensionsErrors,
+  GetV1TelemetryDimensionsResponses,
   GetV1WorkersErrors,
   GetV1WorkersResponses,
+  GetV1WorkflowRunsErrors,
+  GetV1WorkflowRunsResponses,
   GetV1WorkflowsByConfigObjectIdErrors,
   GetV1WorkflowsByConfigObjectIdResponses,
   GetV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdErrors,
@@ -710,6 +718,8 @@ import type {
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses,
   PostV1GatewayUsageLimitResetRequestsErrors,
   PostV1GatewayUsageLimitResetRequestsResponses,
+  PostV1InferenceAnalyticsEventsErrors,
+  PostV1InferenceAnalyticsEventsResponses,
   PostV1InferenceAnalyticsLangfuseConnectErrors,
   PostV1InferenceAnalyticsLangfuseConnectResponses,
   PostV1InferenceAnalyticsLangfuseTestErrors,
@@ -866,6 +876,8 @@ import type {
   PostV1SsoVerifyDomainResponses,
   PostV1TeamsErrors,
   PostV1TeamsResponses,
+  PostV1TelemetryIngestErrors,
+  PostV1TelemetryIngestResponses,
   PostV1WebhooksConnectorsGithubErrors,
   PostV1WebhooksConnectorsGithubResponses,
   PostV1WorkersByIdActivityHeartbeatErrors,
@@ -3632,6 +3644,36 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * List Workflow runs
+   *
+   * Lists Workflow run receipts visible to the active organization member, newest first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page.
+   */
+  public getV1WorkflowRuns<ThrowOnError extends boolean = false>(
+    parameters?: {
+      cursor?: string;
+      limit?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1WorkflowRunsResponses, GetV1WorkflowRunsErrors, ThrowOnError>({
+      url: "/v1/workflow-runs",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
    * List accessible Workflows
    *
    * Lists every Workflow the calling member can reach through Plugin or direct grants, each with the Plugin it executes under, its latest immutable version id, declared inputSchema and outputSchema, and the capabilities it calls. Workflows whose latest version cannot be parsed are omitted. Use the returned configObjectVersionId to run an exact version.
@@ -4953,6 +4995,65 @@ export class DenClient extends HeyApiClient {
     );
     return (options?.client ?? this.client).patch<PatchV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
       url: "/v1/inference/analytics/settings",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Report task analytics events for the calling member's OpenWork Models calls
+   *
+   * Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.
+   */
+  public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
+    parameters: {
+      events: Array<{
+        id: string;
+        type:
+          | "task.started"
+          | "task.completed"
+          | "task.failed"
+          | "task.cancelled"
+          | "tool.executed"
+          | "skill.loaded"
+          | "model.call";
+        timestamp: string;
+        sessionId: string;
+        taskId: string;
+        callId?: string;
+        durationMs?: number;
+        status?: "completed" | "failed" | "cancelled";
+        model?: string;
+        provider?: string;
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+        costUsd?: number;
+        usageComplete?: boolean;
+        tool?: string;
+        skill?: string;
+        skillVersion?: string;
+        mcp?: string;
+        metadata?: {
+          [key: string]: string | number | boolean;
+        };
+      }>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsEventsResponses,
+      PostV1InferenceAnalyticsEventsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference/analytics/events",
       ...options,
       ...params,
       headers: {
@@ -15221,5 +15322,118 @@ export class DenClient extends HeyApiClient {
       unknown,
       ThrowOnError
     >({ url: "/mcp/admin/.well-known/oauth-protected-resource", ...options });
+  }
+
+  /**
+   * Ingest telemetry events
+   *
+   * Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.
+   */
+  public postV1TelemetryIngest<ThrowOnError extends boolean = false>(
+    parameters: {
+      events: Array<{
+        type: string;
+        timestamp: string;
+        source?: string;
+        sessionId?: string;
+        durationMs?: number;
+        success?: boolean;
+        dimensions?: Array<{
+          type: string;
+          value?: string;
+          label: string;
+          metadata?: {
+            [key: string]: unknown;
+          };
+        }>;
+      }>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1TelemetryIngestResponses,
+      PostV1TelemetryIngestErrors,
+      ThrowOnError
+    >({
+      url: "/v1/telemetry/ingest",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List telemetry dimension values
+   *
+   * Returns unique analytics dimension values for the active organization, such as project labels for the project selector.
+   */
+  public getV1TelemetryDimensions<ThrowOnError extends boolean = false>(
+    parameters: {
+      type: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "type" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1TelemetryDimensionsResponses,
+      GetV1TelemetryDimensionsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/telemetry/dimensions",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Get adoption metrics
+   *
+   * Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.
+   */
+  public getV1TelemetryAdoption<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1TelemetryAdoptionResponses,
+      GetV1TelemetryAdoptionErrors,
+      ThrowOnError
+    >({ url: "/v1/telemetry/adoption", ...options });
+  }
+
+  /**
+   * Get usage analytics
+   *
+   * Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks.
+   */
+  public getV1TelemetryAnalytics<ThrowOnError extends boolean = false>(
+    parameters?: {
+      dimensionType?: string;
+      dimensionValue?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "dimensionType" },
+            { in: "query", key: "dimensionValue" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<
+      GetV1TelemetryAnalyticsResponses,
+      GetV1TelemetryAnalyticsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/telemetry/analytics",
+      ...options,
+      ...params,
+    });
   }
 }

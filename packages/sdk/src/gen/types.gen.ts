@@ -1287,6 +1287,7 @@ export type OrganizationContextResponse = {
     sso: boolean;
     desktopPolicies: boolean;
     orgControls: boolean;
+    analytics: boolean;
     auditLogs: boolean;
   };
   [key: string]: unknown;
@@ -1405,6 +1406,83 @@ export type InvalidManagedBrandAssetError = {
   kind: "logo" | "icon" | null;
   reason: string;
   message: string;
+};
+
+export type WorkflowRunListResponse = {
+  runs: Array<{
+    /**
+     * Den TypeID with 'wfr_' prefix and a 26-character base32 suffix.
+     */
+    id: string;
+    source: string;
+    status: "succeeded" | "failed";
+    errorKind: string | null;
+    errorMessage: string | null;
+    toolCallCount: number;
+    toolCalls: Array<{
+      name: string;
+    }> | null;
+    durationMs: number;
+    startedAt: string;
+    finishedAt: string;
+    createdAt: string;
+    orgMembershipId: string | null;
+    workflow: {
+      configObjectId: string;
+      title: string;
+      graph: {
+        nodes: Array<
+          | {
+              id: string;
+              kind: "input";
+              label: string;
+              fields: Array<string>;
+            }
+          | {
+              id: string;
+              kind: "tool";
+              label: string;
+              namespace: string;
+              tool: string;
+              scriptPath: string;
+              assignsTo: string | null;
+              parallelGroup: string | null;
+            }
+          | {
+              id: string;
+              kind: "search";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "branch";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "loop";
+              label: string;
+            }
+          | {
+              id: string;
+              kind: "return";
+              label: string;
+            }
+        >;
+        edges: Array<{
+          from: string;
+          to: string;
+          label: string | null;
+          kind: "flow" | "data";
+        }>;
+        parseError: string | null;
+      } | null;
+    } | null;
+  }>;
+  /**
+   * Pass as cursor to fetch the next page; null on the last page.
+   */
+  nextCursor: string | null;
 };
 
 export type DashboardElement = {
@@ -5142,6 +5220,56 @@ export type OAuthProtectedResourceMetadata = {
   authorization_servers: Array<string>;
   scopes_supported: Array<string>;
   bearer_methods_supported: Array<string>;
+};
+
+export type TelemetryDimensionListResponse = {
+  items: Array<{
+    type: string;
+    value: string;
+    label: string;
+    sessionCount: number;
+    lastSeenAt: string;
+  }>;
+};
+
+export type TelemetryAdoptionResponse = {
+  members: number;
+  pendingInvites: number;
+  activeMembers7d: number;
+  activeMembers30d: number;
+  weeklyTrend: Array<number>;
+};
+
+export type TelemetryAnalyticsResponse = {
+  members: number;
+  pendingInvites: number;
+  activeMembers7d: number;
+  activeMembers30d: number;
+  sessions7d: number;
+  sessions30d: number;
+  tasksCompleted7d: number;
+  tasksFailed7d: number;
+  tasksCompleted30d: number;
+  tasksFailed30d: number;
+  avgTaskDurationMs30d: number | null;
+  weekly: Array<{
+    weekStart: string;
+    activeMembers: number;
+    sessions: number;
+    tasksCompleted: number;
+    tasksFailed: number;
+  }>;
+  models: {
+    usage30d: Array<{
+      id: string;
+      label: string;
+      sessions: number;
+    }>;
+    selection30d: {
+      default: number;
+      manual: number;
+    };
+  };
 };
 
 export type GetHealthData = {
@@ -10297,6 +10425,45 @@ export type PostV1OrgBrandAssetsResponses = {
 
 export type PostV1OrgBrandAssetsResponse = PostV1OrgBrandAssetsResponses[keyof PostV1OrgBrandAssetsResponses];
 
+export type GetV1WorkflowRunsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Opaque cursor returned as nextCursor by the previous page. Omit for the first page.
+     */
+    cursor?: string;
+    limit?: number;
+  };
+  url: "/v1/workflow-runs";
+};
+
+export type GetV1WorkflowRunsErrors = {
+  /**
+   * The Workflow run list query was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to list Workflow runs.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workflow run analytics requires an Enterprise plan.
+   */
+  402: EnterprisePlanRequiredError;
+};
+
+export type GetV1WorkflowRunsError = GetV1WorkflowRunsErrors[keyof GetV1WorkflowRunsErrors];
+
+export type GetV1WorkflowRunsResponses = {
+  /**
+   * Workflow runs returned successfully.
+   */
+  200: WorkflowRunListResponse;
+};
+
+export type GetV1WorkflowRunsResponse = GetV1WorkflowRunsResponses[keyof GetV1WorkflowRunsResponses];
+
 export type GetV1WorkflowsData = {
   body?: never;
   path?: never;
@@ -13194,6 +13361,76 @@ export type PatchV1InferenceAnalyticsSettingsResponses = {
 
 export type PatchV1InferenceAnalyticsSettingsResponse =
   PatchV1InferenceAnalyticsSettingsResponses[keyof PatchV1InferenceAnalyticsSettingsResponses];
+
+export type PostV1InferenceAnalyticsEventsData = {
+  body: {
+    events: Array<{
+      id: string;
+      type:
+        | "task.started"
+        | "task.completed"
+        | "task.failed"
+        | "task.cancelled"
+        | "tool.executed"
+        | "skill.loaded"
+        | "model.call";
+      timestamp: string;
+      sessionId: string;
+      taskId: string;
+      callId?: string;
+      durationMs?: number;
+      status?: "completed" | "failed" | "cancelled";
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      usageComplete?: boolean;
+      tool?: string;
+      skill?: string;
+      skillVersion?: string;
+      mcp?: string;
+      metadata?: {
+        [key: string]: string | number | boolean;
+      };
+    }>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/events";
+};
+
+export type PostV1InferenceAnalyticsEventsErrors = {
+  /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+};
+
+export type PostV1InferenceAnalyticsEventsError =
+  PostV1InferenceAnalyticsEventsErrors[keyof PostV1InferenceAnalyticsEventsErrors];
+
+export type PostV1InferenceAnalyticsEventsResponses = {
+  /**
+   * Accepted event ids.
+   */
+  202: {
+    acceptedIds: Array<string>;
+  };
+  /**
+   * Task analytics are not enabled for this organization; nothing was recorded.
+   */
+  204: void;
+};
+
+export type PostV1InferenceAnalyticsEventsResponse =
+  PostV1InferenceAnalyticsEventsResponses[keyof PostV1InferenceAnalyticsEventsResponses];
 
 export type GetV1InferenceAnalyticsActivityData = {
   body?: never;
@@ -30012,3 +30249,142 @@ export type GetMcpAdminWellKnownOauthProtectedResourceResponses = {
 
 export type GetMcpAdminWellKnownOauthProtectedResourceResponse =
   GetMcpAdminWellKnownOauthProtectedResourceResponses[keyof GetMcpAdminWellKnownOauthProtectedResourceResponses];
+
+export type PostV1TelemetryIngestData = {
+  body: {
+    events: Array<{
+      type: string;
+      timestamp: string;
+      source?: string;
+      sessionId?: string;
+      durationMs?: number;
+      success?: boolean;
+      dimensions?: Array<{
+        type: string;
+        value?: string;
+        label: string;
+        metadata?: {
+          [key: string]: unknown;
+        };
+      }>;
+    }>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/telemetry/ingest";
+};
+
+export type PostV1TelemetryIngestErrors = {
+  /**
+   * Invalid event payload.
+   */
+  400: InvalidRequestError;
+  /**
+   * Caller must be signed in.
+   */
+  401: UnauthorizedError;
+};
+
+export type PostV1TelemetryIngestError = PostV1TelemetryIngestErrors[keyof PostV1TelemetryIngestErrors];
+
+export type PostV1TelemetryIngestResponses = {
+  /**
+   * Events accepted.
+   */
+  204: void;
+};
+
+export type PostV1TelemetryIngestResponse = PostV1TelemetryIngestResponses[keyof PostV1TelemetryIngestResponses];
+
+export type GetV1TelemetryDimensionsData = {
+  body?: never;
+  path?: never;
+  query: {
+    type: string;
+  };
+  url: "/v1/telemetry/dimensions";
+};
+
+export type GetV1TelemetryDimensionsErrors = {
+  /**
+   * Invalid dimension query.
+   */
+  400: InvalidRequestError;
+  /**
+   * Caller must be signed in.
+   */
+  401: UnauthorizedError;
+};
+
+export type GetV1TelemetryDimensionsError = GetV1TelemetryDimensionsErrors[keyof GetV1TelemetryDimensionsErrors];
+
+export type GetV1TelemetryDimensionsResponses = {
+  /**
+   * Telemetry dimensions returned.
+   */
+  200: TelemetryDimensionListResponse;
+};
+
+export type GetV1TelemetryDimensionsResponse =
+  GetV1TelemetryDimensionsResponses[keyof GetV1TelemetryDimensionsResponses];
+
+export type GetV1TelemetryAdoptionData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/telemetry/adoption";
+};
+
+export type GetV1TelemetryAdoptionErrors = {
+  /**
+   * Caller must be signed in.
+   */
+  401: UnauthorizedError;
+};
+
+export type GetV1TelemetryAdoptionError = GetV1TelemetryAdoptionErrors[keyof GetV1TelemetryAdoptionErrors];
+
+export type GetV1TelemetryAdoptionResponses = {
+  /**
+   * Adoption metrics returned.
+   */
+  200: TelemetryAdoptionResponse;
+};
+
+export type GetV1TelemetryAdoptionResponse = GetV1TelemetryAdoptionResponses[keyof GetV1TelemetryAdoptionResponses];
+
+export type GetV1TelemetryAnalyticsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    dimensionType?: string;
+    dimensionValue?: string;
+  };
+  url: "/v1/telemetry/analytics";
+};
+
+export type GetV1TelemetryAnalyticsErrors = {
+  /**
+   * Invalid analytics query.
+   */
+  400: InvalidRequestError;
+  /**
+   * Caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Usage analytics requires an Enterprise plan.
+   */
+  402: EnterprisePlanRequiredError;
+};
+
+export type GetV1TelemetryAnalyticsError = GetV1TelemetryAnalyticsErrors[keyof GetV1TelemetryAnalyticsErrors];
+
+export type GetV1TelemetryAnalyticsResponses = {
+  /**
+   * Analytics returned.
+   */
+  200: TelemetryAnalyticsResponse;
+};
+
+export type GetV1TelemetryAnalyticsResponse = GetV1TelemetryAnalyticsResponses[keyof GetV1TelemetryAnalyticsResponses];

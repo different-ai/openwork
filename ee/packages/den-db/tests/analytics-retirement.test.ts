@@ -68,4 +68,20 @@ describe("legacy analytics migration keeps every row", () => {
     if (!other) throw new Error("missing 0127");
     expect(receiptMatchesMigration("4a23d428e3b5c4e23fe147a2fd73cfedd3d73384c0f41e11327d203a05e802dc", other)).toBe(false);
   });
+
+  test("0135 only creates the analytics tables where they are missing", async () => {
+    const sql = (await readFile(new URL("../drizzle/0135_restore_legacy_analytics.sql", import.meta.url), "utf8")).replace(/--[^\n]*/g, "");
+    const statements = sql.split(";").map((statement) => statement.trim()).filter(Boolean);
+    expect(statements.map((statement) => statement.split("(")[0]?.trim())).toEqual([
+      "CREATE TABLE IF NOT EXISTS `telemetry_event`",
+      "CREATE TABLE IF NOT EXISTS `telemetry_session_dimension`",
+    ]);
+    expect(sql).not.toMatch(/\b(DROP|DELETE|TRUNCATE|ALTER)\b/i);
+  });
+
+  test("0135 restores the analytics tables exactly as they were before 0128", async () => {
+    const before = await snapshot("0127_snapshot.json");
+    const after = await snapshot("0135_snapshot.json");
+    for (const name of ["telemetry_event", "telemetry_session_dimension"]) expect(after[name], name).toEqual(before[name]);
+  });
 });

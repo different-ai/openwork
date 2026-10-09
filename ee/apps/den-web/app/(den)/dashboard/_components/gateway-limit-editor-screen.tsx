@@ -16,7 +16,7 @@ import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { formatUsageCost } from "../_features/gateway-usage/stacked-daily-chart";
+import { formatUsageCost } from "../_features/analytics/stacked-daily-chart";
 import {
   GatewayLimitsWriteUncertainError, microUsdDecimal, timeframePeriods, useGatewayLimitsMutation, useGatewayPolicies,
 } from "./gateway-usage-limits-data";
