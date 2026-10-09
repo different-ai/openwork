@@ -138,7 +138,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
   return {
     listPolicies(scope: GatewayUsageScope) {
       return transaction(async (tx) => {
-        await activeUsageMember(tx, scope)
+        // Organization-wide read: share-lock the caller's active membership for it (see activeUsageMember).
+        await activeUsageMember(tx, scope, true)
         return { policies: await usagePolicies(tx, scope.organizationId) }
       })
     },

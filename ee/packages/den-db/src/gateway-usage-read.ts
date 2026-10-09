@@ -46,6 +46,11 @@ export function usageFail(
  * Authorization is the caller's job: Den routes check the catalog permission
  * (gateway_limits.view / gateway_limits.manage) before calling in, so a team
  * permission set can grant usage-limit management without an admin role.
+ *
+ * Pass `lock` whenever the caller's membership gates organization-wide data
+ * (policies, assignments, other members, their usage and requests) or a write:
+ * the share lock keeps a concurrent removal of the caller from landing between
+ * this check and the read. Only a member reading their own data skips it.
  */
 export async function activeUsageMember(
   tx: UsageReader,

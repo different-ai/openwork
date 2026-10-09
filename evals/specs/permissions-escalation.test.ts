@@ -43,6 +43,8 @@ function bytes(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+const ADMIN_GRANT_REQUIRES_ADMIN = "Only the owner or an admin can make someone an admin.";
+
 function said(result: PermissionsCall): string {
   const required = field(result.body, "requiredPermission");
   return `${result.status} ${String(field(result.body, "error"))}${typeof required === "string" ? ` requiredPermission ${required}` : ""}`;
@@ -344,21 +346,21 @@ test("with Permissions on, a member who may change roles through a team cannot m
     expect([...tess.permissions].sort()).toEqual(["invitations.manage", "members.update"]);
   });
 
-  await step("Tess cannot make Maya an admin, or invite someone as an admin, and is told the first Admin permission she lacks", async () => {
+  await step("Tess cannot make Maya an admin, or invite someone as an admin, because only the owner or an admin can", async () => {
     const promote = await world.request(world.tess, "POST", `/v1/members/${world.ids.maya}/role`, { role: "admin" });
     const invite = await world.request(world.tess, "POST", "/v1/invitations", { email: `permissions-invitee+${Date.now().toString(36)}@example.test`, role: "admin" });
     const maya = { role: await rosterRole(world, world.ids.maya) };
-    const ok = promote.status === 403 && field(promote.body, "requiredPermission") === firstMissing
-      && invite.status === 403 && field(invite.body, "requiredPermission") === firstMissing && maya.role === "member";
+    const ok = promote.status === 403 && field(promote.body, "message") === ADMIN_GRANT_REQUIRES_ADMIN
+      && invite.status === 403 && field(invite.body, "message") === ADMIN_GRANT_REQUIRES_ADMIN && maya.role === "member" && firstMissing !== "";
     evidence.recordAssertionEvidence(
-      "Making someone an admin needs every Admin permission",
-      `POST /v1/members/:maya/role admin → ${said(promote)}: “${String(field(promote.body, "message"))}”; POST /v1/invitations role admin → ${said(invite)}; Maya is still ${maya.role}`,
+      "Making someone an admin needs the owner or an admin",
+      `POST /v1/members/:maya/role admin → ${said(promote)}: “${String(field(promote.body, "message"))}”; POST /v1/invitations role admin → ${said(invite)}: “${String(field(invite.body, "message"))}”; Maya is still ${maya.role}`,
       ok,
     );
     expect(promote.status, summary(promote)).toBe(403);
-    expect(promote.body).toMatchObject({ error: "forbidden", requiredPermission: firstMissing });
+    expect(promote.body).toMatchObject({ error: "forbidden", message: ADMIN_GRANT_REQUIRES_ADMIN });
     expect(invite.status, summary(invite)).toBe(403);
-    expect(invite.body).toMatchObject({ error: "forbidden", requiredPermission: firstMissing });
+    expect(invite.body).toMatchObject({ error: "forbidden", message: ADMIN_GRANT_REQUIRES_ADMIN });
     expect(maya.role).toBe("member");
   });
 
@@ -373,7 +375,7 @@ test("with Permissions on, a member who may change roles through a team cannot m
     const invite = await world.request(world.tess, "POST", "/v1/invitations", { email: `permissions-invitee+${Date.now().toString(36)}@example.test`, role: "admin" });
     const maya = { role: await rosterRole(world, world.ids.maya) };
     const restored = await world.request(world.owner, "PUT", `/v1/permissions/sets/${adminSet}/permissions`, { changes: allowed.map((key) => ({ key, status: "allow" })) });
-    const message = "Only the owner or an admin can make someone an admin while Admin permissions allow nothing.";
+    const message = ADMIN_GRANT_REQUIRES_ADMIN;
     const ok = allowed.length > 0 && field(field(emptied.body, "set"), "allowedCount") === 0
       && promote.status === 403 && field(promote.body, "message") === message && field(promote.body, "requiredPermission") === undefined
       && invite.status === 403 && field(invite.body, "message") === message
@@ -431,6 +433,24 @@ test("with Permissions on, a member who may change roles through a team cannot m
     expect(adam.role).toBe("admin");
   });
 
+  await step("Adam, an admin holding every Admin permission and Change member roles, can make Nora an admin", async () => {
+    const adamKeys = (await memberContext(world, world.adam)).permissions;
+    const promote = await world.request(world.adam, "POST", `/v1/members/${world.ids.nora}/role`, { role: "admin" });
+    const nora = { role: await rosterRole(world, world.ids.nora) };
+    const demote = await world.request(world.owner, "POST", `/v1/members/${world.ids.nora}/role`, { role: "member" });
+    const holdsAll = adminDefaults.every((key) => adamKeys.includes(key)) && adamKeys.includes("members.update");
+    const ok = holdsAll && promote.status === 200 && nora.role === "admin" && demote.status === 200;
+    evidence.recordAssertionEvidence(
+      "An admin who holds every Admin permission can still make someone an admin",
+      `Adam holds every Admin permission and members.update: ${holdsAll}; Adam POST /v1/members/:nora/role admin → ${said(promote)}; Nora is ${nora.role}; owner sets her back to member → ${demote.status}`,
+      ok,
+    );
+    expect(holdsAll).toBe(true);
+    expect(promote.status, summary(promote)).toBe(200);
+    expect(nora.role).toBe("admin");
+    expect(demote.status, summary(demote)).toBe(200);
+  });
+
   await step("after: the owner makes Tess an admin, and she holds every Admin permission", async () => {
     const promote = await world.request(world.owner, "POST", `/v1/members/${world.ids.tess}/role`, { role: "admin" });
     const tess = await memberContext(world, world.tess);
@@ -480,35 +500,41 @@ test("with Permissions on, permissions granted through a team cannot mint a last
     expect([...tess.permissions].sort()).toEqual(["members.delete", "members.update"]);
   });
 
-  await step("Tess cannot give Maya the admin role, which would outlast her leaving the Ops admins team, and is told the first Admin permission she lacks", async () => {
+  await step("Tess cannot give Maya the admin role, which would outlast her leaving the Ops admins team, because only the owner or an admin can", async () => {
     const promote = await world.request(world.tess, "POST", `/v1/members/${world.ids.maya}/role`, { role: "admin" });
     const maya = { role: await rosterRole(world, world.ids.maya) };
-    const ok = promote.status === 403 && field(promote.body, "requiredPermission") === firstMissing && maya.role === "member";
+    const ok = promote.status === 403 && field(promote.body, "message") === ADMIN_GRANT_REQUIRES_ADMIN && maya.role === "member" && firstMissing !== "";
     evidence.recordAssertionEvidence(
-      "Making an Admin-team member a direct admin needs every Admin permission",
+      "Making an Admin-team member a direct admin needs the owner or an admin",
       `Tess POST /v1/members/:maya/role admin → ${said(promote)}: “${String(field(promote.body, "message"))}”; Maya's stored role is still ${maya.role}`,
       ok,
     );
     expect(promote.status, summary(promote)).toBe(403);
-    expect(promote.body).toMatchObject({ error: "forbidden", requiredPermission: firstMissing });
+    expect(promote.body).toMatchObject({ error: "forbidden", message: ADMIN_GRANT_REQUIRES_ADMIN });
     expect(maya.role).toBe("member");
   });
 
-  await step("even holding every Admin permission (and Manage Admin teams) through her team, Tess cannot remove Adam, an admin", async () => {
+  await step("even holding every Admin permission (and Manage Admin teams) through her team, Tess cannot make Maya an admin or remove Adam, an admin", async () => {
     const expanded = await world.request(world.owner, "PUT", `/v1/permissions/sets/${editorsSet}/permissions`, {
       changes: [...adminDefaults, "teams.manage_admin"].map((key) => ({ key, status: "allow" })),
     });
     expect(expanded.status, summary(expanded)).toBe(200);
     const tess = await memberContext(world, world.tess);
+    const promote = await world.request(world.tess, "POST", `/v1/members/${world.ids.maya}/role`, { role: "admin" });
     const remove = await world.request(world.tess, "DELETE", `/v1/members/${world.ids.adam}`);
     const adam = { role: await rosterRole(world, world.ids.adam) };
+    const maya = { role: await rosterRole(world, world.ids.maya) };
     const ok = adminDefaults.every((key) => tess.permissions.includes(key)) && tess.role === "member"
+      && promote.status === 403 && field(promote.body, "message") === ADMIN_GRANT_REQUIRES_ADMIN && maya.role === "member"
       && remove.status === 403 && field(remove.body, "error") === "forbidden" && adam.role === "admin";
     evidence.recordAssertionEvidence(
-      "Removing a direct admin needs the owner or an admin, not just Remove members",
-      `Tess (role ${tess.role}) now holds every Admin permission: ${adminDefaults.every((key) => tess.permissions.includes(key))}; DELETE /v1/members/:adam → ${said(remove)}: “${String(field(remove.body, "message"))}”; Adam is still ${adam.role}`,
+      "Making someone an admin or removing a direct admin needs the owner or an admin, not just the permissions",
+      `Tess (role ${tess.role}) now holds every Admin permission and Change member roles: ${adminDefaults.every((key) => tess.permissions.includes(key))}; POST /v1/members/:maya/role admin → ${said(promote)}: “${String(field(promote.body, "message"))}” (Maya is still ${maya.role}); DELETE /v1/members/:adam → ${said(remove)}: “${String(field(remove.body, "message"))}”; Adam is still ${adam.role}`,
       ok,
     );
+    expect(promote.status, summary(promote)).toBe(403);
+    expect(promote.body).toMatchObject({ error: "forbidden", message: ADMIN_GRANT_REQUIRES_ADMIN });
+    expect(maya.role).toBe("member");
     expect(remove.status, summary(remove)).toBe(403);
     expect(remove.body).toMatchObject({ error: "forbidden", message: "Only the owner or an admin can remove an admin from the organization." });
     expect(adam.role).toBe("admin");

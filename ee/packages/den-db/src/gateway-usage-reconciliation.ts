@@ -170,7 +170,7 @@ async function reconcileOne(
   input: GatewayUsageReconciliationInput,
   entry: GatewayUsageReconciliationEntry,
 ): Promise<{ status: Status; proof?: Awaited<ReturnType<typeof counterProof>>[] }> {
-  await activeUsageMember(tx, input.actor, input.apply === true)
+  await activeUsageMember(tx, input.actor, true)
   const validated = await validatedRow(tx, input, entry, input.apply === true)
   if (!validated) return { status: "missing" }
   const { row, scope, snapshot } = validated
@@ -264,7 +264,7 @@ export async function reconcileGatewayUsageBatch(
       )
   }
   await db.transaction(async (tx) => {
-    await activeUsageMember(tx, input.actor)
+    await activeUsageMember(tx, input.actor, true)
     for (const entry of input.entries) {
       if (!(await validatedRow(tx, input, entry, false)))
         return usageFail(

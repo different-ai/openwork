@@ -292,6 +292,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         if (await invitationHasAdminTeam(tx, existingInvitation)) {
           const permission = await requirePermission(c, "teams.manage_admin")
           if (!permission.ok) return { status: "team_forbidden" as const, response: permission.response }
+          // Re-checked against the inviter resolved through this transaction (above), so a revocation
+          // committed after the request's permissions were read is seen before the refresh is written.
+          if (!inviter.has("teams.manage_admin")) return { status: "team_forbidden" as const, response: permissionDeniedResponse("teams.manage_admin") }
         }
         const refreshRole = await validateInvitationRole(c, {
           role: normalizeRoleName(existingInvitation.role),

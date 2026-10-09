@@ -9,9 +9,9 @@ import type { MemberPermissions } from "./effective.js"
  *
  * With the Permissions feature on (the owner bypasses all of these):
  * - Nobody may change their own role.
- * - Making someone an admin needs every key in the Admin default set (you
- *   can't grant what you don't hold). Only a member who already holds the
- *   admin role directly is exempt: a direct admin role outlives removal from
+ * - Making someone an admin needs the caller to be an effective admin and to
+ *   hold every key in the Admin default set (you can't grant what you don't
+ *   hold). Only a member who already holds the admin role directly is exempt: a direct admin role outlives removal from
  *   an Admin team (e.g. by SCIM), so making a team-granted admin a direct
  *   admin still grants something durable and needs the full check.
  * - Changing a direct admin's role to member needs the caller to be an
@@ -49,24 +49,23 @@ export type RoleAssignmentDenial = {
 export const OWN_ROLE_CHANGE_MESSAGE = "You can't change your own role. Ask the owner or another admin."
 export const ADMIN_ROLE_GRANT_FORBIDDEN_MESSAGE = "You can't make someone an admin because admins have permissions you don't have."
 export const ADMIN_ROLE_CHANGE_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can change an admin's role."
-export const ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can make someone an admin while Admin permissions allow nothing."
+export const ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can make someone an admin."
 
 /**
- * Granting admin (the role, an Admin team, or a place in one) with the
- * feature on needs every Admin default key. When the Admin default set allows
- * nothing that check holds for everyone, yet admins still carry powers beyond
- * the catalog (changing Admin permissions, changing and removing admins), so
- * an empty set instead needs the caller to be the owner or an effective admin.
- * Returns the first missing key, "requires_admin", or null when allowed.
+ * Granting admin status (the role, an admin invitation, an Admin team, or a
+ * place in one) with the feature on. Admins carry powers beyond the catalog
+ * (changing Admin permissions, changing and removing admins), so the caller
+ * must be the owner or an effective admin, and must also hold every Admin
+ * default key (you can't grant what you don't hold). Returns "requires_admin",
+ * the first missing key, or null when allowed.
  */
 export function adminGrantDenial(
   caller: Pick<MemberPermissions, "isOwner" | "isAdmin" | "has">,
   adminDefaultKeys: Iterable<PermissionKey>,
 ): PermissionKey | "requires_admin" | null {
   if (caller.isOwner) return null
-  const keys = [...adminDefaultKeys]
-  if (keys.length === 0) return caller.isAdmin ? null : "requires_admin"
-  return firstMissingPermission(caller, keys)
+  if (!caller.isAdmin) return "requires_admin"
+  return firstMissingPermission(caller, adminDefaultKeys)
 }
 
 /** The first key (in sorted order) the caller lacks, or null when they hold all of them. The owner holds everything. */
