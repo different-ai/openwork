@@ -72,11 +72,12 @@ def guarded(check_id, function):
 def services_check(ecs, cluster, services):
     def run():
         response = ecs.describe_services(cluster=cluster, services=list(services.values()))
-        running = sum(service["runningCount"] for service in response["services"])
-        desired = sum(service["desiredCount"] for service in response["services"])
-        missing = len(services) - len(response["services"])
-        ok = not missing and desired > 0 and running >= desired
-        return check("services_running", "ok" if ok else "failing", value=running, total=desired, code=None if ok else "not_running")
+        # Every service must want at least one task and run all of them; a
+        # service scaled to zero is down, not "0 of 0 running".
+        found = {service["serviceName"]: service for service in response["services"] if service.get("status") == "ACTIVE"}
+        healthy = sum(1 for name in services.values() if name in found and found[name]["desiredCount"] >= 1 and found[name]["runningCount"] >= found[name]["desiredCount"])
+        ok = healthy == len(services)
+        return check("services_running", "ok" if ok else "failing", value=healthy, total=len(services), code=None if ok else "not_running")
     return guarded("services_running", run)
 
 
@@ -95,13 +96,14 @@ def running_version(ecs, cluster, services):
 
 def targets_check(elb, target_groups):
     def run():
-        healthy = total = 0
+        # Each route (API, web) needs at least one healthy target.
+        serving = 0
         for arn in target_groups.values():
-            for description in elb.describe_target_health(TargetGroupArn=arn)["TargetHealthDescriptions"]:
-                total += 1
-                healthy += description["TargetHealth"]["State"] == "healthy"
-        status = "ok" if total and healthy == total else ("failing" if healthy == 0 else "warning")
-        return check("load_balancer_targets", status, value=healthy, total=total, code=None if status == "ok" else "unhealthy")
+            states = [d["TargetHealth"]["State"] for d in elb.describe_target_health(TargetGroupArn=arn)["TargetHealthDescriptions"]]
+            serving += any(state == "healthy" for state in states)
+        total = len(target_groups)
+        status = "ok" if serving == total else ("failing" if serving == 0 else "warning")
+        return check("load_balancer_targets", status, value=serving, total=total, code=None if status == "ok" else "unhealthy")
     return guarded("load_balancer_targets", run)
 
 

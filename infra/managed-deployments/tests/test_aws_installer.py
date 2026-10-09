@@ -90,9 +90,24 @@ class HealthAgentTests(unittest.TestCase):
 
     def test_service_counts(self):
         ecs = MagicMock()
-        ecs.describe_services.return_value = {"services": [{"runningCount": 1, "desiredCount": 1}, {"runningCount": 0, "desiredCount": 1}]}
-        result = health.services_check(ecs, "cluster", {"den_api": "den-api", "den_web": "den-web"})
+        services = {"den_api": "den-api", "den_web": "den-web"}
+        def described(web_running, web_desired):
+            return {"services": [{"serviceName": "den-api", "status": "ACTIVE", "runningCount": 1, "desiredCount": 1},
+                                 {"serviceName": "den-web", "status": "ACTIVE", "runningCount": web_running, "desiredCount": web_desired}]}
+        ecs.describe_services.return_value = described(0, 1)
+        result = health.services_check(ecs, "cluster", services)
         self.assertEqual((result["status"], result["value"], result["total"], result["code"]), ("failing", 1, 2, "not_running"))
+        # Found live: a service scaled to zero must not count as healthy.
+        ecs.describe_services.return_value = described(0, 0)
+        self.assertEqual(health.services_check(ecs, "cluster", services)["status"], "failing")
+        ecs.describe_services.return_value = described(1, 1)
+        self.assertEqual(health.services_check(ecs, "cluster", services)["status"], "ok")
+
+    def test_each_route_needs_a_healthy_target(self):
+        elb = MagicMock()
+        elb.describe_target_health.side_effect = lambda TargetGroupArn: {"TargetHealthDescriptions": [{"TargetHealth": {"State": "healthy"}}] if TargetGroupArn == "api" else []}
+        result = health.targets_check(elb, {"den_api": "api", "den_web": "web"})
+        self.assertEqual((result["status"], result["value"], result["total"]), ("warning", 1, 2))
 
     def test_certificate_expiry_warning(self):
         acm = MagicMock()

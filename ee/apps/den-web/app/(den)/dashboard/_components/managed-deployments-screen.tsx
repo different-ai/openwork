@@ -62,11 +62,11 @@ function checkDetail(check: Check) {
   switch (check.id) {
     case "api_health": case "web_available": return `${Math.round(value)} ms`;
     case "database_ready": return "Connected";
-    case "services_running": return `${value} of ${check.total ?? 0} running`;
-    case "load_balancer_targets": return `${value} of ${check.total ?? 0} healthy`;
+    case "services_running": return `${value} of ${check.total ?? 0} services running`;
+    case "load_balancer_targets": return `${value} of ${check.total ?? 0} routes serving`;
     case "database_instance": return "Available";
     case "database_storage": return `${value.toFixed(1)} of ${check.total ?? 0} GiB free`;
-    case "database_backups": return `Last backup ${Math.round(value)} h ago`;
+    case "database_backups": return value < 1 ? "Backed up within the last hour" : `Last backup ${Math.round(value)} h ago`;
     case "certificate": return `Renews automatically · ${Math.floor(value)} days left`;
   }
 }
@@ -306,7 +306,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, copied, confirm
         </section>
       ) : null}
 
-      {run && (run.kind !== "install" || !installed || run.state !== "ready") ? (
+      {run && run.state !== "ready" ? (
         <section aria-labelledby="run-heading" className="space-y-2">
           <h3 id="run-heading" className="text-[13px] font-semibold text-gray-900">{run.kind === "update" ? `Update to ${run.version}` : run.kind === "retry" ? `Retry ${run.version}` : `Install ${run.version}`}</h3>
           {run.state === "awaiting_approval" && !run.expired ? <p className="text-[13px] text-gray-500">Waiting for approval in AWS.</p> : null}
