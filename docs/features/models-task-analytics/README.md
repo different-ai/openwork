@@ -2,7 +2,7 @@
 
 Organization Analytics, Usage & adoption, Models & usage, and Workflow Runs reporting have been retired. Usage reporting lives in AI Gateway.
 
-Desktop adoption pings, task/tool/skill metadata collection, and their ingestion APIs are removed. `0128_remove_legacy_analytics.sql` drops `telemetry_event` and `telemetry_session_dimension` and deletes only `source = 'app'` rows from `models_analytics_event`.
+Desktop adoption pings, task/tool/skill metadata collection, and their ingestion APIs are removed. `0128_remove_legacy_analytics.sql` originally dropped `telemetry_event` and `telemetry_session_dimension` and deleted `source = 'app'` rows from `models_analytics_event`. It now does nothing, so installs that have not applied it keep that data for when Analytics returns. Databases that already applied the original keep their migration receipt and are not touched again.
 
 ## Data that must stay
 
@@ -16,6 +16,6 @@ Gateway collection still requires its existing rollout capability, subscription,
 
 ## Deployment
 
-Deploy the application that removes the legacy readers and writers before applying the destructive migration. The migration is irreversible for retired app analytics; it does not delete Gateway inference history or Workflow results. No live database is changed by preparing this migration.
+`0128_remove_legacy_analytics.sql` is a no-op (`SELECT 1`). Drizzle decides what to run by migration timestamp only, so changing its body is safe for databases on either side of it.
 
-`ee/packages/den-db/tests/analytics-retirement.test.ts` checks the exact destructive statements, runs them against disposable storage, and compares every retained table definition against the preceding schema snapshot.
+`ee/packages/den-db/tests/analytics-retirement.test.ts` checks that the migration runs no destructive statement, runs it against disposable storage, and compares every retained table definition against the preceding schema snapshot.

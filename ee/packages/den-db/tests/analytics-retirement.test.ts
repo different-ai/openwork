@@ -12,36 +12,31 @@ async function snapshot(name: string) {
   return Object.fromEntries(Object.entries(value.tables));
 }
 
-describe("legacy analytics retirement preserves AI Gateway data", () => {
-  test("the migration drops only adoption tables and deletes only app events", async () => {
+describe("legacy analytics migration keeps every row", () => {
+  test("the migration runs no destructive statement", async () => {
     const sql = (await readFile(migrationUrl, "utf8")).replace(/--[^\n]*/g, "");
     const statements = sql.split(";").map((statement) => statement.trim()).filter(Boolean);
-    expect(statements).toEqual([
-      "DROP TABLE `telemetry_event`",
-      "DROP TABLE `telemetry_session_dimension`",
-      "DELETE FROM `models_analytics_event` WHERE `source` = 'app'",
-    ]);
+    expect(statements).toEqual(["SELECT 1"]);
   });
 
-  test("app data is erased without deleting Gateway events, consent, accounting, or Workflow results", async () => {
-    // These statements use only portable DROP/DELETE SQL. Exercise the exact
-    // generated migration against disposable storage, never a live database.
+  test("app analytics, Gateway events, consent, accounting, and Workflow results all survive", async () => {
+    // Exercise the exact migration against disposable storage, never a live database.
     const db = new Database(":memory:");
     try {
-      db.exec("CREATE TABLE telemetry_event (id TEXT); CREATE TABLE telemetry_session_dimension (id TEXT);");
       db.exec("CREATE TABLE models_analytics_event (id TEXT, source TEXT, payload TEXT);");
       db.exec("INSERT INTO models_analytics_event VALUES ('gateway', 'inference', 'gateway usage'), ('desktop', 'app', 'task metadata');");
-      const protectedTables = ["gateway_request_logs", "gateway_usage_rollups", "gateway_usage_bucket", "inference_usage_ledger_entries", "models_analytics_settings", "workflow_run"];
+      const protectedTables = ["telemetry_event", "telemetry_session_dimension", "gateway_request_logs", "gateway_usage_rollups", "gateway_usage_bucket", "inference_usage_ledger_entries", "models_analytics_settings", "workflow_run"];
       for (const name of protectedTables) {
         db.exec(`CREATE TABLE ${name} (id TEXT, payload TEXT);`);
         db.query(`INSERT INTO ${name} VALUES (?, ?)`).run("preserve", "original data");
       }
       await readFile(migrationUrl, "utf8").then((sql) => db.exec(sql));
-      expect(db.query("SELECT * FROM models_analytics_event").all())
-        .toEqual([{ id: "gateway", source: "inference", payload: "gateway usage" }]);
+      expect(db.query("SELECT * FROM models_analytics_event ORDER BY id").all()).toEqual([
+        { id: "desktop", source: "app", payload: "task metadata" },
+        { id: "gateway", source: "inference", payload: "gateway usage" },
+      ]);
       for (const name of protectedTables)
         expect(db.query(`SELECT * FROM ${name}`).all(), name).toEqual([{ id: "preserve", payload: "original data" }]);
-      expect(db.query("SELECT name FROM sqlite_master WHERE name IN ('telemetry_event', 'telemetry_session_dimension')").all()).toEqual([]);
     } finally {
       db.close();
     }
