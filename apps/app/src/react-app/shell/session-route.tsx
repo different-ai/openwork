@@ -251,8 +251,10 @@ import { resolveOpenworkConnection } from "./openwork-connection";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
-import { shortcutModelRef, type Shortcut } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { shortcutModelRef, useModelShortcutsStore, type Shortcut } from "@/react-app/domains/shortcuts/model-shortcuts-store";
 import { decideModelShortcut } from "@/react-app/domains/shortcuts/resolve-model-shortcut";
+import { useModelShortcutNoticeStore } from "@/react-app/domains/shortcuts/model-shortcut-notice";
+import { resolveShortcutTarget, shortcutFailure, shortcutTargetName, type ShortcutTargetFailure } from "@/react-app/domains/shortcuts/shortcut-target";
 import { decideFastToggle } from "@/react-app/domains/shortcuts/fast-toggle";
 import { useModelShortcutKeys } from "@/react-app/domains/shortcuts/use-model-shortcut-keys";
 import { useEngineReload } from "./use-engine-reload";
@@ -2705,11 +2707,27 @@ export function SessionRoute() {
   }), [cycleFavoriteModel]);
   useControlAction(cycleFavoriteModelControlAction);
 
-  // Model shortcuts (ENG-398): a saved key switches the focused conversation
-  // to a saved model + reasoning + Fast preference. An unavailable model never
-  // changes the current model and never removes the shortcut.
+  // Model shortcuts (ENG-398, ENG-401): a saved key switches the focused
+  // conversation to a saved model + reasoning + Fast preference. A model that
+  // can't run never changes the current model and never removes the shortcut:
+  // the notice above the composer says why and offers the fix.
+  const disconnectedProviderIds = useMemo(() => {
+    const list = providerListQuery.data;
+    const connected = new Set(list?.connected ?? []);
+    return new Set((list?.all ?? []).map((provider) => provider.id).filter((id) => !connected.has(id)));
+  }, [providerListQuery.data]);
+  const resolveShortcutModelTarget = useCallback((model: ModelRef) => resolveShortcutTarget({
+    model,
+    actionOptions: modelPicker.actionOptions,
+    knownOptions: modelPicker.knownOptions,
+    catalogState: modelPicker.catalogState.state,
+    signedIn: denAuth.isSignedIn,
+    restrictToCloud: restrictToCloudProviders,
+    checkRestriction: checkDesktopRestriction,
+    disconnectedProviderIds,
+  }), [modelPicker.actionOptions, modelPicker.knownOptions, modelPicker.catalogState.state, denAuth.isSignedIn, restrictToCloudProviders, checkDesktopRestriction, disconnectedProviderIds]);
   const applyModelShortcutRef = useRef<(shortcut: Shortcut, chordLabel: string, attempt?: number) => void>(() => {});
-  const applyModelShortcut = useCallback((shortcut: Shortcut, _chordLabel: string, attempt = 0) => {
+  const applyModelShortcut = useCallback((shortcut: Shortcut, chordLabel: string, attempt = 0) => {
     const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
     if (!target) return;
     const activeSessionId = target.sessionId;
@@ -2725,15 +2743,35 @@ export function SessionRoute() {
         variant: selection ? selection.variant : activeSessionId ? modelVariantValue : newTaskVariant,
       },
     });
+    const notices = useModelShortcutNoticeStore.getState();
+    const showFailure = (failure: ShortcutTargetFailure) => {
+      const known = modelPicker.knownOptions.find((entry) => entry.providerID === modelRef.providerID && entry.modelID === modelRef.modelID);
+      notices.show({
+        shortcutId: shortcut.id,
+        targetSessionId: activeSessionId ?? null,
+        chordLabel,
+        model: modelRef,
+        modelTitle: shortcutTargetName(modelRef, option ?? known, shortcut.action.modelTitle),
+        providerName: providerListQuery.data?.all?.find((provider) => provider.id === modelRef.providerID)?.name
+          ?? known?.description ?? shortcut.action.providerName ?? null,
+        failure,
+      });
+    };
 
-    if (decision.kind === "pending") {
-      // Catalog still settling: retry briefly instead of treating the model as
-      // unavailable. No transient UI is shown for a key press.
+    // Catalog still settling, or Auto still checking access: retry briefly
+    // instead of calling the model unavailable. Denials wait for the
+    // availability confirmation gate, so a settings visit never flashes one.
+    if (decision.kind === "pending" || decision.kind === "not_ready") {
       if (attempt < 10) {
-        window.setTimeout(() => applyModelShortcutRef.current(shortcut, _chordLabel, attempt + 1), 500);
-      }
+        window.setTimeout(() => applyModelShortcutRef.current(shortcut, chordLabel, attempt + 1), 500);
+      } else if (decision.kind === "not_ready") showFailure({ kind: "not_ready" });
       return;
     }
+    if (decision.kind === "unavailable") {
+      showFailure(shortcutFailure(decision.reason, resolveShortcutModelTarget(modelRef), modelRef.providerID, disconnectedProviderIds));
+      return;
+    }
+    if (notices.notice?.targetSessionId === (activeSessionId ?? null)) notices.dismiss();
     if (decision.kind !== "switch" || !option) return;
 
     const apply = () => {
@@ -2751,9 +2789,47 @@ export function SessionRoute() {
     const gateway = gatewayModelSelectionRef.current;
     if (gateway) gateway.select(option, apply, isCurrent);
     else apply();
-  }, [local.prefs.defaultModel, modelPicker.actionOptions, modelVariantValue, newTaskModel, newTaskVariant, changeNewTaskModel, resolveModelAvailability]);
+  }, [local.prefs.defaultModel, modelPicker.actionOptions, modelPicker.knownOptions, modelVariantValue, newTaskModel, newTaskVariant, changeNewTaskModel, resolveModelAvailability, resolveShortcutModelTarget, disconnectedProviderIds, providerListQuery.data]);
   applyModelShortcutRef.current = applyModelShortcut;
   useModelShortcutKeys(applyModelShortcut);
+
+  // The notice's actions open the same homes the picker and Settings use (S6):
+  // the "All models" dialog, provider sign-in, AI providers, and the shortcut's
+  // own editor, which keeps its key.
+  useEffect(() => {
+    useModelShortcutNoticeStore.getState().setHandlers({
+      pickAnother: (notice) => window.dispatchEvent(new CustomEvent(openModelPickerEvent, notice.targetSessionId ? { detail: { sessionId: notice.targetSessionId } } : undefined)),
+      fix: (notice, fix) => {
+        if (fix === "reconnect") {
+          void sessionProviderAuthStore.openProviderAuthModal({ returnFocusTarget: "composer", preferredProviderId: notice.model.providerID })
+            .catch(() => handleOpenSettings("/settings/ai"));
+        } else if (fix === "providers") handleOpenSettings("/settings/ai");
+        else {
+          useModelShortcutsStore.getState().requestEdit(notice.shortcutId);
+          handleOpenSettings("/settings/shortcuts");
+        }
+      },
+    });
+    return () => useModelShortcutNoticeStore.getState().setHandlers(null);
+  }, [handleOpenSettings, sessionProviderAuthStore]);
+
+  // Once the notice's model can run again (reconnected, re-enabled, policy
+  // lifted), the switch the person asked for finishes on its own.
+  const shortcutNotice = useModelShortcutNoticeStore((state) => state.notice);
+  useEffect(() => {
+    if (!shortcutNotice) return;
+    const shortcut = useModelShortcutsStore.getState().shortcuts.find((entry) => entry.id === shortcutNotice.shortcutId);
+    if (!shortcut) {
+      useModelShortcutNoticeStore.getState().dismiss(shortcutNotice.id);
+      return;
+    }
+    const focused = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
+    if ((focused?.sessionId ?? null) !== shortcutNotice.targetSessionId) return;
+    if (resolveShortcutModelTarget(shortcutNotice.model).kind !== "available") return;
+    if (resolveModelAvailability(shortcutNotice.model).status !== "available") return;
+    useModelShortcutNoticeStore.getState().dismiss(shortcutNotice.id);
+    applyModelShortcutRef.current(shortcut, shortcutNotice.chordLabel);
+  }, [shortcutNotice, resolveShortcutModelTarget, resolveModelAvailability]);
 
   // Fast toggle (⌃⇧F / Ctrl+Alt+F): flips Fast for the focused conversation's
   // model and keeps its reasoning level. A model without Fast never changes.

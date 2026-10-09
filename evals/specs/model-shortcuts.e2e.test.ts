@@ -12,7 +12,7 @@ type RowSnapshot = { elements: Array<{ text: string; attributes?: Record<string,
 
 const rowTexts = (snapshot: RowSnapshot) => snapshot.elements.map((element) => element.text.replace(/\s+/g, " ").trim());
 
-test("a member switches models with saved keys and toggles Fast without opening a notice above the composer", async ({ world, user, probe, step, evidence }) => {
+test("a member switches models with saved keys, and a key whose model went away says why and is rebound in place", async ({ world, user, probe, step, evidence }) => {
   const { mod, chord, fastKey } = world;
   evidence.recordAssertionEvidence("platform keys", `${mod}+Alt+n shown as ${chord(1)}`, true);
   const openShortcutSettings = async () => {
@@ -24,10 +24,10 @@ test("a member switches models with saved keys and toggles Fast without opening 
     await user.see({ text: "Model shortcuts" });
   };
 
-  await step("before: Settings shows the key saved for a retired model, still there and marked as no longer offered", async () => {
+  await step("before: Settings shows the key saved for a retired model, still there and marked as no longer available", async () => {
     await openShortcutSettings();
     const rows = await probe.eventually(() => probe.dom('[data-testid="model-shortcut-row"]'), {
-      within: 30_000, label: "retired shortcut row", until: (snapshot) => rowTexts(snapshot).some((text) => text.includes("No longer offered")),
+      within: 30_000, label: "retired shortcut row", until: (snapshot) => rowTexts(snapshot).some((text) => text.includes("No longer available here")),
     });
     evidence.recordAssertionEvidence("saved shortcut rows", rowTexts(rows).join(" | "), rowTexts(rows).length === 1);
     expect(rowTexts(rows)).toHaveLength(1);
@@ -38,7 +38,7 @@ test("a member switches models with saved keys and toggles Fast without opening 
 
   await step("the member adds a key for Fast witness at High reasoning with Fast on", async () => {
     await user.click({ role: "button", label: "Add model shortcut" });
-    await user.click({ role: "combobox", label: "Model" });
+    await user.see({ testId: "model-shortcut-editor" });
     await user.click({ role: "option", label: "Fast witness" });
     await user.click({ role: "button", label: "High" });
     await user.see({ text: "Higher pricing" });
@@ -57,16 +57,16 @@ test("a member switches models with saved keys and toggles Fast without opening 
 
   await step("a model without Fast shows Fast as not offered, and a key already in use asks to reassign", async () => {
     await user.click({ role: "button", label: "Add model shortcut" });
-    await user.click({ role: "combobox", label: "Model" });
+    await user.see({ testId: "model-shortcut-editor" });
     await user.click({ role: "option", label: "Reasoning witness" });
     await user.see({ text: "Not offered for this model" });
     await user.click({ role: "button", label: "High" });
-    await user.click({ role: "button", label: /Change key|Record a key/ });
+    await user.click({ role: "button", label: /^(Key .+\. Change key|Record a key)$/ });
     await user.press(`${mod}+Alt+1`);
     await user.see({ text: `${chord(1)} opens Fast witness` });
     await user.see({ role: "button", label: "Reassign" });
     await user.screenshot();
-    await user.click({ role: "button", label: /Change key/ });
+    await user.click({ role: "button", label: /^Key .+\. Change key$/ });
     await user.press(`${mod}+Alt+2`);
     await user.click({ role: "button", label: "Save shortcut" });
     const rows = await probe.eventually(() => probe.dom('[data-testid="model-shortcut-row"]'), {
@@ -133,14 +133,44 @@ test("a member switches models with saved keys and toggles Fast without opening 
     await user.screenshot();
   });
 
-  await step("after: the retired model's key quietly leaves the current model alone and is not deleted", async () => {
+  await step("after: the retired model's key leaves the current model alone and says why above the composer, with the key kept", async () => {
     await user.press(`${mod}+Alt+9`);
-    await user.notSee({ testId: "model-shortcut-notice" });
+    await user.see({ testId: "model-shortcut-notice" }, { text: /Retired witness isn’t available/ });
+    await user.see({ testId: "model-shortcut-notice" }, { text: /No longer available here/ });
+    await user.see({ role: "button", label: "Choose a replacement" });
     await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/ });
     const stored = JSON.stringify(await probe.storage("openwork.shortcuts.v1"));
     const kept = stored.includes("sc_retired");
     evidence.recordAssertionEvidence("retired shortcut still saved", kept ? "openwork.shortcuts.v1 still contains the Retired witness key" : stored.slice(0, 300), kept);
     expect(kept).toBe(true);
+    await user.screenshot();
+  });
+
+  await step("Choose a replacement opens that shortcut in Settings; picking Standard witness keeps the same key", async () => {
+    await user.click({ role: "button", label: "Choose a replacement" });
+    await user.see({ testId: "model-shortcut-editor" }, { timeoutMs: 30_000 });
+    await user.see({ role: "button", label: new RegExp(`Key ${escape(chord(9))}`) });
+    await user.click({ role: "option", label: "Standard witness" });
+    await user.screenshot();
+    await user.click({ role: "button", label: /^Save shortcut/ });
+    const rows = await probe.eventually(() => probe.dom('[data-testid="model-shortcut-row"]'), {
+      within: 10_000, label: "replaced row", until: (snapshot) => rowTexts(snapshot).some((text) => text.includes("Standard witness")),
+    });
+    const replaced = rowTexts(rows).find((text) => text.includes("Standard witness")) ?? "";
+    const gone = !rowTexts(rows).some((text) => text.includes("Retired witness"));
+    evidence.recordAssertionEvidence("replacement row", replaced, replaced.includes(chord(9)) && gone);
+    expect(replaced).toContain(chord(9));
+    expect(gone).toBe(true);
+    await user.screenshot();
+  });
+
+  await step("after: the same key now switches to the replacement and the notice is gone", async () => {
+    await user.click({ role: "button", label: "Back to app" });
+    await user.see({ role: "button", label: "Change model" }, { text: /^Reasoning witness/, timeoutMs: 60_000 });
+    await user.press(`${mod}+Alt+9`);
+    await user.see({ role: "button", label: "Change model" }, { text: /^Standard witness/ });
+    await user.notSee({ testId: "model-shortcut-notice" });
+    evidence.recordAssertionEvidence("replacement key", `${chord(9)} switched the conversation to Standard witness`, true);
     await user.screenshot();
   });
 });

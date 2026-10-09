@@ -34,6 +34,7 @@ import type { ModelOption, ModelRef } from "@/app/types";
 import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
+import { useModelShortcutsStore } from "@/react-app/domains/shortcuts/model-shortcuts-store";
 import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 import { ModelSourceIcon } from "@/react-app/domains/models/model-picker-list";
 import { ProviderIcon } from "../design-system/provider-icon";
@@ -550,12 +551,18 @@ export function CommandPalette(props: CommandPaletteProps) {
     }))
   ), [props]);
 
+  // A model's own key shows on its row, the same chord the picker shows (S6).
+  const modelShortcuts = useModelShortcutsStore((state) => state.shortcuts);
   const modelItems = useMemo<PaletteItem[]>(() => (
     buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel, favorites, recentModels).map((item) => ({
       id: item.id,
       title: item.title,
       detail: item.detail,
       meta: item.meta,
+      shortcut: (() => {
+        const bound = modelShortcuts.find((entry) => entry.action.providerID === item.option.providerID && entry.action.modelID === item.option.modelID);
+        return bound && !item.meta ? formatChord(bound.keys, shortcutOs) : undefined;
+      })(),
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
@@ -565,7 +572,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         });
       },
     }))
-  ), [choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, favorites, recentModels]);
+  ), [choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, favorites, recentModels, modelShortcuts, shortcutOs]);
 
   const behaviorItems = useMemo<PaletteItem[]>(() => {
     if (!behaviorModel) return [];
