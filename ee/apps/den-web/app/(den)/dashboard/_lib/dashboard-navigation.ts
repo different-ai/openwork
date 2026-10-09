@@ -24,6 +24,7 @@ import {
   getBillingRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
+  getAwsDeploymentsRoute,
   getLibraryRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
@@ -129,6 +130,7 @@ export function buildDashboardNavSections({
           ? [
               { href: getOrgSettingsRoute(orgSlug), label: "General" },
               { href: getDiagnosticsRoute(orgSlug), label: "Diagnostics" },
+              { href: getAwsDeploymentsRoute(orgSlug), label: "AWS deployments" },
               { href: getBillingRoute(orgSlug), label: "Billing" },
               { href: getApiKeysRoute(orgSlug), label: "API Keys" },
               { href: getSsoRoute(orgSlug), label: "SSO" },

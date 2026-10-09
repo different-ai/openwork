@@ -1,0 +1,38 @@
+name: Build AWS Deployment Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published OpenWork image version to pin
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Install verified Terraform
+        run: |
+          curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+          echo '186e0145f5e5f2eb97cbd785bc78f21bae4ef15119349f6ad4fa535b83b10df8  /tmp/terraform.zip' | sha256sum -c -
+          unzip /tmp/terraform.zip -d /tmp/terraform-bin
+          echo /tmp/terraform-bin >> "$GITHUB_PATH"
+      - name: Verify Terraform configuration
+        run: |
+          terraform -chdir=infra/aws-managed/terraform init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/aws-managed/terraform validate
+      - name: Build pinned installer
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node infra/aws-managed/build-release.mjs "$RELEASE_VERSION" dist/aws-deployments
+      - name: Retain installer for operator publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aws-deployment-installer
+          path: dist/aws-deployments/
+          retention-days: 30

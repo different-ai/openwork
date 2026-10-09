@@ -1,0 +1,11 @@
+{
+  "name": "@openwork/aws-deployments",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./schema": { "types": "./src/schema.ts", "default": "./src/schema.ts" },
+    "./protocol": { "types": "./src/protocol.ts", "default": "./src/protocol.ts" }
+  },
+  "dependencies": { "zod": "^4.3.6", "fast-xml-parser": "5.8.0" }
+}

@@ -8838,6 +8838,8 @@ export type GetV1AwsDeploymentsResponses = {
         state: "awaiting_aws" | "provisioning" | "ready" | "failed";
         createdAt: string;
         lastSeenAt: string | null;
+        expiresAt: string;
+        expired: boolean;
         events: Array<{
           sequence: number;
           step:
@@ -8954,6 +8956,8 @@ export type PostV1AwsDeploymentsResponses = {
       state: "awaiting_aws" | "provisioning" | "ready" | "failed";
       createdAt: string;
       lastSeenAt: string | null;
+      expiresAt: string;
+      expired: boolean;
       events: Array<{
         sequence: number;
         step:
@@ -9059,6 +9063,8 @@ export type PostV1AwsDeploymentsByDeploymentIdLaunchResponses = {
         state: "awaiting_aws" | "provisioning" | "ready" | "failed";
         createdAt: string;
         lastSeenAt: string | null;
+        expiresAt: string;
+        expired: boolean;
         events: Array<{
           sequence: number;
           step:

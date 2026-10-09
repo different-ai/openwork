@@ -23,6 +23,7 @@ import {
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
+  getAwsDeploymentsRoute,
   getDesktopPoliciesRoute,
   getOrgAccessFlags,
   getIntegrationsRoute,
@@ -258,6 +259,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     || pathname.startsWith(getBrandAppearanceRoute(orgSlug))
   ) {
     return "Advanced";
+  }
+  if (pathname.startsWith(getAwsDeploymentsRoute(orgSlug))) {
+    return "AWS deployments";
   }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";

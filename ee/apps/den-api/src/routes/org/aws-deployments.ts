@@ -48,6 +48,7 @@ async function deploymentView(deployment: typeof AwsDeploymentTable.$inferSelect
     stackUrl: `https://${deployment.region}.console.aws.amazon.com/cloudformation/home?region=${deployment.region}#/stacks?filteringText=${deploymentStackName(deployment.id)}`,
     run: run ? {
       id: run.id, version: run.version, state: run.state, createdAt: run.created_at.toISOString(), lastSeenAt: run.last_seen_at?.toISOString() ?? null,
+      expiresAt: run.expires_at.toISOString(), expired: run.expires_at < new Date() && run.state !== "ready" && run.state !== "failed",
       events: events.map((event) => ({ sequence: event.sequence, step: event.step, outcome: event.outcome, ...(event.error_code ? { errorCode: event.error_code } : {}), receivedAt: event.received_at.toISOString() })),
     } : null,
   })
@@ -92,16 +93,21 @@ export function registerAwsDeploymentRoutes<T extends { Variables: OrgRouteVaria
       const active = row.active_run_id ? (await tx.select().from(AwsDeploymentRunTable).where(eq(AwsDeploymentRunTable.id, row.active_run_id)).limit(1))[0] : null
       // Initial install only. Updating an existing environment requires a
       // reviewed infrastructure plan and its own explicit approval flow.
-      if (active?.state === "ready" || (active && active.state !== "failed" && active.expires_at > new Date())) return "conflict"
+      if (active?.state === "awaiting_aws" && active.expires_at > new Date()) return { deployment: row, run: active }
+      if (active?.state === "ready" || (active?.state === "provisioning" && active.expires_at > new Date())) return "conflict"
       if (active && active.state !== "failed") await tx.update(AwsDeploymentRunTable).set({ state: "failed" }).where(eq(AwsDeploymentRunTable.id, active.id))
-      await tx.insert(AwsDeploymentRunTable).values({ id: runId, deployment_id: id, challenge, version: release.version, state: "awaiting_aws", expires_at: expiresAt })
+      const values = { id: runId, deployment_id: id, challenge, version: release.version, template_url: release.templateUrl, bundle_url: release.bundleUrl, bundle_sha256: release.bundleSha256, api_origin: release.apiOrigin, state: "awaiting_aws", expires_at: expiresAt }
+      await tx.insert(AwsDeploymentRunTable).values({ ...values, state: "awaiting_aws" })
       await tx.update(AwsDeploymentTable).set({ active_run_id: runId }).where(eq(AwsDeploymentTable.id, id))
-      return { ...row, active_run_id: runId }
+      const run = (await tx.select().from(AwsDeploymentRunTable).where(eq(AwsDeploymentRunTable.id, runId)).limit(1))[0]
+      if (!run) return null
+      return { deployment: { ...row, active_run_id: runId }, run }
     })
     if (!result) return c.json({ error: "deployment_not_found" }, 404)
     if (result === "conflict") return c.json({ error: "deployment_run_conflict" }, 409)
-    const launchUrl = cloudFormationLaunchUrl({ ...release, region: result.region, deploymentId: id, runId, challenge, domainName: result.domain_name, route53ZoneId: result.route53_zone_id, ownerEmail: result.owner_email, accountId: result.account_id })
-    return c.json({ deployment: await deploymentView(result), launchUrl, expiresAt: expiresAt.toISOString() })
+    const { deployment, run } = result
+    const launchUrl = cloudFormationLaunchUrl({ templateUrl: run.template_url, bundleUrl: run.bundle_url, bundleSha256: run.bundle_sha256, apiOrigin: run.api_origin, version: run.version, region: deployment.region, deploymentId: id, runId: run.id, challenge: run.challenge, domainName: deployment.domain_name, route53ZoneId: deployment.route53_zone_id, ownerEmail: deployment.owner_email, accountId: deployment.account_id })
+    return c.json({ deployment: await deploymentView(deployment), launchUrl, expiresAt: run.expires_at.toISOString() })
   })
 
   // These accept only an existing, bounded run. They deliberately drain after

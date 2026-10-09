@@ -605,6 +605,9 @@ importers:
       '@openwork/automations':
         specifier: workspace:*
         version: link:../../../packages/automations
+      '@openwork/aws-deployments':
+        specifier: workspace:*
+        version: link:../../../packages/aws-deployments
       '@openwork/codemode':
         specifier: workspace:*
         version: link:../../../packages/codemode
@@ -1411,6 +1414,15 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/aws-deployments:
+    dependencies:
+      fast-xml-parser:
+        specifier: 5.8.0
+        version: 5.8.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+
   packages/browser-tabs:
     devDependencies:
       '@types/node':
@@ -1783,6 +1795,9 @@ importers:
 
   packages/types:
     dependencies:
+      '@openwork/aws-deployments':
+        specifier: workspace:*
+        version: link:../aws-deployments
       zod:
         specifier: ^4.3.6
         version: 4.3.6

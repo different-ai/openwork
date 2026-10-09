@@ -197,6 +197,7 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@openwork/aws-deployments": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
