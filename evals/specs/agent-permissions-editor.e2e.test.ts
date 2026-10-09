@@ -276,7 +276,7 @@ adminViewTest("an admin who is not an owner can read the permissions but not cha
   const admin = user.on(world.web);
 
   await step("Morgan, an admin, sees Contractors' permissions with every control locked", async () => {
-    await admin.see({ text: "Needs the “Manage desktop policies” permission." }, { timeoutMs: 90_000 });
+    await admin.see({ text: "Read only. Needs the “Manage desktop policies” permission. Ask the organization owner." }, { timeoutMs: 90_000 });
     await admin.click({ testId: `agent-permissions-scope-${world.teamId}` });
     await admin.see({ testId: "agent-permissions-scope-state" }, { text: /1 member, 1 override/ });
     const controls = await world.permissionControls();
