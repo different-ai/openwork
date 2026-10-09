@@ -67,6 +67,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  driveResumableUploads: {
+    label: "Resumable Google Drive uploads",
+    description: "Members upload larger workspace files to Google Drive and prepare upload sessions for external clients.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   implicitCloudSkills: {
     label: "Implicit Cloud skills",
     description: "Agents discover organization skills automatically without waiting for Cloud before starting a task.",
@@ -147,13 +154,6 @@ export const FEATURES = defineFeatures({
   workbotSideChats: {
     label: "Workbot: side chats",
     description: "Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot.",
-    since: "2026-10",
-    deployments: everywhere,
-    default: false,
-  },
-  workbotNaturalChat: {
-    label: "Workbot: natural replies",
-    description: "Workbot says hello at once and fills in the day as it looks, and a message sent while it is answering changes that answer instead of waiting its turn. Needs Workbot.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

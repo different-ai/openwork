@@ -354,9 +354,9 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
                     // as one that couldn't start; its turn then adds only the line saying it didn't work.
                     const helloFailed = hello?.greeting === true && hello.status === "failed" && !hello.parts.some((part) => part.kind === "text");
                     const followed = starting || (hello?.greeting === true && !helloFailed);
-                    // A side chat has no greeting: the person spoke first. With natural replies the drawn hello (who they
-                    // are, what they connected) stays while Workbot's own hello follows it; otherwise that hello replaces it.
-                    const spoken = side || (host.naturalChat !== true && followed);
+                    // A side chat has no greeting: the person spoke first. In the main chat the drawn hello stays while
+                    // Workbot fills in their day.
+                    const spoken = side;
                     // Workbot's own hello carries the time; the drawn greeting brings its own.
                     return { at: spoken ? 0 : at, joined: helloFailed, node: <Intro name={data.name} organizationName={data.organizationName} firstName={firstName} at={at} spoken={spoken} followed={followed} /> };
                   })()
@@ -704,12 +704,8 @@ function Conversation(props: {
   // Each message keeps its own waiting place where its answer will appear (TurnView, PendingView); only a hello that
   // hasn't reached the conversation yet shows its dots here.
   const typing = useSettled(props.starting, 350);
-  // Natural replies answer the newest message next (it interrupts the answer before it); otherwise messages wait
-  // behind the answer in progress.
-  const natural = workbotHost().naturalChat === true;
-  const answering = props.turns.some((turn) => turn.status === "working" || turn.status === "queued");
+  // A follow-up interrupts the answer before it: the newest message is answered next.
   const unsent = props.pending.filter((entry) => !known.has(entry.id) && !entry.failed);
-  const firstPending = unsent[0]?.id ?? null;
   const lastPending = unsent.at(-1)?.id ?? null;
   // Only the newest of Workbot's words may still be revealing, so two messages are never being written at once.
   const newestText = [...props.turns].reverse().find((turn) => turn.parts.some((part) => part.kind === "text") || Boolean(props.live[turn.id]?.text))?.id ?? null;
@@ -795,7 +791,7 @@ function Conversation(props: {
                     <PendingView
                       entry={row.pending}
                       onRetry={() => row.pending && props.onRetry(row.pending)}
-                      waiting={natural ? row.pending.id === lastPending : !answering && row.pending.id === firstPending}
+                      waiting={row.pending.id === lastPending}
                     />
                   ) : null}
                 </li>
@@ -1316,14 +1312,6 @@ function AppLogos({ apps }: { apps: UsedApp[] }) {
 }
 
 
-/**
- * The hello as it is written: nothing while it is still looking things up (a call that starts a lookup, or a short
- * line that could be a note to itself), and never its closing "Next:" line, which becomes buttons when it's done.
- */
-function helloSoFar(text: string, working: LiveText["working"] | null) {
-  if (working || (text.length < 40 && !text.includes("\n"))) return "";
-  return withoutNextLine(text);
-}
 
 /** An answer as it is written, without a closing "Next:" line, which becomes buttons once the answer is done. */
 function withoutNextLine(text: string) {
@@ -1341,9 +1329,8 @@ function replyProgress(turn: WorkbotTurn, live: LiveText | null) {
   const working = turn.status === "working" || turn.status === "queued";
   // The model call in progress (not stored yet): its text so far, and whether it has started a step.
   const current = working && live && live.step >= turn.modelSteps ? live : null;
-  // Workbot's hello streams only its message, never its notes between lookups, unless natural replies let it speak as it
-  // looks. Live text is trimmed like the stored text, so a finished bubble carries on instead of starting over.
-  const liveText = turn.greeting && workbotHost().naturalChat !== true ? helloSoFar(current?.text ?? "", current?.working ?? null) : withoutNextLine((current?.text ?? "").trimStart());
+  // Live text is trimmed like the stored text, so a finished bubble carries on instead of starting over.
+  const liveText = withoutNextLine((current?.text ?? "").trimStart());
   const last = turn.parts.at(-1);
   // Its computer starting before the step is stored: the card shows right away, after what it just said.
   const startingCard = working && !turn.greeting && current?.working?.on === "computer" && !(last?.kind === "steps" && last.steps.some((step) => step.icon === "computer"));
@@ -1383,9 +1370,6 @@ function TurnView(props: {
   onSuggestion: (text: string) => void;
 }) {
   const { turn } = props;
-  const natural = workbotHost().naturalChat === true;
-  // Without natural replies, Workbot's hello looks things up out of sight; once it's done, one quiet line says what it read.
-  const quietHello = Boolean(turn.greeting) && !natural;
   const { working, liveText, startingCard, lastIsLive } = replyProgress(turn, props.live);
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
   // page opened show at once.
@@ -1399,18 +1383,17 @@ function TurnView(props: {
   const items: TurnItem[] = [];
   parts.forEach((part, index) => {
     if (part.kind === "text") items.push({ kind: "text", key: `text-${part.step ?? `part-${index}`}`, text: part.text });
-    else if (!(quietHello && working)) items.push({ kind: "steps", key: `steps-${index}`, steps: part.steps, live: working && index === parts.length - 1 && lastIsLive });
+    else items.push({ kind: "steps", key: `steps-${index}`, steps: part.steps, live: working && index === parts.length - 1 && lastIsLive });
   });
-  if (working && props.live && !quietHello) {
+  if (working && props.live) {
     for (const entry of props.live.earlier ?? []) {
       const text = withoutNextLine(entry.text.trimStart());
       if (entry.step >= turn.modelSteps && text) items.push({ kind: "text", key: `text-${entry.step}`, text });
     }
   }
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
-  // Whose answer comes next. Natural replies: the newest message's (a follow-up interrupts the answer before it, which
-  // only finishes its step). Otherwise the answer in progress, while later messages wait behind it.
-  const answering = natural ? props.latest && working : turn.status === "working";
+  // The newest message is answered next; a follow-up interrupts the older answer, which only finishes its step.
+  const answering = props.latest && working;
   // The place Workbot's next words will take, one message line tall: the typing dots, or the app step running right now
   // ("Using Gmail"), then the words themselves, each replacing the last without moving the conversation. Once it has
   // shown, it keeps its place until the words arrive.
@@ -1418,7 +1401,7 @@ function TurnView(props: {
   const runningApps = answering && tail?.kind === "steps" && tail.live && tail.steps.every((step) => step.icon === "app") ? tail : null;
   if (runningApps) items.pop();
   const lastText = items.reduce((found, item, index) => (item.kind === "text" ? index : found), -1);
-  const waiting = answering && !liveText && !startingCard && (quietHello || !lastIsLive);
+  const waiting = answering && !liveText && !startingCard && !lastIsLive;
   const fresh = items.length === 0 && !runningApps;
   const settled = useSettled(waiting && !fresh, 350);
   const dots = waiting && (fresh || settled);
@@ -1438,13 +1421,13 @@ function TurnView(props: {
       ) : (
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
-      {items.length > 0 || startingCard || slot || (turn.status === "queued" && !natural) ? <Gap /> : null}
+      {items.length > 0 || startingCard || slot ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
         {items.map((item, index) =>
           item.kind === "text" ? (
             // Natural replies: Copy sits beside the last bubble, so a finished answer doesn't add a row under itself.
-            <AssistantBubble key={item.key} trailing={natural && turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
+            <AssistantBubble key={item.key} trailing={turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
               <StreamingText text={item.text} instant={!(props.newestText && index === lastText && watched.current)} />
             </AssistantBubble>
           ) : (
@@ -1453,9 +1436,6 @@ function TurnView(props: {
         )}
         {startingCard ? <StepsSegment steps={[{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [] }]} live /> : null}
         {slot ? <WaitingSlot>{runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
-        {/* Natural replies answer the newest message next, so nothing waits "Up next". */}
-        {turn.status === "queued" && !natural ? <QuietLine label="Up next" /> : null}
-        {turn.status === "done" && lastText !== -1 && !natural ? <CopyAnswer text={copyText} /> : null}
       </div>
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {turn.tasks.length ? <TaskCards tasks={turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
@@ -1479,7 +1459,6 @@ function TurnView(props: {
         <ErrorLine action={props.latest && (turn.greeting || turn.retryable) ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
       ) : null}
       {/* Natural replies: an answer cut short by a follow-up or by Stop just ends where it was. */}
-      {turn.status === "stopped" && !natural ? <p className="pl-1 pt-1.5 text-[13px] leading-4 text-[var(--wb-muted)]">Stopped</p> : null}
     </>
   );
 }

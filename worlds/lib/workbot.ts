@@ -67,10 +67,10 @@ export type WorkbotWorldOptions = {
   features?: Record<string, boolean>;
 };
 
-/** `--natural` turns on natural replies (workbotNaturalChat) for the seeded organization. */
+/** `--natural` is accepted for older preview launch commands; all Workbot chats now use natural replies. */
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
   for (const arg of argv) if (arg !== "--live" && arg !== "--calendar" && arg !== "--natural") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar, --natural)`);
-  return { live: argv.includes("--live"), calendar: argv.includes("--calendar"), ...(argv.includes("--natural") ? { features: { workbotNaturalChat: true } } : {}) };
+  return { live: argv.includes("--live"), calendar: argv.includes("--calendar") };
 }
 
 /** A secret from the caller's environment, else the team's dev Infisical; never printed. */

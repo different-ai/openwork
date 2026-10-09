@@ -56,7 +56,7 @@ export async function workbotReplyWorld(_seed: Seed, { place }: { place: Place }
             return;
           }
           response.setHeader("content-type", "application/json");
-          if (path === "/v1/workbot/me") { response.end(JSON.stringify({ name: "Alex", email: "alex@acme.test", organizationName: "Acme", enabled: true, naturalChat: options.natural === true, denUrl: null })); return; }
+          if (path === "/v1/workbot/me") { response.end(JSON.stringify({ name: "Alex", email: "alex@acme.test", organizationName: "Acme", enabled: true, denUrl: null })); return; }
           if (path === "/v1/workbot/connections") {
             response.end(JSON.stringify({ connections: [
               { id: "slack", name: "Slack", app: "slack", ready: true, connectUrl: null },

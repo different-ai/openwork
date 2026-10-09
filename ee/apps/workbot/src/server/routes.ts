@@ -90,7 +90,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         maxTokenTtlMs: RUN_TOKEN_TTL_MS,
       }),
       canSchedule: async () => member.den.canSchedule,
-      naturalChat: member.den.enabled && member.den.naturalChat,
     })
 
   const enabled = (c: Context<AppEnv>) => c.get("member").den.enabled
@@ -129,7 +128,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       calendar: who.enabled && who.calendar === true,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
-      naturalChat: who.enabled && who.naturalChat,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
   })

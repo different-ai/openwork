@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./google-drive-upload": {
+      "types": "./src/google-drive-upload.ts",
+      "development": "./src/google-drive-upload.ts",
+      "bun": "./src/google-drive-upload.ts",
+      "default": "./dist/google-drive-upload.js"
+    },
     "./cloud-model-fast": {
       "types": "./src/cloud-model-fast.ts",
       "development": "./src/cloud-model-fast.ts",

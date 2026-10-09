@@ -38,6 +38,16 @@
               ],
               "description": "OpenWork Connect: Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. Renders DEN_FEATURE_MCP_CONNECTIONS."
             },
+            "driveResumableUploads": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Resumable Google Drive uploads: Members upload larger workspace files to Google Drive and prepare upload sessions for external clients. Renders DEN_FEATURE_DRIVE_RESUMABLE_UPLOADS."
+            },
             "implicitCloudSkills": {
               "enum": [
                 "",
@@ -157,16 +167,6 @@
                 false
               ],
               "description": "Workbot: side chats: Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. Renders DEN_FEATURE_WORKBOT_SIDE_CHATS."
-            },
-            "workbotNaturalChat": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: natural replies: Workbot says hello at once and fills in the day as it looks, and a message sent while it is answering changes that answer instead of waiting its turn. Needs Workbot. Renders DEN_FEATURE_WORKBOT_NATURAL_CHAT."
             },
             "litellm": {
               "enum": [

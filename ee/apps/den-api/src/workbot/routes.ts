@@ -42,11 +42,6 @@ const sessionSchema = z.object({
   calendar: z.boolean().optional(),
   /** The person can start side chats next to their main chat (the workbotSideChats feature). */
   sideChats: z.boolean(),
-  /**
-   * Workbot replies naturally (the workbotNaturalChat feature): an instant hello filled in as it looks, and a message
-   * sent while it answers interrupts that answer. Older Dens omit it.
-   */
-  naturalChat: z.boolean().optional(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
@@ -228,7 +223,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         canSchedule,
         calendar: features.workbot && features.workbotCalendar,
         sideChats: features.workbot && features.workbotSideChats,
-        naturalChat: features.workbot && features.workbotNaturalChat,
       })
     },
   )

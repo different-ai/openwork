@@ -1,14 +1,15 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect } from "vitest";
-import { eventually, needs, test } from "@openwork/testkit";
+import { eventually, needs, spec, test } from "@openwork/testkit";
 import { stopChild } from "../worlds/openwork-server-cli.ts";
 
 // Keep the real desktop HTTP boundary; native Cloud Calendar coverage lives in
 // den-api/test/google-workspace-capabilities.test.ts, not this retired extension.
-async function calendarServer(cloudMember = false) {
+async function calendarServer(cloudMember = false, largeFile = false) {
   needs({ commands: ["bun"], placement: "local" });
   const root = await mkdtemp(join(tmpdir(), "google-retirement-"));
   const repo = resolve(import.meta.dirname, "../..");
@@ -18,7 +19,7 @@ async function calendarServer(cloudMember = false) {
   const legacyFiles = new Map<string, Buffer>();
   await mkdir(workspace);
   await mkdir(extensions);
-  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xfb, 0xef]);
+  const bytes = largeFile ? Buffer.alloc(9 * 1024 * 1024 + 17, 137) : Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xfb, 0xef]);
   await writeFile(join(workspace, "review.docx"), bytes);
   await writeFile(config, JSON.stringify({ authorizedRoots: [workspace] }));
   if (cloudMember) {
@@ -179,4 +180,26 @@ test("desktop file bridge uploads exact bytes through Cloud member auth without 
   expect(await readdir(calendar.extensions)).toEqual([]);
   evidence.recordAssertionEvidence("Cloud file bridge survives local Google retirement",
     "Both HTTP extension calls send exact Office bytes, basename, MIME type, folder/reply metadata and only the synthetic Cloud member authorization to the Cloud witness. Results contain IDs, not file bytes. No direct provider requests or local OAuth files are created; local Calendar remains refused.", true);
+});
+
+const uploadTest = spec.world(async () => calendarServer(true, true), { needs: { commands: ["bun"], placement: "local" }, resources: { surfaces: [], services: [] } });
+uploadTest("desktop sends a large file to the selected Drive through bounded direct chunks", async ({ world: calendar, evidence, step }) => {
+  const connectionId = "emc_SelectedDriveFixture";
+  await step("the member asks to upload a large file using a selected Google account", async () => {
+    const result = await calendar.call("openwork-cloud-uploads", "drive_upload_file", { path: "review.docx", folderId: "selected-folder", connectionId });
+    expect(result).toEqual({ status: 200, body: { ok: true, file: { id: "resumable-file", name: "review.docx", size: String(calendar.bytes.length) } } });
+    expect(JSON.stringify(result)).not.toContain("fixture-session-secret");
+    evidence.recordAssertionEvidence("The desktop confirms a completed large-file upload", "The real host HTTP action returned a Google file id for 9 MiB+17 bytes, with no upload URL or file bytes in the tool result.", true);
+  });
+  await step("after: Cloud receives only metadata and the file reaches Google byte-for-byte", async () => {
+    const requests = await calendar.requests();
+    expect(requests).toMatchObject({ externalRequests: [], cloudUploads: [], resumable: {
+      metadata: { name: "review.docx", size: calendar.bytes.length, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", folderId: "selected-folder", connectionId },
+      authorization: "Bearer cloud-member-fixture", bytes: calendar.bytes.length,
+      chunks: [8 * 1024 * 1024, 1024 * 1024 + 17], credentialForwarded: false,
+      contentRanges: [`bytes 0-${8 * 1024 * 1024 - 1}/${calendar.bytes.length}`, `bytes ${8 * 1024 * 1024}-${calendar.bytes.length - 1}/${calendar.bytes.length}`],
+      sha256: createHash("sha256").update(calendar.bytes).digest("hex"),
+    } });
+    evidence.recordAssertionEvidence("Selected identity and exact large-file bytes survive host transport", "Cloud saw only basename, MIME type, byte count, parent folder and selected connection. Two bounded Google chunks had a matching SHA-256; no OAuth authorization was forwarded and no multipart bytes passed through Cloud.", true);
+  });
 });

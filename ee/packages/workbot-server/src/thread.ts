@@ -291,8 +291,7 @@ function outputsOf(files: FileNames, startedAt: number | null, finishedAt: numbe
   return [...latest.values()]
 }
 
-/** `greetingNarration`: the hello shows what it says while it looks things up, like any reply (natural replies). */
-export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), options: { greetingNarration?: boolean } = {}): WorkbotTurn[] {
+export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map()): WorkbotTurn[] {
   const byTurn = new Map<string, RunnerMessage[]>()
   for (const message of snapshot.messages) {
     if (!message.messageId) continue
@@ -324,9 +323,8 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       modelSteps += 1
       const text = message.text.trim()
       // Each model call's words are their own bubble, the same one the page streamed, so two never become one once
-      // stored. Workbot's hello is one finished message unless it narrates: what it said to itself between lookups
-      // ("retrying that") stays out.
-      if (text && (options.greetingNarration === true || !(greeting && message.toolCalls.length > 0))) parts.push({ kind: "text", text, step: modelSteps - 1 })
+      // stored. The greeting follows the same streaming contract as other replies.
+      if (text) parts.push({ kind: "text", text, step: modelSteps - 1 })
       for (const call of message.toolCalls) {
         if (call.name === "react") {
           const result = results.get(call.id)
