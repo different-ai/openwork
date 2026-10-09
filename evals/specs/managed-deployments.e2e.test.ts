@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { eventually, spec } from "@openwork/testkit";
-import { managedDeploymentListSchema } from "@openwork/types/den/managed-deployments";
+import { managedDeploymentLaunchSchema, managedDeploymentListSchema } from "@openwork/types/den/managed-deployments";
 import { managedDeployments } from "../worlds/managed-deployments.ts";
 
 // No paid infrastructure is launched here. This proves the real Den screens,
@@ -97,6 +97,64 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     expect(item.id).toBe(deploymentId);
     expect(item.run?.id).toBe(runId);
     evidence.recordAssertionEvidence("no duplicate installer run", `After reload the deployment ${deploymentId} still has run ${runId}.`, true);
+    await owner.screenshot();
+  });
+
+  await step("three deployments are listed together with independent AWS approvals", async () => {
+    const targets = [
+      { name: "Staging", accountId: "123456789013", domain: "staging.example.test" },
+      { name: "Sandbox", accountId: "123456789014", domain: "sandbox.example.test" },
+    ];
+    for (const target of targets) {
+      await owner.click({ role: "button", label: "Create deployment" });
+      await owner.see({ role: "heading", label: "Create deployment" });
+      await owner.type({ label: "Name" }, target.name);
+      await owner.type({ label: "Dedicated AWS account ID" }, target.accountId);
+      await owner.type({ label: "Address" }, target.domain);
+      await owner.type({ label: "Route 53 hosted zone ID for that address" }, "ZTEST123");
+      await owner.type({ label: "First administrator email" }, "admin@example.test");
+      await owner.click({ role: "checkbox", label: /^I control this AWS account/ });
+      await owner.click({ testId: "create-deployment-submit" });
+      await owner.see({ role: "heading", label: target.name }, { timeoutMs: 60_000 });
+    }
+    const before = await deployments();
+    expect(before).toHaveLength(3);
+    expect(new Set(before.map((item) => item.id)).size).toBe(3);
+    const added = before.filter((item) => item.id !== deploymentId);
+    expect(added.every((item) => item.run === null && item.installedVersion === null)).toBe(true);
+
+    // Prepare both at once: each target must get its own run, stack and account,
+    // without mutating the already-prepared production approval.
+    const approvals = await Promise.all(added.map(async (item) => {
+      const result = await probe.api(world.den.admin, `/v1/managed-deployments/${item.id}/launch`, {
+        method: "POST", headers: ownHeaders, body: JSON.stringify({ kind: "install" }),
+      });
+      expect(result.response.status).toBe(200);
+      const approval = managedDeploymentLaunchSchema.parse(result.body);
+      expect(approval.deployment.id).toBe(item.id);
+      expect(approval.deployment.run?.state).toBe("awaiting_approval");
+      expect(approval.command).toBeNull();
+      const url = new URL(approval.approvalUrl ?? "");
+      const parameters = new URLSearchParams(url.hash.split("?")[1]);
+      expect(parameters.get("param_ExpectedAccountId")).toBe(item.target.accountId);
+      expect(parameters.get("param_RunId")).toBe(approval.deployment.run?.id);
+      expect(parameters.get("stackName")).toBe(`openwork-${item.id.replaceAll("-", "")}`);
+      return approval;
+    }));
+    expect(new Set([runId, ...approvals.map((approval) => approval.deployment.run?.id)]).size).toBe(3);
+    await owner.reload();
+    for (const name of ["Production", ...targets.map((target) => target.name)]) {
+      await owner.see({ role: "heading", label: name }, { timeoutMs: 60_000 });
+    }
+    const after = await deployments();
+    expect(after).toHaveLength(3);
+    expect(after.find((item) => item.id === deploymentId)?.run?.id).toBe(runId);
+    for (const approval of approvals) {
+      expect(after.find((item) => item.id === approval.deployment.id)?.run?.id).toBe(approval.deployment.run?.id);
+    }
+    expect(after.every((item) => item.run?.state === "awaiting_approval" && item.run.events.length === 0 && item.installedVersion === null)).toBe(true);
+    await owner.notSee({ text: "Operational" });
+    evidence.recordAssertionEvidence("three independent customer-cloud installs", "Production, Staging and Sandbox remain listed after reload, with three distinct deployment/run IDs and account-bound AWS approvals. Preparing two in parallel leaves Production unchanged; none falsely claims to be running.", true);
     await owner.screenshot();
   });
 
