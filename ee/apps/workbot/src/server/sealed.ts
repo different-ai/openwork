@@ -10,6 +10,7 @@ import { z } from "zod"
 
 export type Tokens = { accessToken: string; refreshToken: string | null; expiresAt: number }
 export const tokensSchema = z.object({ accessToken: z.string(), refreshToken: z.string().nullable(), expiresAt: z.number() })
+export const sessionSchema = z.object({ id: z.string(), userId: z.string(), organizationId: z.string(), tokens: tokensSchema, createdAt: z.number() })
 
 /** Browsers drop a cookie over 4096 bytes; stop well before that instead of signing someone in to a lost cookie. */
 export const MAX_COOKIE_VALUE = 3_800
