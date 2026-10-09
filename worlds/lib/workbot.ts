@@ -65,9 +65,10 @@ export type WorkbotWorldOptions = {
   features?: Record<string, boolean>;
 };
 
+/** `--natural` turns on natural replies (workbotNaturalChat) for the seeded organization. */
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
-  for (const arg of argv) if (arg !== "--live" && arg !== "--calendar") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar)`);
-  return { live: argv.includes("--live"), calendar: argv.includes("--calendar") };
+  for (const arg of argv) if (arg !== "--live" && arg !== "--calendar" && arg !== "--natural") throw new Error(`preview-workbot: unknown option ${arg} (supported: --live, --calendar, --natural)`);
+  return { live: argv.includes("--live"), calendar: argv.includes("--calendar"), ...(argv.includes("--natural") ? { features: { workbotNaturalChat: true } } : {}) };
 }
 
 /** A secret from the caller's environment, else the team's dev Infisical; never printed. */

@@ -1,4 +1,4 @@
-export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model, the computer and an MCP App; -- --calendar adds the desktop and Workbot Calendars.";
+export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model, the computer and an MCP App; -- --calendar adds the desktop and Workbot Calendars; -- --natural turns on natural replies.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { execFile } from "node:child_process";
