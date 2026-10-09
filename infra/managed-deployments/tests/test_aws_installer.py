@@ -147,13 +147,23 @@ class TemplateTests(unittest.TestCase):
         variables = self.template["Resources"]["Runner"]["Properties"]["Environment"]["EnvironmentVariables"]
         self.assertFalse(any(item["Name"] in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "RUNNER_TOKEN") for item in variables))
         self.assertFalse(self.template["Resources"]["Runner"]["Properties"]["Environment"]["PrivilegedMode"])
-        statements = self.template["Resources"]["RunnerRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+        statements = [s for s in self.template["Resources"]["RunnerRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"] if s["Effect"] == "Allow"]
         actions = [action for statement in statements for action in (statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]])]
         self.assertNotIn("*", actions)
         self.assertFalse(any(action.endswith(":*") for action in actions))
         destructive = [action for action in actions if any(word in action.split(":")[1] for word in ("Delete", "Terminate", "Remove", "Detach"))]
         self.assertEqual(destructive, ["s3:DeleteObject"])  # Terraform's own state lock file only.
-        self.assertTrue(all(statement["Effect"] == "Allow" for statement in statements))
+        self.assertNotIn("codebuild:StartBuild", actions)
+
+    def test_buildspec_cannot_be_overridden_or_role_borrowed(self):
+        resources = self.template["Resources"]
+        trust = resources["RunnerRole"]["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]["Condition"]
+        self.assertIn("aws:SourceArn", trust["ArnLike"])
+        runner = resources["RunnerRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+        self.assertTrue(any(s["Effect"] == "Deny" and "codebuild:StartBuild" in s["Action"] for s in runner))
+        launcher = resources["LauncherRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+        denied = {key for s in launcher if s["Effect"] == "Deny" for key in s["Condition"]["Null"]}
+        self.assertEqual(denied, {"codebuild:source.buildspec", "codebuild:environment.image", "codebuild:environment.privilegedMode"})
 
 
 if __name__ == "__main__":

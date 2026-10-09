@@ -55,6 +55,12 @@ const infrastructureActions = [
   "servicediscovery:UpdateService", "servicediscovery:TagResource",
   "events:DescribeRule", "events:ListTargetsByRule", "events:ListTagsForResource",
 ];
+// The installer runs only the reviewed buildspec and image. Deny StartBuild
+// calls that try to override them (the launcher never sends overrides; this
+// also documents the guard customers should apply to other principals).
+const overrideDenies = ["codebuild:source.buildspec", "codebuild:environment.image", "codebuild:environment.privilegedMode"].map((key) => ({
+  Effect: "Deny", Action: "codebuild:StartBuild", Resource: "*", Condition: { Null: { [key]: "false" } },
+}));
 const policy = {
   Version: "2012-10-17", Statement: [
     { Sid: "Infrastructure", Effect: "Allow", Action: infrastructureActions, Resource: "*", Condition: { StringEquals: { "aws:RequestedRegion": ref("AWS::Region") } } },
@@ -72,6 +78,7 @@ const policy = {
     { Sid: "Logs", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:ListTagsLogGroup", "logs:ListTagsForResource", "logs:TagResource", "logs:TagLogGroup"], Resource: [arn("logs", "log-group:/ecs/${Name}/*"), arn("logs", "log-group:/aws/lambda/${Health}"), arn("logs", "log-group:/aws/lambda/${Health}:*"), sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}*")] },
     { Sid: "ListLogs", Effect: "Allow", Action: "logs:DescribeLogGroups", Resource: "*" },
     { Sid: "AppSecrets", Effect: "Allow", Action: ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], Resource: arn("secretsmanager", "secret:${Name}-den-*") },
+    { Sid: "NoNestedBuilds", Effect: "Deny", Action: ["codebuild:StartBuild", "codebuild:UpdateProject", "codebuild:CreateProject"], Resource: "*" },
     { Sid: "StateBucket", Effect: "Allow", Action: ["s3:ListBucket", "s3:GetBucketLocation"], Resource: get("StateBucket", "Arn") },
     // State and its S3-native lock file, for this deployment only.
     { Sid: "StateObjects", Effect: "Allow", Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], Resource: join([get("StateBucket", "Arn"), "/deployments/", ref("DeploymentId"), "/*"]) },
@@ -115,14 +122,16 @@ const template = {
       OwnershipControls: { Rules: [{ ObjectOwnership: "BucketOwnerEnforced" }] },
     } },
     StateBucketPolicy: { Type: "AWS::S3::BucketPolicy", Properties: { Bucket: ref("StateBucket"), PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Deny", Principal: "*", Action: "s3:*", Resource: [get("StateBucket", "Arn"), join([get("StateBucket", "Arn"), "/*"])], Condition: { Bool: { "aws:SecureTransport": false } } }] } } },
-    RunnerRole: { Type: "AWS::IAM::Role", Properties: { RoleName: runnerRoleName, AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "codebuild.amazonaws.com" }, Action: "sts:AssumeRole", Condition: { StringEquals: { "aws:SourceAccount": ref("AWS::AccountId") } } }] }, Policies: [{ PolicyName: "ProvisionOpenWork", PolicyDocument: policy }] } },
+    // Only this stack's runner project may assume the role (no other CodeBuild
+    // project in the account can borrow it).
+    RunnerRole: { Type: "AWS::IAM::Role", Properties: { RoleName: runnerRoleName, AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "codebuild.amazonaws.com" }, Action: "sts:AssumeRole", Condition: { StringEquals: { "aws:SourceAccount": ref("AWS::AccountId") }, ArnLike: { "aws:SourceArn": sub("arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AWS::StackName}-runner") } } }] }, Policies: [{ PolicyName: "ProvisionOpenWork", PolicyDocument: policy }] } },
     Runner: { Type: "AWS::CodeBuild::Project", Properties: {
       Name: sub("${AWS::StackName}-runner"), ServiceRole: get("RunnerRole", "Arn"), ConcurrentBuildLimit: 1, TimeoutInMinutes: 120,
       Artifacts: { Type: "NO_ARTIFACTS" }, Environment: { Type: "LINUX_CONTAINER", ComputeType: "BUILD_GENERAL1_SMALL", Image: "aws/codebuild/standard:7.0", PrivilegedMode: false, EnvironmentVariables: Object.entries(environment).map(([Name, Value]) => ({ Name, Value, Type: "PLAINTEXT" })) },
       Source: { Type: "NO_SOURCE", BuildSpec: JSON.stringify({ version: "0.2", phases: { install: { commands: ["python3 -m pip install --disable-pip-version-check boto3==1.43.110 botocore==1.43.110"] }, build: { commands: ["set -eu", "umask 077", "cat > /tmp/openwork-bootstrap.py <<'OPENWORK_BOOTSTRAP'\n" + bootstrap + "\nOPENWORK_BOOTSTRAP", "python3 /tmp/openwork-bootstrap.py"] } } }) },
       LogsConfig: { CloudWatchLogs: { Status: "ENABLED" } },
     } },
-    LauncherRole: { Type: "AWS::IAM::Role", Properties: { AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }] }, Policies: [{ PolicyName: "LaunchRunner", PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: "codebuild:StartBuild", Resource: get("Runner", "Arn") }, { Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Resource: sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}*:*") }] } }] } },
+    LauncherRole: { Type: "AWS::IAM::Role", Properties: { AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }] }, Policies: [{ PolicyName: "LaunchRunner", PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: "codebuild:StartBuild", Resource: get("Runner", "Arn") }, ...overrideDenies, { Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Resource: sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}*:*") }] } }] } },
     Launcher: { Type: "AWS::Lambda::Function", Properties: { FunctionName: sub("${AWS::StackName}-launcher"), Runtime: "python3.12", Handler: "index.handler", Role: get("LauncherRole", "Arn"), Timeout: 60, Code: { ZipFile: launcherCode } } },
     // A new RunId (new install, retry or approved update) starts a new build.
     StartRunner: { Type: "Custom::OpenWorkLaunch", Properties: { ServiceToken: get("Launcher", "Arn"), ProjectName: ref("Runner"), RunId: ref("RunId") } },

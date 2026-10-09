@@ -56,6 +56,10 @@ or GCP project) live in the deployment's `target`, never in the contract.
   Terraform and provider versions are pinned with a committed lock file.
 - State is customer-owned: versioned, encrypted S3 with S3-native locking,
   retained if the bootstrap stack is deleted.
+- Only this stack's CodeBuild project can assume the runner role, the launcher
+  cannot override the buildspec, image or privileged mode, and the runner cannot
+  start or edit builds. In the dedicated account, grant `codebuild:StartBuild`
+  on the installer project only to administrators.
 - The runner role has no delete permissions except Terraform's own lock file and
   superseded ECS task definitions. Plans that delete or replace databases,
   secrets, storage or the VPC are refused.

@@ -170,6 +170,11 @@
          "aws:SourceAccount": {
           "Ref": "AWS::AccountId"
          }
+        },
+        "ArnLike": {
+         "aws:SourceArn": {
+          "Fn::Sub": "arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AWS::StackName}-runner"
+         }
         }
        }
       }
@@ -804,6 +809,16 @@
          }
         },
         {
+         "Sid": "NoNestedBuilds",
+         "Effect": "Deny",
+         "Action": [
+          "codebuild:StartBuild",
+          "codebuild:UpdateProject",
+          "codebuild:CreateProject"
+         ],
+         "Resource": "*"
+        },
+        {
          "Sid": "StateBucket",
          "Effect": "Allow",
          "Action": [
@@ -1006,6 +1021,36 @@
            "Runner",
            "Arn"
           ]
+         }
+        },
+        {
+         "Effect": "Deny",
+         "Action": "codebuild:StartBuild",
+         "Resource": "*",
+         "Condition": {
+          "Null": {
+           "codebuild:source.buildspec": "false"
+          }
+         }
+        },
+        {
+         "Effect": "Deny",
+         "Action": "codebuild:StartBuild",
+         "Resource": "*",
+         "Condition": {
+          "Null": {
+           "codebuild:environment.image": "false"
+          }
+         }
+        },
+        {
+         "Effect": "Deny",
+         "Action": "codebuild:StartBuild",
+         "Resource": "*",
+         "Condition": {
+          "Null": {
+           "codebuild:environment.privilegedMode": "false"
+          }
          }
         },
         {
