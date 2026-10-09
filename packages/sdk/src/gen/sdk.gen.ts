@@ -3076,6 +3076,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Read which clouds can be launched
+   *
+   * Lists the clouds this OpenWork environment can install into and the published installer version for each.
    */
   public getV1ManagedDeploymentsConfiguration<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
@@ -3089,6 +3091,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * List the organization's managed deployments
+   *
+   * Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update.
    */
   public getV1ManagedDeployments<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<
@@ -3100,6 +3104,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Create a managed deployment
+   *
+   * Records a new installation target (cloud account, region, address). Nothing is launched until an owner prepares and approves it in their cloud.
    */
   public postV1ManagedDeployments<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3156,6 +3162,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Remove a deployment that was never installed
+   *
+   * Deletes a deployment record that never reached the customer's cloud. Installed deployments stay tracked and answer 409.
    */
   public deleteV1ManagedDeploymentsByDeploymentId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3177,6 +3185,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Prepare an install, retry or approved update
+   *
+   * Creates or reuses an installer run pinned to the published release and returns a console approval link (install) or an account-checked cloud shell command (retry, update).
    */
   public postV1ManagedDeploymentsByDeploymentIdLaunch<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3214,6 +3224,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Enroll a customer-side installer run
+   *
+   * Called by the installer in the customer's cloud. Verifies its signed cloud identity and run challenge, then issues a single-use run token.
    */
   public postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnroll<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3258,6 +3270,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Report an installer milestone
+   *
+   * Called by an enrolled installer to report the next ordered milestone with an allowlisted outcome code.
    */
   public postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEvents<ThrowOnError extends boolean = false>(
     parameters: {
@@ -3314,6 +3328,8 @@ export class DenClient extends HeyApiClient {
 
   /**
    * Report installation health
+   *
+   * Called by the read-only health agent in the customer's cloud every 5 minutes. The signed identity is bound to the exact report body; replays are rejected.
    */
   public postV1ManagedDeploymentsByDeploymentIdHeartbeat<ThrowOnError extends boolean = false>(
     parameters: {

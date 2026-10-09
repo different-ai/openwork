@@ -113,6 +113,10 @@
       "description": "Worker heartbeat and activity reporting routes."
     },
     {
+      "name": "Managed deployments",
+      "description": "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports."
+    },
+    {
       "name": "Automations",
       "description": "Scheduled Automations, their runs, and desktop runner presence."
     },
@@ -31996,6 +32000,7 @@
           "Managed deployments"
         ],
         "summary": "Read which clouds can be launched",
+        "description": "Lists the clouds this OpenWork environment can install into and the published installer version for each.",
         "responses": {
           "200": {
             "description": "Read which clouds can be launched",
@@ -32187,12 +32192,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "x-mint": {
-          "metadata": {
-            "og:description": "Read which clouds can be launched API reference in OpenWork Docs."
-          }
-        }
+        ]
       }
     },
     "/v1/managed-deployments": {
@@ -32202,6 +32202,7 @@
           "Managed deployments"
         ],
         "summary": "List the organization's managed deployments",
+        "description": "Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update.",
         "responses": {
           "200": {
             "description": "List the organization's managed deployments",
@@ -32714,12 +32715,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "x-mint": {
-          "metadata": {
-            "og:description": "List the organization's managed deployments API reference in OpenWork Docs."
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postV1ManagedDeployments",
@@ -32727,6 +32723,7 @@
           "Managed deployments"
         ],
         "summary": "Create a managed deployment",
+        "description": "Records a new installation target (cloud account, region, address). Nothing is launched until an owner prepares and approves it in their cloud.",
         "responses": {
           "200": {
             "description": "Create a managed deployment",
@@ -33308,12 +33305,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "x-mint": {
-          "metadata": {
-            "og:description": "Create a managed deployment API reference in OpenWork Docs."
-          }
-        }
+        ]
       }
     },
     "/v1/managed-deployments/{deploymentId}": {
@@ -33323,6 +33315,7 @@
           "Managed deployments"
         ],
         "summary": "Remove a deployment that was never installed",
+        "description": "Deletes a deployment record that never reached the customer's cloud. Installed deployments stay tracked and answer 409.",
         "responses": {
           "200": {
             "description": "Remove a deployment that was never installed",
@@ -33489,12 +33482,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "x-mint": {
-          "metadata": {
-            "og:description": "Remove a deployment that was never installed API reference in OpenWork Docs."
-          }
-        }
+        ]
       }
     },
     "/v1/managed-deployments/{deploymentId}/launch": {
@@ -33504,6 +33492,7 @@
           "Managed deployments"
         ],
         "summary": "Prepare an install, retry or approved update",
+        "description": "Creates or reuses an installer run pinned to the published release and returns a console approval link (install) or an account-checked cloud shell command (retry, update).",
         "responses": {
           "200": {
             "description": "Prepare an install, retry or approved update",
@@ -34085,12 +34074,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "x-mint": {
-          "metadata": {
-            "og:description": "Prepare an install, retry or approved update API reference in OpenWork Docs."
-          }
-        }
+        ]
       }
     },
     "/v1/managed-deployments/{deploymentId}/runs/{runId}/enroll": {
@@ -34100,6 +34084,7 @@
           "Managed deployments"
         ],
         "summary": "Enroll a customer-side installer run",
+        "description": "Called by the installer in the customer's cloud. Verifies its signed cloud identity and run challenge, then issues a single-use run token.",
         "security": [],
         "responses": {
           "200": {
@@ -34318,11 +34303,6 @@
               }
             }
           }
-        },
-        "x-mint": {
-          "metadata": {
-            "og:description": "Enroll a customer-side installer run API reference in OpenWork Docs."
-          }
         }
       }
     },
@@ -34333,6 +34313,7 @@
           "Managed deployments"
         ],
         "summary": "Report an installer milestone",
+        "description": "Called by an enrolled installer to report the next ordered milestone with an allowlisted outcome code.",
         "security": [
           {
             "bearerAuth": []
@@ -34557,11 +34538,6 @@
               }
             }
           }
-        },
-        "x-mint": {
-          "metadata": {
-            "og:description": "Report an installer milestone API reference in OpenWork Docs."
-          }
         }
       }
     },
@@ -34572,6 +34548,7 @@
           "Managed deployments"
         ],
         "summary": "Report installation health",
+        "description": "Called by the read-only health agent in the customer's cloud every 5 minutes. The signed identity is bound to the exact report body; replays are rejected.",
         "security": [],
         "responses": {
           "200": {
@@ -34731,12 +34708,7 @@
             },
             "required": true
           }
-        ],
-        "x-mint": {
-          "metadata": {
-            "og:description": "Report installation health API reference in OpenWork Docs."
-          }
-        }
+        ]
       }
     },
     "/v1/api-keys": {

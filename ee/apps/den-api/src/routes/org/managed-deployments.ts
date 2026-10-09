@@ -36,9 +36,9 @@ const errorSchema = z.object({ error: z.string() })
 type DeploymentRow = typeof ManagedDeploymentTable.$inferSelect
 type RunRow = typeof ManagedDeploymentRunTable.$inferSelect
 
-function operation(summary: string, response: z.ZodType, security?: Array<Record<string, string[]>>) {
+function operation(summary: string, description: string, response: z.ZodType, security?: Array<Record<string, string[]>>) {
   return describeRoute({
-    tags: ["Managed deployments"], summary, ...(security ? { security } : {}),
+    tags: ["Managed deployments"], summary, description, ...(security ? { security } : {}),
     responses: {
       200: jsonResponse(summary, response),
       400: jsonResponse("Invalid input.", errorSchema),
@@ -112,7 +112,7 @@ function bearerToken(header: string | undefined) {
 }
 
 export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  app.get(`${PATH}/configuration`, operation("Read which clouds can be launched", managedDeploymentConfigurationSchema),
+  app.get(`${PATH}/configuration`, operation("Read which clouds can be launched", "Lists the clouds this OpenWork environment can install into and the published installer version for each.", managedDeploymentConfigurationSchema),
     orgRoleRoute(["admin"]), requireFeature("managedDeployments"), (c) => {
       const release = awsRelease()
       return c.json(managedDeploymentConfigurationSchema.parse({
@@ -125,7 +125,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       }))
     })
 
-  app.get(PATH, operation("List the organization's managed deployments", managedDeploymentListSchema),
+  app.get(PATH, operation("List the organization's managed deployments", "Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update.", managedDeploymentListSchema),
     orgRoleRoute(["admin"]), requireFeature("managedDeployments"), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
@@ -133,7 +133,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ deployments: await deploymentViews(rows) })
     })
 
-  app.post(PATH, operation("Create a managed deployment", managedDeploymentSchema),
+  app.post(PATH, operation("Create a managed deployment", "Records a new installation target (cloud account, region, address). Nothing is launched until an owner prepares and approves it in their cloud.", managedDeploymentSchema),
     orgRoleRoute(["super-admin"]), requireFeature("managedDeployments"), jsonValidator(managedDeploymentInputSchema), async (c) => {
       const permission = ensureOrganizationSuperAdmin(c, "Only owners and super-admins can create deployments.")
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -151,7 +151,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json(await oneView(row))
     })
 
-  app.delete(`${PATH}/:deploymentId`, operation("Remove a deployment that was never installed", acceptedSchema),
+  app.delete(`${PATH}/:deploymentId`, operation("Remove a deployment that was never installed", "Deletes a deployment record that never reached the customer's cloud. Installed deployments stay tracked and answer 409.", acceptedSchema),
     orgRoleRoute(["super-admin"]), requireFeature("managedDeployments"), paramValidator(deploymentParam), async (c) => {
       const permission = ensureOrganizationSuperAdmin(c, "Only owners and super-admins can remove deployments.")
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -174,7 +174,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ ok: true })
     })
 
-  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", managedDeploymentLaunchSchema),
+  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", "Creates or reuses an installer run pinned to the published release and returns a console approval link (install) or an account-checked cloud shell command (retry, update).", managedDeploymentLaunchSchema),
     orgRoleRoute(["super-admin"]), requireFeature("managedDeployments"), paramValidator(deploymentParam), jsonValidator(managedDeploymentLaunchInputSchema), async (c) => {
       const permission = ensureOrganizationSuperAdmin(c, "Only owners and super-admins can launch or update deployments.")
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -230,7 +230,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
   // keep working when the feature is turned off so in-flight installs finish
   // and existing installations keep reporting; nothing new can be launched.
 
-  app.post(`${PATH}/:deploymentId/runs/:runId/enroll`, operation("Enroll a customer-side installer run", enrollmentResponseSchema, []),
+  app.post(`${PATH}/:deploymentId/runs/:runId/enroll`, operation("Enroll a customer-side installer run", "Called by the installer in the customer's cloud. Verifies its signed cloud identity and run challenge, then issues a single-use run token.", enrollmentResponseSchema, []),
     tokenRoute, paramValidator(runParam), jsonValidator(awsEnrollmentSchema), async (c) => {
       const { deploymentId, runId } = c.req.valid("param")
       const [row] = await db.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1)
@@ -261,7 +261,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ token, expiresAt: run.expires_at.toISOString() })
     })
 
-  app.post(`${PATH}/:deploymentId/runs/:runId/events`, operation("Report an installer milestone", acceptedSchema, [{ bearerAuth: [] }]),
+  app.post(`${PATH}/:deploymentId/runs/:runId/events`, operation("Report an installer milestone", "Called by an enrolled installer to report the next ordered milestone with an allowlisted outcome code.", acceptedSchema, [{ bearerAuth: [] }]),
     tokenRoute, paramValidator(runParam), jsonValidator(deploymentEventInputSchema), async (c) => {
       const { deploymentId, runId } = c.req.valid("param")
       const token = bearerToken(c.req.header("authorization"))
@@ -291,7 +291,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ ok: true })
     })
 
-  app.post(`${PATH}/:deploymentId/heartbeat`, operation("Report installation health", acceptedSchema, []),
+  app.post(`${PATH}/:deploymentId/heartbeat`, operation("Report installation health", "Called by the read-only health agent in the customer's cloud every 5 minutes. The signed identity is bound to the exact report body; replays are rejected.", acceptedSchema, []),
     tokenRoute, paramValidator(deploymentParam), async (c) => {
       const { deploymentId } = c.req.valid("param")
       const raw = await c.req.text()
