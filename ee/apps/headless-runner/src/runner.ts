@@ -120,6 +120,12 @@ export type SendInput = {
   credentials: TurnCredentials
   /** Ids of saved files sent with this message. */
   attachments?: string[]
+  /**
+   * A person's follow-up that interrupts: the conversation's answer in progress wraps up at its next safe point (now,
+   * if it is writing; after the step it is running otherwise) and keeps what it wrote; a message already waiting is
+   * answered together with this one. Background tasks keep going.
+   */
+  interrupt?: boolean
 }
 export type SendResult =
   | { ok: true; state: "accepted" | "resumed" | "already_present"; turn: Turn }
@@ -130,7 +136,10 @@ export const MAX_QUEUED_PER_SESSION = 20
 
 /** A person's message, a background task, or a task's report back to the conversation (see Turn.kind). */
 type JobKind = "message" | "task" | "report"
-type Job = { sessionId: string; messageId: string; kind: JobKind }
+/** `superseded`: a later message interrupted it, so it wraps up at its next safe point (see SendInput.interrupt). */
+type Job = { sessionId: string; messageId: string; kind: JobKind; superseded?: boolean }
+/** The running turn of one lane. `onSupersede` stops the model call it is waiting on, while it writes. */
+type Running = { sessionId: string; messageId: string; kind: JobKind; controller: AbortController; superseded: boolean; onSupersede?: () => void }
 /**
  * A turn's credentials and when they were issued. Tasks and reports inherit the turn's that started them, so they
  * count their age from then: the token was minted for that turn.
@@ -310,7 +319,7 @@ function unansweredCalls(messages: Message[]) {
 
 export class Runner {
   /** The one running turn per lane (see laneOf). Other turns for that lane wait in the queue, in order. */
-  private readonly controllers = new Map<string, { sessionId: string; messageId: string; kind: JobKind; controller: AbortController }>()
+  private readonly controllers = new Map<string, Running>()
   private readonly credentials = new Map<string, HeldCredentials>()
   private readonly queue: Job[] = []
   private readonly running = new Set<Promise<void>>()
@@ -383,6 +392,7 @@ export class Runner {
     }
     const turn = store.getTurn(input.sessionId, input.messageId)
     if (!turn) throw new Error("turn_missing_after_admission")
+    if (input.interrupt && turn.kind === undefined) this.supersede(input.sessionId, input.messageId)
     // Resuming a task or a report keeps it in its lane.
     this.enqueue({ sessionId: input.sessionId, messageId: input.messageId, kind: turn.kind ?? "message" }, { credentials: input.credentials, at: Date.now() })
     return { ok: true, state, turn: store.getTurn(input.sessionId, input.messageId) ?? turn }
@@ -424,6 +434,19 @@ export class Runner {
     return stopped
   }
 
+  /**
+   * The conversation's answer in progress, and any message waiting behind it, wrap up for a follow-up: a turn that is
+   * writing stops now and keeps what it wrote; one running a step finishes that step first. Background tasks keep going.
+   */
+  private supersede(sessionId: string, follower: string) {
+    const running = this.controllers.get(sessionId)
+    if (running && running.messageId !== follower) {
+      running.superseded = true
+      running.onSupersede?.()
+    }
+    for (const job of this.queue) if (job.sessionId === sessionId && job.kind !== "task" && job.messageId !== follower) job.superseded = true
+  }
+
   /** Resolves when every queued and running turn has settled. */
   async idle() {
     while (this.running.size || this.queue.length) await Promise.all([...this.running])
@@ -460,7 +483,7 @@ export class Runner {
         this.queue.splice(index, 1)
         this.activeCount += 1
         const controller = new AbortController()
-        this.controllers.set(lane, { sessionId: job.sessionId, messageId: job.messageId, kind: job.kind, controller })
+        this.controllers.set(lane, { sessionId: job.sessionId, messageId: job.messageId, kind: job.kind, controller, superseded: job.superseded === true })
         const promise = this.runTurn(job, controller).finally(() => {
           this.activeCount -= 1
           this.controllers.delete(lane)
@@ -548,6 +571,10 @@ export class Runner {
     console.log(`[headless-runner] turn started ${JSON.stringify({ sessionId, messageId })}`)
 
     const turnMessages = () => store.turnMessages(sessionId, messageId).map((entry) => entry.message)
+    const lane = kind === "task" ? `${sessionId}#${messageId}` : sessionId
+    // A follow-up interrupted this answer (see supersede): it wraps up at the next safe point, keeping what it said.
+    const superseded = () => this.controllers.get(lane)?.superseded === true
+    const wrapUp = () => store.setTurnStatus(sessionId, messageId, "aborted", "superseded")
     const closeUnanswered = (reason: string) => {
       for (const call of unansweredCalls(turnMessages())) {
         store.appendMessage(sessionId, messageId, { role: "tool", callId: call.id, name: call.name, output: reason, isError: true })
@@ -564,6 +591,7 @@ export class Runner {
         store.setTurnStatus(sessionId, messageId, "completed")
         return
       }
+      if (superseded()) return wrapUp()
 
       const apiKey = credentials.modelApiKey ?? this.options.defaultModelApiKey
       if (!apiKey) {
@@ -652,6 +680,8 @@ export class Runner {
       let modelStep = turnMessages().filter((message) => message.role === "assistant").length
       for (let step = 0; step < limits.maxSteps; step += 1) {
         signal.throwIfAborted()
+        // Between steps: the step a follow-up arrived during has finished, so nothing is cut off mid-way.
+        if (superseded()) return wrapUp()
         if (waitBeforeNextStep) await sleep(waitBeforeNextStep, signal)
         // Between steps, never mid-call, so no tool is cut off. The caller resumes the turn right away with a
         // fresh MCP token; a caller that stopped supervising simply never resumes it. Inherited credentials may
@@ -674,23 +704,45 @@ export class Runner {
         const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now()) }] : []
         const { messages, repairs } = normalizeTranscript([...history, ...state])
         if (repairs) console.warn(`[headless-runner] context repaired ${JSON.stringify({ sessionId, messageId, repairs })}`)
-        const result = await this.options.model.complete({
-          system: askedToStop ? `${baseSystem}\n\n${STOP_REPEATING_INSTRUCTION}` : baseSystem,
-          messages,
-          // Cached up to the two newest earlier turns (so the next turn starts from the cache) and the newest message.
-          cacheAfter: new Set([...context.cachePoints, ...history.slice(-1)]),
-          tools: toolSpecs,
-          model: turn?.model ?? this.options.defaultModel,
-          apiKey,
-          signal,
-          ...(events
-            ? {
-                onText: (delta: string) => events.emit(sessionId, { type: "text", messageId, step: streamStep, delta }),
-                onReset: () => events.emit(sessionId, { type: "text", messageId, step: streamStep, delta: "", reset: true }),
-                onTool: (tool: string) => events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool }),
-              }
-            : {}),
-        })
+        // A follow-up stops this model call while it writes (see supersede); what it wrote so far is kept.
+        const writing = new AbortController()
+        const running = this.controllers.get(lane)
+        if (running) running.onSupersede = () => writing.abort(new Error("superseded"))
+        if (superseded()) writing.abort(new Error("superseded"))
+        let written = ""
+        let result: Awaited<ReturnType<ModelClient["complete"]>>
+        try {
+          result = await this.options.model.complete({
+            system: askedToStop ? `${baseSystem}\n\n${STOP_REPEATING_INSTRUCTION}` : baseSystem,
+            messages,
+            // Cached up to the two newest earlier turns (so the next turn starts from the cache) and the newest message.
+            cacheAfter: new Set([...context.cachePoints, ...history.slice(-1)]),
+            tools: toolSpecs,
+            model: turn?.model ?? this.options.defaultModel,
+            apiKey,
+            signal: AbortSignal.any([signal, writing.signal]),
+            ...(events
+              ? {
+                  onText: (delta: string) => {
+                    written += delta
+                    events.emit(sessionId, { type: "text", messageId, step: streamStep, delta })
+                  },
+                  onReset: () => {
+                    written = ""
+                    events.emit(sessionId, { type: "text", messageId, step: streamStep, delta: "", reset: true })
+                  },
+                  onTool: (tool: string) => events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool }),
+                }
+              : {}),
+          })
+        } catch (error) {
+          if (!writing.signal.aborted || signal.aborted) throw error
+          // The person watched these words stream in, and the next answer picks up from them.
+          if (written.trim()) store.appendMessage(sessionId, messageId, { role: "assistant", text: written, toolCalls: [] })
+          return wrapUp()
+        } finally {
+          if (running) running.onSupersede = undefined
+        }
         modelStep += 1
         steps += 1
         toolCalls += result.toolCalls.length

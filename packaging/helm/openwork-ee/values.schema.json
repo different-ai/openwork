@@ -158,6 +158,16 @@
               ],
               "description": "Workbot: side chats: Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. Renders DEN_FEATURE_WORKBOT_SIDE_CHATS."
             },
+            "workbotNaturalChat": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: natural replies: Workbot says hello at once and fills in the day as it looks, and a message sent while it is answering changes that answer instead of waiting its turn. Needs Workbot. Renders DEN_FEATURE_WORKBOT_NATURAL_CHAT."
+            },
             "litellm": {
               "enum": [
                 "",

@@ -3,6 +3,7 @@
 import { Check } from "lucide-react";
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useWorkbotConnections, type WorkbotConnection } from "./data";
+import { workbotHost } from "./host";
 import { AppMark } from "./files";
 import { OpenWorkMark } from "./mark";
 
@@ -38,7 +39,12 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
   const getStarted = () => {
     // Nothing set up to connect (or the list isn't back yet and failed): straight to the conversation.
     if (list.length === 0) finish();
-    else leaveTo(() => setStep("connect"));
+    else {
+      // Natural replies: with everything already connected there is nothing left to choose, so Workbot starts looking
+      // at their day while they read the next screen.
+      if (workbotHost().naturalChat === true && list.every((connection) => connection.ready)) onBegin();
+      leaveTo(() => setStep("connect"));
+    }
   };
 
   return (

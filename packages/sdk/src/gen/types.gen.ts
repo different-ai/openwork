@@ -177,6 +177,7 @@ export type AdminFeature = {
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotNaturalChat"
     | "litellm"
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
@@ -233,6 +234,7 @@ export type AdminOrganizationsPageResponse = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotNaturalChat: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
@@ -366,6 +368,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotNaturalChat: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -487,6 +498,7 @@ export type AdminOverviewResponse = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotNaturalChat: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
@@ -620,6 +632,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotNaturalChat: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -1791,6 +1812,7 @@ export type CapabilityDisabledError = {
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotNaturalChat"
     | "litellm"
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
@@ -4972,6 +4994,7 @@ export type WorkbotSession = {
   canSchedule: boolean;
   calendar?: boolean;
   sideChats: boolean;
+  naturalChat?: boolean;
 };
 
 export type WorkbotRunToken = {
@@ -5685,6 +5708,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotNaturalChat: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
@@ -5818,6 +5842,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotNaturalChat: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -5927,6 +5960,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotNaturalChat: boolean;
       litellm: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
@@ -6060,6 +6094,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotNaturalChat: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

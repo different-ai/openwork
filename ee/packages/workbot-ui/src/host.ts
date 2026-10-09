@@ -27,6 +27,11 @@ export type WorkbotHost = {
   connectionsHref?: string | null
   /** The person can start side chats next to their main chat (the workbotSideChats feature). Off when unset. */
   sideChats?: boolean
+  /**
+   * Natural replies (the workbotNaturalChat feature): the drawn hello stays while Workbot's own hello fills in the day as
+   * it looks, and a message sent while Workbot answers interrupts that answer instead of waiting its turn. Off when unset.
+   */
+  naturalChat?: boolean
 }
 
 let current: WorkbotHost | null = null

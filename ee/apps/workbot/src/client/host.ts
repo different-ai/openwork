@@ -14,6 +14,8 @@ export const meSchema = z.object({
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (the workbotSideChats feature). */
   sideChats: z.boolean().default(false),
+  /** Natural replies are on for this person (the workbotNaturalChat feature). */
+  naturalChat: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -63,5 +65,6 @@ export function createHost(me: Me): WorkbotHost {
     canSchedule: me.canSchedule,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
     sideChats: me.sideChats,
+    naturalChat: me.naturalChat,
   }
 }

@@ -60,7 +60,11 @@ export type WorkbotStep = {
   /** What it did, in its own plain words: the updates it gave while working on its computer. */
   updates: string[]
 }
-export type WorkbotPart = { kind: "text"; text: string } | { kind: "steps"; steps: WorkbotStep[] }
+/**
+ * What Workbot said and did, in order. A text part is one model call's words, `step` being that call (counted from 0
+ * within the turn): the page keeps one bubble per call, from its first streamed word to its stored copy.
+ */
+export type WorkbotPart = { kind: "text"; text: string; step: number } | { kind: "steps"; steps: WorkbotStep[] }
 
 /**
  * A bigger job this message handed to a background task: the page keeps it in view where it started, so the person
@@ -287,7 +291,8 @@ function outputsOf(files: FileNames, startedAt: number | null, finishedAt: numbe
   return [...latest.values()]
 }
 
-export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map()): WorkbotTurn[] {
+/** `greetingNarration`: the hello shows what it says while it looks things up, like any reply (natural replies). */
+export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), options: { greetingNarration?: boolean } = {}): WorkbotTurn[] {
   const byTurn = new Map<string, RunnerMessage[]>()
   for (const message of snapshot.messages) {
     if (!message.messageId) continue
@@ -314,12 +319,10 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       if (message.role !== "assistant") continue
       modelSteps += 1
       const text = message.text.trim()
-      // Workbot's hello is one finished message: what it said to itself between lookups ("retrying that") stays out.
-      if (text && !(greeting && message.toolCalls.length > 0)) {
-        const last = parts.at(-1)
-        if (last?.kind === "text") last.text = `${last.text}\n\n${text}`
-        else parts.push({ kind: "text", text })
-      }
+      // Each model call's words are their own bubble, the same one the page streamed, so two never become one once
+      // stored. Workbot's hello is one finished message unless it narrates: what it said to itself between lookups
+      // ("retrying that") stays out.
+      if (text && (options.greetingNarration === true || !(greeting && message.toolCalls.length > 0))) parts.push({ kind: "text", text, step: modelSteps - 1 })
       for (const call of message.toolCalls) {
         if (call.name === "react") {
           const result = results.get(call.id)

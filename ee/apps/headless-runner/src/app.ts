@@ -57,6 +57,11 @@ const sendBody = z
     credentials: turnCredentialsSchema.default({}),
     /** Ids of saved files (POST /v1/sessions/:id/saved-files) sent with this message. */
     attachments: z.array(z.string().regex(/^fl_[a-f0-9]{32}$/)).optional(),
+    /**
+     * The conversation's answer in progress wraps up at its next safe point (now, if it is writing; after the step it is
+     * running otherwise), keeping what it wrote, and this message is answered next with all of that in view.
+     */
+    interrupt: z.boolean().optional(),
   })
   .strict()
   .refine((body) => body.prompt.trim().length > 0 || (body.attachments?.length ?? 0) > 0, "prompt or attachments is required")

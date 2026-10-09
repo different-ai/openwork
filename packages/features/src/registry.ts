@@ -151,6 +151,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotNaturalChat: {
+    label: "Workbot: natural replies",
+    description: "Workbot says hello at once and fills in the day as it looks, and a message sent while it is answering changes that answer instead of waiting its turn. Needs Workbot.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   litellm: {
     label: "AI Gateway: LiteLLM",
     description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
