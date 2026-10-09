@@ -90898,7 +90898,7 @@
           "Telemetry"
         ],
         "summary": "List telemetry dimension values",
-        "description": "Returns unique analytics dimension values for the active organization, such as project labels for the project selector.",
+        "description": "Returns unique analytics dimension values for the active organization, such as project labels for the project selector. Workspace owners and admins on an Enterprise plan only, like the analytics they filter.",
         "responses": {
           "200": {
             "description": "Telemetry dimensions returned.",
@@ -90926,6 +90926,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Usage analytics requires an Enterprise plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnterprisePlanRequiredError"
                 }
               }
             }

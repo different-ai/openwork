@@ -84,7 +84,7 @@ const test = spec.world(async (seed) => {
   if (failed.response.ok) throw new Error("Missing workflow input must fail");
   const web = await seed.web({ den, signedInAs: "admin", startPath: "/dashboard/workflow-runs", headless: true, viewport: { width: 1440, height: 1000 } });
   return { den, web, setEnterprise, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
-}, { timeout: 600_000 });
+}, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den"] } });
 
 test("workflow activity shows linked version diagrams and keeps one-off and inaccessible runs readable", async ({ world, user, probe, seed, evidence, step }) => {
   const readRuns = async (session = world.den.admin) => {

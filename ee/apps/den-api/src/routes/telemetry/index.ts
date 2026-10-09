@@ -129,18 +129,22 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "List telemetry dimension values",
-      description: "Returns unique analytics dimension values for the active organization, such as project labels for the project selector.",
+      description: "Returns unique analytics dimension values for the active organization, such as project labels for the project selector. Workspace owners and admins on an Enterprise plan only, like the analytics they filter.",
       responses: {
         200: jsonResponse("Telemetry dimensions returned.", telemetryDimensionListDocumentSchema),
         400: jsonResponse("Invalid dimension query.", invalidRequestSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
+        402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
-    orgMemberRoute(),
+    // Organization-wide usage aggregates: the same admin and Enterprise gate as /v1/telemetry/analytics.
+    orgRoleRoute(["admin"]),
     queryValidator(telemetryDimensionsQuerySchema),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       if (!orgId) return c.json({ items: [] })
+      const entitlement = checkEntitlement(c.get("organizationContext")?.organization.metadata ?? null, "analytics")
+      if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
 
       const query = c.req.valid("query")
       const rows = await db

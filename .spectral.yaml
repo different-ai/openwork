@@ -264,6 +264,13 @@ overrides:
       - "**/*.json#/paths/~1v1~1automation-runners"
     rules:
       ow-list-pagination: "off"
+  # Distinct analytics dimension values (project labels) for one selector:
+  # bounded by the organization's labels and read whole by the desktop and Den
+  # web, so it is not a paginated collection.
+  - files:
+      - "**/*.json#/paths/~1v1~1telemetry~1dimensions"
+    rules:
+      ow-list-pagination: "off"
   - files:
       - "**/*.json#/components/schemas/AutomationDesktopTarget/properties/lastSeenAt"
     rules:

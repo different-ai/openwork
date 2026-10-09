@@ -30314,6 +30314,10 @@ export type GetV1TelemetryDimensionsErrors = {
    * Caller must be signed in.
    */
   401: UnauthorizedError;
+  /**
+   * Usage analytics requires an Enterprise plan.
+   */
+  402: EnterprisePlanRequiredError;
 };
 
 export type GetV1TelemetryDimensionsError = GetV1TelemetryDimensionsErrors[keyof GetV1TelemetryDimensionsErrors];

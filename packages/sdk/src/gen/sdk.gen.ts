@@ -15370,7 +15370,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List telemetry dimension values
    *
-   * Returns unique analytics dimension values for the active organization, such as project labels for the project selector.
+   * Returns unique analytics dimension values for the active organization, such as project labels for the project selector. Workspace owners and admins on an Enterprise plan only, like the analytics they filter.
    */
   public getV1TelemetryDimensions<ThrowOnError extends boolean = false>(
     parameters: {

@@ -4,7 +4,7 @@ import type { DenSession } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
 import { orgModelAnalyticsWorld } from "../worlds/org-model-analytics.ts";
 
-const test = spec.world(orgModelAnalyticsWorld, { timeout: 900_000, needs: {} });
+const test = spec.world(orgModelAnalyticsWorld, { timeout: 900_000, needs: {}, resources: { surfaces: ["web"], services: ["den"] } });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
