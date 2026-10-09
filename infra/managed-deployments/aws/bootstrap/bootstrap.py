@@ -12,6 +12,8 @@ from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 
 # Standard library only: nothing is downloaded from a package index while the
@@ -49,6 +51,12 @@ def signed_identity(proof, region, credentials, now=None):
             "x-amz-date": amz_date, "x-amz-security-token": token, "x-openwork-proof": proof}
 
 
+# Answers that mean the request never reached OpenWork (or was turned away
+# before any change): a proxy or load balancer error, or rate limiting.
+TRANSIENT_STATUS = {429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530}
+RETRY_DELAYS = (5, 10, 20, 40, 60, 60, 60, 60)
+
+
 def post(origin, path, payload, token=None):
     headers = {"Content-Type": "application/json"}
     if token:
@@ -59,10 +67,30 @@ def post(origin, path, payload, token=None):
         return json.load(response)
 
 
+def transient(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in TRANSIENT_STATUS
+    return isinstance(error, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def with_retries(send, sleep=time.sleep):
+    """Retry only failures where OpenWork never handled the request (about 5 minutes)."""
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return send()
+        except Exception as error:
+            if delay is None or not transient(error):
+                raise
+            print(f"OpenWork is not reachable yet ({type(error).__name__}); retrying in {delay}s.", flush=True)
+            sleep(delay)
+
+
 def enroll():
     proof = "enroll:" + os.environ["RUN_ID"] + ":" + os.environ["CHALLENGE"]
-    headers = signed_identity(proof, os.environ["AWS_REGION"], container_credentials())
-    return post(os.environ["CONTROL_PLANE_ORIGIN"], run_path() + "/enroll", {"headers": headers})["token"]
+    # Signed per attempt: OpenWork accepts a proof for 60 seconds. A request
+    # that was handled answers 200 or a definite error, which is never retried.
+    return with_retries(lambda: post(os.environ["CONTROL_PLANE_ORIGIN"], run_path() + "/enroll",
+                                     {"headers": signed_identity(proof, os.environ["AWS_REGION"], container_credentials())})["token"])
 
 
 def run_path():
@@ -73,7 +101,8 @@ def event(token, sequence, step, outcome="succeeded", error_code=None):
     payload = {"sequence": sequence, "step": step, "outcome": outcome}
     if error_code:
         payload["errorCode"] = error_code
-    return post(os.environ["CONTROL_PLANE_ORIGIN"], run_path() + "/events", payload, token)
+    # Exact repeats of a milestone are idempotent.
+    return with_retries(lambda: post(os.environ["CONTROL_PLANE_ORIGIN"], run_path() + "/events", payload, token))
 
 
 def download_bundle(url, digest, destination):

@@ -63,6 +63,36 @@ class BootstrapTests(unittest.TestCase):
                 bootstrap.download_bundle("http://release.example.test/bundle", "a" * 64, Path(directory))
 
 
+class RetryTests(unittest.TestCase):
+    def test_retries_only_when_openwork_never_handled_the_request(self):
+        import urllib.error
+        attempts = []
+        def flaky():
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise urllib.error.HTTPError("https://api.example.test", 530, "origin unreachable", {}, None)
+            return {"token": "t"}
+        self.assertEqual(bootstrap.with_retries(flaky, sleep=lambda _: None), {"token": "t"})
+        self.assertEqual(len(attempts), 3)
+        for code in (400, 401, 404, 409, 500):
+            calls = []
+            def definite():
+                calls.append(1)
+                raise urllib.error.HTTPError("https://api.example.test", code, "no", {}, None)
+            with self.assertRaises(urllib.error.HTTPError):
+                bootstrap.with_retries(definite, sleep=lambda _: None)
+            self.assertEqual(len(calls), 1, code)
+
+    def test_gives_up_after_about_five_minutes(self):
+        import urllib.error
+        waited = []
+        def down():
+            raise urllib.error.URLError("connection refused")
+        with self.assertRaises(urllib.error.URLError):
+            bootstrap.with_retries(down, sleep=waited.append)
+        self.assertTrue(240 <= sum(waited) <= 400)
+
+
 class SigningTests(unittest.TestCase):
     def test_stdlib_signature_matches_botocore(self):
         from botocore.auth import SigV4Auth
