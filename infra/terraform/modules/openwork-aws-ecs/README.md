@@ -96,7 +96,8 @@ After `terraform apply`:
 - **Existing ECS cluster.** Set `ecs_cluster_arn` to deploy the two services
   into a cluster you already run; the module then creates no cluster. The
   services are named `den-api` and `den-web`, so they must not collide with
-  services already in that cluster. They use `launch_type = "FARGATE"`,
+  services already in that cluster; set `service_name_prefix` (for example
+  `openwork-`) to prefix every service name. They use `launch_type = "FARGATE"`,
   which overrides the cluster's default capacity provider strategy. The
   module still creates its own Cloud Map namespace (`<name>.internal`), ALB
   (unless you bring one, below), security groups and IAM roles.

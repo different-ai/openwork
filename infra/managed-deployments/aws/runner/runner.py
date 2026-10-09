@@ -78,7 +78,93 @@ def terraform_inputs():
         "control_plane_origin": os.environ["CONTROL_PLANE_ORIGIN"], "size": os.environ.get("SIZE", "small"),
         "region": os.environ["AWS_REGION"], "account_id": os.environ["EXPECTED_ACCOUNT_ID"],
         "route53_zone_id": os.environ["ROUTE53_ZONE_ID"],
+        **network_inputs(),
     }
+
+
+def id_list(name):
+    return [item for item in os.environ.get(name, "").split(",") if item]
+
+
+def network_inputs():
+    if os.environ.get("NETWORK_MODE", "dedicated") != "existing":
+        return {"network_mode": "dedicated"}
+    return {
+        "network_mode": "existing", "vpc_id": os.environ["VPC_ID"],
+        "service_subnet_ids": id_list("SERVICE_SUBNET_IDS"),
+        "load_balancer_subnet_ids": id_list("LOAD_BALANCER_SUBNET_IDS"),
+        "ecs_cluster_arn": os.environ.get("ECS_CLUSTER_ARN", ""),
+    }
+
+
+class StepFailure(Exception):
+    """A failure with a specific, allowlisted code for the control plane."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def default_route(table):
+    for route in table.get("Routes", []):
+        if route.get("DestinationCidrBlock") == "0.0.0.0/0" and route.get("State") == "active":
+            return route
+    return None
+
+
+def network_problems(vpc, dns, subnets, route_tables, cluster, inputs):
+    """Explain why an existing network cannot host OpenWork; empty when it can."""
+    problems = []
+    if not vpc or vpc.get("State") != "available":
+        return ["the VPC was not found in this account and region"]
+    if not (dns.get("support") and dns.get("hostnames")):
+        problems.append("the VPC needs DNS resolution and DNS hostnames turned on")
+    by_id = {subnet["SubnetId"]: subnet for subnet in subnets}
+    main = next((table for table in route_tables if any(a.get("Main") for a in table.get("Associations", []))), None)
+    def table_for(subnet_id):
+        for table in route_tables:
+            if any(a.get("SubnetId") == subnet_id for a in table.get("Associations", [])):
+                return table
+        return main
+    for role, ids in (("service", inputs["service_subnet_ids"]), ("load balancer", inputs["load_balancer_subnet_ids"])):
+        found = [by_id[i] for i in ids if i in by_id and by_id[i].get("VpcId") == vpc["VpcId"]]
+        if len(found) != len(ids):
+            problems.append(f"every {role} subnet must exist in the VPC")
+            continue
+        if len({subnet["AvailabilityZone"] for subnet in found}) < 2:
+            problems.append(f"the {role} subnets must span at least two availability zones")
+        for subnet in found:
+            route = default_route(table_for(subnet["SubnetId"]) or {})
+            through_internet_gateway = bool(route and str(route.get("GatewayId", "")).startswith("igw-"))
+            if role == "load balancer" and not through_internet_gateway:
+                problems.append(f"load balancer subnet {subnet['SubnetId']} is not public (no route to an internet gateway)")
+            if role == "service" and (not route or through_internet_gateway):
+                problems.append(f"service subnet {subnet['SubnetId']} needs outbound internet through a NAT gateway or similar")
+    if inputs.get("ecs_cluster_arn") and (not cluster or cluster.get("status") != "ACTIVE"):
+        problems.append("the ECS cluster was not found or is not active")
+    return problems
+
+
+def verify_network():
+    inputs = network_inputs()
+    if inputs["network_mode"] != "existing":
+        return
+    vpc_id = inputs["vpc_id"]
+    vpcs = aws("ec2", "describe-vpcs", "--filters", f"Name=vpc-id,Values={vpc_id}").get("Vpcs", [])
+    dns = {
+        "support": aws("ec2", "describe-vpc-attribute", "--vpc-id", vpc_id, "--attribute", "enableDnsSupport")["EnableDnsSupport"]["Value"],
+        "hostnames": aws("ec2", "describe-vpc-attribute", "--vpc-id", vpc_id, "--attribute", "enableDnsHostnames")["EnableDnsHostnames"]["Value"],
+    } if vpcs else {}
+    subnet_ids = inputs["service_subnet_ids"] + inputs["load_balancer_subnet_ids"]
+    subnets = aws("ec2", "describe-subnets", "--filters", "Name=subnet-id,Values=" + ",".join(subnet_ids)).get("Subnets", [])
+    tables = aws("ec2", "describe-route-tables", "--filters", f"Name=vpc-id,Values={vpc_id}").get("RouteTables", [])
+    cluster = None
+    if inputs["ecs_cluster_arn"]:
+        clusters = aws("ecs", "describe-clusters", "--clusters", inputs["ecs_cluster_arn"]).get("clusters", [])
+        cluster = clusters[0] if clusters else None
+    problems = network_problems(vpcs[0] if vpcs else None, dns, subnets, tables, cluster, inputs)
+    if problems:
+        print("The existing network cannot host OpenWork: " + "; ".join(problems) + ".")
+        raise StepFailure("network_check_failed")
 
 
 def verify_account():
@@ -91,11 +177,6 @@ def verify_account():
         raise ValueError("domain must belong to a public hosted zone")
 
 
-class StepFailure(Exception):
-    """A failure with a specific, allowlisted code for the control plane."""
-    def __init__(self, code):
-        super().__init__(code)
-        self.code = code
 
 
 # ACM never recovers a certificate that failed validation (for example a CAA
@@ -219,6 +300,7 @@ def main():
     current = STEPS[0]
     try:
         verify_account()
+        verify_network()
         report(3, "account_verified")
         current = STEPS[1]
         outputs = apply(root, tf_root)

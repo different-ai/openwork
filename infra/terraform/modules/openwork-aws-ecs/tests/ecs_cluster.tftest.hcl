@@ -93,3 +93,17 @@ run "rejects_non_arn" {
 
   expect_failures = [var.ecs_cluster_arn]
 }
+
+run "prefixes_service_names_in_a_shared_cluster" {
+  command = apply
+
+  variables {
+    ecs_cluster_arn     = "arn:aws:ecs:us-east-1:123456789012:cluster/platform"
+    service_name_prefix = "ow-1234-"
+  }
+
+  assert {
+    condition     = aws_ecs_service.api.name == "ow-1234-den-api" && aws_ecs_service.web.name == "ow-1234-den-web"
+    error_message = "service_name_prefix should prefix every ECS service name."
+  }
+}

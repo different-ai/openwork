@@ -12,7 +12,13 @@ const deploymentId = "00000000-0000-4000-8000-000000000001"
 const runId = "00000000-0000-4000-8000-000000000002"
 const challenge = "a".repeat(64)
 const now = new Date("2026-10-08T12:00:00Z")
-const target = { accountId: "123456789012", region: "us-east-1" as const, route53ZoneId: "ZTEST123" }
+const target = { accountId: "123456789012", region: "us-east-1" as const, route53ZoneId: "ZTEST123", network: { mode: "dedicated" as const } }
+const existingNetwork = {
+  mode: "existing" as const, vpcId: "vpc-0123456789abcdef0",
+  serviceSubnetIds: ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0aaaaaaaaaaaaaaa2"],
+  loadBalancerSubnetIds: ["subnet-0bbbbbbbbbbbbbbb1", "subnet-0bbbbbbbbbbbbbbb2"],
+  ecsClusterArn: "arn:aws:ecs:us-east-1:123456789012:cluster/platform",
+}
 const signedHeaders = "content-type;host;x-amz-date;x-amz-security-token;x-openwork-proof"
 function identity(proof: string, headers = signedHeaders) {
   return {
@@ -35,6 +41,23 @@ test("deployment input is provider-tagged and validates the AWS target", () => {
   assert.equal(managedDeploymentInputSchema.parse(input).size, "small")
   for (const change of [{ provider: "azure" }, { target: { ...target, accountId: "1234" } }, { target: { ...target, region: "mars-1" } }, { domainName: "https://openwork.example.com" }, { target: { ...target, extra: true } }]) {
     assert.equal(managedDeploymentInputSchema.safeParse({ ...input, ...change }).success, false)
+  }
+})
+
+test("an existing network is validated against the account and region", () => {
+  const input = { name: "Production", provider: "aws", domainName: "openwork.example.com", ownerEmail: "admin@example.com", target: { ...target, network: existingNetwork } }
+  assert.equal(managedDeploymentInputSchema.safeParse(input).success, true)
+  // Records created before the network choice read as dedicated.
+  const { network: _omitted, ...legacy } = target
+  assert.deepEqual(managedDeploymentInputSchema.parse({ ...input, target: legacy }).target.network, { mode: "dedicated" })
+  for (const network of [
+    { ...existingNetwork, ecsClusterArn: "arn:aws:ecs:us-west-2:123456789012:cluster/platform" },
+    { ...existingNetwork, ecsClusterArn: "arn:aws:ecs:us-east-1:999999999999:cluster/platform" },
+    { ...existingNetwork, serviceSubnetIds: ["subnet-0aaaaaaaaaaaaaaa1"] },
+    { ...existingNetwork, loadBalancerSubnetIds: existingNetwork.serviceSubnetIds },
+    { ...existingNetwork, vpcId: "vpc-nope" },
+  ]) {
+    assert.equal(managedDeploymentInputSchema.safeParse({ ...input, target: { ...target, network } }).success, false)
   }
 })
 
@@ -157,6 +180,20 @@ test("multiple installations have independent stacks, roles and account-bound ap
     assert.ok(command.includes(`--stack-name '${stackName(input.deploymentId)}'`))
     assert.ok(command.includes(input.target.accountId))
   }
+})
+
+test("an existing network reaches the installer, and updates keep it", () => {
+  const existing = { ...launch, target: { ...target, network: existingNetwork } }
+  const params = new URLSearchParams(new URL(quickCreateUrl(existing)).hash.split("?")[1])
+  assert.equal(params.get("param_NetworkMode"), "existing")
+  assert.equal(params.get("param_VpcId"), existingNetwork.vpcId)
+  assert.equal(params.get("param_ServiceSubnetIds"), existingNetwork.serviceSubnetIds.join(","))
+  assert.equal(params.get("param_LoadBalancerSubnetIds"), existingNetwork.loadBalancerSubnetIds.join(","))
+  assert.equal(params.get("param_EcsClusterArn"), existingNetwork.ecsClusterArn)
+  assert.ok(updateStackCommand(existing).includes(`"ParameterKey":"VpcId","ParameterValue":"${existingNetwork.vpcId}"`))
+  const dedicated = new URLSearchParams(new URL(quickCreateUrl(launch)).hash.split("?")[1])
+  assert.equal(dedicated.get("param_NetworkMode"), "dedicated")
+  assert.equal(dedicated.get("param_VpcId"), "")
 })
 
 test("retry and update commands check the account and only update the named installer", () => {

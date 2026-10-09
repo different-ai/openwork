@@ -8,8 +8,18 @@ feature (cloud only, off by default). Design and contract:
 
 ## What the customer needs
 
-- A **dedicated AWS account** (AWS Organizations member account is ideal) and
-  someone who can create a CloudFormation stack with IAM resources in it.
+- An AWS account and someone who can create a CloudFormation stack with IAM
+  resources in it. Choose the network when creating the deployment:
+  - **New dedicated network** (default): the installer creates a VPC, one NAT
+    gateway and an ECS cluster. Use an account that holds nothing else
+    (an AWS Organizations member account is ideal).
+  - **Existing VPC**: the installer uses your VPC, two or more private subnets
+    (in different availability zones, with outbound internet through NAT or a
+    transit gateway) for services and the database, two or more public subnets
+    for its load balancer, and optionally your ECS cluster. The VPC needs DNS
+    resolution and DNS hostnames. Services in a shared cluster are named
+    `ow-<id>-den-api` and `ow-<id>-den-web`. The installer checks all of this
+    before changing anything and explains what to fix.
 - A **public Route 53 hosted zone in that account** containing the address,
   for example `openwork.example.com` in zone `example.com` (or a delegated
   `openwork.example.com` zone). The installer creates `openwork.example.com`,
@@ -86,8 +96,13 @@ bound to the exact report body; replays are rejected.
 
 - AWS only. The contract, API, data model and UI are provider-neutral; Azure
   and GCP need their bootstrap, identity proof, Terraform root and agent.
-- Dedicated-account model: some AWS create/describe APIs used by the runner
-  cannot be scoped to resources, so the runner role is scoped to the region and
-  resource-name prefixes but should not share an account with other workloads.
+- Shared accounts (existing VPC): the runner may only create security groups
+  in the chosen VPC and change groups tagged with its deployment, services
+  named with its prefix in the chosen cluster, and its own load balancer,
+  database, secrets, roles and logs. A few AWS create calls cannot be scoped
+  (registering task definitions, requesting certificates, Cloud Map
+  namespaces); they create new resources and cannot change existing ones.
+- The existing-VPC option still creates its own internet-facing load balancer;
+  attaching to a shared load balancer is not offered yet.
 - No alert notifications yet: health is shown in OpenWork, not emailed.
 - Single NAT gateway and single-AZ database at the small size (cost over HA).

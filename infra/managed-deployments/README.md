@@ -49,8 +49,14 @@ or GCP project) live in the deployment's `target`, never in the contract.
 
 ## Security model
 
-- Dedicated cloud account per deployment. No customer cloud keys are stored by
-  OpenWork and no inbound access is needed: the runner and the agent call out.
+- A dedicated cloud account per deployment (default), or the customer's
+  existing network: the AWS target's `network` is `dedicated` (own VPC and ECS
+  cluster) or `existing` (customer VPC, subnets and optional ECS cluster). In
+  an existing network the runner's permissions are limited to resources named
+  with, or tagged at creation for, its deployment, and it checks the network
+  (subnets, routes, DNS, cluster) before changing anything. No customer cloud
+  keys are stored by OpenWork and no inbound access is needed: the runner and
+  the agent call out.
 - Release bundles and the Terraform binary are verified by SHA-256 before
   execution; published files are referenced by immutable S3 object versions.
   Terraform and provider versions are pinned with a committed lock file.

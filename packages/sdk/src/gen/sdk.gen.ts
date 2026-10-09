@@ -3125,6 +3125,17 @@ export class DenClient extends HeyApiClient {
           | "ap-southeast-1"
           | "ap-southeast-2";
         route53ZoneId: string;
+        network?:
+          | {
+              mode: "dedicated";
+            }
+          | {
+              mode: "existing";
+              vpcId: string;
+              serviceSubnetIds: Array<string>;
+              loadBalancerSubnetIds: Array<string>;
+              ecsClusterArn?: string;
+            };
       };
     },
     options?: Options<never, ThrowOnError>,
@@ -3288,6 +3299,7 @@ export class DenClient extends HeyApiClient {
       outcome: "succeeded" | "failed";
       errorCode?:
         | "release_verification_failed"
+        | "network_check_failed"
         | "infrastructure_failed"
         | "certificate_failed"
         | "service_unhealthy"

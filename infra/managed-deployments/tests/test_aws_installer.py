@@ -124,6 +124,52 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("FAILED", runner.UNRECOVERABLE_CERTIFICATE_STATES)
 
 
+class NetworkTests(unittest.TestCase):
+    VPC = {"VpcId": "vpc-1", "State": "available"}
+    DNS = {"support": True, "hostnames": True}
+    INPUTS = {"service_subnet_ids": ["subnet-p1", "subnet-p2"], "load_balancer_subnet_ids": ["subnet-a1", "subnet-a2"], "ecs_cluster_arn": ""}
+
+    def subnets(self):
+        return [{"SubnetId": sid, "VpcId": "vpc-1", "AvailabilityZone": az} for sid, az in
+                (("subnet-p1", "a"), ("subnet-p2", "b"), ("subnet-a1", "a"), ("subnet-a2", "b"))]
+
+    def tables(self, private_target=None):
+        private_target = private_target or {"NatGatewayId": "nat-1"}
+        return [
+            {"Associations": [{"Main": True}], "Routes": []},
+            {"Associations": [{"SubnetId": "subnet-a1"}, {"SubnetId": "subnet-a2"}], "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1", "State": "active"}]},
+            {"Associations": [{"SubnetId": "subnet-p1"}, {"SubnetId": "subnet-p2"}], "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "State": "active", **private_target}]},
+        ]
+
+    def test_a_ready_network_passes(self):
+        self.assertEqual(runner.network_problems(self.VPC, self.DNS, self.subnets(), self.tables(), None, self.INPUTS), [])
+        cluster = {"status": "ACTIVE"}
+        self.assertEqual(runner.network_problems(self.VPC, self.DNS, self.subnets(), self.tables({"TransitGatewayId": "tgw-1"}), cluster, {**self.INPUTS, "ecs_cluster_arn": "arn"}), [])
+
+    def test_explains_each_problem(self):
+        self.assertIn("VPC was not found", runner.network_problems(None, {}, [], [], None, self.INPUTS)[0])
+        self.assertIn("DNS", runner.network_problems(self.VPC, {"support": True, "hostnames": False}, self.subnets(), self.tables(), None, self.INPUTS)[0])
+        one_zone = [{**subnet, "AvailabilityZone": "a"} for subnet in self.subnets()]
+        self.assertTrue(any("two availability zones" in p for p in runner.network_problems(self.VPC, self.DNS, one_zone, self.tables(), None, self.INPUTS)))
+        public_services = runner.network_problems(self.VPC, self.DNS, self.subnets(), self.tables({"GatewayId": "igw-1"}), None, self.INPUTS)
+        self.assertTrue(any("needs outbound internet" in p for p in public_services))
+        swapped = runner.network_problems(self.VPC, self.DNS, self.subnets(), self.tables(), None,
+                                          {**self.INPUTS, "load_balancer_subnet_ids": ["subnet-p1", "subnet-p2"], "service_subnet_ids": ["subnet-a1", "subnet-a2"]})
+        self.assertTrue(any("is not public" in p for p in swapped))
+        other_vpc = [{**subnet, "VpcId": "vpc-2"} for subnet in self.subnets()]
+        self.assertTrue(any("must exist in the VPC" in p for p in runner.network_problems(self.VPC, self.DNS, other_vpc, self.tables(), None, self.INPUTS)))
+        inactive = runner.network_problems(self.VPC, self.DNS, self.subnets(), self.tables(), {"status": "INACTIVE"}, {**self.INPUTS, "ecs_cluster_arn": "arn"})
+        self.assertTrue(any("ECS cluster" in p for p in inactive))
+
+    def test_inputs_reach_terraform(self):
+        env = {"NETWORK_MODE": "existing", "VPC_ID": "vpc-1", "SERVICE_SUBNET_IDS": "subnet-p1,subnet-p2",
+               "LOAD_BALANCER_SUBNET_IDS": "subnet-a1,subnet-a2", "ECS_CLUSTER_ARN": ""}
+        with patch.dict(os.environ, env):
+            self.assertEqual(runner.network_inputs()["service_subnet_ids"], ["subnet-p1", "subnet-p2"])
+        with patch.dict(os.environ, {"NETWORK_MODE": "dedicated"}):
+            self.assertEqual(runner.network_inputs(), {"network_mode": "dedicated"})
+
+
 class HealthAgentTests(unittest.TestCase):
     def test_reports_contain_only_allowlisted_fields(self):
         result = health.check("services_running", "failing", value=1, total=2, code="not_running")
@@ -175,9 +221,52 @@ class HealthAgentTests(unittest.TestCase):
         self.assertIn("SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-openwork-proof", headers["X-OpenWork-Aws-Authorization"])
 
 
+def runner_statements(template, mode):
+    """The runner policy as CloudFormation resolves it for one network mode."""
+    conditions = {"IsDedicated": mode == "dedicated", "IsExisting": mode == "existing"}
+    resolved = []
+    for statement in template["Resources"]["RunnerRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]:
+        if "Fn::If" in statement:
+            condition, then, otherwise = statement["Fn::If"]
+            statement = then if conditions[condition] else otherwise
+            if statement == {"Ref": "AWS::NoValue"}:
+                continue
+        resolved.append(statement)
+    return resolved
+
+
+def actions_of(statement):
+    return statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+
+
 class TemplateTests(unittest.TestCase):
     def setUp(self):
         self.template = json.loads((ROOT / "bootstrap/cloudformation.json").read_text())
+
+    def test_fits_inline_template_limit(self):
+        self.assertLess(len((ROOT / "bootstrap/cloudformation.json").read_bytes()), 51_200)
+
+    def test_existing_network_changes_only_this_deployments_resources(self):
+        statements = [s for s in runner_statements(self.template, "existing") if s["Effect"] == "Allow"]
+        actions = {action for statement in statements for action in actions_of(statement)}
+        for network_action in ("ec2:CreateVpc", "ec2:CreateSubnet", "ec2:CreateNatGateway", "ec2:CreateRoute", "ec2:AllocateAddress"):
+            self.assertNotIn(network_action, actions)
+        for statement in statements:
+            mutating = [a for a in actions_of(statement) if not a.split(":")[1].startswith(("Describe", "List", "Get"))]
+            unscoped = statement["Resource"] == "*"
+            allowed_unscoped = {"ecs:RegisterTaskDefinition", "acm:RequestCertificate", "acm:AddTagsToCertificate", "route53:CreateHostedZone",
+                                "servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:CreateService", "servicediscovery:TagResource"}
+            conditioned = any(key in json.dumps(statement.get("Condition", {})) for key in ("ResourceTag/Deployment", "ec2:CreateAction"))
+            if unscoped and not conditioned:
+                self.assertEqual(set(mutating) - allowed_unscoped, set(), statement["Sid"])
+        security_groups = next(s for s in statements if s["Sid"] == "OwnSecurityGroups")
+        self.assertIn("aws:ResourceTag/Deployment", security_groups["Condition"]["StringEquals"])
+        new_groups = next(s for s in statements if s["Sid"] == "NewSecurityGroups")
+        self.assertIn("aws:RequestTag/Deployment", new_groups["Condition"]["StringEquals"])
+
+    def test_dedicated_account_can_build_its_network(self):
+        actions = {a for s in runner_statements(self.template, "dedicated") for a in actions_of(s)}
+        self.assertTrue({"ec2:CreateVpc", "ec2:CreateNatGateway", "ec2:CreateSecurityGroup"} <= actions)
 
     def test_customer_state_is_retained_encrypted_and_private(self):
         bucket = self.template["Resources"]["StateBucket"]
@@ -189,21 +278,22 @@ class TemplateTests(unittest.TestCase):
         variables = self.template["Resources"]["Runner"]["Properties"]["Environment"]["EnvironmentVariables"]
         self.assertFalse(any(item["Name"] in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "RUNNER_TOKEN") for item in variables))
         self.assertFalse(self.template["Resources"]["Runner"]["Properties"]["Environment"]["PrivilegedMode"])
-        statements = [s for s in self.template["Resources"]["RunnerRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"] if s["Effect"] == "Allow"]
-        actions = [action for statement in statements for action in (statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]])]
+        statements = [s for mode in ("dedicated", "existing") for s in runner_statements(self.template, mode) if s["Effect"] == "Allow"]
+        actions = [action for statement in statements for action in actions_of(statement)]
         self.assertNotIn("*", actions)
         self.assertFalse(any(action.endswith(":*") for action in actions))
         destructive = [action for action in actions if any(word in action.split(":")[1] for word in ("Delete", "Terminate", "Remove", "Detach"))]
         # Terraform's state lock file, and replacing a certificate ACM failed to issue.
-        self.assertEqual(sorted(destructive), ["acm:DeleteCertificate", "s3:DeleteObject"])
+        self.assertEqual(sorted(set(destructive)), ["acm:DeleteCertificate", "s3:DeleteObject"])
         self.assertNotIn("codebuild:StartBuild", actions)
 
     def test_buildspec_cannot_be_overridden_or_role_borrowed(self):
         resources = self.template["Resources"]
         trust = resources["RunnerRole"]["Properties"]["AssumeRolePolicyDocument"]["Statement"][0]["Condition"]
         self.assertIn("aws:SourceArn", trust["ArnLike"])
-        runner = resources["RunnerRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
-        self.assertTrue(any(s["Effect"] == "Deny" and "codebuild:StartBuild" in s["Action"] for s in runner))
+        for mode in ("dedicated", "existing"):
+            runner_policy = runner_statements(self.template, mode)
+            self.assertTrue(any(s["Effect"] == "Deny" and "codebuild:StartBuild" in s["Action"] for s in runner_policy))
         launcher = resources["LauncherRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
         denied = {key for s in launcher if s["Effect"] == "Deny" for key in s["Condition"]["Null"]}
         self.assertEqual(denied, {"codebuild:source.buildspec", "codebuild:environment.image", "codebuild:environment.privilegedMode"})

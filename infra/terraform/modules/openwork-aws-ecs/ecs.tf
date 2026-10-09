@@ -213,7 +213,7 @@ resource "aws_ecs_task_definition" "web" {
 # Services -------------------------------------------------------------------
 
 resource "aws_ecs_service" "api" {
-  name                  = "den-api"
+  name                  = "${var.service_name_prefix}den-api"
   cluster               = local.cluster_arn
   task_definition       = aws_ecs_task_definition.api.arn
   desired_count         = var.den_api.desired_count
@@ -260,7 +260,7 @@ resource "aws_ecs_service" "api" {
 }
 
 resource "aws_ecs_service" "web" {
-  name                  = "den-web"
+  name                  = "${var.service_name_prefix}den-web"
   cluster               = local.cluster_arn
   task_definition       = aws_ecs_task_definition.web.arn
   desired_count         = var.den_web.desired_count

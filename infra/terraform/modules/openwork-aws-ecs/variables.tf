@@ -139,6 +139,17 @@ variable "ecs_cluster_arn" {
   }
 }
 
+variable "service_name_prefix" {
+  description = "Prefix for the ECS service names (den-api, den-web, ...). ECS service names must be unique in a cluster, so set it (for example \"openwork-\") when sharing ecs_cluster_arn with other services or another OpenWork deployment. Changing it on an existing deployment replaces the services."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^([A-Za-z][A-Za-z0-9_-]{0,31})?$", var.service_name_prefix))
+    error_message = "service_name_prefix must be empty or up to 32 letters, digits, hyphens or underscores, starting with a letter."
+  }
+}
+
 variable "cpu_architecture" {
   description = "X86_64 or ARM64 (Graviton). The published images support both."
   type        = string

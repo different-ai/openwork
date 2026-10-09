@@ -98,12 +98,21 @@ export type AwsLaunch = {
   release: { templateUrl: string; bundleUrl: string; bundleSha256: string; version: string; apiOrigin: string }
 }
 
+function networkParameters(network: AwsTarget["network"]) {
+  if (network.mode === "dedicated") return { NetworkMode: "dedicated", VpcId: "", ServiceSubnetIds: "", LoadBalancerSubnetIds: "", EcsClusterArn: "" }
+  return {
+    NetworkMode: "existing", VpcId: network.vpcId, ServiceSubnetIds: network.serviceSubnetIds.join(","),
+    LoadBalancerSubnetIds: network.loadBalancerSubnetIds.join(","), EcsClusterArn: network.ecsClusterArn ?? "",
+  }
+}
+
 function launchParameters(input: AwsLaunch) {
   return {
     DeploymentId: input.deploymentId, RunId: input.runId, Challenge: input.challenge,
     ExpectedAccountId: input.target.accountId, ControlPlaneOrigin: input.release.apiOrigin,
     BundleUrl: input.release.bundleUrl, BundleSha256: input.release.bundleSha256, OpenWorkVersion: input.release.version,
     DomainName: input.domainName, Route53ZoneId: input.target.route53ZoneId, OwnerEmail: input.ownerEmail, Size: input.size,
+    ...networkParameters(input.target.network),
   }
 }
 

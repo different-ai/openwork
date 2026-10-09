@@ -8844,6 +8844,17 @@ export type GetV1ManagedDeploymentsResponses = {
           | "ap-southeast-1"
           | "ap-southeast-2";
         route53ZoneId: string;
+        network?:
+          | {
+              mode: "dedicated";
+            }
+          | {
+              mode: "existing";
+              vpcId: string;
+              serviceSubnetIds: Array<string>;
+              loadBalancerSubnetIds: Array<string>;
+              ecsClusterArn?: string;
+            };
       };
       domainName: string;
       ownerEmail: string;
@@ -8910,6 +8921,7 @@ export type GetV1ManagedDeploymentsResponses = {
           outcome: "succeeded" | "failed";
           errorCode?:
             | "release_verification_failed"
+            | "network_check_failed"
             | "infrastructure_failed"
             | "certificate_failed"
             | "service_unhealthy"
@@ -8942,6 +8954,17 @@ export type PostV1ManagedDeploymentsData = {
         | "ap-southeast-1"
         | "ap-southeast-2";
       route53ZoneId: string;
+      network?:
+        | {
+            mode: "dedicated";
+          }
+        | {
+            mode: "existing";
+            vpcId: string;
+            serviceSubnetIds: Array<string>;
+            loadBalancerSubnetIds: Array<string>;
+            ecsClusterArn?: string;
+          };
     };
   };
   path?: never;
@@ -9015,6 +9038,17 @@ export type PostV1ManagedDeploymentsResponses = {
         | "ap-southeast-1"
         | "ap-southeast-2";
       route53ZoneId: string;
+      network?:
+        | {
+            mode: "dedicated";
+          }
+        | {
+            mode: "existing";
+            vpcId: string;
+            serviceSubnetIds: Array<string>;
+            loadBalancerSubnetIds: Array<string>;
+            ecsClusterArn?: string;
+          };
     };
     domainName: string;
     ownerEmail: string;
@@ -9081,6 +9115,7 @@ export type PostV1ManagedDeploymentsResponses = {
         outcome: "succeeded" | "failed";
         errorCode?:
           | "release_verification_failed"
+          | "network_check_failed"
           | "infrastructure_failed"
           | "certificate_failed"
           | "service_unhealthy"
@@ -9243,6 +9278,17 @@ export type PostV1ManagedDeploymentsByDeploymentIdLaunchResponses = {
           | "ap-southeast-1"
           | "ap-southeast-2";
         route53ZoneId: string;
+        network?:
+          | {
+              mode: "dedicated";
+            }
+          | {
+              mode: "existing";
+              vpcId: string;
+              serviceSubnetIds: Array<string>;
+              loadBalancerSubnetIds: Array<string>;
+              ecsClusterArn?: string;
+            };
       };
       domainName: string;
       ownerEmail: string;
@@ -9309,6 +9355,7 @@ export type PostV1ManagedDeploymentsByDeploymentIdLaunchResponses = {
           outcome: "succeeded" | "failed";
           errorCode?:
             | "release_verification_failed"
+            | "network_check_failed"
             | "infrastructure_failed"
             | "certificate_failed"
             | "service_unhealthy"
@@ -9419,6 +9466,7 @@ export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsData = {
     outcome: "succeeded" | "failed";
     errorCode?:
       | "release_verification_failed"
+      | "network_check_failed"
       | "infrastructure_failed"
       | "certificate_failed"
       | "service_unhealthy"

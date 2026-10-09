@@ -9,11 +9,47 @@ export const managedDeploymentProviderSchema = z.enum(["aws", "azure", "gcp"])
 export const availableProviders = ["aws"] as const
 
 export const awsRegionSchema = z.enum(["us-east-1", "us-east-2", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-southeast-2"])
+const subnetIdsSchema = (label: string) => z.array(z.string().trim().regex(/^subnet-[0-9a-f]{8,17}$/, `Enter ${label} subnet IDs such as subnet-0abc12345.`))
+  .min(2, `Choose at least two ${label} subnets in different availability zones.`).max(6)
+  .refine((ids) => new Set(ids).size === ids.length, "Each subnet can be listed once.")
+
+/**
+ * Where the deployment runs inside the AWS account. `dedicated` creates its own
+ * VPC and ECS cluster (the account should hold nothing else). `existing` uses
+ * the customer's VPC, subnets and optionally an ECS cluster; the installer then
+ * creates only OpenWork's own resources and can change only those.
+ */
+export const awsNetworkSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("dedicated") }).strict(),
+  z.object({
+    mode: z.literal("existing"),
+    vpcId: z.string().trim().regex(/^vpc-[0-9a-f]{8,17}$/, "Enter a VPC ID such as vpc-0abc12345."),
+    /** Private subnets with outbound internet (NAT) for services and the database. */
+    serviceSubnetIds: subnetIdsSchema("private"),
+    /** Public subnets for the internet-facing load balancer. */
+    loadBalancerSubnetIds: subnetIdsSchema("public"),
+    /** Empty creates an ECS cluster for this deployment. */
+    ecsClusterArn: z.string().trim().max(300).optional(),
+  }).strict(),
+])
+export type AwsNetwork = z.infer<typeof awsNetworkSchema>
+
 export const awsTargetSchema = z.object({
   accountId: z.string().regex(/^\d{12}$/, "Enter the 12-digit AWS account ID."),
   region: awsRegionSchema,
   route53ZoneId: z.string().trim().regex(/^Z[A-Z0-9]{1,31}$/, "Enter the Route 53 hosted zone ID, starting with Z."),
-}).strict()
+  // Deployments created before network choice existed are dedicated.
+  network: awsNetworkSchema.default({ mode: "dedicated" }),
+}).strict().superRefine((target, context) => {
+  const network = target.network
+  if (network.mode !== "existing") return
+  if (network.ecsClusterArn && !new RegExp(`^arn:aws:ecs:${target.region}:${target.accountId}:cluster/[A-Za-z0-9_-]{1,255}$`).test(network.ecsClusterArn)) {
+    context.addIssue({ code: "custom", path: ["network", "ecsClusterArn"], message: "Enter an ECS cluster ARN in the same AWS account and region, or leave it empty." })
+  }
+  if (network.serviceSubnetIds.some((id) => network.loadBalancerSubnetIds.includes(id))) {
+    context.addIssue({ code: "custom", path: ["network", "loadBalancerSubnetIds"], message: "Use public subnets for the load balancer and private subnets for services." })
+  }
+})
 export type AwsTarget = z.infer<typeof awsTargetSchema>
 
 const hostnameSchema = z.string().trim().toLowerCase().max(200)
@@ -40,7 +76,7 @@ export const deploymentEventInputSchema = z.object({
   sequence: z.number().int().min(1).max(100),
   step: deploymentStepSchema,
   outcome: z.enum(["succeeded", "failed"]),
-  errorCode: z.enum(["release_verification_failed", "infrastructure_failed", "certificate_failed", "service_unhealthy", "health_check_failed", "runner_failed"]).optional(),
+  errorCode: z.enum(["release_verification_failed", "network_check_failed", "infrastructure_failed", "certificate_failed", "service_unhealthy", "health_check_failed", "runner_failed"]).optional(),
 }).strict()
 export const deploymentEventSchema = deploymentEventInputSchema.extend({ receivedAt: z.string().datetime() })
 export type DeploymentEventInput = z.infer<typeof deploymentEventInputSchema>

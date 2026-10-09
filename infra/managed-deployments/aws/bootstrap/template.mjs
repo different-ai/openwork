@@ -23,38 +23,59 @@ const environment = {
   BUNDLE_URL: ref("BundleUrl"), BUNDLE_SHA256: ref("BundleSha256"), OPENWORK_VERSION: ref("OpenWorkVersion"),
   DOMAIN_NAME: ref("DomainName"), ROUTE53_ZONE_ID: ref("Route53ZoneId"), OWNER_EMAIL: ref("OwnerEmail"),
   SIZE: ref("Size"), STATE_BUCKET: ref("StateBucket"),
+  NETWORK_MODE: ref("NetworkMode"), VPC_ID: ref("VpcId"), SERVICE_SUBNET_IDS: ref("ServiceSubnetIds"),
+  LOAD_BALANCER_SUBNET_IDS: ref("LoadBalancerSubnetIds"), ECS_CLUSTER_ARN: ref("EcsClusterArn"),
 };
 // Pass only the names a pattern uses, keeping the template small and readable.
 const names = (text) => Object.fromEntries([["Name", tfName], ["Health", healthName]].filter(([key]) => text.includes(`\${${key}}`)));
 const arn = (service, resource) => sub(`arn:\${AWS::Partition}:${service}:\${AWS::Region}:\${AWS::AccountId}:${resource}`, names(resource));
 const iamRole = (pattern) => sub(`arn:\${AWS::Partition}:iam::\${AWS::AccountId}:role/${pattern}`, names(pattern));
 
-// Create, read and update the deployment's networking, containers, database,
-// load balancer and certificate. Many of these AWS create/describe APIs do not
-// support resource-level permissions; the account is dedicated to OpenWork and
-// requests are limited to the selected region. The only delete actions are
+// The runner may create, read and update only this deployment's resources.
+// Most actions are limited to resource names starting with the deployment's
+// prefix, or to resources tagged with its Deployment tag at creation, so the
+// same account can hold other workloads. The only delete actions are
 // deregistering superseded task definitions and replacing a certificate that
 // failed validation (an in-use certificate cannot be deleted).
-const infrastructureActions = [
-  "ec2:Describe*", "ec2:CreateVpc", "ec2:ModifyVpcAttribute", "ec2:CreateSubnet", "ec2:ModifySubnetAttribute",
-  "ec2:CreateInternetGateway", "ec2:AttachInternetGateway", "ec2:AllocateAddress", "ec2:CreateNatGateway",
-  "ec2:CreateRouteTable", "ec2:CreateRoute", "ec2:ReplaceRoute", "ec2:AssociateRouteTable", "ec2:CreateSecurityGroup",
-  "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress", "ec2:RevokeSecurityGroupEgress",
-  "ec2:ModifySecurityGroupRules", "ec2:UpdateSecurityGroupRuleDescriptionsIngress", "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
-  "ec2:CreateTags",
-  "ecs:CreateCluster", "ecs:UpdateCluster", "ecs:PutClusterCapacityProviders", "ecs:Describe*", "ecs:List*", "ecs:RegisterTaskDefinition",
-  "ecs:DeregisterTaskDefinition", "ecs:CreateService", "ecs:UpdateService", "ecs:TagResource",
-  "elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:CreateListener",
-  "elasticloadbalancing:CreateRule", "elasticloadbalancing:Describe*", "elasticloadbalancing:ModifyLoadBalancerAttributes",
-  "elasticloadbalancing:ModifyTargetGroup", "elasticloadbalancing:ModifyTargetGroupAttributes", "elasticloadbalancing:ModifyListener",
-  "elasticloadbalancing:ModifyListenerAttributes", "elasticloadbalancing:ModifyRule", "elasticloadbalancing:AddTags",
-  "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:RegisterTargets",
-  "rds:CreateDBInstance", "rds:CreateDBSubnetGroup", "rds:ModifyDBInstance", "rds:ModifyDBSubnetGroup", "rds:Describe*",
-  "rds:AddTagsToResource", "rds:ListTagsForResource",
-  "acm:RequestCertificate", "acm:DescribeCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate", "acm:ListTagsForCertificate",
-  "servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:Get*", "servicediscovery:List*", "servicediscovery:CreateService",
-  "servicediscovery:UpdateService", "servicediscovery:TagResource",
-  "events:DescribeRule", "events:ListTargetsByRule", "events:ListTagsForResource",
+const inRegion = { StringEquals: { "aws:RequestedRegion": ref("AWS::Region") } };
+const tagged = (key) => ({ StringEquals: { [key]: ref("DeploymentId") } });
+const allow = (Sid, Action, Resource, Condition) => ({ Sid, Effect: "Allow", Action, Resource, ...(Condition ? { Condition } : {}) });
+const when = (condition, statement) => ({ "Fn::If": [condition, statement, ref("AWS::NoValue")] });
+const clusterName = { "Fn::If": ["HasCluster", { "Fn::Select": [1, { "Fn::Split": ["/", ref("EcsClusterArn")] }] }, join([tfName, "-den"])] };
+const serviceGlob = { "Fn::If": ["IsExisting", join([tfName, "-*"]), "*"] };
+const securityGroupRules = ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress", "ec2:RevokeSecurityGroupEgress",
+  "ec2:ModifySecurityGroupRules", "ec2:UpdateSecurityGroupRuleDescriptionsIngress", "ec2:UpdateSecurityGroupRuleDescriptionsEgress"];
+const statements = [
+  // Reads, and creates that have no resource-level permissions.
+  allow("Read", ["ec2:Describe*", "ecs:Describe*", "ecs:List*", "ecs:RegisterTaskDefinition", "elasticloadbalancing:Describe*", "rds:Describe*",
+    "rds:ListTagsForResource", "acm:DescribeCertificate", "acm:ListTagsForCertificate", "acm:RequestCertificate", "acm:AddTagsToCertificate",
+    "servicediscovery:Get*", "servicediscovery:List*", "events:DescribeRule", "events:ListTargetsByRule", "events:ListTagsForResource"], "*", inRegion),
+  // A dedicated account gets its own VPC; its network actions cannot be scoped before the VPC exists.
+  when("IsDedicated", allow("DedicatedNetwork", ["ec2:CreateVpc", "ec2:ModifyVpcAttribute", "ec2:CreateSubnet", "ec2:ModifySubnetAttribute",
+    "ec2:CreateInternetGateway", "ec2:AttachInternetGateway", "ec2:AllocateAddress", "ec2:CreateNatGateway", "ec2:CreateRouteTable",
+    "ec2:CreateRoute", "ec2:ReplaceRoute", "ec2:AssociateRouteTable", "ec2:CreateSecurityGroup", "ec2:CreateTags", ...securityGroupRules], "*", inRegion)),
+  // In an existing VPC: new security groups only in that VPC, tagged for this
+  // deployment, and rule changes only on those groups.
+  when("IsExisting", allow("SecurityGroupVpc", "ec2:CreateSecurityGroup", arn("ec2", "vpc/${VpcId}"))),
+  when("IsExisting", allow("NewSecurityGroups", "ec2:CreateSecurityGroup", arn("ec2", "security-group/*"), tagged("aws:RequestTag/Deployment"))),
+  when("IsExisting", allow("OwnSecurityGroups", [...securityGroupRules, "ec2:CreateTags"], arn("ec2", "security-group/*"), tagged("aws:ResourceTag/Deployment"))),
+  when("IsExisting", allow("OwnSecurityGroupRules", [...securityGroupRules, "ec2:CreateTags"], arn("ec2", "security-group-rule/*"))),
+  when("IsExisting", allow("TagOnCreate", "ec2:CreateTags", "*", { StringEquals: { "ec2:CreateAction": ["CreateSecurityGroup", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"] } })),
+  allow("OwnCluster", ["ecs:CreateCluster", "ecs:UpdateCluster", "ecs:PutClusterCapacityProviders", "ecs:TagResource"], arn("ecs", "cluster/${Name}-den")),
+  allow("OwnServices", ["ecs:CreateService", "ecs:UpdateService", "ecs:TagResource"], sub("arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${Cluster}/${Services}", { Cluster: clusterName, Services: serviceGlob })),
+  allow("OwnTaskDefinitions", ["ecs:TagResource", "ecs:DeregisterTaskDefinition"], arn("ecs", "task-definition/${Name}-*:*")),
+  allow("OwnLoadBalancer", ["elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:CreateListener",
+    "elasticloadbalancing:CreateRule", "elasticloadbalancing:ModifyLoadBalancerAttributes", "elasticloadbalancing:ModifyTargetGroup",
+    "elasticloadbalancing:ModifyTargetGroupAttributes", "elasticloadbalancing:ModifyListener", "elasticloadbalancing:ModifyListenerAttributes",
+    "elasticloadbalancing:ModifyRule", "elasticloadbalancing:AddTags", "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:RegisterTargets"],
+    [arn("elasticloadbalancing", "loadbalancer/app/${Name}-*"), arn("elasticloadbalancing", "targetgroup/${Name}-*"),
+      arn("elasticloadbalancing", "listener/app/${Name}-*"), arn("elasticloadbalancing", "listener-rule/app/${Name}-*")]),
+  // Creating an instance also names the default option and parameter groups.
+  allow("OwnDatabase", ["rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:CreateDBSubnetGroup", "rds:ModifyDBSubnetGroup", "rds:AddTagsToResource"],
+    [arn("rds", "db:${Name}-den-*"), arn("rds", "subgrp:${Name}-den"), arn("rds", "og:*"), arn("rds", "pg:*")]),
+  allow("ReplaceFailedCertificate", "acm:DeleteCertificate", arn("acm", "certificate/*"), tagged("aws:ResourceTag/Deployment")),
+  allow("NewServiceDiscovery", ["servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:CreateService", "servicediscovery:TagResource"], "*", inRegion),
+  allow("OwnServiceDiscovery", "servicediscovery:UpdateService", "*", { StringEquals: { "aws:RequestedRegion": ref("AWS::Region"), "aws:ResourceTag/Deployment": ref("DeploymentId") } }),
 ];
 // The installer runs only the reviewed buildspec and image. Deny StartBuild
 // calls that try to override them (the launcher never sends overrides; this
@@ -64,7 +85,7 @@ const overrideDenies = ["codebuild:source.buildspec", "codebuild:environment.ima
 }));
 const policy = {
   Version: "2012-10-17", Statement: [
-    { Sid: "Infrastructure", Effect: "Allow", Action: infrastructureActions, Resource: "*", Condition: { StringEquals: { "aws:RequestedRegion": ref("AWS::Region") } } },
+    ...statements,
     { Sid: "DeploymentDns", Effect: "Allow", Action: ["route53:GetHostedZone", "route53:ListResourceRecordSets", "route53:ChangeResourceRecordSets", "route53:ListTagsForResource"], Resource: sub("arn:${AWS::Partition}:route53:::hostedzone/${Route53ZoneId}") },
     { Sid: "DnsChanges", Effect: "Allow", Action: "route53:GetChange", Resource: sub("arn:${AWS::Partition}:route53:::change/*") },
     // Cloud Map creates and reads a private hosted zone for the new VPC.
@@ -106,7 +127,7 @@ def handler(event, context):
 `;
 const template = {
   AWSTemplateFormatVersion: "2010-09-09",
-  Description: "OpenWork installer. Creates a customer-owned runner and retained, encrypted Terraform state. The runner provisions billable ECS, RDS, load balancer and NAT resources in this dedicated account, plus a read-only health agent that reports status to OpenWork.",
+  Description: "OpenWork installer. Creates a customer-owned runner and retained, encrypted Terraform state. The runner provisions billable ECS, RDS and load balancer resources (and, in a dedicated account, a VPC with a NAT gateway), plus a read-only health agent that reports status to OpenWork.",
   Parameters: {
     DeploymentId: { Type: "String", AllowedPattern: "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" }, RunId: { Type: "String", AllowedPattern: "[a-f0-9-]{36}" },
     Challenge: { Type: "String", AllowedPattern: "[a-f0-9]{64}" }, ExpectedAccountId: { Type: "String", AllowedPattern: "[0-9]{12}" },
@@ -115,6 +136,22 @@ const template = {
     OpenWorkVersion: { Type: "String", AllowedPattern: "[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?" },
     DomainName: { Type: "String", AllowedPattern: "[a-z0-9.-]+" }, Route53ZoneId: { Type: "String", AllowedPattern: "Z[A-Z0-9]+" }, OwnerEmail: { Type: "String" },
     Size: { Type: "String", AllowedValues: ["small"], Default: "small" },
+    NetworkMode: { Type: "String", AllowedValues: ["dedicated", "existing"], Default: "dedicated" },
+    VpcId: { Type: "String", Default: "", AllowedPattern: "(vpc-[0-9a-f]{8,17})?" },
+    ServiceSubnetIds: { Type: "String", Default: "", AllowedPattern: "(subnet-[0-9a-f]{8,17}(,subnet-[0-9a-f]{8,17}){1,5})?" },
+    LoadBalancerSubnetIds: { Type: "String", Default: "", AllowedPattern: "(subnet-[0-9a-f]{8,17}(,subnet-[0-9a-f]{8,17}){1,5})?" },
+    EcsClusterArn: { Type: "String", Default: "", AllowedPattern: "(arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:cluster/[A-Za-z0-9_-]{1,255})?" },
+  },
+  Conditions: {
+    IsDedicated: { "Fn::Equals": [ref("NetworkMode"), "dedicated"] },
+    IsExisting: { "Fn::Equals": [ref("NetworkMode"), "existing"] },
+    HasCluster: { "Fn::And": [{ Condition: "IsExisting" }, { "Fn::Not": [{ "Fn::Equals": [ref("EcsClusterArn"), ""] }] }] },
+  },
+  Rules: {
+    ExistingNetwork: {
+      RuleCondition: { "Fn::Equals": [ref("NetworkMode"), "existing"] },
+      Assertions: [{ Assert: { "Fn::And": [{ "Fn::Not": [{ "Fn::Equals": [ref("VpcId"), ""] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("ServiceSubnetIds"), ""] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("LoadBalancerSubnetIds"), ""] }] }] }, AssertDescription: "An existing network needs a VPC, private service subnets and public load balancer subnets." }],
+    },
   },
   Resources: {
     StateBucket: { Type: "AWS::S3::Bucket", DeletionPolicy: "Retain", UpdateReplacePolicy: "Retain", Properties: {
@@ -140,5 +177,6 @@ const template = {
   Outputs: { RunnerProject: { Value: ref("Runner") }, StateBucket: { Value: ref("StateBucket") } },
 };
 const output = resolve(process.argv[2] ?? fileURLToPath(new URL("cloudformation.json", import.meta.url)));
-writeFileSync(output, JSON.stringify(template, null, 1) + "\n");
+// Compact: CloudFormation accepts at most 51,200 bytes inline (validate-template, --template-body).
+writeFileSync(output, JSON.stringify(template) + "\n");
 console.log(`Wrote ${output}`);

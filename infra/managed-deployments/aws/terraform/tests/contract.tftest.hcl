@@ -63,3 +63,30 @@ run "contract_outputs" {
     error_message = "The health agent name must match the identity the control plane verifies."
   }
 }
+
+run "dedicated_network_by_default" {
+  command = plan
+  assert {
+    condition     = length(module.network) == 1 && module.platform.service_names.den_api == "den-api"
+    error_message = "A dedicated account gets its own VPC, and its services keep their unprefixed names."
+  }
+}
+
+run "existing_vpc_and_cluster" {
+  command = plan
+  variables {
+    network_mode             = "existing"
+    vpc_id                   = "vpc-0123456789abcdef0"
+    service_subnet_ids       = ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0aaaaaaaaaaaaaaa2"]
+    load_balancer_subnet_ids = ["subnet-0bbbbbbbbbbbbbbb1", "subnet-0bbbbbbbbbbbbbbb2"]
+    ecs_cluster_arn          = "arn:aws:ecs:us-east-1:123456789012:cluster/platform"
+  }
+  assert {
+    condition     = length(module.network) == 0
+    error_message = "An existing network must not create a VPC, subnets or NAT gateway."
+  }
+  assert {
+    condition     = module.platform.cluster_name == "platform" && module.platform.service_names.den_api == "ow-0cf7aa5c4c1a-den-api"
+    error_message = "Services run in the customer's cluster with names unique to this deployment."
+  }
+}

@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { z } from "zod";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
+import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
@@ -33,6 +34,7 @@ const FAILURE_LABELS: Record<string, string> = {
   certificate_failed: "AWS could not issue the HTTPS certificate. Make sure the domain's CAA records allow amazon.com, then retry.",
   service_unhealthy: "Services did not start. Check the ECS service events in AWS, then retry.",
   health_check_failed: "HTTPS or the database could not be verified. Check DNS for the domain, then retry.",
+  network_check_failed: "The existing network can't host OpenWork. The installer logs in AWS CodeBuild say what to change (subnets, routes, DNS or the ECS cluster); fix it, then retry.",
   runner_failed: "The AWS account or hosted zone did not match. Check the deployment details.",
 };
 const CHECK_LABELS: Record<Check["id"], string> = {
@@ -99,6 +101,16 @@ function StatusIcon({ status }: { status: Check["status"] }) {
   if (status === "warning") return <AlertTriangle aria-hidden className="size-4 text-amber-600" />;
   if (status === "failing") return <XCircle aria-hidden className="size-4 text-red-600" />;
   return <CircleDashed aria-hidden className="size-4 text-gray-400" />;
+}
+
+function networkLabel(network: ManagedDeployment["target"]["network"]) {
+  if (network.mode === "dedicated") return "Dedicated VPC";
+  const cluster = network.ecsClusterArn ? ` · cluster ${network.ecsClusterArn.split("/").pop()}` : "";
+  return `${network.vpcId}${cluster}`;
+}
+
+function idList(value: string) {
+  return value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -234,7 +246,7 @@ export function ManagedDeploymentsScreen() {
                       className="flex min-h-12 w-full items-center justify-between gap-4 rounded-lg px-2 py-2 text-left hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 aria-[current=true]:bg-gray-50">
                       <span className="min-w-0">
                         <span className="block truncate text-[13px] font-medium text-gray-900">{item.name}</span>
-                        <span className="block truncate text-[12px] text-gray-500">AWS · {item.target.accountId} · {item.target.region}</span>
+                        <span className="block truncate text-[12px] text-gray-500">AWS · {item.target.accountId} · {item.target.region}{item.target.network.mode === "existing" ? ` · ${item.target.network.vpcId}` : ""}</span>
                       </span>
                       <span className="flex shrink-0 items-center gap-4 text-[13px]">
                         <span className="text-gray-500">{item.installedVersion ?? ""}</span>
@@ -283,6 +295,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, copied, confirm
       <div>
         <Row label="Address">{installed ? <a className="underline-offset-2 hover:underline" href={deployment.webUrl} target="_blank" rel="noopener noreferrer">{deployment.domainName}</a> : deployment.domainName}</Row>
         <Row label="Cloud">AWS · {deployment.target.accountId} · {deployment.target.region}</Row>
+        <Row label="Network">{networkLabel(deployment.target.network)}</Row>
         <Row label="Version">{deployment.installedVersion ?? "Not installed"}{deployment.updateAvailable && deployment.availableVersion ? ` · ${deployment.availableVersion} available` : ""}</Row>
         <Row label="Updates">Approval required</Row>
         {installed ? <Row label="Last health report">{relativeTime(health.reportedAt)}</Row> : null}
@@ -377,13 +390,22 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
   const [domainName, setDomainName] = useState("");
   const [zoneId, setZoneId] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
+  const [networkMode, setNetworkMode] = useState<"dedicated" | "existing">("dedicated");
+  const [vpcId, setVpcId] = useState("");
+  const [serviceSubnets, setServiceSubnets] = useState("");
+  const [loadBalancerSubnets, setLoadBalancerSubnets] = useState("");
+  const [clusterArn, setClusterArn] = useState("");
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const parsed = managedDeploymentInputSchema.safeParse({ provider: "aws", name, domainName, ownerEmail, target: { accountId: accountId.trim(), region, route53ZoneId: zoneId.trim() } });
+    const network = networkMode === "dedicated" ? { mode: "dedicated" } : {
+      mode: "existing", vpcId: vpcId.trim(), serviceSubnetIds: idList(serviceSubnets), loadBalancerSubnetIds: idList(loadBalancerSubnets),
+      ...(clusterArn.trim() ? { ecsClusterArn: clusterArn.trim() } : {}),
+    };
+    const parsed = managedDeploymentInputSchema.safeParse({ provider: "aws", name, domainName, ownerEmail, target: { accountId: accountId.trim(), region, route53ZoneId: zoneId.trim(), network } });
     if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? "Check the deployment details."); return; }
     if (!consent) { setError("Confirm the account, permissions and AWS costs first."); return; }
     setBusy(true); setError(null);
@@ -427,12 +449,27 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
                 {awsRegionSchema.options.map((value) => <option key={value} value={value}>{value}</option>)}
               </DenSelect>
             </div>
+            <fieldset className="space-y-2 text-[13px]">
+              <legend className="mb-1 text-gray-700">Network</legend>
+              <DenOptionCard type="radio" name="deployment-network" testId="network-dedicated" checked={networkMode === "dedicated"} onChange={() => setNetworkMode("dedicated")}
+                title="New dedicated network" description="Creates its own VPC, NAT gateway and ECS cluster. Best for an AWS account that holds nothing else." />
+              <DenOptionCard type="radio" name="deployment-network" testId="network-existing" checked={networkMode === "existing"} onChange={() => setNetworkMode("existing")}
+                title="Existing VPC" description="Runs in your VPC and, optionally, your ECS cluster. The installer can change only what it creates." />
+            </fieldset>
+            {networkMode === "existing" ? (
+              <div className="space-y-4 border-l border-gray-200 pl-4">
+                <label className="block space-y-1 text-[13px]"><span className="text-gray-700">VPC ID</span><DenInput value={vpcId} onChange={(event) => setVpcId(event.target.value)} required placeholder="vpc-0abc12345" /></label>
+                <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Private subnet IDs</span><DenInput value={serviceSubnets} onChange={(event) => setServiceSubnets(event.target.value)} required placeholder="subnet-0aaa…, subnet-0bbb…" /><span className="block text-gray-500">Two or more, in different availability zones, with outbound internet through NAT.</span></label>
+                <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Public subnet IDs</span><DenInput value={loadBalancerSubnets} onChange={(event) => setLoadBalancerSubnets(event.target.value)} required placeholder="subnet-0ccc…, subnet-0ddd…" /><span className="block text-gray-500">For the load balancer. Two or more, routed to an internet gateway.</span></label>
+                <label className="block space-y-1 text-[13px]"><span className="text-gray-700">ECS cluster ARN (optional)</span><DenInput value={clusterArn} onChange={(event) => setClusterArn(event.target.value)} placeholder="arn:aws:ecs:us-east-1:123456789012:cluster/platform" /><span className="block text-gray-500">Leave empty to create a cluster for OpenWork.</span></label>
+              </div>
+            ) : null}
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Address</span><DenInput value={domainName} onChange={(event) => setDomainName(event.target.value)} required placeholder="openwork.example.com" /></label>
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Route 53 hosted zone ID for that address</span><DenInput value={zoneId} onChange={(event) => setZoneId(event.target.value)} required placeholder="Z0123456789ABC" /></label>
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">First administrator email</span><DenInput type="email" value={ownerEmail} onChange={(event) => setOwnerEmail(event.target.value)} required /></label>
             <label className="flex items-start gap-3 text-[13px] text-gray-700">
               <input type="checkbox" className="mt-0.5" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-              <span>I control this AWS account and hosted zone. AWS bills my account for the containers, database, load balancer and NAT gateway (about $100–150 a month at the small size). I'll review the installer's permissions in AWS before approving.</span>
+              <span>I control this AWS account and hosted zone. AWS bills my account for the containers, database and load balancer{networkMode === "dedicated" ? " and NAT gateway (about $100–150 a month at the small size)" : " (about $60–100 a month at the small size, plus my network's own costs)"}. I'll review the installer's permissions in AWS before approving.</span>
             </label>
             {error ? <p role="alert" className="text-[13px] text-red-700">{error}</p> : null}
             <DenButton type="submit" data-testid="create-deployment-submit" loading={busy} disabled={!consent}>Create deployment</DenButton>

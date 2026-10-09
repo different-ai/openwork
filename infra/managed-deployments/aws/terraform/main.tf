@@ -28,6 +28,34 @@ variable "size" {
 variable "region" { type = string }
 variable "account_id" { type = string }
 variable "route53_zone_id" { type = string }
+variable "network_mode" {
+  description = "dedicated: create a VPC and ECS cluster. existing: use the customer's VPC, subnets and (optionally) ECS cluster."
+  type        = string
+  default     = "dedicated"
+  validation {
+    condition     = contains(["dedicated", "existing"], var.network_mode)
+    error_message = "network_mode must be dedicated or existing."
+  }
+}
+variable "vpc_id" {
+  type    = string
+  default = ""
+}
+variable "service_subnet_ids" {
+  description = "Existing network: private subnets (with outbound internet) for services and the database."
+  type        = list(string)
+  default     = []
+}
+variable "load_balancer_subnet_ids" {
+  description = "Existing network: public subnets for the load balancer."
+  type        = list(string)
+  default     = []
+}
+variable "ecs_cluster_arn" {
+  description = "Existing network: ECS cluster to run in. Empty creates one."
+  type        = string
+  default     = ""
+}
 variable "test_disposable" {
   description = "Validation only: allow deleting the database without a final snapshot."
   type        = bool
@@ -62,9 +90,34 @@ locals {
     }
   }
   profile = local.profiles[var.size]
+
+  existing = var.network_mode == "existing"
+  network = local.existing ? {
+    vpc_id             = var.vpc_id
+    public_subnet_ids  = var.load_balancer_subnet_ids
+    private_subnet_ids = var.service_subnet_ids
+    } : {
+    vpc_id             = module.network[0].vpc_id
+    public_subnet_ids  = module.network[0].public_subnet_ids
+    private_subnet_ids = module.network[0].private_subnet_ids
+  }
+}
+
+check "existing_network_inputs" {
+  assert {
+    condition     = !local.existing || (var.vpc_id != "" && length(var.service_subnet_ids) >= 2 && length(var.load_balancer_subnet_ids) >= 2)
+    error_message = "An existing network needs a VPC, two private service subnets and two public load balancer subnets."
+  }
+}
+
+# Installs before network choice had a single, unconditional network.
+moved {
+  from = module.network
+  to   = module.network[0]
 }
 
 module "network" {
+  count  = local.existing ? 0 : 1
   source = "./modules/network"
   name   = module.contract.name
 }
@@ -77,11 +130,14 @@ module "platform" {
   owner_emails     = [var.owner_email]
   org_name         = "OpenWork"
 
-  vpc_id              = module.network.vpc_id
-  alb_subnet_ids      = module.network.public_subnet_ids
-  service_subnet_ids  = module.network.private_subnet_ids
-  database_subnet_ids = module.network.private_subnet_ids
+  vpc_id              = local.network.vpc_id
+  alb_subnet_ids      = local.network.public_subnet_ids
+  service_subnet_ids  = local.network.private_subnet_ids
+  database_subnet_ids = local.network.private_subnet_ids
   assign_public_ip    = false
+  # A shared cluster may already run other services (or another OpenWork).
+  ecs_cluster_arn     = local.existing ? var.ecs_cluster_arn : ""
+  service_name_prefix = local.existing ? "${module.contract.name}-" : ""
 
   domain_name     = var.domain_name
   route53_zone_id = var.route53_zone_id

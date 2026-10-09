@@ -232,7 +232,7 @@ resource "aws_ecs_task_definition" "runner" {
 resource "aws_ecs_service" "runner" {
   count = local.runner_count
 
-  name                  = "headless-runner"
+  name                  = "${var.service_name_prefix}headless-runner"
   cluster               = local.cluster_arn
   task_definition       = aws_ecs_task_definition.runner[0].arn
   desired_count         = 1
@@ -382,7 +382,7 @@ resource "aws_ecs_task_definition" "workbot" {
 resource "aws_ecs_service" "workbot" {
   count = local.workbot_count
 
-  name                  = "workbot"
+  name                  = "${var.service_name_prefix}workbot"
   cluster               = local.cluster_arn
   task_definition       = aws_ecs_task_definition.workbot[0].arn
   desired_count         = var.workbot.desired_count

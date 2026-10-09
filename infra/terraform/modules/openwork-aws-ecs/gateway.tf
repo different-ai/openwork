@@ -127,7 +127,7 @@ resource "aws_ecs_task_definition" "gateway" {
 resource "aws_ecs_service" "gateway" {
   count = local.gateway_count
 
-  name                  = "den-gateway"
+  name                  = "${var.service_name_prefix}den-gateway"
   cluster               = local.cluster_arn
   task_definition       = aws_ecs_task_definition.gateway[0].arn
   desired_count         = var.den_gateway.desired_count
