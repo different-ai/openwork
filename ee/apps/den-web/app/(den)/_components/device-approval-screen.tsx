@@ -3,6 +3,7 @@
 import { Check, Terminal, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { deviceReturnTarget, deviceReturnUrl } from "../_lib/device-return";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 import { OnboardingTexture } from "./onboarding-texture";
@@ -34,6 +35,18 @@ type CodeState =
 
 const CLIENT_NAMES: Record<string, string> = {
   "openwork-cli": "OpenWork CLI",
+  "openwork-opencode-plugin": "OpenWork - OpenCode Plugin",
+};
+
+/** The command the person ran, echoed in the terminal illustration. */
+const CLIENT_COMMANDS: Record<string, string> = {
+  "openwork-cli": "openwork-bootstrap login",
+  "openwork-opencode-plugin": "opencode auth login openwork",
+};
+
+/** Where the person goes back to once the code is decided. */
+const CLIENT_RETURN_PLACES: Record<string, string> = {
+  "openwork-opencode-plugin": "OpenCode",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,12 +78,13 @@ function readClientId(payload: unknown): string | null {
   return isRecord(payload) && typeof payload.clientId === "string" ? payload.clientId : null;
 }
 
-export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: string }) {
+export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initialUserCode: string; returnTo?: string }) {
   const { user, sessionHydrated, signOut } = useDenFlow();
   const [userCode, setUserCode] = useState(formatUserCode(initialUserCode));
   const [draftCode, setDraftCode] = useState("");
   const [codeState, setCodeState] = useState<CodeState>({ kind: "idle" });
   const [clientName, setClientName] = useState("OpenWork CLI");
+  const [clientId, setClientId] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<Organization[] | null>(null);
   const [organizationId, setOrganizationId] = useState("");
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
@@ -99,6 +113,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
         return;
       }
       const clientId = readClientId(lookup.payload);
+      setClientId(clientId);
       if (clientId) setClientName(CLIENT_NAMES[clientId] ?? clientId);
       const status = readStatus(lookup.payload);
       setCodeState(status === "approved" ? { kind: "approved" } : status === "denied" ? { kind: "denied" } : { kind: "pending" });
@@ -109,6 +124,10 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
   }, [user?.id, userCode]);
 
   const selectedOrg = useMemo(() => orgs?.find((org) => org.id === organizationId) ?? null, [orgs, organizationId]);
+  // Only a known client may send the browser back, and only to a page on this machine.
+  const returnUrl = useMemo(() => deviceReturnUrl(returnTo, clientId), [returnTo, clientId]);
+  const command = (clientId && CLIENT_COMMANDS[clientId]) || "openwork-bootstrap login";
+  const returnPlace = (clientId && CLIENT_RETURN_PLACES[clientId]) || "your terminal";
 
   async function decide(decision: "approve" | "deny") {
     setBusy(decision);
@@ -131,6 +150,8 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
       return;
     }
     setCodeState(decision === "approve" ? { kind: "approved" } : { kind: "denied" });
+    // The person asked for this by deciding; the page they return to says what happened.
+    if (returnUrl) window.location.assign(deviceReturnTarget(returnUrl, decision === "approve" ? "approved" : "denied"));
   }
 
   const shownCode = userCode || "XXXX-XXXX";
@@ -153,7 +174,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
       aside={(
         <SetupTerminal
           lines={[
-            { text: "$ openwork-bootstrap login" },
+            { text: `$ ${command}` },
             { text: "Open this link to sign in:", muted: true },
             { text: `  ${host || "…"}/device` },
             { text: `and confirm the code ${shownCode}.`, muted: true },
@@ -219,7 +240,7 @@ export function DeviceApprovalScreen({ initialUserCode }: { initialUserCode: str
   }
 
   if (codeState.kind === "approved") {
-    return frame(<SetupStatus icon={<Check className="size-5" strokeWidth={1.5} />} title={`${clientName} is signed in`} line="Return to your terminal." />);
+    return frame(<SetupStatus icon={<Check className="size-5" strokeWidth={1.5} />} title={`${clientName} is signed in`} line={`Return to ${returnPlace}.`} />);
   }
 
   if (codeState.kind === "denied") {

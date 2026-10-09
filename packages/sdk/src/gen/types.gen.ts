@@ -184,6 +184,7 @@ export type AdminFeature = {
     | "permissions"
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
+    | "opencodePlugin"
     | "platformAuditReads";
   label: string;
   description: string;
@@ -244,6 +245,7 @@ export type AdminOrganizationsPageResponse = {
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -437,6 +439,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -538,6 +549,7 @@ export type AdminOverviewResponse = {
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -731,6 +743,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2039,6 +2060,7 @@ export type CapabilityDisabledError = {
     | "permissions"
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
+    | "opencodePlugin"
     | "platformAuditReads";
 };
 
@@ -6315,6 +6337,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -6508,6 +6531,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6597,6 +6629,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -6790,6 +6823,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

@@ -13,15 +13,10 @@ import { db } from "./db.js"
  * otherwise get a session with no active organization.
  */
 
-/** The only client ids allowed to start a device login. */
-export const DEN_DEVICE_CLIENT_IDS = ["openwork-cli"] as const
+export { DEN_DEVICE_CLIENT_IDS, DEN_OPENCODE_PLUGIN_DEVICE_CLIENT_ID, isDenDeviceClientId, isEnabledDenDeviceClientId } from "./device-clients.js"
 
 export const DEN_DEVICE_CODE_EXPIRES_IN = "15m"
 export const DEN_DEVICE_CODE_POLL_INTERVAL = "5s"
-
-export function isDenDeviceClientId(clientId: string): boolean {
-  return DEN_DEVICE_CLIENT_IDS.some((allowed) => allowed === clientId)
-}
 
 /** Strip the display separator so "ABCD-EFGH" and "abcdefgh" match the stored code. */
 export function normalizeDeviceUserCode(userCode: string): string {

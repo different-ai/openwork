@@ -861,6 +861,7 @@
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "opencodePlugin",
               "platformAuditReads"
             ]
           },
@@ -1099,6 +1100,9 @@
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
+                    "opencodePlugin": {
+                      "type": "boolean"
+                    },
                     "platformAuditReads": {
                       "type": "boolean"
                     },
@@ -1131,6 +1135,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
                   ]
@@ -2314,6 +2319,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "opencodePlugin": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "platformAuditReads": {
                       "type": "object",
                       "properties": {
@@ -2393,6 +2454,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads"
                   ],
                   "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -2830,6 +2892,9 @@
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
+                    "opencodePlugin": {
+                      "type": "boolean"
+                    },
                     "platformAuditReads": {
                       "type": "boolean"
                     },
@@ -2862,6 +2927,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
                   ]
@@ -4045,6 +4111,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "opencodePlugin": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "platformAuditReads": {
                       "type": "object",
                       "properties": {
@@ -4124,6 +4246,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads"
                   ],
                   "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -9528,6 +9651,7 @@
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "opencodePlugin",
               "platformAuditReads"
             ]
           }
@@ -26049,6 +26173,9 @@
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
+                        "opencodePlugin": {
+                          "type": "boolean"
+                        },
                         "platformAuditReads": {
                           "type": "boolean"
                         },
@@ -26081,6 +26208,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
                       ]
@@ -27264,6 +27392,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "opencodePlugin": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "platformAuditReads": {
                           "type": "object",
                           "properties": {
@@ -27343,6 +27527,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads"
                       ],
                       "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -27525,6 +27710,9 @@
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
+                        "opencodePlugin": {
+                          "type": "boolean"
+                        },
                         "platformAuditReads": {
                           "type": "boolean"
                         },
@@ -27557,6 +27745,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
                       ]
@@ -28740,6 +28929,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "opencodePlugin": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "platformAuditReads": {
                           "type": "object",
                           "properties": {
@@ -28819,6 +29064,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads"
                       ],
                       "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."

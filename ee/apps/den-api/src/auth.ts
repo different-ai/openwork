@@ -114,10 +114,11 @@ import {
   DEN_DEVICE_CODE_EXPIRES_IN,
   DEN_DEVICE_CODE_POLL_INTERVAL,
   clearDeviceSessionOrganization,
-  isDenDeviceClientId,
+  isEnabledDenDeviceClientId,
   stageDeviceSessionOrganization,
   takeDeviceSessionOrganization,
 } from "./device-authorization.js";
+import { deploymentFeatureEnabled } from "./features.js";
 import { WORKBOT_OAUTH_CLIENT_ID } from "./workbot/config.js";
 import { ensureWorkbotOAuthClient } from "./workbot/oauth-client.js";
 
@@ -1760,14 +1761,15 @@ export const auth = betterAuth({
           });
       },
     }),
-    // RFC 8628 device authorization for `openwork-bootstrap login`: the CLI
-    // shows a code, the person approves it on Den web's /device page, and the
-    // CLI receives a Den session token. No password ever reaches the CLI.
+    // RFC 8628 device authorization for `openwork-bootstrap login` and the
+    // OpenCode plugin (`opencode auth login openwork`): the client shows a code,
+    // the person approves it on Den web's /device page, and the client receives
+    // a Den session token. No password ever reaches the client.
     deviceAuthorization({
       expiresIn: DEN_DEVICE_CODE_EXPIRES_IN,
       interval: DEN_DEVICE_CODE_POLL_INTERVAL,
       verificationUri: `${env.betterAuthUrl}/device`,
-      validateClient: (clientId) => isDenDeviceClientId(clientId),
+      validateClient: (clientId) => isEnabledDenDeviceClientId(clientId, deploymentFeatureEnabled),
     }),
     apiKey({
       defaultPrefix: DEN_API_KEY_DEFAULT_PREFIX,
