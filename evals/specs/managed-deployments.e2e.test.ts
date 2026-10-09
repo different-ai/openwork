@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { spec } from "@openwork/testkit";
+import { eventually, spec } from "@openwork/testkit";
 import { managedDeploymentListSchema } from "@openwork/types/den/managed-deployments";
 import { managedDeployments } from "../worlds/managed-deployments.ts";
 
@@ -10,6 +10,7 @@ const test = spec.world(managedDeployments, { timeout: 600_000, resources: { sur
 
 test("an owner prepares an AWS install without OpenWork claiming it is running", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.web);
+  const page = probe.on(world.web);
   const ownHeaders = { "x-openwork-org-id": world.enabledOrgId };
   async function openEnabledWorkspace() {
     await owner.see({ testId: "workspace-switcher-trigger" }, { timeoutMs: 90_000 });
@@ -26,6 +27,15 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
   }
 
   await step("before: a workspace outside the rollout sees why deployments are unavailable", async () => {
+    const locked = "Deployments aren't turned on for this workspace";
+    // A first visit may ask which workspace to open; pick it like a person would.
+    await eventually(async () => await page.has(locked) || await page.has("Choose an organization"), { within: 90_000, label: "the deployments page or the workspace picker" });
+    if (!(await page.has(locked))) {
+      await owner.click({ role: "button", label: new RegExp(`^${world.names.disabled}`) });
+      // The picker closes only after the workspace is committed.
+      await eventually(async () => !(await page.has("Choose an organization")), { within: 60_000, label: "the workspace choice to be saved" });
+      await owner.navigate(`${world.baseUrl}/dashboard/deployments`);
+    }
     await owner.see({ text: /Deployments aren't turned on for this workspace/ }, { timeoutMs: 90_000 });
     const blocked = await probe.api(world.den.admin, "/v1/managed-deployments", { headers: { "x-openwork-org-id": world.disabledOrgId } });
     expect(blocked.response.status).toBe(404);
