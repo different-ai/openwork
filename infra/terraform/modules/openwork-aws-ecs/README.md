@@ -206,6 +206,14 @@ file bytes separate from the fleet database objects. Never put bucket credential
 or fleet tokens in committed `.tfvars` files. See
 [`OWNER-CELLS.md`](../../../../ee/apps/headless-runner/OWNER-CELLS.md).
 
+**Required on Fargate and other temporary disks: set `CELLD_DURABILITY=bucket`
+on every fleet node.** The default `fleet` mode can keep acknowledged writes
+only on node-local disks until they reach the bucket. If all nodes stop
+together and lose those disks, celld refuses to open affected cells until it can
+verify the missing data. Bucket mode avoids that availability failure. Use
+`fleet` only with persistent `CELLD_WATCH` disks and stable node identities.
+Consider `CELLD_TTL_MS=30000` to tolerate brief bucket outages.
+
 **Migration safety:** upgrade Workbot to a build with encrypted-cookie sign-in
 before applying the diskless task definition. Older builds require the database.
 The plan removes Workbot's obsolete EFS access point; its old sign-in sessions no
