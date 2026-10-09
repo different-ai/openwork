@@ -434,7 +434,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
               <span>I control this AWS account and hosted zone. AWS bills my account for the containers, database, load balancer and NAT gateway (about $100–150 a month at the small size). I'll review the installer's permissions in AWS before approving.</span>
             </label>
             {error ? <p role="alert" className="text-[13px] text-red-700">{error}</p> : null}
-            <DenButton type="submit" loading={busy} disabled={!consent}>Create deployment</DenButton>
+            <DenButton type="submit" data-testid="create-deployment-submit" loading={busy} disabled={!consent}>Create deployment</DenButton>
           </form>
         </Dialog.Popup>
       </Dialog.Portal>

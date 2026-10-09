@@ -44,7 +44,8 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
   let deploymentId = "";
   await step("after: creating records the deployment but does not claim it is installed", async () => {
     await owner.click({ role: "checkbox", label: /^I control this AWS account/ });
-    await owner.click({ role: "button", label: "Create deployment" });
+    // The dialog's own submit, not the page action behind the backdrop.
+    await owner.click({ testId: "create-deployment-submit" });
     await owner.see({ testId: "managed-deployment-status" }, { text: "Not launched", timeoutMs: 60_000 });
     const listed = await deployments();
     expect(listed).toHaveLength(1);
