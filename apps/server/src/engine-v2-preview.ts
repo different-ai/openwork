@@ -2,6 +2,8 @@ import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import { ApiError } from "./errors.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
+import { agentPermissionMcpDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
+import { organizationMcpServers, type OrganizationMcpServers } from "./organization-mcp-names.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -20,6 +22,7 @@ import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
   isEngineGlobalRuntimeConfigId,
+  listRuntimeOpencodeConfigRows,
   onRuntimeOpencodeConfigWrite,
   readGlobalRuntimeOpencodeConfig,
   readEffectiveRuntimeOpencodeConfig,
@@ -466,8 +469,16 @@ export function createEngineV2Preview(options: {
   async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<void> {
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
-    const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId));
+    const effective = await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId);
+    const runtime = runtimeMcpMap(effective);
+    const agentPermissionRules = agentPermissionRulesOf(effective.managedPolicy);
+    // Local servers the member's agent permissions block are not registered,
+    // and an earlier registration is removed below like any other unwanted entry.
+    // The agent permissions plugin learns of new organization servers first,
+    // so it does not disable them as they are registered.
+    if (agentPermissionRules.some((rule) => rule.action === "mcp")) await active.refreshConfig();
     const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
+      if (agentPermissionMcpDenial(agentPermissionRules, name)) return [];
       const mapped = mapRuntimeMcpToV2(value);
       return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
     }));
@@ -694,6 +705,13 @@ export function createEngineV2Preview(options: {
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
         return executionRules(runtime.managedPolicy?.execution);
+      },
+      agentPermissions: async () => {
+        const rules = agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy);
+        const organizationMcp: OrganizationMcpServers = {};
+        if (rules.length === 0) return { rules, organizationMcp };
+        for (const row of await listRuntimeOpencodeConfigRows(config)) organizationMcpServers(runtimeMcpMap(row.value), organizationMcp);
+        return { rules, organizationMcp };
       },
     });
     sidecar = managed;

@@ -14,6 +14,7 @@ import {
 import { runDetachedTask } from "./process-resilience.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
+import { agentPermissionDenialMessage, decideAgentPermission } from "@openwork/types/den/agent-permissions-runtime";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
@@ -43,6 +44,92 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
 });
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
+  // The member's agent permission rules for websites, from their desktop
+  // config. They apply to the pages and frames the built-in browser opens,
+  // whoever opens them, as the engines apply them to the agent's web fetches.
+  // Empty, so every page opens, unless the app reports that the member's
+  // organization uses agent permissions; null while those are not yet verified
+  // for this sign-in: no page opens meanwhile, and the pages kept closed reload
+  // once they arrive.
+  let websiteRules = [];
+  // Each tab kept closed while the rules load, with the address it was opening.
+  const tabsWaitingForWebsiteRules = new Map();
+  // Sites the member approved under an "Ask first" rule, until the rules change.
+  let approvedWebsites = new Set();
+  const websiteApprovals = new Map();
+  function websiteDecision(url) {
+    if (websiteRules === null) {
+      return { effect: "deny", waiting: true, message: "Your organization's agent permissions are still loading. This page opens once they have." };
+    }
+    const decision = decideAgentPermission(websiteRules, "webfetch", [url]);
+    return decision.rule && decision.effect !== "allow"
+      ? { effect: decision.effect, rule: decision.rule, message: agentPermissionDenialMessage(decision.rule, decision.resource) }
+      : { effect: "allow" };
+  }
+  /** Asks the member before a page opens under an "Ask first" rule; anything but an approval keeps it closed. */
+  function approveWebsite(url, rule) {
+    let site;
+    try { site = new URL(url); } catch { return Promise.resolve(false); }
+    if (approvedWebsites.has(site.origin)) return Promise.resolve(true);
+    const pending = websiteApprovals.get(site.origin);
+    if (pending) return pending;
+    const rules = websiteRules;
+    const parent = window();
+    const approval = (parent && !parent.isDestroyed()
+      ? dialog.showMessageBox(parent, {
+        type: "question",
+        buttons: ["Open", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        message: `Open ${site.host}?`,
+        detail: `Your organization's agent permissions ask before this site opens (set for ${rule.source}).`,
+      }).then(({ response }) => response === 0)
+      : Promise.resolve(false))
+      .catch(() => false)
+      // Rules that changed while the member decided get a fresh question.
+      .then((approved) => approved && rules === websiteRules)
+      .then((approved) => {
+        if (approved) approvedWebsites.add(site.origin);
+        return approved;
+      })
+      .finally(() => websiteApprovals.delete(site.origin));
+    websiteApprovals.set(site.origin, approval);
+    return approval;
+  }
+  /**
+   * Throws when the website rules keep a page or frame closed. A page under an
+   * "Ask first" rule opens once the member approves; a frame never asks.
+   */
+  async function checkWebsiteRules(url, { page }) {
+    const decision = websiteDecision(url);
+    if (decision.effect === "allow") return;
+    if (decision.effect === "ask" && page && await approveWebsite(url, decision.rule)) return;
+    throw Object.assign(new Error(decision.message), { code: "organization_policy_denied", websiteRule: true, waiting: decision.waiting === true });
+  }
+  /**
+   * Website rules first, then the managed policy. A site under an "Ask first"
+   * rule passes here; the member is asked as its page loads. Opening a link
+   * outside OpenWork is not a built-in browser load.
+   */
+  async function checkBrowserPolicy(input) {
+    const decision = input.external ? { effect: "allow" } : websiteDecision(input.url);
+    if (decision.effect === "deny") throw Object.assign(new Error(decision.message), { code: "organization_policy_denied" });
+    await checkPolicy?.(input);
+  }
+  function setWebsiteRules(rules) {
+    if (JSON.stringify(rules) === JSON.stringify(websiteRules)) return;
+    websiteRules = rules;
+    approvedWebsites = new Set();
+    if (rules === null) return;
+    const waiting = [...tabsWaitingForWebsiteRules];
+    tabsWaitingForWebsiteRules.clear();
+    for (const [tab, url] of waiting) {
+      if (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) continue;
+      tab.loadError = null;
+      runDetachedTask("open a page held for agent permissions", () => tab.view.webContents.loadURL(url));
+    }
+    sendBrowserState();
+  }
   let browserSessionHooksInstalled = false;
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
@@ -56,7 +143,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       item.once("done", () => tab.downloads.delete(item));
     });
     browserSessionHooksInstalled = true;
-    if (!checkPolicy) return;
     // The session request boundary covers normal navigation, redirects, frames,
     // scripted fetches and CDP navigation; window navigation events do not.
     browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
@@ -67,10 +153,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
       const request = { url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) };
       Promise.resolve().then(async () => {
-        await checkPolicy(request);
+        // Pages and frames follow the website rules; the resources an allowed page loads do not.
+        if (details.resourceType === "mainFrame" || details.resourceType === "subFrame") {
+          await checkWebsiteRules(details.url, { page: details.resourceType === "mainFrame" });
+        }
+        await checkPolicy?.(request);
         if (guard) {
           const validate = await guard(details.url);
-          await checkPolicy(request);
+          await checkPolicy?.(request);
           return validate;
         }
       })
@@ -81,6 +171,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           } catch { callback({ cancel: true }); return; }
           callback({ cancel: false });
         }, (error) => {
+          if (error?.websiteRule && tab && details.resourceType === "mainFrame"
+            && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()) {
+            tab.loadError = { code: "organization_policy_denied", message: error.message };
+            if (error.waiting) tabsWaitingForWebsiteRules.set(tab, details.url);
+            sendBrowserState();
+            callback({ cancel: true });
+            return;
+          }
           if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
             && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
             && tab.loadError?.code !== "page_load_failed"
@@ -164,7 +262,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   async function browserTaskAllowed(url) {
     if (!browserControlEnabled || typeof checkPolicy !== "function") return false;
     try {
-      await checkPolicy({ url });
+      await checkBrowserPolicy({ url });
       return browserControlEnabled;
     } catch {
       return false;
@@ -522,7 +620,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if ((request.source === "link" && itemId !== "copy-url") || (request.source === "page" && itemId === "open-new-tab")) {
       try {
         const external = request.source === "link" && itemId !== "open-builtin";
-        await checkPolicy?.({ url: request.url, external });
+        await checkBrowserPolicy({ url: request.url, external });
         if (!isCurrent()) return;
         if (!external) {
           createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
@@ -1277,7 +1375,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!saved) return;
     reopeningTab = true;
     try {
-      await checkPolicy?.({ url: saved.url });
+      await checkBrowserPolicy({ url: saved.url });
       // Focus, owner cleanup, or a conversation switch may change while policy
       // is checked. A stale shortcut must not resurrect a deleted owner's page.
       if (shortcutFocus !== focus || registry.visibleSessionId() !== focus.visibleSessionId || !closedTabs.includes(saved)) return;
@@ -1657,6 +1755,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return ensureWebMcpFramePolicy().checkFrame(event.senderFrame);
     });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
+    // `rules` is null while the app has not verified the member's rules yet.
+    ipcMain.handle("openwork:browser:setAgentPermissionRules", (event, rules) => {
+      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
+      setWebsiteRules(Array.isArray(rules) ? rules.filter((rule) => rule?.action === "webfetch"
+        && typeof rule.resource === "string" && ["allow", "ask", "deny"].includes(rule.effect) && typeof rule.source === "string") : null);
+      return true;
+    });
     ipcMain.handle("openwork:browser:setControlEnabled", (event, enabled) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
       browserControlEnabled = enabled === true;

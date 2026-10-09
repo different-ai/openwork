@@ -1657,6 +1657,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
+    /** Has the server read the member's organization policy from Den again, as it does at sign-in. */
+    refreshManagedPolicy: async () => {
+      await requestJson<unknown>(baseUrl, "/managed-policy", { token, hostToken, timeoutMs: timeouts.config });
+    },
     putDenIdentity: async (body: { baseUrl: string; token: string; orgId: string }, signal?: AbortSignal) => {
       await requestJson<unknown>(baseUrl, "/den-session/identity", { hostToken, method: "PUT", body, signal, timeoutMs: timeouts.config });
     },

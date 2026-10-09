@@ -244,6 +244,7 @@
             "group": "Policies and operations",
             "pages": [
               "cloud/share-with-your-team/desktop-policies",
+              "cloud/share-with-your-team/agent-permissions",
               "cloud/share-with-your-team/team-prompt-cards",
               "cloud/security-and-operations",
               "cloud/enterprise"

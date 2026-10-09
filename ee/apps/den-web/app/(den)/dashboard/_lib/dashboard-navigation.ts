@@ -10,6 +10,7 @@ import {
   ScrollText,
   Server,
   Plug,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Users,
@@ -18,6 +19,7 @@ import {
 import {
   type DenOrgAccessFlags,
   type DenOrgCapabilities,
+  getAgentPermissionsRoute,
   getAiGatewayRoute,
   getAnalyticsRoute,
   getApiKeysRoute,
@@ -88,6 +90,8 @@ export type BuildDashboardNavSectionsInput = {
   permissionsEnabled?: boolean;
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
+  /** The agentPermissions feature is on for this organization. */
+  agentPermissionsEnabled?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -98,6 +102,7 @@ export function buildDashboardNavSections({
   libraryNeedsSignIn = 0,
   permissionsEnabled = false,
   managedDeployments = false,
+  agentPermissionsEnabled = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
@@ -130,6 +135,9 @@ export function buildDashboardNavSections({
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
+        ...(agentPermissionsEnabled
+          ? [{ href: getAgentPermissionsRoute(orgSlug), label: "Agent permissions", icon: ShieldCheck, testId: "dashboard-nav-agent-permissions" }]
+          : []),
       ].filter((item) => canOpen(item.href))
     : [];
   const observabilityItems: DashboardNavItem[] = orgSlug
@@ -201,6 +209,7 @@ function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, enab
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
+  "Agent permissions": ["permissions", "commands", "websites", "allow list", "block list", "policy"],
   "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
   Analytics: ["usage", "stats", "consumption", "workflow runs", "history", "langfuse"],
   "Audit logs": ["audit", "history", "operations", "changes", "security"],

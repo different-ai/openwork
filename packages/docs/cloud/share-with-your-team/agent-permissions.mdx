@@ -1,0 +1,74 @@
+---
+title: "Agent permissions"
+description: "Choose what agents can do on members' computers: run commands, edit files, open websites, and use local skills and MCP servers."
+keywords: ["agent permissions", "block commands", "allow commands", "allow list", "block list", "approved websites", "block websites", "local skills", "local MCP servers", "team permissions", "enterprise controls"]
+---
+
+Agent permissions decide what the agent can do on a member's computer in the OpenWork desktop app. You set them for everyone in your organization, and override them for a team.
+
+<Note>
+Agent permissions are rolling out. If **Agent permissions** isn't under **Manage** in OpenWork Cloud, it isn't available for your organization yet.
+</Note>
+
+## Who can manage agent permissions
+
+- Members with the **Manage desktop policies** permission (owners by default) can change agent permissions.
+- Members with **View desktop policies** (admins by default) can view them.
+- Agent permissions are part of the Enterprise plan.
+
+## What you can control
+
+| Permission | Choices | Lists |
+| --- | --- | --- |
+| **Run commands** | **Allow**, **Ask first**, or **Block** | Commands |
+| **Edit files** | **Allow**, **Ask first**, or **Block** | None |
+| **Open websites** | **Allow**, **Ask first**, or **Block** | Websites |
+| **Search the web** | Allowed or blocked | None |
+| **Use local skills** | Allowed or blocked | Skill names |
+| **Use local MCP servers** | Allowed or blocked | Server names |
+
+- **Ask first** has the agent ask the member each time before it acts.
+- **Always allowed** lists exceptions while a permission is set to **Ask first** or **Block**. They run without asking.
+- **Always blocked** lists what is blocked in every case. A blocked pattern always wins over an allowed one.
+- Skills your organization shares and your organization's connections are never affected.
+
+### Patterns
+
+- **Commands**: `*` matches any text. `git *` matches every `git` command, including `git` on its own. `npm test` matches only that command.
+- **Websites**: `docs.example.com` matches that site, `*.example.com` its subdomains, and `example.com/docs` the pages under `/docs`. Start with `https://` to match only secure pages.
+- **Local skills and MCP servers**: their names, with `*` for any text, such as `team-*`.
+
+## Everyone and teams
+
+- **Everyone**'s permissions apply to every member.
+- A team's choice for a permission replaces **Everyone**'s for the team's members. A team's lists add to **Everyone**'s.
+- When someone is in several teams that set the same permission, the strictest choice applies: **Block**, then **Ask first**, then **Allow**.
+
+## Set agent permissions
+
+1. Open [app.openworklabs.com](https://app.openworklabs.com/) and choose your organization.
+2. Go to **Manage › Agent permissions**.
+3. Choose **Everyone**, or a team.
+4. Change a permission's choice, or add patterns to its lists. On a team, a changed permission overrides **Everyone**'s; click the reset icon next to it to use **Everyone**'s again. **Use Everyone's permissions** removes all of a team's overrides.
+5. To check what would happen, choose **Command**, **Website**, **Local skill**, or **Local MCP server** under **Try a request** and type one in. The check uses your unsaved changes.
+6. Click **Save changes**. To go back, click **Undo** in the confirmation.
+
+Members' apps apply changes the next time they refresh their organization's settings: when the app starts or wakes up, when the member signs in, and every hour.
+
+## What members see
+
+When something is blocked, the agent is told what was blocked, by which pattern, and for whom it is set, for example: *Your organization's agent permissions block the command `rm -rf build` ("rm *" is blocked for Contractors).*
+
+In the built-in browser, a blocked website doesn't load and the browser shows the same reason. A website set to **Ask first** opens once the member approves it, and stays approved until the permissions change. Until the app has the member's permissions, for example right after signing in on a new computer, the built-in browser opens no pages.
+
+<Accordion title="Technical details">
+**Rules.** Den resolves each member's permissions into ordered OpenCode permission rules (`action`, `resource`, `effect`) and delivers them in `GET /v1/me/desktop-config` as `agentPermissions.rules`, each labeled with **Everyone** or the team's name. The last matching rule decides. A choice other than **Allow** becomes a `*` rule, its **Always allowed** patterns follow, and its **Always blocked** patterns come last. A permission left at **Allow** adds no rules, so a member's own settings apply.
+
+**Engines.** On OpenCode v2 the rules become the engine's own permission rules, with blocks written as Ask first, and OpenWork's agent permissions plugin decides every permission request after the engine: it blocks with the rule named, and a workspace's own config can't loosen it. If the plugin can't load, blocked actions ask the member instead. On OpenCode v1 the plugin re-applies the rules after every config file has merged, and checks website addresses before a fetch runs. Blocked local MCP servers are disabled from any config source and aren't registered by OpenWork; adding one in OpenWork is refused. Your organization's connections are recognized by the name and address OpenWork registered them with, so a workspace server that reuses one of their names is treated as local.
+
+**Websites.** Patterns match the address's host, its subdomains for `*.`, its port and scheme when the pattern names them, and its path as a prefix. The built-in browser applies them to every page and frame it opens, whoever opens them; the resources an allowed page loads are not checked.
+
+**Offline.** The desktop app keeps the last rules it received for the signed-in member and applies them while Den is unreachable. Signing out removes them. Adding a local skill or MCP server in OpenWork waits until the member's permissions are verified, and is refused when they can't be.
+
+**API.** `GET /v1/agent-permissions` lists everyone's and each team's settings. `PUT /v1/agent-permissions/everyone` and `PUT /v1/agent-permissions/teams/{teamId}` replace them; `DELETE /v1/agent-permissions/teams/{teamId}` removes a team's overrides.
+</Accordion>

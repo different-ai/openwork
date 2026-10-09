@@ -90,7 +90,29 @@ const DESKTOP_CONFIG_ITEMS = [
   "connectEnabled",
   "onboardingPrompts",
   "onboardingPromptDescriptions",
+  "agentPermissions",
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
+
+// The member a cached config was fetched for. The cache is per organization,
+// while agent permissions are per member, so another member's cached rules
+// never count as known.
+const CACHED_CONFIG_MEMBER_PREFIX = "openwork.den.desktopConfigMember:";
+
+function cachedConfigFor(cacheKey: string, userId: string): boolean {
+  try {
+    return userId !== "" && window.localStorage.getItem(`${CACHED_CONFIG_MEMBER_PREFIX}${cacheKey}`) === userId;
+  } catch {
+    return false;
+  }
+}
+
+function rememberCachedConfigMember(cacheKey: string, userId: string): void {
+  try {
+    if (userId) window.localStorage.setItem(`${CACHED_CONFIG_MEMBER_PREFIX}${cacheKey}`, userId);
+  } catch {
+    // A lost record only means the next start waits for a fresh config.
+  }
+}
 
 export function resolveConnectStateToPush(config: DenDesktopConfig): boolean | null {
   return typeof config.connectEnabled === "boolean" ? config.connectEnabled : null;
@@ -142,8 +164,26 @@ function desktopConfigItemMatches(
     if (previousValue.length !== nextValue.length) return false;
     return previousValue.every((value, index) => value === nextValue[index]);
   }
+  if (typeof previousValue === "object" || typeof nextValue === "object") {
+    return JSON.stringify(previousValue ?? null) === JSON.stringify(nextValue ?? null);
+  }
 
   return previousValue === nextValue;
+}
+
+/**
+ * The local server enforces the member's agent permissions from the policy it
+ * read at sign-in; when Den reports different ones, it reads them again so the
+ * engines and the built-in browser pick them up without a relaunch.
+ */
+async function refreshServerManagedPolicy(): Promise<void> {
+  const connection = await resolveOpenworkConnection();
+  if (!connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
+  await createOpenworkServerClient({
+    baseUrl: connection.normalizedBaseUrl,
+    token: connection.resolvedToken,
+    hostToken: connection.resolvedHostToken,
+  }).refreshManagedPolicy();
 }
 
 function getDesktopConfigActions(input: {
@@ -206,6 +246,8 @@ type DesktopConfigState = {
   config: DenDesktopConfig;
   loading: boolean;
   freshConfigStatus: "pending" | "ready" | "failed";
+  /** `config` is this sign-in's, fresh or cached, or there is no organization to read one for. */
+  known: boolean;
 };
 
 /**
@@ -225,8 +267,9 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     config: DEFAULT_DESKTOP_CONFIG,
     loading: true,
     freshConfigStatus: "pending",
+    known: false,
   });
-  const { config, freshConfigStatus, loading } = desktopConfigState;
+  const { config, freshConfigStatus, known, loading } = desktopConfigState;
   // Bumped whenever the browser tells us the Den session or settings changed.
   const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
   // Monotonic run id — same guard-against-stale-resolution pattern as DenAuthProvider.
@@ -238,6 +281,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
   const devRefreshDesktopConfigRef = useRef<DenDesktopConfig | null>(null);
   const isSignedIn = denAuth.isSignedIn;
+  const userId = denAuth.user?.id?.trim() ?? "";
 
   useEffect(() => {
     const syncBrowserControl = () => {
@@ -249,6 +293,19 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, syncBrowserControl);
     return () => window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, syncBrowserControl);
   }, [config.allowBuiltInExtensions]);
+
+  // The built-in browser applies the member's website rules to every page it
+  // opens. While they are unknown for this sign-in it opens none, but only when
+  // the organization's last config had agent permissions: everyone else's
+  // browser never waits for them.
+  const websiteRules = useMemo(() => {
+    const rules = config.agentPermissions?.rules ?? [];
+    if (known) return rules.filter((rule) => rule.action === "webfetch");
+    return rules.length > 0 ? null : [];
+  }, [config.agentPermissions, known]);
+  useEffect(() => {
+    void window.__OPENWORK_ELECTRON__?.browser?.setAgentPermissionRules?.(websiteRules);
+  }, [websiteRules]);
 
   const applyDesktopConfigActions = useCallback((latestConfig: DenDesktopConfig) => {
     const normalizedConfig = desktopCapabilityConfig(normalizeDenDesktopConfig(latestConfig));
@@ -270,6 +327,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       }).catch((error: unknown) => {
         console.warn("[brand-icon] Desktop icon apply request failed", error);
       });
+    }
+
+    if (actions.some((action) => action.item === "agentPermissions")) {
+      void refreshServerManagedPolicy().catch(() => undefined);
     }
 
     const brandAppNameAction = actions.find((action) => action.item === "brandAppName");
@@ -300,7 +361,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     if (import.meta.env.DEV && requireFresh && devRefreshDesktopConfigRef.current) {
       const nextConfig = desktopCapabilityConfig(devRefreshDesktopConfigRef.current);
       applyDesktopConfigActions(nextConfig);
-      setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready" }));
+      setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready", known: true }));
       void reconcileShellBranding(nextConfig).catch(() => undefined);
       return nextConfig;
     }
@@ -317,13 +378,16 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         ...current,
         freshConfigStatus: "failed",
         loading: false,
+        known: true,
       }));
       return DEFAULT_DESKTOP_CONFIG;
     }
 
     const cached = readCachedDenDesktopConfig(cacheKey);
+    const cachedKnown = Boolean(cached) && cachedConfigFor(cacheKey, userId);
     if (cached) {
       applyDesktopConfigActions(cached);
+      setDesktopConfigState((current) => ({ ...current, known: cachedKnown }));
     }
 
     if (!cached) {
@@ -339,8 +403,9 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       if (currentRun !== refreshRunRef.current) return nextConfig;
 
       writeCachedDenDesktopConfig(cacheKey, nextConfig);
+      rememberCachedConfigMember(cacheKey, userId);
       applyDesktopConfigActions(nextConfig);
-      setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready" }));
+      setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready", known: true }));
       void reconcileShellBranding(nextConfig).catch(() => undefined);
       return nextConfig;
     } catch (error) {
@@ -363,7 +428,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
       const fallbackConfig = cached ?? DEFAULT_DESKTOP_CONFIG;
       applyDesktopConfigActions(fallbackConfig);
-      setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "failed" }));
+      setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "failed", known: cachedKnown }));
       if (requireFresh) throw error;
       return fallbackConfig;
     } finally {
@@ -371,7 +436,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         setDesktopConfigState((current) => ({ ...current, loading: false }));
       }
     }
-  }, [applyDesktopConfigActions, isSignedIn]);
+  }, [applyDesktopConfigActions, isSignedIn, userId]);
 
   const refresh = useCallback(
     async () => {
@@ -404,6 +469,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         ...current,
         freshConfigStatus: "pending",
         loading: true,
+        known: false,
       }));
       return;
     }
@@ -414,6 +480,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         ...current,
         freshConfigStatus: "failed",
         loading: false,
+        known: true,
       }));
       return;
     }
@@ -425,9 +492,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       ...current,
       freshConfigStatus: "pending",
       loading: !cached,
+      known: Boolean(cached) && cachedConfigFor(cacheKey, userId),
     }));
     void desktopConfigHandler();
-  }, [applyDesktopConfigActions, denAuth.status, desktopConfigHandler, isSignedIn, settingsVersion]);
+  }, [applyDesktopConfigActions, denAuth.status, desktopConfigHandler, isSignedIn, settingsVersion, userId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

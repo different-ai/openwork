@@ -26,6 +26,9 @@ const specs = new Set([
   "evals/specs/sent-message-matches-composer.e2e.test.ts",
   "evals/specs/agent-connection-sign-in-journey.e2e.test.ts",
   "evals/specs/opencode-v2-built-in-browser.e2e.test.ts",
+  "evals/specs/agent-permissions.e2e.test.ts",
+  "evals/specs/agent-permissions-local-extensions.e2e.test.ts",
+  "evals/specs/agent-permissions-off.e2e.test.ts",
 ]);
 
 export function parityProofPlan(spec) {

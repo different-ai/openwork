@@ -465,6 +465,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     runtimeConfigLoaded,
     permissionsEnabled: orgFeatureEnabled(orgContext, "permissions"),
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
+    agentPermissionsEnabled: orgFeatureEnabled(orgContext, "agentPermissions"),
   });
 
   const orgSwitcher = isSingleOrgMode ? (

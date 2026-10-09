@@ -1,3 +1,4 @@
+import type { DesktopAgentPermissionRule } from "@openwork/types/den/desktop-policies";
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
 
 export type * from "./desktop-types";
@@ -205,6 +206,8 @@ declare global {
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;
+        /** The member's agent permission rules for websites, applied to every page the built-in browser opens; null while they are being verified for an organization that uses them, which opens none. */
+        setAgentPermissionRules?: (rules: DesktopAgentPermissionRule[] | null) => Promise<boolean>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;

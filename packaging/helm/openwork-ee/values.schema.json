@@ -238,6 +238,16 @@
               ],
               "description": "OpenCode plugin sign-in: People can sign in to OpenWork from the OpenCode plugin, approve it as \"OpenWork - OpenCode Plugin\", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect. Renders DEN_FEATURE_OPENCODE_PLUGIN."
             },
+            "agentPermissions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Agent permissions: Organization admins choose what agents can do on members' computers: run commands, edit files, open websites and use local skills and MCP servers, for everyone or per team. Renders DEN_FEATURE_AGENT_PERMISSIONS."
+            },
             "platformAuditReads": {
               "enum": [
                 "",
