@@ -38,7 +38,7 @@ export function MemberDashboardScreen() {
           Get OpenWork
         </DenButton>
 
-        <p className="mt-3 text-[12px] text-gray-400">macOS · Windows · Linux</p>
+        <p className="mt-3 text-[12px] text-gray-500">macOS · Windows · Linux</p>
 
         <p className="mt-10 w-full border-t border-gray-100 pt-5 text-[13px] text-gray-500">
           Already installed?{" "}
