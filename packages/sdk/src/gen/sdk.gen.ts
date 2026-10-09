@@ -15393,7 +15393,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get adoption metrics
    *
-   * Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.
+   * Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend. Workspace owners and admins on an Enterprise plan only.
    */
   public getV1TelemetryAdoption<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<

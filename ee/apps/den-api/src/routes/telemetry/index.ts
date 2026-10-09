@@ -184,18 +184,23 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "Get adoption metrics",
-      description: "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.",
+      description: "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend. Workspace owners and admins on an Enterprise plan only.",
       responses: {
         200: jsonResponse("Adoption metrics returned.", telemetryAdoptionResponseSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
+        402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
-    orgMemberRoute({ useUserOrganizations: true }),
+    // Organization-wide activity: the same admin and Enterprise gate as /v1/telemetry/analytics.
+    // Den web's overview falls back to /v1/org for member and invite counts.
+    orgRoleRoute(["admin"]),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       if (!orgId) {
         return c.json({ members: 0, pendingInvites: 0, activeMembers7d: 0, activeMembers30d: 0, weeklyTrend: [] })
       }
+      const entitlement = checkEntitlement(c.get("organizationContext")?.organization.metadata ?? null, "analytics")
+      if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
 
       const now = Date.now()
       const sevenDaysAgo = new Date(now - 7 * DAY_MS)

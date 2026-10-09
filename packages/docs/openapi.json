@@ -90970,7 +90970,7 @@
           "Telemetry"
         ],
         "summary": "Get adoption metrics",
-        "description": "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.",
+        "description": "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend. Workspace owners and admins on an Enterprise plan only.",
         "responses": {
           "200": {
             "description": "Adoption metrics returned.",
@@ -90988,6 +90988,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Usage analytics requires an Enterprise plan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnterprisePlanRequiredError"
                 }
               }
             }
