@@ -10,7 +10,7 @@
  * Den returns only directly exposed, ready connections.
  */
 import { createHash } from "node:crypto"
-import { denRequest, isRecord, normalizeBaseUrl, type DenSession, type Fetch } from "./den.ts"
+import { DenUrlError, denRequest, isAllowedApiBaseUrl, isRecord, normalizeBaseUrl, type DenSession, type Fetch } from "./den.ts"
 import type { RemoteMcpConfig } from "./opencode.ts"
 
 export const CLOUD_SERVER_NAME = "openwork-cloud"
@@ -67,6 +67,8 @@ export function mcpServerEntries(input: {
   token: string
   servers: readonly DirectServer[]
 }): Record<string, RemoteMcpConfig> {
+  // Never hand OpenCode a bearer for a plain-HTTP remote host.
+  if (!isAllowedApiBaseUrl(input.apiBaseUrl)) return {}
   const headers = { Authorization: `Bearer ${input.token}` }
   // oauth:false — the bearer is ours; OpenCode must not start its own MCP OAuth flow on a 401.
   const entries: Record<string, RemoteMcpConfig> = {
@@ -221,6 +223,7 @@ export function parseServerIndex(text: string, apiBaseUrl: string): DirectServer
 }
 
 export async function fetchDirectServers(fetcher: Fetch, apiBaseUrl: string, token: string): Promise<DirectServer[]> {
+  if (!isAllowedApiBaseUrl(apiBaseUrl)) throw new DenUrlError(apiBaseUrl)
   const text = await readResourceText(fetcher, agentUrl(apiBaseUrl), token, SERVER_INDEX_URI)
   return parseServerIndex(text, apiBaseUrl)
 }

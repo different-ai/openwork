@@ -40,7 +40,39 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function normalizeBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "")
+  let end = value.length
+  while (end > 0 && /\s/.test(value[end - 1] ?? "")) end--
+  while (end > 0 && value[end - 1] === "/") end--
+  return value.slice(0, end).trim()
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"])
+
+/**
+ * Where the member's tokens may be sent: HTTPS, or plain HTTP only to a Den on
+ * this machine (local development and self-hosted testing). Anything else
+ * would let the network read the session.
+ */
+export function isAllowedApiBaseUrl(value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  if (url.username || url.password) return false
+  return url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
+}
+
+export class DenUrlError extends Error {
+  constructor(value: string) {
+    super(`Refusing to send the OpenWork sign-in to ${value}: use an https:// address.`)
+    this.name = "DenUrlError"
+  }
+}
+
+function assertAllowedApiBaseUrl(value: string): void {
+  if (!isAllowedApiBaseUrl(value)) throw new DenUrlError(value)
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -55,6 +87,8 @@ async function readJson(response: Response): Promise<unknown> {
 
 /** Unauthenticated JSON request (device authorization endpoints). */
 export async function postPublic(fetcher: Fetch, apiBaseUrl: string, path: string, body: unknown) {
+  // The device token arrives in this response, so the same transport rule applies.
+  assertAllowedApiBaseUrl(apiBaseUrl)
   const response = await fetcher(`${normalizeBaseUrl(apiBaseUrl)}${path}`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
@@ -72,6 +106,7 @@ export async function denRequest(
   path: string,
   init: { method?: "GET" | "POST"; body?: unknown } = {},
 ): Promise<unknown> {
+  assertAllowedApiBaseUrl(session.apiBaseUrl)
   const headers: Record<string, string> = {
     accept: "application/json",
     authorization: `Bearer ${session.token}`,
@@ -150,6 +185,7 @@ export async function readAccount(fetcher: Fetch, session: DenSession): Promise<
 
 /** POST /api/auth/sign-out: ends the Den session (and the MCP tokens minted from it). */
 export async function signOut(fetcher: Fetch, apiBaseUrl: string, token: string): Promise<boolean> {
+  if (!isAllowedApiBaseUrl(apiBaseUrl)) return false
   try {
     const response = await fetcher(`${normalizeBaseUrl(apiBaseUrl)}/api/auth/sign-out`, {
       method: "POST",

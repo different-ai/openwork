@@ -50,3 +50,8 @@ test("builds remote MCP entries that never start OpenCode's own OAuth", () => {
   assert.equal(entries[names[1]!]?.url, `${API}/mcp/agent/connections/mcn_slack`)
   assert.equal(entries[names[1]!]?.oauth, false)
 })
+
+test("never hands OpenCode a bearer for a plain-HTTP remote Den", () => {
+  assert.deepEqual(mcpServerEntries({ apiBaseUrl: "http://den.example.com", token: MCP_TOKEN, servers: [] }), {})
+  assert.ok(mcpServerEntries({ apiBaseUrl: "http://127.0.0.1:8790", token: MCP_TOKEN, servers: [] })["openwork-cloud"])
+})

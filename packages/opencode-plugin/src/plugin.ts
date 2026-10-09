@@ -17,7 +17,7 @@ import {
   readCredentialMetadata,
   signInMethods,
 } from "./auth.ts"
-import { DenAuthError, isRecord, normalizeBaseUrl, signOut, type DenSession, type Fetch } from "./den.ts"
+import { DenAuthError, isAllowedApiBaseUrl, isRecord, normalizeBaseUrl, signOut, type DenSession, type Fetch } from "./den.ts"
 import {
   fetchDirectServers,
   mcpServerEntries,
@@ -54,7 +54,7 @@ export interface PluginOptions {
 }
 
 export function readOptions(options: Readonly<Record<string, unknown>>): PluginOptions {
-  const apiBaseUrl = typeof options.apiBaseUrl === "string" && /^https?:\/\//.test(options.apiBaseUrl)
+  const apiBaseUrl = typeof options.apiBaseUrl === "string" && isAllowedApiBaseUrl(normalizeBaseUrl(options.apiBaseUrl))
     ? normalizeBaseUrl(options.apiBaseUrl)
     : DEFAULT_API_BASE_URL
   const interval = typeof options.refreshIntervalMs === "number" && Number.isFinite(options.refreshIntervalMs)
