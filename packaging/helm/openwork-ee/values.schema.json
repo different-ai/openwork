@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "managedDeployments": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Managed deployments: Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork. Renders DEN_FEATURE_MANAGED_DEPLOYMENTS."
+            },
             "installLinks": {
               "enum": [
                 "",

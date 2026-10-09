@@ -1,4 +1,5 @@
 export * from "./auth"
+export * from "./managed-deployments"
 export * from "./audit"
 export * from "./dashboards"
 export * from "./desktop-policies"

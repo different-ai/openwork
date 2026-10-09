@@ -936,15 +936,22 @@
     {
       "idx": 134,
       "version": "5",
-      "when": 1791498741126,
-      "tag": "0134_permissions",
+      "when": 1791507341644,
+      "tag": "0134_managed_deployments",
       "breakpoints": true
     },
     {
       "idx": 135,
       "version": "5",
-      "when": 1791498742496,
-      "tag": "0135_deprecate_super_admin",
+      "when": 1791524917093,
+      "tag": "0135_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "5",
+      "when": 1791524918431,
+      "tag": "0136_deprecate_super_admin",
       "breakpoints": true
     }
   ]

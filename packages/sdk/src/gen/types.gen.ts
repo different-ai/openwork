@@ -163,6 +163,7 @@ export type NotFoundError = {
 
 export type AdminFeature = {
   key:
+    | "managedDeployments"
     | "installLinks"
     | "mcpConnections"
     | "driveResumableUploads"
@@ -221,6 +222,7 @@ export type AdminUsersPageResponse = {
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
     capabilities: {
+      managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -252,6 +254,15 @@ export type AdminOrganizationsPageResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      managedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -495,6 +506,7 @@ export type AdminOverviewResponse = {
   }>;
   organizations: Array<{
     capabilities: {
+      managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -526,6 +538,15 @@ export type AdminOverviewResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      managedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -1289,6 +1310,8 @@ export type OrganizationContextResponse = {
       | "egress_diagnostics.manage"
       | "desktop_policies.view"
       | "desktop_policies.manage"
+      | "deployments.view"
+      | "deployments.manage"
       | "billing.view"
       | "billing.manage"
       | "billing_portal.use"
@@ -1879,6 +1902,7 @@ export type CreateInstallLinkResponse = {
 export type CapabilityDisabledError = {
   error: "capability_disabled";
   capability:
+    | "managedDeployments"
     | "installLinks"
     | "mcpConnections"
     | "driveResumableUploads"
@@ -6091,6 +6115,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
+      managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -6122,6 +6147,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      managedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -6353,6 +6387,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
+      managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       driveResumableUploads: boolean;
@@ -6384,6 +6419,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      managedDeployments: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       installLinks: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -9059,6 +9103,870 @@ export type PostV1OrgsInvitationsAcceptResponses = {
 
 export type PostV1OrgsInvitationsAcceptResponse =
   PostV1OrgsInvitationsAcceptResponses[keyof PostV1OrgsInvitationsAcceptResponses];
+
+export type GetV1ManagedDeploymentsConfigurationData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/managed-deployments/configuration";
+};
+
+export type GetV1ManagedDeploymentsConfigurationErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1ManagedDeploymentsConfigurationError =
+  GetV1ManagedDeploymentsConfigurationErrors[keyof GetV1ManagedDeploymentsConfigurationErrors];
+
+export type GetV1ManagedDeploymentsConfigurationResponses = {
+  /**
+   * Read which clouds can be launched
+   */
+  200: {
+    providers: Array<{
+      provider: "aws" | "azure" | "gcp";
+      available: boolean;
+      version: string | null;
+    }>;
+    updateMode: "approval";
+  };
+};
+
+export type GetV1ManagedDeploymentsConfigurationResponse =
+  GetV1ManagedDeploymentsConfigurationResponses[keyof GetV1ManagedDeploymentsConfigurationResponses];
+
+export type GetV1ManagedDeploymentsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/managed-deployments";
+};
+
+export type GetV1ManagedDeploymentsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1ManagedDeploymentsError = GetV1ManagedDeploymentsErrors[keyof GetV1ManagedDeploymentsErrors];
+
+export type GetV1ManagedDeploymentsResponses = {
+  /**
+   * List the organization's managed deployments
+   */
+  200: {
+    deployments: Array<{
+      id: string;
+      name: string;
+      provider: "aws" | "azure" | "gcp";
+      target: {
+        accountId: string;
+        region:
+          | "us-east-1"
+          | "us-east-2"
+          | "us-west-2"
+          | "eu-west-1"
+          | "eu-central-1"
+          | "ap-southeast-1"
+          | "ap-southeast-2";
+        route53ZoneId: string;
+      };
+      domainName: string;
+      ownerEmail: string;
+      size: "small";
+      updateMode: "approval";
+      createdAt: string;
+      webUrl: string;
+      consoleUrl: string;
+      installedVersion: string | null;
+      availableVersion: string | null;
+      updateAvailable: boolean;
+      health: {
+        state: "operational" | "degraded" | "down" | "not_reporting" | "awaiting_report";
+        reportedAt: string | null;
+        version: string | null;
+        checks: Array<{
+          id:
+            | "api_health"
+            | "database_ready"
+            | "web_available"
+            | "services_running"
+            | "load_balancer_targets"
+            | "database_instance"
+            | "database_storage"
+            | "database_backups"
+            | "certificate";
+          status: "ok" | "warning" | "failing" | "unknown";
+          value?: number;
+          total?: number;
+          code?:
+            | "http_error"
+            | "unreachable"
+            | "slow"
+            | "not_running"
+            | "unhealthy"
+            | "unavailable"
+            | "permission_denied"
+            | "low_storage"
+            | "stale_backup"
+            | "backups_disabled"
+            | "not_issued"
+            | "expiring"
+            | "expired";
+        }>;
+      };
+      run: {
+        id: string;
+        kind: "install" | "update" | "retry";
+        version: string;
+        state: "awaiting_approval" | "provisioning" | "ready" | "failed";
+        createdAt: string;
+        lastSeenAt: string | null;
+        expiresAt: string;
+        expired: boolean;
+        events: Array<{
+          sequence: number;
+          step:
+            | "runner_connected"
+            | "release_verified"
+            | "account_verified"
+            | "infrastructure_applied"
+            | "services_ready"
+            | "health_verified";
+          outcome: "succeeded" | "failed";
+          errorCode?:
+            | "release_verification_failed"
+            | "infrastructure_failed"
+            | "certificate_failed"
+            | "service_unhealthy"
+            | "health_check_failed"
+            | "runner_failed";
+          receivedAt: string;
+        }>;
+      } | null;
+    }>;
+  };
+};
+
+export type GetV1ManagedDeploymentsResponse = GetV1ManagedDeploymentsResponses[keyof GetV1ManagedDeploymentsResponses];
+
+export type PostV1ManagedDeploymentsData = {
+  body: {
+    name: string;
+    domainName: string;
+    ownerEmail: string;
+    size?: "small";
+    provider: "aws";
+    target: {
+      accountId: string;
+      region:
+        | "us-east-1"
+        | "us-east-2"
+        | "us-west-2"
+        | "eu-west-1"
+        | "eu-central-1"
+        | "ap-southeast-1"
+        | "ap-southeast-2";
+      route53ZoneId: string;
+    };
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/managed-deployments";
+};
+
+export type PostV1ManagedDeploymentsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1ManagedDeploymentsError = PostV1ManagedDeploymentsErrors[keyof PostV1ManagedDeploymentsErrors];
+
+export type PostV1ManagedDeploymentsResponses = {
+  /**
+   * Create a managed deployment
+   */
+  200: {
+    id: string;
+    name: string;
+    provider: "aws" | "azure" | "gcp";
+    target: {
+      accountId: string;
+      region:
+        | "us-east-1"
+        | "us-east-2"
+        | "us-west-2"
+        | "eu-west-1"
+        | "eu-central-1"
+        | "ap-southeast-1"
+        | "ap-southeast-2";
+      route53ZoneId: string;
+    };
+    domainName: string;
+    ownerEmail: string;
+    size: "small";
+    updateMode: "approval";
+    createdAt: string;
+    webUrl: string;
+    consoleUrl: string;
+    installedVersion: string | null;
+    availableVersion: string | null;
+    updateAvailable: boolean;
+    health: {
+      state: "operational" | "degraded" | "down" | "not_reporting" | "awaiting_report";
+      reportedAt: string | null;
+      version: string | null;
+      checks: Array<{
+        id:
+          | "api_health"
+          | "database_ready"
+          | "web_available"
+          | "services_running"
+          | "load_balancer_targets"
+          | "database_instance"
+          | "database_storage"
+          | "database_backups"
+          | "certificate";
+        status: "ok" | "warning" | "failing" | "unknown";
+        value?: number;
+        total?: number;
+        code?:
+          | "http_error"
+          | "unreachable"
+          | "slow"
+          | "not_running"
+          | "unhealthy"
+          | "unavailable"
+          | "permission_denied"
+          | "low_storage"
+          | "stale_backup"
+          | "backups_disabled"
+          | "not_issued"
+          | "expiring"
+          | "expired";
+      }>;
+    };
+    run: {
+      id: string;
+      kind: "install" | "update" | "retry";
+      version: string;
+      state: "awaiting_approval" | "provisioning" | "ready" | "failed";
+      createdAt: string;
+      lastSeenAt: string | null;
+      expiresAt: string;
+      expired: boolean;
+      events: Array<{
+        sequence: number;
+        step:
+          | "runner_connected"
+          | "release_verified"
+          | "account_verified"
+          | "infrastructure_applied"
+          | "services_ready"
+          | "health_verified";
+        outcome: "succeeded" | "failed";
+        errorCode?:
+          | "release_verification_failed"
+          | "infrastructure_failed"
+          | "certificate_failed"
+          | "service_unhealthy"
+          | "health_check_failed"
+          | "runner_failed";
+        receivedAt: string;
+      }>;
+    } | null;
+  };
+};
+
+export type PostV1ManagedDeploymentsResponse =
+  PostV1ManagedDeploymentsResponses[keyof PostV1ManagedDeploymentsResponses];
+
+export type DeleteV1ManagedDeploymentsByDeploymentIdData = {
+  body?: never;
+  path: {
+    deploymentId: string;
+  };
+  query?: never;
+  url: "/v1/managed-deployments/{deploymentId}";
+};
+
+export type DeleteV1ManagedDeploymentsByDeploymentIdErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type DeleteV1ManagedDeploymentsByDeploymentIdError =
+  DeleteV1ManagedDeploymentsByDeploymentIdErrors[keyof DeleteV1ManagedDeploymentsByDeploymentIdErrors];
+
+export type DeleteV1ManagedDeploymentsByDeploymentIdResponses = {
+  /**
+   * Remove a deployment that was never installed
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type DeleteV1ManagedDeploymentsByDeploymentIdResponse =
+  DeleteV1ManagedDeploymentsByDeploymentIdResponses[keyof DeleteV1ManagedDeploymentsByDeploymentIdResponses];
+
+export type PostV1ManagedDeploymentsByDeploymentIdLaunchData = {
+  body: {
+    kind?: "install" | "update" | "retry";
+  };
+  path: {
+    deploymentId: string;
+  };
+  query?: never;
+  url: "/v1/managed-deployments/{deploymentId}/launch";
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdLaunchErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdLaunchError =
+  PostV1ManagedDeploymentsByDeploymentIdLaunchErrors[keyof PostV1ManagedDeploymentsByDeploymentIdLaunchErrors];
+
+export type PostV1ManagedDeploymentsByDeploymentIdLaunchResponses = {
+  /**
+   * Prepare an install, retry or approved update
+   */
+  200: {
+    deployment: {
+      id: string;
+      name: string;
+      provider: "aws" | "azure" | "gcp";
+      target: {
+        accountId: string;
+        region:
+          | "us-east-1"
+          | "us-east-2"
+          | "us-west-2"
+          | "eu-west-1"
+          | "eu-central-1"
+          | "ap-southeast-1"
+          | "ap-southeast-2";
+        route53ZoneId: string;
+      };
+      domainName: string;
+      ownerEmail: string;
+      size: "small";
+      updateMode: "approval";
+      createdAt: string;
+      webUrl: string;
+      consoleUrl: string;
+      installedVersion: string | null;
+      availableVersion: string | null;
+      updateAvailable: boolean;
+      health: {
+        state: "operational" | "degraded" | "down" | "not_reporting" | "awaiting_report";
+        reportedAt: string | null;
+        version: string | null;
+        checks: Array<{
+          id:
+            | "api_health"
+            | "database_ready"
+            | "web_available"
+            | "services_running"
+            | "load_balancer_targets"
+            | "database_instance"
+            | "database_storage"
+            | "database_backups"
+            | "certificate";
+          status: "ok" | "warning" | "failing" | "unknown";
+          value?: number;
+          total?: number;
+          code?:
+            | "http_error"
+            | "unreachable"
+            | "slow"
+            | "not_running"
+            | "unhealthy"
+            | "unavailable"
+            | "permission_denied"
+            | "low_storage"
+            | "stale_backup"
+            | "backups_disabled"
+            | "not_issued"
+            | "expiring"
+            | "expired";
+        }>;
+      };
+      run: {
+        id: string;
+        kind: "install" | "update" | "retry";
+        version: string;
+        state: "awaiting_approval" | "provisioning" | "ready" | "failed";
+        createdAt: string;
+        lastSeenAt: string | null;
+        expiresAt: string;
+        expired: boolean;
+        events: Array<{
+          sequence: number;
+          step:
+            | "runner_connected"
+            | "release_verified"
+            | "account_verified"
+            | "infrastructure_applied"
+            | "services_ready"
+            | "health_verified";
+          outcome: "succeeded" | "failed";
+          errorCode?:
+            | "release_verification_failed"
+            | "infrastructure_failed"
+            | "certificate_failed"
+            | "service_unhealthy"
+            | "health_check_failed"
+            | "runner_failed";
+          receivedAt: string;
+        }>;
+      } | null;
+    };
+    kind: "install" | "update" | "retry";
+    approvalUrl: string | null;
+    command: string | null;
+    expiresAt: string;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdLaunchResponse =
+  PostV1ManagedDeploymentsByDeploymentIdLaunchResponses[keyof PostV1ManagedDeploymentsByDeploymentIdLaunchResponses];
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollData = {
+  body: {
+    headers: {
+      authorization: string;
+      "x-amz-date": string;
+      "x-amz-security-token": string;
+      "x-openwork-proof": string;
+    };
+  };
+  path: {
+    deploymentId: string;
+    runId: string;
+  };
+  query?: never;
+  url: "/v1/managed-deployments/{deploymentId}/runs/{runId}/enroll";
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollError =
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollErrors[keyof PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollErrors];
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponses = {
+  /**
+   * Enroll a customer-side installer run
+   */
+  200: {
+    token: string;
+    expiresAt: string;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponse =
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponses[keyof PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponses];
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsData = {
+  body: {
+    sequence: number;
+    step:
+      | "runner_connected"
+      | "release_verified"
+      | "account_verified"
+      | "infrastructure_applied"
+      | "services_ready"
+      | "health_verified";
+    outcome: "succeeded" | "failed";
+    errorCode?:
+      | "release_verification_failed"
+      | "infrastructure_failed"
+      | "certificate_failed"
+      | "service_unhealthy"
+      | "health_check_failed"
+      | "runner_failed";
+  };
+  path: {
+    deploymentId: string;
+    runId: string;
+  };
+  query?: never;
+  url: "/v1/managed-deployments/{deploymentId}/runs/{runId}/events";
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsError =
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsErrors[keyof PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsErrors];
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponses = {
+  /**
+   * Report an installer milestone
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponse =
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponses[keyof PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponses];
+
+export type PostV1ManagedDeploymentsByDeploymentIdHeartbeatData = {
+  body?: never;
+  path: {
+    deploymentId: string;
+  };
+  query?: never;
+  url: "/v1/managed-deployments/{deploymentId}/heartbeat";
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdHeartbeatErrors = {
+  /**
+   * Invalid input.
+   */
+  400: {
+    error: string;
+  };
+  /**
+   * Authentication required.
+   */
+  401: {
+    error: string;
+  };
+  /**
+   * Owner or super-admin approval required.
+   */
+  403: {
+    error: string;
+  };
+  /**
+   * Deployment or feature unavailable.
+   */
+  404: {
+    error: string;
+  };
+  /**
+   * The deployment cannot accept this operation now.
+   */
+  409: {
+    error: string;
+  };
+  /**
+   * Too many attempts.
+   */
+  429: {
+    error: string;
+  };
+  /**
+   * No installer release is configured.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdHeartbeatError =
+  PostV1ManagedDeploymentsByDeploymentIdHeartbeatErrors[keyof PostV1ManagedDeploymentsByDeploymentIdHeartbeatErrors];
+
+export type PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponses = {
+  /**
+   * Report installation health
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponse =
+  PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponses[keyof PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponses];
 
 export type GetV1ApiKeysData = {
   body?: never;

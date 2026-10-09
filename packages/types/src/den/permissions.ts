@@ -27,6 +27,7 @@ export const PERMISSION_AREAS = {
   sharing: { label: "Sharing" },
   security: { label: "Security and sign-in" },
   desktop: { label: "Desktop app" },
+  deployments: { label: "Deployments" },
   billing: { label: "Billing" },
   models: { label: "Models and providers" },
   gateway: { label: "AI Gateway" },
@@ -239,6 +240,21 @@ export const PERMISSIONS = {
     area: "desktop",
     label: "Manage desktop policies",
     description: "Create, change and delete desktop app policies.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+
+  // Deployments
+  "deployments.view": {
+    area: "deployments",
+    label: "View deployments",
+    description: "See the organization's installations in its own cloud accounts and which clouds can be launched.",
+    defaultOn: ADMIN,
+  },
+  "deployments.manage": {
+    area: "deployments",
+    label: "Manage deployments",
+    description: "Create, launch, update and remove installations in the organization's own cloud accounts.",
     defaultOn: OWNER_ONLY,
     sensitive: true,
   },

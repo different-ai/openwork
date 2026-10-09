@@ -10,6 +10,11 @@
       "bun": "./src/google-drive-upload.ts",
       "default": "./dist/google-drive-upload.js"
     },
+    "./den/managed-deployments": {
+      "types": "./src/den/managed-deployments.ts",
+      "development": "./src/den/managed-deployments.ts",
+      "default": "./src/den/managed-deployments.ts"
+    },
     "./cloud-model-fast": {
       "types": "./src/cloud-model-fast.ts",
       "development": "./src/cloud-model-fast.ts",
@@ -197,6 +202,7 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@openwork/managed-deployments": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {

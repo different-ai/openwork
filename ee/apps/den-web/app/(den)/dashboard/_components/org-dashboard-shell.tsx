@@ -23,8 +23,10 @@ import {
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
+  getDeploymentsRoute,
   getDesktopPoliciesRoute,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   getIntegrationsRoute,
   getLibraryRoute,
   getMcpConnectionsRoute,
@@ -41,7 +43,6 @@ import {
   getScimRoute,
   getWebRoute,
   getPermissionsRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -264,6 +265,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   ) {
     return "Advanced";
   }
+  if (pathname.startsWith(getDeploymentsRoute(orgSlug))) {
+    return "Deployments";
+  }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";
   }
@@ -452,6 +456,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
     permissionsEnabled: orgFeatureEnabled(orgContext, "permissions"),
+    managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
   });
 
   const orgSwitcher = isSingleOrgMode ? (

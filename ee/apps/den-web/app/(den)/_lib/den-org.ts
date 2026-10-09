@@ -153,6 +153,8 @@ export type DenOrgAccessFlags = {
   canViewDesktopPolicies: boolean;
   /** `desktop_policies.manage` */
   canManageDesktopPolicies: boolean;
+  canViewDeployments: boolean;
+  canManageDeployments: boolean;
   /** `egress_diagnostics.view` */
   canViewEgressDiagnostics: boolean;
   /** `egress_diagnostics.manage` */
@@ -600,6 +602,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canManageWebOrigins: can("web_origins.manage"),
     canViewDesktopPolicies: can("desktop_policies.view"),
     canManageDesktopPolicies: can("desktop_policies.manage"),
+    canViewDeployments: can("deployments.view"),
+    canManageDeployments: can("deployments.manage"),
     canViewEgressDiagnostics: can("egress_diagnostics.view"),
     canManageEgressDiagnostics: can("egress_diagnostics.manage"),
     canViewBilling: can("billing.view"),
@@ -805,6 +809,10 @@ export function getBillingRoute(orgSlug?: string | null): string {
 
 export function getOrgSettingsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/org-settings`;
+}
+
+export function getDeploymentsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/deployments`;
 }
 
 export function getDiagnosticsRoute(orgSlug?: string | null): string {

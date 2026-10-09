@@ -53,6 +53,13 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  managedDeployments: {
+    label: "Managed deployments",
+    description: "Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork.",
+    since: "2026-10",
+    deployments: ["cloud"],
+    default: false,
+  },
   installLinks: {
     label: "Install links",
     description: "Workspace admins can create desktop install links for their organization.",

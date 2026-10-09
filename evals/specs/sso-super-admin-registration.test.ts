@@ -3,7 +3,7 @@ import { denFetch, freshSession } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { inviteMember, server, test } from "@openwork/testkit";
 
-// Super-admin was retired (migration 0135_deprecate_super_admin). Registering
+// Super-admin was retired (the deprecate_super_admin migration). Registering
 // SSO used to need super-admin, so it now needs the sso.manage permission,
 // which only the owner holds by default: plain admins keep what they could do
 // before, and that never included SSO.

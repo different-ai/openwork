@@ -89,6 +89,8 @@ import type {
   DeleteV1LlmProvidersByLlmProviderIdMyCredentialErrors,
   DeleteV1LlmProvidersByLlmProviderIdMyCredentialResponses,
   DeleteV1LlmProvidersByLlmProviderIdResponses,
+  DeleteV1ManagedDeploymentsByDeploymentIdErrors,
+  DeleteV1ManagedDeploymentsByDeploymentIdResponses,
   DeleteV1MarketplacesByKeyByExternalKeyResponses,
   DeleteV1MarketplacesByMarketplaceIdAccessByGrantIdErrors,
   DeleteV1MarketplacesByMarketplaceIdAccessByGrantIdResponses,
@@ -365,6 +367,10 @@ import type {
   GetV1LlmProvidersByLlmProviderIdResponses,
   GetV1LlmProvidersErrors,
   GetV1LlmProvidersResponses,
+  GetV1ManagedDeploymentsConfigurationErrors,
+  GetV1ManagedDeploymentsConfigurationResponses,
+  GetV1ManagedDeploymentsErrors,
+  GetV1ManagedDeploymentsResponses,
   GetV1MarketplacesByKeyByExternalKeyErrors,
   GetV1MarketplacesByKeyByExternalKeyResponses,
   GetV1MarketplacesByMarketplaceIdAccessErrors,
@@ -767,6 +773,16 @@ import type {
   PostV1LlmProvidersResponses,
   PostV1LlmProvidersTestConnectionErrors,
   PostV1LlmProvidersTestConnectionResponses,
+  PostV1ManagedDeploymentsByDeploymentIdHeartbeatErrors,
+  PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponses,
+  PostV1ManagedDeploymentsByDeploymentIdLaunchErrors,
+  PostV1ManagedDeploymentsByDeploymentIdLaunchResponses,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
+  PostV1ManagedDeploymentsErrors,
+  PostV1ManagedDeploymentsResponses,
   PostV1MarketplacesByMarketplaceIdAccessErrors,
   PostV1MarketplacesByMarketplaceIdAccessResponses,
   PostV1MarketplacesByMarketplaceIdArchiveErrors,
@@ -3062,6 +3078,282 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Read which clouds can be launched
+   *
+   * Lists the clouds this OpenWork environment can install into and the published installer version for each.
+   */
+  public getV1ManagedDeploymentsConfiguration<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<
+      GetV1ManagedDeploymentsConfigurationResponses,
+      GetV1ManagedDeploymentsConfigurationErrors,
+      ThrowOnError
+    >({ url: "/v1/managed-deployments/configuration", ...options });
+  }
+
+  /**
+   * List the organization's managed deployments
+   *
+   * Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update.
+   */
+  public getV1ManagedDeployments<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1ManagedDeploymentsResponses,
+      GetV1ManagedDeploymentsErrors,
+      ThrowOnError
+    >({ url: "/v1/managed-deployments", ...options });
+  }
+
+  /**
+   * Create a managed deployment
+   *
+   * Records a new installation target (cloud account, region, address). Nothing is launched until an owner prepares and approves it in their cloud.
+   */
+  public postV1ManagedDeployments<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      domainName: string;
+      ownerEmail: string;
+      size?: "small";
+      provider: "aws";
+      target: {
+        accountId: string;
+        region:
+          | "us-east-1"
+          | "us-east-2"
+          | "us-west-2"
+          | "eu-west-1"
+          | "eu-central-1"
+          | "ap-southeast-1"
+          | "ap-southeast-2";
+        route53ZoneId: string;
+      };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "domainName" },
+            { in: "body", key: "ownerEmail" },
+            { in: "body", key: "size" },
+            { in: "body", key: "provider" },
+            { in: "body", key: "target" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1ManagedDeploymentsResponses,
+      PostV1ManagedDeploymentsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Remove a deployment that was never installed
+   *
+   * Deletes a deployment record that never reached the customer's cloud. Installed deployments stay tracked and answer 409.
+   */
+  public deleteV1ManagedDeploymentsByDeploymentId<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "deploymentId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1ManagedDeploymentsByDeploymentIdResponses,
+      DeleteV1ManagedDeploymentsByDeploymentIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments/{deploymentId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Prepare an install, retry or approved update
+   *
+   * Creates or reuses an installer run pinned to the published release and returns a console approval link (install) or an account-checked cloud shell command (retry, update).
+   */
+  public postV1ManagedDeploymentsByDeploymentIdLaunch<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+      kind?: "install" | "update" | "retry";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "deploymentId" },
+            { in: "body", key: "kind" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1ManagedDeploymentsByDeploymentIdLaunchResponses,
+      PostV1ManagedDeploymentsByDeploymentIdLaunchErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments/{deploymentId}/launch",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Enroll a customer-side installer run
+   *
+   * Called by the installer in the customer's cloud. Verifies its signed cloud identity and run challenge, then issues a single-use run token.
+   */
+  public postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnroll<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+      runId: string;
+      headers: {
+        authorization: string;
+        "x-amz-date": string;
+        "x-amz-security-token": string;
+        "x-openwork-proof": string;
+      };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "deploymentId" },
+            { in: "path", key: "runId" },
+            { in: "body", key: "headers" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments/{deploymentId}/runs/{runId}/enroll",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Report an installer milestone
+   *
+   * Called by an enrolled installer to report the next ordered milestone with an allowlisted outcome code.
+   */
+  public postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEvents<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+      runId: string;
+      sequence: number;
+      step:
+        | "runner_connected"
+        | "release_verified"
+        | "account_verified"
+        | "infrastructure_applied"
+        | "services_ready"
+        | "health_verified";
+      outcome: "succeeded" | "failed";
+      errorCode?:
+        | "release_verification_failed"
+        | "infrastructure_failed"
+        | "certificate_failed"
+        | "service_unhealthy"
+        | "health_check_failed"
+        | "runner_failed";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "deploymentId" },
+            { in: "path", key: "runId" },
+            { in: "body", key: "sequence" },
+            { in: "body", key: "step" },
+            { in: "body", key: "outcome" },
+            { in: "body", key: "errorCode" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments/{deploymentId}/runs/{runId}/events",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Report installation health
+   *
+   * Called by the read-only health agent in the customer's cloud every 5 minutes. The signed identity is bound to the exact report body; replays are rejected.
+   */
+  public postV1ManagedDeploymentsByDeploymentIdHeartbeat<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "deploymentId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponses,
+      PostV1ManagedDeploymentsByDeploymentIdHeartbeatErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments/{deploymentId}/heartbeat",
+      ...options,
+      ...params,
     });
   }
 

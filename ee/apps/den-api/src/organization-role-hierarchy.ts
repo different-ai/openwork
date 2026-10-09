@@ -20,7 +20,7 @@ export const ASSIGNABLE_ORGANIZATION_ROLES: readonly AssignableOrganizationRole[
 
 /**
  * Super-admin was merged into admin, and custom roles were removed (migration
- * 0135_deprecate_super_admin rewrites stored role lists to member / admin / owner).
+ * the *_deprecate_super_admin migration rewrites stored role lists to member / admin / owner).
  * A stray value, e.g. from an old invitation link or a client that still sends
  * it, is read as admin rather than rejected or treated as a custom role.
  */
