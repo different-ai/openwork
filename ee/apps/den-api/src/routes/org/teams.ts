@@ -129,7 +129,7 @@ async function teamGrantsDenial(tx: TeamMutationTransaction, payload: ResourceOr
   teamId: TeamId | null
   grantsOrganizationAdmin: boolean
   adminDefaultsOnly?: boolean
-  adminTeamChange: { makesAdminTeam: boolean; addsMembersToAdminTeam: boolean } | null
+  adminTeamChange: Omit<Parameters<typeof decideAdminTeamChange>[0], "actor"> | null
   message: string
 }): Promise<TeamGrantsFailure | null> {
   const decision = await teamGrantDecisionInTransaction({
@@ -292,6 +292,11 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   const notHeld = heldInTransaction(actor, touchesAdminTeam ? ["teams.manage", "teams.manage_admin"] : ["teams.manage"])
   if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
   const nextGrantsOrganizationAdmin = input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin
+  if (team.grantsOrganizationAdmin && !nextGrantsOrganizationAdmin) {
+    // Turning an Admin team off takes admin status away from its members.
+    const denial = decideAdminTeamChange({ actor, unmakesAdminTeam: true })
+    if (denial) return c.json({ error: "forbidden" as const, ...requiresAdminError(denial.message) }, 403)
+  }
   if (nextGrantsOrganizationAdmin && !team.grantsOrganizationAdmin) {
     const denied = await teamGrantsDenial(tx, payload, actor, {
       teamId: team.id,
@@ -324,6 +329,12 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       .from(TeamMemberTable)
       .where(eq(TeamMemberTable.teamId, team.id)))
       .map((row) => row.id))
+    // Taking people out of an Admin team takes away their admin status.
+    const nextMemberIds = new Set<MemberId | null>(memberIds)
+    if (team.grantsOrganizationAdmin && [...currentMemberIds].some((memberId) => !nextMemberIds.has(memberId))) {
+      const denial = decideAdminTeamChange({ actor, removesMembersFromAdminTeam: true })
+      if (denial) return c.json({ error: "forbidden" as const, ...requiresAdminError(denial.message) }, 403)
+    }
     if (memberIds.some((memberId) => !currentMemberIds.has(memberId))) {
       const denied = await teamGrantsDenial(tx, payload, actor, {
         teamId: team.id,
@@ -414,6 +425,11 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   const actor = await resolveTeamActorInTransaction(tx, payload.organization.id, payload.currentMember.id)
   const notHeld = heldInTransaction(actor, team.grantsOrganizationAdmin ? ["teams.manage", "teams.manage_admin"] : ["teams.manage"])
   if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
+  if (team.grantsOrganizationAdmin) {
+    // Deleting an Admin team takes admin status away from its members.
+    const denial = decideAdminTeamChange({ actor, deletesAdminTeam: true })
+    if (denial) return c.json({ error: "forbidden" as const, ...requiresAdminError(denial.message) }, 403)
+  }
 
     const removedAt = new Date()
     await invalidateTeamInferenceOAuth(tx, team.id)
@@ -608,7 +624,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         200: jsonResponse("Team updated successfully.", teamResponseSchema),
         400: jsonResponse("The team update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update teams.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in. Admin teams also need Manage Admin teams, and with Permissions on, adding people needs every permission the team grants, and only the owner or an admin can make a team an Admin team or add people to one.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in. Admin teams also need Manage Admin teams, and with Permissions on, adding people needs every permission the team grants, and only the owner or an admin can make a team an Admin team, turn one off, or add people to or remove people from one.", forbiddenSchema),
         404: jsonResponse("The team, organization, or a referenced member could not be found.", notFoundSchema),
       },
     }),
@@ -628,7 +644,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         204: emptyResponse("Team deleted successfully."),
         400: jsonResponse("The team deletion path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to delete teams.", unauthorizedSchema),
-        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in; deleting an Admin team also needs Manage Admin teams.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage teams permission and a recent sign-in; deleting an Admin team also needs Manage Admin teams, and with Permissions on only the owner or an admin can delete one.", forbiddenSchema),
         404: jsonResponse("The team or organization could not be found.", notFoundSchema),
       },
     }),

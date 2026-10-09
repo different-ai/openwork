@@ -154,23 +154,32 @@ export function decideMemberRemoval(input: {
 }
 
 export const ADMIN_TEAM_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can make a team an Admin team or add people to one."
+export const ADMIN_TEAM_REMOVAL_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can delete an Admin team, turn it off, or remove people from it."
 
 /**
- * Making a team an Admin team, or adding people to one. Membership of an
- * Admin team makes someone an effective admin, which carries powers beyond the
+ * Any change to who is admin through an Admin team. Membership of an Admin
+ * team makes someone an effective admin, which carries powers beyond the
  * catalog (changing Admin permissions, changing and removing admins). With the
  * Permissions feature on, `teams.manage_admin` can be granted to non-admins
- * through team sets, so these changes also need the actor to be the owner or
- * an effective admin. SCIM writes Admin-team membership through
- * scim-groups.ts, not this rule. With the feature off nothing changes. Null
- * means allowed.
+ * through team sets, so both granting admin status (making a team an Admin
+ * team, adding people to one) and taking it away (turning an Admin team off,
+ * removing people from one, deleting one) also need the actor to be the owner
+ * or an effective admin, the same as changing or removing an admin directly.
+ * SCIM writes Admin-team membership through scim-groups.ts, not this rule.
+ * With the feature off nothing changes. Null means allowed.
  */
 export function decideAdminTeamChange(input: {
   actor: Pick<MemberPermissions, "featureEnabled" | "isOwner" | "isAdmin">
-  makesAdminTeam: boolean
-  addsMembersToAdminTeam: boolean
+  makesAdminTeam?: boolean
+  addsMembersToAdminTeam?: boolean
+  unmakesAdminTeam?: boolean
+  removesMembersFromAdminTeam?: boolean
+  deletesAdminTeam?: boolean
 }): { reason: "admin_team_requires_admin"; message: string } | null {
   if (!input.actor.featureEnabled || input.actor.isOwner || input.actor.isAdmin) return null
-  if (!input.makesAdminTeam && !input.addsMembersToAdminTeam) return null
-  return { reason: "admin_team_requires_admin", message: ADMIN_TEAM_REQUIRES_ADMIN_MESSAGE }
+  if (input.makesAdminTeam || input.addsMembersToAdminTeam) return { reason: "admin_team_requires_admin", message: ADMIN_TEAM_REQUIRES_ADMIN_MESSAGE }
+  if (input.unmakesAdminTeam || input.removesMembersFromAdminTeam || input.deletesAdminTeam) {
+    return { reason: "admin_team_requires_admin", message: ADMIN_TEAM_REMOVAL_REQUIRES_ADMIN_MESSAGE }
+  }
+  return null
 }

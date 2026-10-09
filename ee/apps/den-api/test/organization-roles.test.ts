@@ -226,3 +226,19 @@ test("adminGrantDenial: the owner, or an admin holding every Admin default key; 
   // Making an Admin team or adding people to one needs the owner or an admin regardless of the set.
   assert.equal(decideAdminTeamChange({ actor: caller({ keys: ["teams.manage", "teams.manage_admin"] }), makesAdminTeam: true, addsMembersToAdminTeam: false })?.reason, "admin_team_requires_admin")
 })
+
+test("with Permissions on only the owner or an admin can take admin status away through an Admin team", () => {
+  const teamGranted = caller({ keys: ["teams.manage", "teams.manage_admin", ...ADMIN_DEFAULTS] })
+  for (const change of [{ unmakesAdminTeam: true }, { removesMembersFromAdminTeam: true }, { deletesAdminTeam: true }]) {
+    const denial = decideAdminTeamChange({ actor: teamGranted, ...change })
+    assert.equal(denial?.reason, "admin_team_requires_admin")
+    assert.equal(denial?.message, "Only the owner or an admin can delete an Admin team, turn it off, or remove people from it.")
+    assert.equal(decideAdminTeamChange({ actor: caller({ isAdmin: true }), ...change }), null)
+    assert.equal(decideAdminTeamChange({ actor: caller({ isOwner: true }), ...change }), null)
+    // Feature off: unchanged.
+    assert.equal(decideAdminTeamChange({ actor: caller({ featureEnabled: false, keys: ["teams.manage", "teams.manage_admin"] }), ...change }), null)
+  }
+  // Granting keeps its own message; no change at all is allowed.
+  assert.equal(decideAdminTeamChange({ actor: teamGranted, makesAdminTeam: true, removesMembersFromAdminTeam: true })?.message, "Only the owner or an admin can make a team an Admin team or add people to one.")
+  assert.equal(decideAdminTeamChange({ actor: teamGranted }), null)
+})

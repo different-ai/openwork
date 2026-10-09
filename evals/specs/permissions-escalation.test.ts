@@ -600,4 +600,42 @@ test("with Permissions on, permissions granted through a team cannot mint a last
     expect(add.status, summary(add)).toBe(200);
     expect(missing).toEqual([]);
   });
+
+  await step("Tess, holding Manage teams and Manage Admin teams through her team, cannot delete the Ops admins team, turn it off, or remove people from it; Adam, an admin, can", async () => {
+    const message = "Only the owner or an admin can delete an Admin team, turn it off, or remove people from it.";
+    const tessKeys = (await memberContext(world, world.tess)).permissions;
+    const remove = await world.request(world.tess, "PATCH", `/v1/teams/${opsAdmins}`, { memberIds: [world.ids.maya] });
+    const turnOff = await world.request(world.tess, "PATCH", `/v1/teams/${opsAdmins}`, { grantsOrganizationAdmin: false });
+    const deleted = await world.request(world.tess, "DELETE", `/v1/teams/${opsAdmins}`);
+    const noraKept = (await memberContext(world, world.nora)).permissions;
+    const adamRemove = await world.request(world.adam, "PATCH", `/v1/teams/${opsAdmins}`, { memberIds: [world.ids.maya] });
+    const noraAfter = (await memberContext(world, world.nora)).permissions;
+    const adamDelete = await world.request(world.adam, "DELETE", `/v1/teams/${opsAdmins}`);
+    const mayaAfter = (await memberContext(world, world.maya)).permissions;
+    const holds = tessKeys.includes("teams.manage") && tessKeys.includes("teams.manage_admin");
+    const ok = holds
+      && remove.status === 403 && field(remove.body, "message") === message
+      && turnOff.status === 403 && field(turnOff.body, "message") === message
+      && deleted.status === 403 && field(deleted.body, "message") === message
+      && adminDefaults.every((key) => noraKept.includes(key))
+      && adamRemove.status === 200 && !noraAfter.includes("teams.manage")
+      && adamDelete.status === 204 && !mayaAfter.includes("teams.manage");
+    evidence.recordAssertionEvidence(
+      "Taking admin status away through an Admin team needs the owner or an admin",
+      `Tess holds teams.manage and teams.manage_admin: ${holds}; Tess PATCH Ops admins without Nora → ${said(remove)}: “${String(field(remove.body, "message"))}”; Tess turns it off → ${said(turnOff)}; Tess DELETE it → ${said(deleted)}; Nora still holds every Admin permission: ${adminDefaults.every((key) => noraKept.includes(key))}; Adam removes Nora → ${adamRemove.status}, Nora holds Manage teams (an Admin permission): ${noraAfter.includes("teams.manage")}; Adam deletes the team → ${adamDelete.status}, Maya holds Manage teams: ${mayaAfter.includes("teams.manage")}`,
+      ok,
+    );
+    expect(holds).toBe(true);
+    expect(remove.status, summary(remove)).toBe(403);
+    expect(remove.body).toMatchObject({ error: "forbidden", message });
+    expect(turnOff.status, summary(turnOff)).toBe(403);
+    expect(turnOff.body).toMatchObject({ error: "forbidden", message });
+    expect(deleted.status, summary(deleted)).toBe(403);
+    expect(deleted.body).toMatchObject({ error: "forbidden", message });
+    expect(noraKept).toEqual(expect.arrayContaining(adminDefaults));
+    expect(adamRemove.status, summary(adamRemove)).toBe(200);
+    expect(noraAfter).not.toContain("teams.manage");
+    expect(adamDelete.status, summary(adamDelete)).toBe(204);
+    expect(mayaAfter).not.toContain("teams.manage");
+  });
 });

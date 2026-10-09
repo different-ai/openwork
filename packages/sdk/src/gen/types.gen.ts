@@ -29527,7 +29527,7 @@ export type DeleteV1TeamsByTeamIdErrors = {
    */
   401: UnauthorizedError;
   /**
-   * The caller needs the Manage teams permission and a recent sign-in; deleting an Admin team also needs Manage Admin teams.
+   * The caller needs the Manage teams permission and a recent sign-in; deleting an Admin team also needs Manage Admin teams, and with Permissions on only the owner or an admin can delete one.
    */
   403: ForbiddenError;
   /**
@@ -29603,7 +29603,7 @@ export type PatchV1TeamsByTeamIdErrors = {
    */
   401: UnauthorizedError;
   /**
-   * The caller needs the Manage teams permission and a recent sign-in. Admin teams also need Manage Admin teams, and with Permissions on, adding people needs every permission the team grants, and only the owner or an admin can make a team an Admin team or add people to one.
+   * The caller needs the Manage teams permission and a recent sign-in. Admin teams also need Manage Admin teams, and with Permissions on, adding people needs every permission the team grants, and only the owner or an admin can make a team an Admin team, turn one off, or add people to or remove people from one.
    */
   403: ForbiddenError;
   /**
