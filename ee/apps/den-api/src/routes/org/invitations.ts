@@ -256,6 +256,14 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         .where(eq(OrganizationTable.id, payload.organization.id))
         .for("update")
 
+      // The route checked Invite people before the transaction; re-check it against the inviter's
+      // permissions resolved through the transaction, so a revocation committed since is seen
+      // before anything is written (new and refreshed invitations alike).
+      const inviter = await resolvePermissionsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id, database: tx })
+      if (!inviter.has("invitations.manage")) {
+        return { status: "role_error" as const, validation: { ok: false as const, error: "permission" as const, response: permissionDeniedResponse("invitations.manage") } }
+      }
+
       const existingInvitationRows = await tx
         .select()
         .from(InvitationTable)

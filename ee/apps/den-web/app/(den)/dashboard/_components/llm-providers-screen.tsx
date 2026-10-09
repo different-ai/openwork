@@ -36,7 +36,7 @@ function LlmProviderList({ providers, orgSlug }: { providers: DenLlmProvider[]; 
   return (
     <DenList>
       {providers.map((provider) => {
-        const members = provider.access.members.length;
+        const members = provider.access.memberCount;
         const teams = provider.access.teams.length;
         const accessText = provider.access.allMembers
           ? "Everyone in the org"
@@ -57,7 +57,7 @@ function LlmProviderList({ providers, orgSlug }: { providers: DenLlmProvider[]; 
             chips={
               <>
                 <DenChip>{plural(provider.models.length, "model")}</DenChip>
-                {!provider.hasApiKey ? (
+                {!provider.hasApiKey && !provider.configRedacted ? (
                   <DenChip tone="warning" icon={KeyRound}>
                     Credential missing
                   </DenChip>

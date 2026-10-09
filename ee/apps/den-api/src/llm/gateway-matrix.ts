@@ -437,16 +437,18 @@ export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], u
 }
 
 /**
- * Management details include who created each credential set and whose each member credential is.
- * `identities` (default false) returns those names and emails (and those of LiteLLM people needing
- * attention); pass it only for callers holding Manage Gateway providers. View-only callers get createdBy
- * omitted and null memberName/memberEmail and attention name/email.
+ * Management details include people (who created each credential set, whose each member credential
+ * is, LiteLLM people needing attention) and upstream configuration (the upstream base URL, OAuth
+ * client, Entra tenant and IAM Identity Center settings). `managerDetails` (default false) returns
+ * them; pass it only for callers holding Manage Gateway providers. View-only callers get createdBy,
+ * oauthTenantId, awsSso and settings.upstreamBaseUrl omitted, and null memberName/memberEmail,
+ * attention name/email, oauthClientId and litellm.baseUrl.
  */
-export type GatewaySummaryOptions = { identities?: boolean }
+export type GatewaySummaryOptions = { managerDetails?: boolean }
 export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true, options?: GatewaySummaryOptions): Promise<GatewayProviderDetails>
 export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options?: GatewaySummaryOptions): Promise<GatewayProviderSummary>
 export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options: GatewaySummaryOptions = {}): Promise<GatewayProviderDetails | GatewayProviderSummary> {
-  const identities = manage && options.identities === true
+  const identities = manage && options.managerDetails === true
   const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt)))
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
   // Read-only: never refreshes the catalog or locks the provider. Catalog sync
@@ -512,8 +514,8 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
       ...(manage ? { createdAt: set.created_at.toISOString() } : {}),
       ...(identities ? { createdBy: set.created_by_org_membership_id ? { id: set.created_by_org_membership_id, name: creator?.name ?? null, email: creator?.email ?? null } : null } : {}),
       credentialStatus: provider.status === "active" && set.status === "active" && configured && usable ? "ready" : set.credential_mode === "member" ? "member_auth_required" : "org_credential_missing",
-      oauthClientId: set.oauth_client_id, hasOauthClientSecret: Boolean(set.oauth_client_secret),
-      ...(set.oauth_tenant_id ? { oauthTenantId: set.oauth_tenant_id } : {}), ...(awsSso ? { awsSso } : {}) }
+      oauthClientId: identities ? set.oauth_client_id : null, hasOauthClientSecret: Boolean(set.oauth_client_secret),
+      ...(identities && set.oauth_tenant_id ? { oauthTenantId: set.oauth_tenant_id } : {}), ...(identities && awsSso ? { awsSso } : {}) }
   })
   // LiteLLM keys created by OpenWork need nothing from the person once any key exists.
   const liteLlmSettings = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings) : null
@@ -558,7 +560,9 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const modelGroups: GatewayModelGroup[] = groups.map((group) => ({ id: group.id, name: group.name, description: group.description, status: group.status,
     modelIds: (modelsByGroupId.get(group.id) ?? []).map((model) => model.model_id) }))
   const status = await liteLlmStatus(provider)
-  const litellm = status && !identities ? { ...status, attention: status.attention.map((entry) => ({ ...entry, name: null, email: null })) } : status
-  return { ...summary, ...(litellm ? { litellm } : {}), settings: publicProviderSettings(provider.settings), modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
+  const litellm = status && !identities ? { ...status, baseUrl: null, attention: status.attention.map((entry) => ({ ...entry, name: null, email: null })) } : status
+  const settings = publicProviderSettings(provider.settings)
+  if (!identities) delete settings.upstreamBaseUrl
+  return { ...summary, ...(litellm ? { litellm } : {}), settings, modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
     credentials: credentials.map(({ credential, memberName, memberEmail }) => ({ id: credential.id, credentialSetId: credential.credential_set_id, subject: credential.subject, orgMembershipId: credential.org_membership_id, memberName: identities ? memberName : null, memberEmail: identities ? memberEmail : null, kind: credential.kind, status: credential.status, expiresAt: credential.expires_at?.toISOString() ?? null })) }
 }

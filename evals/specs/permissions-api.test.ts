@@ -378,24 +378,28 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
     expect(ownerChangers.every((person) => typeof person.email === "string" && String(person.email).endsWith("@example.test"))).toBe(true);
   });
 
-  await step("Tess, allowed to view every provider but not edit them, gets only the non-secret fields of a provider's configuration, so no credential stored anywhere in it; the owner who added it still sees it", async () => {
+  await step("Tess, allowed to view every provider but not edit or use them, sees only a provider's name, package and models: no URL, host, env name, credential or who has access; the owner who added it still sees everything", async () => {
     const inlineSecret = `inline-secret-${Date.now()}`;
+    const plantedEnv = `PLANTED_${Date.now()}_TOKEN`;
+    const plantedHost = `${inlineSecret}.inference.eval.invalid`;
     const allowView = await world.request(world.owner, "PUT", `/v1/permissions/sets/${editorsSetId}/permissions`, { changes: [{ key: "llm_providers.view", status: "allow" }] });
     expect(allowView.status, summary(allowView)).toBe(200);
     const created = await world.request(world.owner, "POST", "/v1/llm-providers", {
       name: "Inline credential provider",
       source: "custom",
+      memberIds: [world.ids.maya],
       teamIds: [],
       customConfig: {
         id: "inline-credential",
         name: "Inline credential",
         npm: "@ai-sdk/openai-compatible",
-        env: ["INLINE_API_KEY"],
-        api: `https://proxy:${inlineSecret}@inference.eval.invalid/v1/key/${inlineSecret}?api_key=${inlineSecret}`,
+        env: ["INLINE_API_KEY", plantedEnv],
+        doc: `https://${plantedHost}/docs`,
+        api: `https://proxy:${inlineSecret}@${plantedHost}/v1/key/${inlineSecret}?api_key=${inlineSecret}`,
         bearer: inlineSecret,
         routing: [[{ region: "eu", credential: inlineSecret }], [[inlineSecret]]],
-        options: { baseURL: `https://inference.eval.invalid/${inlineSecret}/v1`, apiKey: inlineSecret, headers: { Authorization: `Bearer ${inlineSecret}` } },
-        models: [{ id: "witness", name: "Witness", bearer: inlineSecret, fallbacks: [[inlineSecret]], options: { apiKey: inlineSecret }, limit: { context: 32000, input: 32000, output: 32000 } }],
+        options: { baseURL: `https://${plantedHost}/v1`, apiKey: inlineSecret, headers: { Authorization: `Bearer ${inlineSecret}` } },
+        models: [{ id: "witness", name: "Witness", bearer: inlineSecret, fallbacks: [[inlineSecret]], options: { apiKey: inlineSecret, baseURL: `https://${plantedHost}` }, limit: { context: 32000, input: 32000, output: 32000 } }],
       },
     });
     expect(created.status, summary(created)).toBe(201);
@@ -404,20 +408,26 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
     const tessById = await world.request(world.tess, "GET", `/v1/llm-providers/${providerId}`);
     const tessList = await world.request(world.tess, "GET", "/v1/llm-providers?scope=manageable");
     const ownerById = await world.request(world.owner, "GET", `/v1/llm-providers/${providerId}`);
-    const tessConfig = field(field(tessById.body, "llmProvider"), "providerConfig");
+    const tessProvider = field(tessById.body, "llmProvider");
     const tessListed = rows(field(tessList.body, "llmProviders")).find((provider) => provider.id === providerId);
-    const tessModel = rows(field(field(tessById.body, "llmProvider"), "models"))[0];
-    const leaked = [tessById.text, tessList.text].some((text) => text.includes(inlineSecret));
+    const tessModel = rows(field(tessProvider, "models"))[0];
+    const tessAccess = field(tessProvider, "access");
+    const planted = [inlineSecret, plantedHost, "inference.eval.invalid", "INLINE_API_KEY", plantedEnv, "://", "@example.test"];
+    const tessResponses = JSON.stringify([tessById.body, tessList.body]);
+    const found = planted.filter((value) => tessResponses.includes(value));
+    const ownerResponse = JSON.stringify(ownerById.body);
     const ok = tessKeys.includes("llm_providers.view") && !tessKeys.includes("llm_providers.update")
-      && tessById.status === 200 && tessList.status === 200 && tessListed !== undefined && !leaked
-      && field(field(tessById.body, "llmProvider"), "configRedacted") === true && field(tessListed, "configRedacted") === true
-      && field(tessConfig, "api") === "https://inference.eval.invalid"
-      && field(field(tessConfig, "options"), "baseURL") === "https://inference.eval.invalid"
-      && field(field(field(tessModel, "config"), "limit"), "context") === 32000
-      && ownerById.status === 200 && ownerById.text.includes(inlineSecret) && field(field(ownerById.body, "llmProvider"), "configRedacted") === false;
+      && tessById.status === 200 && tessList.status === 200 && tessListed !== undefined && found.length === 0
+      && field(tessProvider, "configRedacted") === true && field(tessListed, "configRedacted") === true
+      && JSON.stringify(field(tessProvider, "providerConfig")) === JSON.stringify({ id: "inline-credential", name: "Inline credential", npm: "@ai-sdk/openai-compatible" })
+      && JSON.stringify(field(tessModel, "config")) === JSON.stringify({ id: "witness", name: "Witness", limit: { context: 32000, input: 32000, output: 32000 } })
+      && JSON.stringify(field(tessProvider, "configuredEnvKeys")) === "[]" && JSON.stringify(field(tessProvider, "runtimeEnvKeys")) === "[]"
+      && field(tessAccess, "membersHidden") === true && rows(field(tessAccess, "members")).length === 2
+      && ownerById.status === 200 && field(field(ownerById.body, "llmProvider"), "configRedacted") === false
+      && ownerResponse.includes(inlineSecret) && ownerResponse.includes(plantedEnv) && ownerResponse.includes("permissions-maya+");
     evidence.recordAssertionEvidence(
-      "A View-only caller gets no inline provider credential",
-      `Stored: api with userinfo, a secret path segment and api_key query, options.baseURL with a secret path segment, options.apiKey, Authorization header, top-level bearer, routing[[{credential}],[[secret]]], model bearer and fallbacks[[secret]]. Tess holds llm_providers.view: ${tessKeys.includes("llm_providers.view")}, llm_providers.update: ${tessKeys.includes("llm_providers.update")}; Tess GET provider → ${tessById.status} configRedacted ${String(field(field(tessById.body, "llmProvider"), "configRedacted"))} providerConfig ${JSON.stringify(tessConfig)} model config ${JSON.stringify(field(tessModel, "config"))}; Tess GET scope=manageable → ${tessList.status}, lists it: ${tessListed !== undefined}; inline secret anywhere in Tess's responses: ${leaked}; owner GET provider → ${ownerById.status}, configRedacted ${String(field(field(ownerById.body, "llmProvider"), "configRedacted"))}, inline secret present: ${ownerById.text.includes(inlineSecret)}`,
+      "A View-only caller gets no URL, host, env name, inline credential or access identity",
+      `Stored: a secret in the api userinfo, hostname label, path and query; the same hostname in doc, options.baseURL and a model's baseURL; env names INLINE_API_KEY and ${plantedEnv}; options.apiKey, an Authorization header, a top-level bearer, routing[[{credential}],[[secret]]], model bearer and fallbacks[[secret]]; access for Maya. Tess holds llm_providers.view: ${tessKeys.includes("llm_providers.view")}, llm_providers.update: ${tessKeys.includes("llm_providers.update")}; Tess GET provider → ${tessById.status} configRedacted ${String(field(tessProvider, "configRedacted"))} providerConfig ${JSON.stringify(field(tessProvider, "providerConfig"))} model config ${JSON.stringify(field(tessModel, "config"))} configuredEnvKeys ${JSON.stringify(field(tessProvider, "configuredEnvKeys"))} runtimeEnvKeys ${JSON.stringify(field(tessProvider, "runtimeEnvKeys"))} access ${JSON.stringify(tessAccess)}; Tess GET scope=manageable → ${tessList.status}, lists it: ${tessListed !== undefined}; planted values found anywhere in Tess's two responses: ${JSON.stringify(found)}; owner GET provider → ${ownerById.status}, configRedacted ${String(field(field(ownerById.body, "llmProvider"), "configRedacted"))}, sees the secret, the env name and Maya's email: ${ownerResponse.includes(inlineSecret) && ownerResponse.includes(plantedEnv) && ownerResponse.includes("permissions-maya+")}`,
       ok,
     );
     expect(tessKeys).toContain("llm_providers.view");
@@ -425,15 +435,20 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
     expect(tessById.status, summary(tessById)).toBe(200);
     expect(tessList.status, summary(tessList)).toBe(200);
     expect(tessListed).toBeDefined();
-    expect(leaked).toBe(false);
-    expect(field(field(tessById.body, "llmProvider"), "configRedacted")).toBe(true);
+    expect(found).toEqual([]);
+    expect(field(tessProvider, "configRedacted")).toBe(true);
     expect(field(tessListed, "configRedacted")).toBe(true);
-    expect(field(tessConfig, "api")).toBe("https://inference.eval.invalid");
-    expect(field(field(tessConfig, "options"), "baseURL")).toBe("https://inference.eval.invalid");
-    expect(field(field(field(tessModel, "config"), "limit"), "context")).toBe(32000);
+    expect(field(tessProvider, "providerConfig")).toEqual({ id: "inline-credential", name: "Inline credential", npm: "@ai-sdk/openai-compatible" });
+    expect(field(tessModel, "config")).toEqual({ id: "witness", name: "Witness", limit: { context: 32000, input: 32000, output: 32000 } });
+    expect(field(tessProvider, "configuredEnvKeys")).toEqual([]);
+    expect(field(tessProvider, "runtimeEnvKeys")).toEqual([]);
+    expect(field(tessAccess, "membersHidden")).toBe(true);
+    expect(rows(field(tessAccess, "members"))).toHaveLength(2);
     expect(ownerById.status, summary(ownerById)).toBe(200);
     expect(field(field(ownerById.body, "llmProvider"), "configRedacted")).toBe(false);
-    expect(ownerById.text).toContain(inlineSecret);
+    expect(ownerResponse).toContain(inlineSecret);
+    expect(ownerResponse).toContain(plantedEnv);
+    expect(ownerResponse).toContain("permissions-maya+");
   });
 
   await step("then Maya's permissions explain where each one comes from", async () => {

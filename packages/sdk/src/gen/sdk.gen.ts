@@ -5388,7 +5388,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by stable key
    *
-   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, URL origins only, model metadata and limits).
+   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true, providerConfig with only id, name and npm, model configs with only id, name and limit, empty configuredEnvKeys and runtimeEnvKeys, and hasApiKey false. People's names and emails in access are only returned to callers who can edit the provider; others get access.membersHidden: true and member entries without identities.
    */
   public getV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5497,7 +5497,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by id
    *
-   * Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, URL origins only, model metadata and limits).
+   * Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true, providerConfig with only id, name and npm, model configs with only id, name and limit, empty configuredEnvKeys and runtimeEnvKeys, and hasApiKey false. People's names and emails in access are only returned to callers who can edit the provider; others get access.membersHidden: true and member entries without identities.
    */
   public getV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5660,7 +5660,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List organization LLM providers
    *
-   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, URL origins only, model metadata and limits).
+   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with configRedacted: true, providerConfig with only id, name and npm, model configs with only id, name and limit, empty configuredEnvKeys and runtimeEnvKeys, and hasApiKey false. People's names and emails in access are only returned for providers the caller can edit; for the others access.membersHidden is true and member entries carry no identities.
    */
   public getV1LlmProviders<ThrowOnError extends boolean = false>(
     parameters?: {

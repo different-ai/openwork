@@ -21,6 +21,8 @@ import {
     getProviderDocUrl,
     getProviderEnvNames,
     getProviderNpmPackage,
+    LLM_PROVIDER_DETAILS_HIDDEN_MESSAGE,
+    LLM_PROVIDER_MEMBERS_HIDDEN_MESSAGE,
     useOrgLlmProviders,
 } from "./llm-provider-data";
 import { RuntimeEnvKeyChip, resolveRuntimeEnvKeys } from "./runtime-env-key";
@@ -283,14 +285,16 @@ export function LlmProviderDetailScreen({
                         </h2>
                     </div>
 
-                    <div
-                        className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
-                    >
-                        <KeyRound className="h-4 w-4" />
-                        {provider.hasApiKey
-                            ? "Credential saved"
-                            : "Credential missing"}
-                    </div>
+                    {provider.configRedacted ? null : (
+                        <div
+                            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-[13px] font-medium ${provider.hasApiKey ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
+                        >
+                            <KeyRound className="h-4 w-4" />
+                            {provider.hasApiKey
+                                ? "Credential saved"
+                                : "Credential missing"}
+                        </div>
+                    )}
                 </div>
 
                 <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -310,14 +314,16 @@ export function LlmProviderDetailScreen({
                             {npmPackage ?? "Not set"}
                         </p>
                     </div>
-                    <div className="rounded-[24px] bg-gray-50 p-5">
-                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-                            API base
-                        </p>
-                        <p className="mt-3 break-all text-[16px] font-medium text-gray-900">
-                            {apiBase ?? "Not set"}
-                        </p>
-                    </div>
+                    {provider.configRedacted ? null : (
+                        <div className="rounded-[24px] bg-gray-50 p-5">
+                            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                                API base
+                            </p>
+                            <p className="mt-3 break-all text-[16px] font-medium text-gray-900">
+                                {apiBase ?? "Not set"}
+                            </p>
+                        </div>
+                    )}
                     <div className="rounded-[24px] bg-gray-50 p-5">
                         <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
                             Updated
@@ -328,26 +334,32 @@ export function LlmProviderDetailScreen({
                     </div>
                 </div>
 
-                <div className="mt-6 flex flex-wrap gap-2">
-                    {envKeys.map((envKey) => (
-                        <RuntimeEnvKeyChip
-                            key={envKey.declared}
-                            envKey={envKey}
-                            className="rounded-full bg-gray-100 px-3 py-1 font-mono text-[12px] font-medium text-gray-600"
-                        />
-                    ))}
-                    {docUrl ? (
-                        <a
-                            href={docUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600 transition hover:bg-gray-200"
-                        >
-                            Docs
-                            <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
-                    ) : null}
-                </div>
+                {provider.configRedacted ? (
+                    <p data-testid="llm-provider-details-hidden" className="mt-6 rounded-[20px] bg-gray-50 px-5 py-4 text-[14px] text-gray-600">
+                        {LLM_PROVIDER_DETAILS_HIDDEN_MESSAGE}
+                    </p>
+                ) : (
+                    <div className="mt-6 flex flex-wrap gap-2">
+                        {envKeys.map((envKey) => (
+                            <RuntimeEnvKeyChip
+                                key={envKey.declared}
+                                envKey={envKey}
+                                className="rounded-full bg-gray-100 px-3 py-1 font-mono text-[12px] font-medium text-gray-600"
+                            />
+                        ))}
+                        {docUrl ? (
+                            <a
+                                href={docUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600 transition hover:bg-gray-200"
+                            >
+                                Docs
+                                <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                        ) : null}
+                    </div>
+                )}
             </section>
 
             <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
@@ -406,7 +418,7 @@ export function LlmProviderDetailScreen({
                         <Users className="h-4 w-4" />
                         {provider.access.allMembers
                             ? "Everyone"
-                            : `${provider.access.members.length + provider.access.teams.length} grants`}
+                            : `${provider.access.memberCount + provider.access.teams.length} grants`}
                     </div>
                 </div>
 
@@ -422,7 +434,11 @@ export function LlmProviderDetailScreen({
                             People
                         </p>
                         <div className="mt-4 grid gap-3">
-                            {provider.access.members.length === 0 ? (
+                            {provider.access.membersHidden ? (
+                                <p data-testid="llm-provider-members-hidden" className="text-[14px] text-gray-500">
+                                    {`${provider.access.memberCount} ${provider.access.memberCount === 1 ? "person" : "people"}. ${LLM_PROVIDER_MEMBERS_HIDDEN_MESSAGE}`}
+                                </p>
+                            ) : provider.access.members.length === 0 ? (
                                 <p className="text-[14px] text-gray-500">
                                     No direct people access yet.
                                 </p>
@@ -476,15 +492,13 @@ export function LlmProviderDetailScreen({
                 </div>
             </section>
 
-            {provider.source === "custom" ? (
+            {provider.source === "custom" && !provider.configRedacted ? (
                 <section className="rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                     <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">
                         Custom provider payload
                     </h2>
                     <p className="mt-2 text-[15px] text-gray-500">
-                        {provider.configRedacted
-                            ? "The non-secret parts of this provider's config. Only people who can edit the provider see the rest."
-                            : "The raw provider config saved for this custom source."}
+                        The raw provider config saved for this custom source.
                     </p>
                     <pre className="mt-6 overflow-x-auto rounded-[24px] bg-[#0f172a] p-5 text-[13px] leading-6 text-slate-100">
                         {JSON.stringify(provider.providerConfig, null, 2)}

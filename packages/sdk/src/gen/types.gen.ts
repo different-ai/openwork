@@ -1979,7 +1979,7 @@ export type LlmProviderResponse = {
       state: "missing" | "active" | "blocked" | "stale" | "error";
     };
     /**
-     * True when providerConfig and model configs are the non-secret view: the caller can't edit the provider and isn't granted it.
+     * True when the caller can't edit the provider and isn't granted it: providerConfig has only id, name and npm, model configs only id, name and limit, env key lists are empty and hasApiKey is false.
      */
     configRedacted?: boolean;
     [key: string]: unknown;
@@ -2026,7 +2026,7 @@ export type LlmProviderCatalogResponse = {
 export type LlmProviderListResponse = {
   llmProviders: Array<{
     /**
-     * True when providerConfig and model configs are the non-secret view: the caller can't edit the provider and isn't granted it.
+     * True when the caller can't edit the provider and isn't granted it: providerConfig has only id, name and npm, model configs only id, name and limit, env key lists are empty and hasApiKey is false.
      */
     configRedacted?: boolean;
     [key: string]: unknown;

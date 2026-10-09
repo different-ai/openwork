@@ -58,10 +58,17 @@ export type DenLlmProvider = {
   models: DenLlmProviderModel[];
   access: {
     allMembers: boolean;
+    /** People with direct access, counted even when their names are hidden. */
+    memberCount: number;
+    /** Den returned no names or emails: the caller can't edit this provider. `members` is then empty. */
+    membersHidden: boolean;
     members: DenLlmProviderMemberAccess[];
     teams: DenLlmProviderTeamAccess[];
   };
 };
+
+export const LLM_PROVIDER_DETAILS_HIDDEN_MESSAGE = "Details are hidden because you can't edit or use this provider.";
+export const LLM_PROVIDER_MEMBERS_HIDDEN_MESSAGE = "Names are hidden because you can't edit this provider.";
 
 export type DenModelsDevProviderSummary = {
   id: string;
@@ -223,7 +230,9 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
       : [],
     access: {
       allMembers: value.access.allMembers === true,
-      members: Array.isArray(value.access.members)
+      memberCount: Array.isArray(value.access.members) ? value.access.members.length : 0,
+      membersHidden: value.access.membersHidden === true,
+      members: Array.isArray(value.access.members) && value.access.membersHidden !== true
         ? value.access.members
             .map(asLlmProviderMemberAccess)
             .filter((entry): entry is DenLlmProviderMemberAccess => entry !== null)
