@@ -810,10 +810,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
 
   app.delete("/v1/inference-providers/:inferenceProviderId", route("Delete inference gateway provider", "Deletes the provider, models, groups, credential sets, grants, credentials and pending sign-ins, and revokes applicable Google tokens. Returns an empty 204; historical request logs and usage rollups are retained. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
     try {
-      const before = await getProvider(db, c.get("organizationContext"), c.req.valid("param").inferenceProviderId)
-      // Keys OpenWork created in LiteLLM go first, while the admin key is still stored.
-      if (isLiteLlmProviderId(before.provider_id)) await deleteLiteLlmIssuedKeys(before)
       const credentials = await providerTransaction(c, async (tx, provider) => {
+        // Keys OpenWork created in LiteLLM go first, while the admin key is still stored. This runs
+        // inside the transaction, after providerTransaction has locked the caller's member row and
+        // re-checked the permission, so a concurrent membership removal or revocation stops the
+        // request before any external key is deleted.
+        if (isLiteLlmProviderId(provider.provider_id)) await deleteLiteLlmIssuedKeys(provider)
         await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, provider.id))
         await tx.delete(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id))
         const credentials = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id)).for("update")
