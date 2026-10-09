@@ -87,7 +87,8 @@ lifecycleTest("the global tab limit rejects new pages without disturbing live ta
     }, { within: 15_000, label: "closing the tab removes its native page and releases one slot" });
 
     const pending = agent.run("browser.open_url", { url: retryUrl, provider: "builtin" });
-    await user.click({ role: "button", label: "Allow for this thread" });
+    // The reading conversation's first agent browser use asks once.
+    await user.click({ role: "button", label: "Allow for this session" });
     const result = await pending;
     const retried = await eventually(() => world.readBrowserState(), {
       within: 15_000,
@@ -190,16 +191,18 @@ lifecycleTest("repeated refused navigations leave no allocated page or hidden ho
   expect(baseline.backgroundWindowCount).toBe(0);
   const pages = await world.pageTargets();
 
-  await step("Foreground and background unsafe-port failures release their pages after navigation approval", async () => {
+  await step("Foreground and background unsafe-port failures release their pages", async () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       // Chromium refuses this loopback port without depending on DNS or a server.
       const ownerSessionId = attempt === 1 ? reading.sessionId : researching.sessionId;
       const rejected = expect(world.openTabAs(`refused-${attempt}`, ownerSessionId, "http://127.0.0.1:1"))
         .rejects.toThrow(/Browser operation could not finish/);
-      if (ownerSessionId === researching.sessionId) await user.click(conversation(researching.title));
-      await user.click({ role: "button", label: "Allow for this thread" });
+      // Each session is asked once, on its first use; a failed load never asks again.
+      const firstUse = attempt < 2;
+      if (firstUse && ownerSessionId === researching.sessionId) await user.click(conversation(researching.title));
+      if (firstUse) await user.click({ role: "button", label: "Allow for this session" });
       await rejected;
-      if (ownerSessionId === researching.sessionId) await user.click(conversation(reading.title));
+      if (firstUse && ownerSessionId === researching.sessionId) await user.click(conversation(reading.title));
       await eventually(async () => {
         const state = await world.readBrowserState();
         expect(state.tabs).toEqual(baseline.tabs);
@@ -213,21 +216,18 @@ lifecycleTest("repeated refused navigations leave no allocated page or hidden ho
     }
     expect(await world.clickAndType(readingTab, "-after")).toEqual({ clicks: 2, value: "kept-after" });
     evidence.recordAssertionEvidence("Refused page loads leave nothing behind",
-      `3 approved opens of an unreachable address failed with "Browser operation could not finish"; after each, tabs stayed ${baseline.tabs.length}, no hidden browser host, browser pages unchanged; the existing tab kept its text`, true);
+      `3 opens of an unreachable address (one allow per session, none for the retry) failed with "Browser operation could not finish"; after each, tabs stayed ${baseline.tabs.length}, no hidden browser host, browser pages unchanged; the existing tab kept its text`, true);
   });
 
-  await step("An approved retry remains usable in the background after the failures", async () => {
-    const pending = world.openTabAs("navigation-recovered", researching.sessionId);
-    await user.click(conversation(researching.title));
-    await user.click({ role: "button", label: "Allow for this thread" });
-    const recovered = await pending;
-    await user.click(conversation(reading.title));
+  await step("A later open stays usable in the background without asking again", async () => {
+    const recovered = await world.openTabAs("navigation-recovered", researching.sessionId);
+    await user.notSee({ role: "button", label: "Allow for this session" });
     expect((await world.readBrowserState()).tabs).toHaveLength(2);
     await world.loadInputProbe(recovered);
     expect(await world.clickAndType(recovered, "recovered")).toEqual({ clicks: 1, value: "recovered" });
     expect(await world.readInputProbe(readingTab)).toEqual({ clicks: 2, value: "kept-after" });
-    evidence.recordAssertionEvidence("A later approved open still works",
-      `After the failures, an approved open in "${researching.title}" loaded and accepts typing; tabs ${baseline.tabs.length} → 2; the first tab kept its text`, true);
+    evidence.recordAssertionEvidence("A later open still works without another prompt",
+      `After the failures, an open in "${researching.title}" loaded with no prompt and accepts typing; tabs ${baseline.tabs.length} → 2; the first tab kept its text`, true);
   });
 });
 
@@ -286,9 +286,9 @@ lifecycleTest("moving the last background page on screen releases its hidden hos
 
 // Effect contract: previously the browser toolbar exposed a memory-management action alongside navigation.
 // Removing Suspend simplifies that surface without unlocking a new capability: a person can still open,
-// read, and use a real page while thread ownership, action approval, and explicit handle release remain intact.
+// read, and use a real page while thread ownership, the session allow, and explicit handle release remain intact.
 // The distinguishing assertion is Suspend's absence; no performance or memory-saving benefit is claimed.
-test("a background conversation reads its owned page silently and requests attention before acting", async ({ world, user, agent, probe, step, evidence }) => {
+test("a background conversation is allowed once, then reads and acts on its owned page without switching the screen", async ({ world, user, agent, probe, step, evidence }) => {
   const reading = { ...world.session, title: "Reading the news" };
   await agent.run("session.rename", { sessionId: reading.sessionId, title: reading.title });
   const researching = { sessionId: await agent.createSession("Background research"), title: "Background research" };
@@ -298,7 +298,7 @@ test("a background conversation reads its owned page silently and requests atten
     label: "the reading conversation is selected before requesting browser access" });
   // Match the real agent's origin-stamped command rather than a captured renderer selection.
   const readingOpen = world.commandFrom(reading.sessionId, "browser.open_url", { url: `${world.origin}/?viewport-probe=reading`, provider: "builtin" });
-  await user.click({ role: "button", label: "Allow for this thread" });
+  await user.click({ role: "button", label: "Allow for this session" });
   const readingResult = await readingOpen;
   expect(readingResult).toMatchObject({ ok: true, result: { owner_session_id: reading.sessionId } });
   if (!readingResult || typeof readingResult !== "object" || !("result" in readingResult)) {
@@ -316,7 +316,7 @@ test("a background conversation reads its owned page silently and requests atten
     const requests = (await witness()).pageRequests;
     let settled = false;
     // The server's HTTP mailbox answers within 5 s, so a command that must wait
-    // for approval is stamped with its origin at the window boundary instead.
+    // for the session allow is stamped with its origin at the window boundary instead.
     const pending = world.commandFrom(researching.sessionId, "browser.open_url", { url: `${world.origin}/?viewport-probe=research`, provider: "builtin" })
       .then((result) => { settled = true; return result; });
     const state = await probe.eventually(() => probe.browserState(), { within: 10_000, until: (value) => value.tabs.some((tab) => tab.ownerSessionId === researching.sessionId), label: "the background command allocates an owned review tab" });
@@ -327,18 +327,18 @@ test("a background conversation reads its owned page silently and requests atten
     expect(blank.label).toBe("New tab");
     expect(settled).toBe(false);
     expect((await witness()).pageRequests).toEqual(requests);
-    // A consent tab has no document yet: it stays off every host, unsized, and
-    // allocates no hidden window until its approved first navigation completes.
+    // A tab waiting for the session allow has no document yet: it stays off every
+    // host, unsized, and allocates no hidden window until its first navigation completes.
     expect(state).toMatchObject({ backgroundWindowCount: 0 });
     expect(state.nativeViews.find((view) => view.tabId === blank.id)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, width: 0, height: 0 } });
     await user.see(tabButton("reading"));
     await user.notSee(tabButton("research"));
-    await user.notSee({ role: "button", label: "Allow for this thread" });
+    await user.notSee({ role: "button", label: "Allow for this session" });
     expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
     await user.click(conversation(researching.title));
-    await user.see({ role: "button", label: "Allow for this thread" });
+    await user.see({ role: "button", label: "Allow for this session" });
     expect((await witness()).pageRequests).toEqual(requests);
-    await user.click({ role: "button", label: "Allow for this thread" });
+    await user.click({ role: "button", label: "Allow for this session" });
     const result = await pending;
     if (!result || typeof result !== "object" || !("result" in result)) throw new Error(`The background browser command returned no result: ${JSON.stringify(result)}`);
     expect(result).toMatchObject({ ok: true, result: { owner_session_id: researching.sessionId, visible: true } });
@@ -347,16 +347,15 @@ test("a background conversation reads its owned page silently and requests atten
     expect((await witness()).pageRequests).toEqual([...requests, { path: "/", signedIn: false }]);
     await user.see(tabButton("research"));
     await user.click(conversation(reading.title));
-    evidence.recordAssertionEvidence("Pending background navigation preserves the viewed conversation", "The origin-stamped command allocated an owned blank tab and stayed pending with zero additional page requests, no approval in the unrelated conversation, and unchanged foreground dimensions. Selecting the owner and approving navigation released exactly one GET into that same tab.", true);
+    evidence.recordAssertionEvidence("Pending background navigation preserves the viewed conversation", "The origin-stamped command allocated an owned blank tab and stayed pending with zero additional page requests, no prompt in the unrelated conversation, and unchanged foreground dimensions. Selecting the owner and allowing the session once released exactly one GET into that same tab.", true);
     return opened;
   });
   const task = (operation: BrowserTaskInput["operation"], args: BrowserTaskInput["args"] = {}) => agent.browserTask({ sessionId: researching.sessionId, operation, args: { tabId: researchTab.tabId, ...args } });
 
-  await step("The browser reads and images a hidden page, but click, fill and site callbacks need attention", async () => {
+  await step("The browser reads, images and acts on a hidden page without a prompt or a screen switch", async () => {
     await user.click(conversation(researching.title));
     expect((await task("observe")).ok).toBe(true);
-    await user.notSee({ role: "button", label: "Allow for this thread" });
-    await user.notSee({ role: "button", label: "Allow reading this origin" });
+    await user.notSee({ role: "button", label: "Allow for this session" });
     await user.click(conversation(reading.title));
     const metrics = await probe.eventually(() => probe.browserTabMetrics(researchTab.targetId), { within: 15_000, until: (value) => value.width === BACKGROUND_TAB_VIEWPORT.width && value.hasFocus, label: "the hidden page has its background viewport and focus" });
     expect(metrics).toMatchObject({ ...BACKGROUND_TAB_VIEWPORT, hasFocus: true });
@@ -367,21 +366,24 @@ test("a background conversation reads its owned page silently and requests atten
     const observed = await task("observe", { includeImage: true });
     expect(observed.text).toContain("Project status");
     expect(browserImageTarget(observed.image)).toMatchObject(BACKGROUND_TAB_VIEWPORT);
-    const actions: Array<{ type: "click" | "fill"; name: string; text?: string }> = [{ type: "click", name: "Save draft" }, { type: "fill", name: "Draft title", text: "ok" }];
+    const actions: Array<{ type: "click" | "fill"; name: string; text?: string }> = [{ type: "fill", name: "Draft title", text: "ok" }, { type: "click", name: "Save draft" }];
     for (const action of actions) {
       const fresh = await task("observe");
       const ref = fresh.elements?.find((element) => element.name === action.name)?.ref;
       if (!ref) throw new Error(`Missing observed ${action.name} control.`);
-      expect(await task("act", { observationId: fresh.observationId, action: { type: action.type, ref, text: action.text } })).toMatchObject({ ok: false, code: "needs_attention" });
+      expect(await task("act", { observationId: fresh.observationId, action: { type: action.type, ref, text: action.text } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
     }
+    const saved = await probe.eventually(witness, { within: 5_000, until: (value) => value.records.length === 1 && value.inputValue === "ok", label: "the hidden page receives the fill and the click" });
+    expect(saved.records).toEqual([{ method: "dom", count: 1, signedIn: false }]);
     const listed = await task("site_tools");
     const tool = listed.tools?.find((tool) => tool.name === "read_session");
     if (!tool) throw new Error("The hidden page did not list its session-read tool.");
-    expect(await task("site_tool", { toolId: tool.toolId })).toMatchObject({ ok: false, code: "needs_attention" });
-    expect(await witness()).toMatchObject({ sessionReads: 0, records: [], inputValue: "", signInCount: 0 });
+    expect(await task("site_tool", { toolId: tool.toolId })).toMatchObject({ ok: true, dispatched: true });
+    expect(await witness()).toMatchObject({ sessionReads: 1, signInCount: 0 });
+    await user.notSee({ role: "button", label: "Allow for this session" });
     expect(await probe.browserState()).toMatchObject({ visibleSessionId: reading.sessionId, activeTabId: readingTab.tabId });
     expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
-    evidence.recordAssertionEvidence("Hidden browser tools read without unapproved mutations", "The browser/task boundary returned real text and a decoded 1280 by 800 image. Click, fill and site callbacks returned needs_attention with zero fixture writes or session reads and no foreground change.", true);
+    evidence.recordAssertionEvidence("Hidden browser tools read and act without prompts or a screen switch", "The browser/task boundary returned real text and a decoded 1280 by 800 image. A fill, a click and a site callback on the hidden page all ran: one DOM save, the typed value and one session read, while the visible conversation and its tab dimensions stayed the same.", true);
   });
 
   await step("Closing the panel removes all native overlays while background observation continues", async () => {
@@ -391,17 +393,14 @@ test("a background conversation reads its owned page silently and requests atten
     expect(hidden).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
     expect(hidden.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: false, aboveApp: false });
     const observed = await task("observe", { includeImage: true });
-    expect(observed.text).toContain("Nothing saved");
+    expect(observed.text).toContain("Saved 1");
     expect(browserImageTarget(observed.image)).toMatchObject(BACKGROUND_TAB_VIEWPORT);
-    const ref = observed.elements?.find((element) => element.name === "Save draft")?.ref;
-    if (!ref) throw new Error("Missing hidden Save draft control.");
-    expect(await task("act", { observationId: observed.observationId, action: { type: "click", ref } })).toMatchObject({ ok: false, code: "needs_attention" });
-    expect(await witness()).toMatchObject({ records: [], inputValue: "", sessionReads: 0 });
+    expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }], inputValue: "ok", sessionReads: 1 });
     await user.click({ role: "button", label: "Open side panel" });
     await user.see(tabButton("reading"));
   });
 
-  await step("The owner can use the page under the simplified toolbar while approvals stay scoped", async () => {
+  await step("The owner can use the page under the simplified toolbar without another prompt", async () => {
     await user.click(conversation(researching.title));
     const state = await probe.eventually(() => probe.browserState(), { within: 30_000, until: (value) => value.visibleSessionId === researching.sessionId && value.activeTabId === researchTab.tabId, label: "the research conversation takes the screen" });
     expect(state.tabs.map((tab) => tab.ownerSessionId).sort()).toEqual([reading.sessionId, researching.sessionId].sort());
@@ -412,36 +411,17 @@ test("a background conversation reads its owned page silently and requests atten
     const native = await probe.browserState();
     expect(native.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: true, aboveApp: true });
     expect(native.nativeViews.find((view) => view.tabId === readingTab.tabId)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT } });
-    const actions: Array<{ type: "click" | "fill"; name: string; text?: string }> = [{ type: "click", name: "Save draft" }, { type: "fill", name: "Draft title", text: "ok" }];
-    for (const action of actions) {
-      const before = await witness();
-      for (const decision of ["Deny", "Allow once"]) {
-        const observed = await task("observe");
-        const ref = observed.elements?.find((element) => element.name === action.name)?.ref;
-        if (!ref) throw new Error(`Missing observed ${action.name} control.`);
-        let settled = false;
-        const pending = task("act", { observationId: observed.observationId, action: { type: action.type, ref, text: action.text } })
-          .then((result) => { settled = true; return result; });
-        await user.see({ text: "Allow browser action?" });
-        await user.see({ role: "button", label: "Allow once" });
-        await user.notSee({ role: "button", label: "Allow for this thread" });
-        expect(settled).toBe(false);
-        expect(await witness()).toMatchObject({ records: before.records, inputValue: before.inputValue });
-        await user.click({ role: "button", label: decision });
-        const result = await pending;
-        if (decision === "Deny") {
-          expect(result).toMatchObject({ ok: false, code: "user_denied", dispatched: false, mayHaveChangedState: false });
-          expect(await witness()).toMatchObject({ records: before.records, inputValue: before.inputValue });
-        } else expect(result).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
-        await user.notSee({ role: "button", label: "Allow once" });
-        await user.notSee({ role: "button", label: "Share result" });
-      }
-      if (action.type === "click") await probe.eventually(() => task("observe"), { within: 5_000, until: (value) => value.text?.includes("Saved 1") === true, label: "the approved save visibly completes before the next action" });
-    }
-    const completed = await probe.eventually(witness, { within: 5_000, until: (value) => value.records.length === 1 && value.inputValue === "ok", label: "the fixture receives only the approved click and text" });
-    expect(completed.records).toEqual([{ method: "dom", count: 1, signedIn: false }]);
+    const visible = await task("observe");
+    const saveRef = visible.elements?.find((element) => element.name === "Save draft")?.ref;
+    if (!saveRef) throw new Error("Missing observed Save draft control.");
+    expect(await task("act", { observationId: visible.observationId, action: { type: "click", ref: saveRef } })).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+    await user.notSee({ role: "button", label: "Allow for this session" });
+    await user.notSee({ text: "Allow browser action?" });
+    const completed = await probe.eventually(witness, { within: 5_000, until: (value) => value.records.length === 2, label: "the fixture receives the visible click" });
+    expect(completed.records).toEqual([{ method: "dom", count: 1, signedIn: false }, { method: "dom", count: 2, signedIn: false }]);
+    await probe.eventually(() => task("observe"), { within: 5_000, until: (value) => value.text?.includes("Saved 2") === true, label: "the second save visibly completes" });
     const savedPage = await task("observe", { includeImage: true });
-    expect(savedPage.text).toContain("Saved 1");
+    expect(savedPage.text).toContain("Saved 2");
     if (!savedPage.image) throw new Error("The saved page observation did not include its screenshot.");
     // App screenshots do not include Electron's native child view. Preserve the
     // real page image separately so the reviewer can see the saved result too.
@@ -454,7 +434,7 @@ test("a background conversation reads its owned page silently and requests atten
     await user.see({ placeholder: "Enter URL..." });
     await user.notSee({ role: "button", label: "Suspend" });
     await user.screenshot();
-    evidence.recordAssertionEvidence("Selecting the owner restores its tab while inputs require separate approval", "Native attachment, z-order and both panel dimensions recovered. Reading reused the thread grant. Hidden, pending and denied inputs caused no writes; separately approved inputs produced one DOM save and the expected field value, and a new page observation verified Saved 1.", true);
+    evidence.recordAssertionEvidence("Selecting the owner restores its tab and input needs no prompt", "Native attachment, z-order and both panel dimensions recovered. A click on the now-visible page ran with no prompt, producing the second DOM save, and a new page observation verified Saved 2.", true);
   });
 
   await step("A paused background conversation cannot open through the legacy automation command", async () => {
@@ -497,7 +477,7 @@ test("a background conversation reads its owned page silently and requests atten
     await user.notSee({ role: "button", label: "Suspend" });
     expect((await probe.browserState()).tabs.map(tab => tab.id).sort())
       .toEqual([readingTab.tabId, researchTab.tabId].sort());
-    expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }], inputValue: "ok", sessionReads: 0 });
+    expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }, { method: "dom", count: 2, signedIn: false }], inputValue: "ok", sessionReads: 1 });
     await user.see(tabButton("reading"));
     await user.notSee(tabButton("research"));
     await user.screenshot();
@@ -676,7 +656,7 @@ linkTest("a member opens transcript links in their saved destination and can ove
     );
   });
 
-  const manualTabId = await step("Choosing OpenWork loads one owned sidebar tab without browser control consent", async () => {
+  const manualTabId = await step("Choosing OpenWork loads one owned sidebar tab without asking to use the browser", async () => {
     const before = await world.pageTargets();
     const browserBefore = await world.readBrowserState();
     await user.click(link);
@@ -701,7 +681,7 @@ linkTest("a member opens transcript links in their saved destination and can ove
     expect(await world.readMainUrl()).toBe(mainUrl);
     expect((await world.nativeMenu()).open).toBe(false);
     await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
-    await user.notSee({ role: "button", label: "Allow for this thread" });
+    await user.notSee({ role: "button", label: "Allow for this session" });
     await user.notSee({ role: "button", label: "Take over" });
     await user.notSee({ role: "button", label: "Resume browser" });
     expect(await world.externalOpens()).toEqual([]);
@@ -717,23 +697,23 @@ linkTest("a member opens transcript links in their saved destination and can ove
     return state.activeTabId;
   });
 
-  await step("The agent must request control before reading the manually opened page", async () => {
+  await step("The agent asks once before its first read of the manually opened page", async () => {
     let returned = false;
     const observing = agent.browserTask({ sessionId: world.reading.sessionId, operation: "observe", args: { tabId: manualTabId } })
       .then(result => { returned = true; return result; });
-    await user.see({ role: "button", label: "Allow for this thread" });
+    await user.see({ role: "button", label: "Allow for this session" });
     await user.see({ role: "button", label: "Take over" });
     expect(returned).toBe(false);
-    await user.click({ role: "button", label: "Allow for this thread" });
+    await user.click({ role: "button", label: "Allow for this session" });
     const observed = await observing;
     const destination = new URL(world.linkUrl);
     expect(observed).toMatchObject({ ok: true, tabId: manualTabId, url: destination.origin + destination.pathname });
     expect(typeof observed.text).toBe("string");
-    await user.notSee({ role: "button", label: "Allow for this thread" });
+    await user.notSee({ role: "button", label: "Allow for this session" });
     await user.see({ role: "button", label: "Take over" });
     evidence.recordAssertionEvidence(
-      "A tab the member opened still needs approval before the agent reads it",
-      `The agent's read waited on "Allow for this thread"; after approval it read ${destination.origin + destination.pathname}`,
+      "The agent's first browser use in a session asks once, even for a tab the member opened",
+      `The agent's read waited on "Allow for this session"; after approval it read ${destination.origin + destination.pathname}`,
       true,
     );
   });
@@ -961,7 +941,7 @@ artifactTest("a transcript link replaces the selected artifact with its own live
     expect((await world.readBrowserState()).nativeViews.every((view) => !view.attached)).toBe(true);
 
     const pending = world.openTabAs("requested-preview", reading.sessionId);
-    await user.click({ role: "button", label: "Allow for this thread" });
+    await user.click({ role: "button", label: "Allow for this session" });
     const requested = await pending;
     const state = await eventually(() => world.readBrowserState(), {
       within: 15_000,
@@ -973,7 +953,7 @@ artifactTest("a transcript link replaces the selected artifact with its own live
     await user.see(tabButton(requested.name));
     await user.notSee({ text: link.artifactText });
     evidence.recordAssertionEvidence("A page reload keeps the file selected, but a new browser request takes over",
-      `Reloading the tab left ${link.artifactName} on screen; an approved new open selected its own tab (${requested.name}) and hid the file`, true);
+      `Reloading the tab left ${link.artifactName} on screen; a new open selected its own tab (${requested.name}) and hid the file`, true);
   });
 
   await step("The other conversation keeps its original tab and page", async () => {

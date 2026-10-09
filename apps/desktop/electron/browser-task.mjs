@@ -1,10 +1,9 @@
-// The browser host owns task identity, consent, observations and dispatch.
+// The browser host owns task identity, the session allow, observations and dispatch.
 // No model-specific API, arbitrary script execution, cookies or raw CDP surface.
 import { createHash, randomUUID } from "node:crypto";
+import { createBrowserSessionAllows } from "./browser-session-allows.mjs";
 
 const WORLD = 1001;
-const MAX_OPERATION_MS = 30_000;
-const OBSERVATION_MS = 15_000;
 const TRUST = "untrusted-site-content";
 
 export class BrowserTaskError extends Error {
@@ -106,19 +105,19 @@ async function isolated(webContents, fn, ...args) {
 }
 
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
-  allowed, enabled, confirm, changed, siteTools, runSiteTool }) {
+  allowed, enabled, confirm, changed, siteTools, runSiteTool, sessionAllows = createBrowserSessionAllows() }) {
   const states = new Map();
-  const grants = new Map();
+  const controls = new Map();
   const pausedSessions = new Set();
   const opening = new Map();
   const navigations = new Map();
   function controlFor(sessionId) {
-    if (!grants.has(sessionId)) grants.set(sessionId, { controller: new AbortController(), approved: false, pending: null });
-    return grants.get(sessionId);
+    if (!controls.has(sessionId)) controls.set(sessionId, { controller: new AbortController(), pending: null });
+    return controls.get(sessionId);
   }
-  function revokeControl(sessionId, control = grants.get(sessionId), reason = new BrowserTaskError("consent_revoked", "Browser control was revoked. Request fresh thread approval before continuing.")) {
-    if (!control || grants.get(sessionId) !== control) return;
-    grants.delete(sessionId);
+  function stopControl(sessionId, control = controls.get(sessionId), reason = new BrowserTaskError("canceled", "Browser control stopped. Retry the browser operation.")) {
+    if (!control || controls.get(sessionId) !== control) return;
+    controls.delete(sessionId);
     control.controller.abort(reason);
     for (const tab of tabsFor(sessionId)) {
       const state = states.get(tab.tabId);
@@ -127,7 +126,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   }
   function checkControl(sessionId, control) {
     control.controller.signal.throwIfAborted();
-    if (grants.get(sessionId) !== control) fail("consent_revoked", "Browser control was revoked. Request fresh thread approval before continuing.");
+    if (controls.get(sessionId) !== control) fail("canceled", "Browser control stopped. Retry the browser operation.");
   }
   function trackNavigation(sessionId, tab, signal = undefined) {
     const previous = navigations.get(tab.tabId);
@@ -154,24 +153,23 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume before continuing.");
     if (!enabled()) fail("browser_disabled", "Browser control was disabled while navigation was pending.");
   }
-  async function authorizeNavigation(scope, value, waitForVisible = false, armOperationTimeout = () => {}) {
+  async function authorizeNavigation(scope, value) {
     const url = browserTaskUrl(value);
     checkNavigation(scope);
     if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
     checkNavigation(scope);
-    await access(scope, url, waitForVisible);
-    armOperationTimeout();
+    await access(scope);
     checkNavigation(scope);
     if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
     checkNavigation(scope);
-    // The request hook rechecks the full managed policy (including uploads)
-    // after consent. Give it a synchronous final ownership/cancellation check.
+    // The request hook rechecks the full managed policy (including uploads).
+    // Give it a synchronous final ownership/cancellation check.
     return () => checkNavigation(scope);
   }
   function navigationGuard(tabId) {
     const scope = navigations.get(tabId);
     // Pausing alone must not turn a late task redirect into manual browsing.
-    // Only explicit app-toolbar navigation enables manual mode, without grants.
+    // Only explicit app-toolbar navigation enables manual mode.
     // Page input (including trusted events) can come from queued automation.
     if (!scope || (scope.manual && pausedSessions.has(scope.sessionId) && ownerOf(tabId) === scope.sessionId)) return null;
     return (url) => authorizeNavigation(scope, url);
@@ -203,23 +201,22 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (tab.view.webContents.isDestroyed() || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking policy. Observe again.");
     return tab;
   }
-  async function access(scope, url, waitForVisible) {
-    const { tab, control } = scope;
-    if (control.approved) return;
+  async function access(scope) {
+    const { tab, sessionId, control } = scope;
+    // One "use the browser" decision per session, kept across restarts.
+    // Takeover, cancellation and closing tabs stop in-flight work but never ask again.
+    if (sessionAllows.has(sessionId)) return;
     if (!control.pending) {
-      if (!waitForVisible && !isVisible(tab.tabId)) fail("needs_attention", "Select this tab in its conversation's browser panel to review browser control, then retry.");
       control.pending = (async () => {
         publish(tab.tabId, "needs_attention", "Browser control");
-        const accepted = await confirm({ tabId: tab.tabId, title: "Allow browser control for this thread?",
-          message: "Allow browser control across this thread's tabs?", approveLabel: "Allow for this thread",
-          detail: "Allows navigating allowed websites, reading and scrolling using the signed-in browser. Clicking, typing, key input and website tools require separate confirmations. Applies only to this thread until Take over, cancellation of a browser operation, its last tab closes or desktop restart. Organization restrictions still apply.",
-          signal: scope.signal, waitForVisible });
+        const decision = await confirm({ tabId: tab.tabId, title: "Allow this agent to use the browser?",
+          message: "Let this session use the built-in browser?", approveLabel: "Allow for this session",
+          detail: "This session can open websites, read pages, click, type and run website tools in its own tabs without asking again. Organization restrictions still apply. Choose Take over at any time to pause it.",
+          signal: scope.signal });
         checkNavigation(scope);
-        if (!accepted) fail("user_denied", "Browser control was not allowed.");
-        if (!await allowed(url.href)) fail("website_blocked", "Your organization does not allow this website.");
-        checkNavigation(scope);
-        if (!isVisible(tab.tabId)) fail("needs_attention", "The tab is no longer visible. Review browser control again.");
-        control.approved = true;
+        if (decision === false) fail("user_denied", "The user did not allow browser use for this session.");
+        if (decision !== true) fail("canceled", "The browser request was dismissed before a decision. Retry when the user is ready.");
+        sessionAllows.add(sessionId);
       })();
     }
     const pending = control.pending;
@@ -231,7 +228,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (owner) {
       pausedSessions.add(owner);
       const reason = new BrowserTaskError("paused", "The user has taken over this browser conversation.");
-      revokeControl(owner, grants.get(owner), reason);
+      stopControl(owner, controls.get(owner), reason);
       opening.get(owner)?.abort(reason);
     }
     for (const item of tabsFor(owner)) {
@@ -257,7 +254,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (closed) {
       const owner = ownerOf(tabId);
       if (owner && !tabsFor(owner).some((tab) => tab.tabId !== tabId && !tab.view.webContents.isDestroyed())) {
-        revokeControl(owner, grants.get(owner), reason);
+        stopControl(owner, controls.get(owner), reason);
         pausedSessions.delete(owner);
       }
       navigations.get(tabId)?.lifetime.abort(); navigations.delete(tabId);
@@ -283,7 +280,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed during observation. Observe again.");
     signal.throwIfAborted();
-    state.observation = { id, at: Date.now(), revision, url, viewport: page.viewport, elements: page.elements, digest };
+    state.observation = { id, revision, url, viewport: page.viewport, elements: page.elements, digest };
     return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...page, ...(image ? { image } : {}) };
   }
   /**
@@ -291,7 +288,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
    * @param {{ signal?: AbortSignal }} options
    */
   async function request({ sessionId, operation, args = {} } = {}, { signal } = {}) {
-    let tab, state, dispatched = false, timer, abort, controller, openingController;
+    let tab, state, dispatched = false, abort, controller, openingController;
     try {
       if (typeof sessionId !== "string" || !sessionId.trim()) fail("missing_session", "Browser control requires a requesting conversation.");
       if (!enabled()) fail("browser_disabled", "Enable OpenWork Browser in Library, or ask your organization to allow browser control.");
@@ -300,24 +297,12 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       const control = controlFor(sessionId);
       controller = new AbortController();
       const requestSignal = AbortSignal.any([controller.signal, control.controller.signal]);
-      abort = () => { revokeControl(sessionId, control, signal?.reason); controller.abort(signal?.reason); };
+      abort = () => controller.abort(signal?.reason);
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
       requestSignal.throwIfAborted();
       const canceled = new Promise((_, reject) => requestSignal.addEventListener("abort", () => reject(requestSignal.reason), { once: true }));
       void canceled.catch(() => {});
-      const armOperationTimeout = () => {
-        if (timer) return;
-        timer = setTimeout(() => {
-          const reason = new BrowserTaskError("timeout", "Browser operation timed out. Observe the page before deciding what remains.");
-          revokeControl(sessionId, control, reason);
-          controller.abort(reason);
-        }, MAX_OPERATION_MS);
-      };
-      // Human review of the initial thread grant is not browser operation time.
-      // Existing grants retain the original request-wide deadline; a new grant
-      // starts its deadline only after the person approves it.
-      if (control.approved) armOperationTimeout();
       for (const item of tabsFor(sessionId)) {
         if (!navigations.has(item.tabId)) trackNavigation(sessionId, item);
       }
@@ -339,7 +324,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (!tab) {
           tab = await Promise.race([
             openTab(url.href, sessionId, requestSignal, async (created) => {
-              const validate = await authorizeNavigation(trackNavigation(sessionId, created, requestSignal), url.href, true, armOperationTimeout);
+              const validate = await authorizeNavigation(trackNavigation(sessionId, created, requestSignal), url.href);
               validate();
               dispatched = true;
             }),
@@ -350,7 +335,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         else if (tab.view.webContents.getURL() !== url.href) fail("different_page", "Use navigate to change the selected tab's page.");
         else {
           if (stateFor(tab.tabId).controller) fail("busy", "A browser operation is already running in this tab.");
-          const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, requestSignal), url.href, false, armOperationTimeout), canceled]);
+          const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, requestSignal), url.href), canceled]);
           validate();
         }
         publish(tab.tabId, "idle");
@@ -369,7 +354,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         requestSignal.throwIfAborted();
         if (operation !== "navigate") {
           const url = tab.view.webContents.getURL();
-          const validate = await authorizeNavigation(navigationScope, url, false, armOperationTimeout);
+          const validate = await authorizeNavigation(navigationScope, url);
           validate();
           if (url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking access. Observe again.");
         }
@@ -378,7 +363,6 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (operation === "observe") return observe(tab, args.includeImage === true, requestSignal);
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
-          if (!isVisible(tab.tabId)) fail("needs_attention", "Select this tab in its conversation's browser panel to review its website action, then retry.");
           state.observation = null;
           dispatched = true;
           const result = await runSiteTool({ ...args, tabId: tab.tabId, sessionId }, { signal: requestSignal });
@@ -387,7 +371,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         }
         if (operation === "navigate") {
           const url = browserTaskUrl(args.url);
-          const validate = await authorizeNavigation(navigationScope, url.href, false, armOperationTimeout);
+          const validate = await authorizeNavigation(navigationScope, url.href);
           validate();
           state.observation = null; dispatched = true;
           const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
@@ -398,7 +382,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         }
         if (operation !== "act") fail("unknown_operation", "Use a supported browser operation.");
         const observed = state.observation;
-        if (!observed || observed.id !== args.observationId || Date.now() - observed.at > OBSERVATION_MS || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
+        if (!observed || observed.id !== args.observationId || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
         const action = structuredClone(args.action);
         if (!action || !["click", "fill", "key", "scroll"].includes(action.type)) fail("invalid_action", "Use click, fill, key or scroll.");
         if (action.type === "click" && !action.ref && !observed.digest) fail("image_required", "Observe with includeImage before clicking image coordinates.");
@@ -406,23 +390,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const keys = { Enter: "Enter", Tab: "Tab", Escape: "Escape", ArrowDown: "Down", ArrowUp: "Up", ArrowLeft: "Left", ArrowRight: "Right", Backspace: "Backspace", Space: "Space" };
         if (action.type === "key" && !Object.hasOwn(keys, action.key)) fail("invalid_key", "Use Enter, Tab, Escape, arrows, Backspace or Space. System shortcuts are unavailable.");
         if (action.type === "scroll" && (!Number.isFinite(action.deltaY) || Math.abs(action.deltaY) > 1200)) fail("invalid_scroll", "Scroll distance must be between -1200 and 1200.");
-        if (!isVisible(tab.tabId)) fail("needs_attention", "Select this tab in its conversation's browser panel, then retry from a fresh observation.");
-        let approvalMs = 0;
-        if (action.type !== "scroll") {
-          const target = action.type === "key" ? "focused control from this observation" : observed.elements.find((item) => item.ref === action.ref)?.name || `position ${action.x}, ${action.y}`;
-          publish(tab.tabId, "needs_attention", `Approve ${action.type}`);
-          const approvalStarted = Date.now();
-          const accepted = await confirm({ tabId: tab.tabId, title: "Allow browser action?",
-            message: `Allow ${action.type} on ${new URL(observed.url).origin}?`,
-            detail: `Target: ${target}.${action.ref ? ` Reference: ${action.ref}.` : ""}${action.type === "key" ? ` Key: ${action.key}.` : ""}${action.type === "fill" ? ` Text to enter: ${action.text}` : ""} This may submit information or change website data.`, signal: requestSignal });
-          approvalMs = Math.max(0, Date.now() - approvalStarted);
-          checkNavigation(navigationScope);
-          if (!accepted) fail("user_denied", "The browser action was not allowed.");
-          if (!isVisible(tab.tabId)) fail("needs_attention", "The tab is no longer visible. Select it and observe again before acting.");
-        }
         if (!await allowed(observed.url) || state.observation !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
-        if (Date.now() - observed.at - approvalMs > OBSERVATION_MS) fail("stale_observation", "The observation expired. Observe again.");
         if (action.type === "click" && !action.ref && imageDigest(await captureObservation(tab.view.webContents, observed.viewport)) !== observed.digest) fail("stale_observation", "The image changed. Observe again before choosing coordinates.");
         checkNavigation(navigationScope);
         let point;
@@ -434,16 +403,15 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           throw error;
         }
         checkNavigation(navigationScope);
-        if (state.observation !== observed || Date.now() - observed.at - approvalMs > OBSERVATION_MS || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
+        if (state.observation !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
         state.observation = null; requestSignal.throwIfAborted();
-        if (!isVisible(tab.tabId)) fail("needs_attention", "The tab is no longer visible. Select it and observe again before acting.");
         publish(tab.tabId, "running", action.type);
         const contents = tab.view.webContents;
         dispatched = true;
         if (action.type === "fill") await contents.insertText(action.text);
         if (action.type === "click" || action.type === "scroll") {
           // sendInputEvent targets the main widget, not an OOPIF's widget.
-          // Chromium's input router hit-tests these already-approved CSS pixels.
+          // Chromium's input router hit-tests these observed CSS pixels.
           const cdp = contents.debugger;
           const attached = !cdp.isAttached();
           if (attached) cdp.attach("1.3");
@@ -472,7 +440,6 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       return { ok: false, code: error instanceof BrowserTaskError ? error.code : "browser_operation_failed", error: error instanceof BrowserTaskError ? error.message : "Browser operation could not finish. Observe the page or take over to continue.", dispatched, mayHaveChangedState: dispatched, retrySafe: false, next: dispatched ? "observe_before_retry" : "review", trust: TRUST };
     } finally {
       if (openingController && opening.get(sessionId) === openingController) opening.delete(sessionId);
-      if (timer) clearTimeout(timer);
       if (signal && abort) signal.removeEventListener("abort", abort);
       if (state && state.controller === controller) state.controller = null;
     }

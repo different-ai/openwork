@@ -14,6 +14,7 @@ import {
 import { runDetachedTask } from "./process-resilience.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
+import { createBrowserSessionAllows } from "./browser-session-allows.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
@@ -42,7 +43,7 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu, sessionAllowsPath }) {
   let browserSessionHooksInstalled = false;
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
@@ -610,23 +611,25 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return !!tab && browserViewVisible && registry.onScreenTabId() === tabId
       && window()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
   }
-  function confirmBrowserAction({ tabId, title, message, detail, signal, approveLabel = "Allow once", waitForVisible = false }) {
+  // Resolves true or false only for the person's explicit choice, and null when
+  // the request was dismissed (canceled, tab closed or owner changed), so a
+  // dismissal is never reported as a denial. It waits for as long as it takes.
+  function confirmBrowserAction({ tabId, title, message, detail, signal, approveLabel = "Allow once" }) {
     const tab = getBrowserTab(tabId);
     const owner = registry.ownerOf(tabId);
-    if (!tab || (!waitForVisible && !browserTabVisible(tabId)) || signal?.aborted) return Promise.resolve(false);
-    if (approvals.has(tabId)) return Promise.resolve(false);
+    if (!tab || signal?.aborted) return Promise.resolve(null);
+    approvals.get(tabId)?.finish(null);
     return new Promise((resolve) => {
       const id = createBrowserTabId();
       const finish = (allowed) => {
-        clearTimeout(timer);
         signal?.removeEventListener("abort", canceled);
         if (approvals.get(tabId)?.id !== id) return;
         approvals.delete(tabId); tab.browserApproval = null;
         if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(tab.loadError?.code !== "page_load_failed");
-        sendBrowserState(); resolve(allowed && !signal?.aborted && getBrowserTab(tabId) === tab && registry.ownerOf(tabId) === owner && browserTabVisible(tabId));
+        sendBrowserState();
+        resolve(allowed !== null && !signal?.aborted && getBrowserTab(tabId) === tab && registry.ownerOf(tabId) === owner ? allowed : null);
       };
-      const canceled = () => finish(false);
-      const timer = setTimeout(canceled, 60_000);
+      const canceled = () => finish(null);
       approvals.set(tabId, { id, finish });
       tab.browserApproval = { id, title, message, detail, approveLabel };
       tab.view.setVisible(false);
@@ -634,12 +637,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
     });
   }
-  async function confirmWebMcpExecution({ tool, inputSummary, tabId, signal }) {
-    return confirmBrowserAction({ tabId, signal, title: "Allow website action?",
-      message: `Allow ${tool.origin} to run “${tool.name}”?`,
-      detail: `This website tool may change data. Arguments: ${inputSummary}` });
-  }
-
   const webMcpBroker = createWebMcpBroker({
     getTab: (tabId) => getBrowserTab(tabId),
     getActiveTabId: (sessionId) => registry.activeTabIdFor(sessionId),
@@ -648,12 +645,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const tab = getBrowserTab(tabId);
       if (!tab || !await browserTaskAllowed(tab.view.webContents.getURL())) throw new Error("website_blocked");
     },
-    confirmExecution: confirmWebMcpExecution,
-    confirmResultDisclosure: ({ tabId, signal, tool, resultText }) => confirmBrowserAction({
-      tabId, signal, title: "Share website result?", approveLabel: "Share result",
-      message: `Share the result from ${tool.origin} with this conversation and its model provider?`,
-      detail: `The website action has already run. Review this complete result for passwords, session cookies, tokens or other private data before sharing. Denying keeps the result out of the conversation and does not undo the action.\n\n${resultText}`,
-    }),
     isFrameAllowed: async (frame) => await browserTaskAllowed(frame.url) && ensureWebMcpFramePolicy().checkFrame(frame),
     onActivity: (activity) => {
       const tab = getBrowserTab(activity.tabId);
@@ -677,6 +668,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   });
 
 
+  const sessionAllows = createBrowserSessionAllows({ filePath: sessionAllowsPath });
   const taskHost = createBrowserTaskHost({
     getTab: getBrowserTab,
     tabsFor: (sessionId) => registry.tabsFor(sessionId).map((item) => getBrowserTab(item.tabId)).filter(Boolean),
@@ -691,6 +683,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     changed: (tabId, activity) => { const tab = getBrowserTab(tabId); if (tab) { tab.browserTask = activity; sendBrowserState(); } },
     siteTools: (args) => webMcpBroker.listTools(args),
     runSiteTool: (args, options) => webMcpBroker.executeTool(args, options),
+    sessionAllows,
   });
 
   function scheduleWebMcpToolCountRefresh(tabId) {
@@ -1194,7 +1187,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined) {
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
-    approvals.get(tabId)?.finish(false);
+    approvals.get(tabId)?.finish(null);
     taskHost.invalidate(tabId, { closed: true, reason });
     if (!preserve) suspendedTabs.delete(tabId);
     if (menuRequest?.tabId === tabId) hideContextMenu();
@@ -1466,6 +1459,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // tabs or the currently visible conversation.
     const ownerSessionId = normalizeSessionId(sessionId);
     if (!ownerSessionId) return [];
+    // The session is gone, so its browser allow is too.
+    sessionAllows.remove(ownerSessionId);
     closedTabs = closedTabs.filter((entry) => entry.ownerSessionId !== ownerSessionId);
     if (shortcutFocus?.ownerSessionId === ownerSessionId) shortcutFocus = null;
     const closedTabIds = registry.list()
@@ -1738,8 +1733,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       // listing that already saw the same registrations. It is not a new
       // document: only navigation bumps the revision. Listed handles stay
       // valid, and execution revalidates each tool's live descriptor digest
-      // before asking for consent, so a changed or removed tool still fails
-      // as stale_tool while an unchanged one reaches the approval prompt.
+      // before running it, so a changed or removed tool still fails as
+      // stale_tool while an unchanged one runs.
       scheduleWebMcpToolCountRefresh(tab.tabId);
     });
   }

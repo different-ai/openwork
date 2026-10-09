@@ -7,37 +7,30 @@ it does not create a different website account for every conversation.
 
 ## User experience
 
+The first browser operation in a session asks **Allow this agent to use the
+browser?** once. **Allow for this session** is saved in the desktop profile and
+survives restarts; takeover, cancellation and closing tabs never ask again. Deleting
+the session forgets it. There are no per-action or
+per-tool prompts and no operation time limit. Organization policy and takeover
+are the other gates. Denying returns `user_denied`; a prompt dismissed without a
+choice (cancellation, closed tab) returns `canceled`, never `user_denied`.
+
 1. List the conversation's tabs and reuse a matching page, or open the requested
-   URL in a new owned tab. Review **Allow browser control for this thread?** in
-   the panel and choose **Allow for this thread** once. The grant covers allowed
-   website navigation, reading and scrolling across this thread's tabs, using
-   the built-in browser's signed-in account. A new thread's first tab stays blank
-   until acceptance; localhost has no exemption.
+   URL in a new owned tab, using the built-in browser's signed-in account. A new
+   session's first tab stays blank until the session is allowed.
 2. Discover site tools. Prefer a relevant structured integration or site tool;
-   otherwise observe the page and use its visible controls. Scrolling needs no
-   further prompt. Every click, fill and key instead asks **Allow browser action?**
-   with its target, key or text before dispatch. Choose **Allow once** or **Deny**:
-   these inputs can submit information or change website data. A fresh image
+   otherwise observe the page and use its visible controls. A fresh image
    supports a coordinate click without a useful DOM reference.
-3. Review each WebMCP invocation separately. A site's read-only annotation is
-   advisory. Approvals bind the operation to its tab and current page.
-   After a site callback returns, review its complete bounded result locally
-   before choosing **Share result**. This separately authorizes disclosure to
-   the conversation and its model provider. Denying keeps the payload private;
-   it does not undo the action or permit an automatic retry.
-4. Choose **Take over** to pause the conversation's browser operations and revoke
-   its grant. Sign in directly in the page, then choose **Resume browser**. The
-   next browser operation requests fresh thread consent, and actions need a new
+3. WebMCP tools run and return their bounded result to the conversation. A
+   site's read-only annotation is advisory and never makes a retry safe.
+4. Choose **Take over** to pause the conversation's browser operations. Sign in
+   directly in the page, then choose **Resume browser**; actions need a new
    observation. Opening another tab cannot bypass takeover.
 5. Observe the requested result. An input event being dispatched and a site
    callback returning are separate from the user's desired outcome being met.
 
 Background tabs keep their conversation ownership and cannot switch the visible
-conversation. An initial open can wait on its blank tab for the panel to mount
-and the owner to select it, within the task's 30-second timeout. Timeout or
-cancellation dismisses the pending approval and releases the new tab; the
-dialog's longer 60-second limit cannot revive it. Other background operations
-needing approval return `needs_attention`; the user selects the tab and retries.
+conversation, and browser operations work in them without selecting the tab.
 Ordinary popup windows stay in
 owned built-in tabs, using the same profile and opener. Non-HTTP(S) popups are
 refused. A closed tab is an explicit error, never silently replaced.
@@ -57,10 +50,7 @@ browser-tool boundary; it does not sandbox unrelated shell tools or user-added
 plugins with independent machine permissions.
 
 Each tab allows one operation at a time. There is no mutation queue. DOM
-observations carry random IDs and must be no older than 15 seconds when an action
-starts. One action's approval wait is excluded from its remaining age budget,
-without renewing the stored observation or extending the operation timeout.
-After approval the host rechecks observation identity, document, URL, policy,
+observations carry random IDs and have no age limit. Before dispatch the host rechecks observation identity, document, URL, policy,
 DOM changes, viewport, scroll and target readiness. Key input also requires the
 same directly focused native input, textarea, select, button or link. Keyboard
 input to frames, shadow hosts and generic/custom editors is refused because their
@@ -68,45 +58,36 @@ actual focused descendant cannot be verified; the person must take over. This
 includes closed shadow roots, which cannot be detected from a host's `shadowRoot`.
 Coordinate clicks require an image scaled to the page
 viewport and recheck its pixels before dispatch. The reviewed action payload is
-copied before waiting and never replaced silently. Actions consume their
+copied once and never replaced silently. Actions consume their
 observation before dispatch; failure or cancellation clears it. Timeouts and
 uncertain outcomes prohibit automatic replay, including through another method.
 
-Browser-control consent is one in-memory grant per trusted conversation ID.
-Same-thread tabs and popups reuse it; other conversations never do. Takeover,
-disabling control, cancellation or timeout of an in-flight browser request,
-closing the last owned tab, and desktop restart clear it. Closing one tab does
-not revoke its surviving siblings' grant. Concurrent consent requests share one
-review, and revocation fences pending requests and stale approval completions.
-WebMCP invocation and result disclosure remain separate approvals. Takeover
-stops pending task loads; only explicit address-bar, Back, Forward or Reload
-actions enable manual navigation without creating task grants. Webpage mouse
-and keyboard input do not enable navigation. Resume requires new thread consent.
-Browser permission is not task authorization for unrelated or consequential
-work. None of these approvals can expand the organization's managed policy.
+Each conversation has one in-memory control scope. Takeover, disabling control
+and closing the last owned tab abort its in-flight operations without clearing
+the session allow. Cancellation aborts only that operation. Takeover stops pending
+task loads; only explicit address-bar, Back, Forward or Reload actions enable
+manual navigation. Webpage mouse and keyboard input do not enable navigation.
+Browser access is not task authorization for unrelated or consequential work,
+and nothing expands the organization's managed policy.
 The existing async `checkPolicy`
-boundary checks task access, DOM actions, site-tool discovery and invocation,
-and result sharing. There is no renderer-managed website grant or parallel
-policy cache. `execution.browserOrigins` matches exact scheme, host and port
+boundary checks task access, DOM actions, site-tool discovery and invocation.
+There is no renderer-managed website grant or parallel policy cache. `execution.browserOrigins` matches exact scheme, host and port
 and intersects across policies; it does not union host patterns or wildcards.
 
 The browser session's request-policy hook in `browser-panel.mjs` remains the
 only `onBeforeRequest` listener. It checks all network requests, including redirects,
 frames, subresources, scripted requests and uploads. `blockBrowserUploads`
-remains authoritative. User consent cannot bypass it, and a denied request
+remains authoritative, and a denied request
 never falls back to an external browser.
 
 The same request listener holds task-controlled main-frame requests, including
-cross-origin redirects, until thread consent and managed policy permit dispatch.
-It rechecks managed policy after acceptance and checks cancellation, tab identity
-and ownership before releasing the request. A paused task cannot acquire grants
-or treat a late redirect as manual browsing. Legacy automation open also goes
-through the task host's pre-load consent gate.
+cross-origin redirects, until managed policy permits dispatch. It checks
+cancellation, tab identity and ownership before releasing the request. A paused
+task cannot treat a late redirect as manual browsing.
 
 This is not a complete browser egress sandbox. Frames, images, scripts, fetches
 and other subresources remain governed by the existing managed request policy.
-If that policy permits them, an approved thread can navigate between origins
-without another permission prompt. Exact managed URL origins are not a DNS/IP
+If that policy permits them, a thread can navigate between origins. Exact managed URL origins are not a DNS/IP
 classification or DNS-rebinding defense, and the browser still shares its
 persistent signed-in profile across conversations.
 
@@ -141,7 +122,7 @@ The host implements the imperative `document.modelContext` path with an
 isolated preload bridge. When the runtime does not supply that API, the existing
 compatibility implementation supplies it. Discovery validates names, bounded
 JSON Schemas, frame policy and origin. Every invocation rechecks the document,
-frame, schema and registration, both before and after approval. Handles carry
+frame, schema and registration before running and before returning. Handles carry
 the requesting conversation and navigation revision. Discovery spanning a
 navigation is rejected instead of publishing stale handles.
 
@@ -149,7 +130,7 @@ Input schemas use a bounded JSON Schema 2020-12 subset. `pattern`,
 `patternProperties` and all `format` validators (including `regex`) are
 unsupported, including in nested schemas and definitions. Discovery reports
 each rejected descriptor in `rejectedTools` without hiding valid tools. Those
-schemas are rejected before compilation or action approval, not silently
+schemas are rejected before compilation, not silently
 accepted with their constraints ignored. Literal data and property names may
 still contain those words. References are limited to named local `$defs` or
 `definitions` entries; arbitrary JSON pointers, remote and dynamic references
@@ -211,7 +192,7 @@ planner, prompts, permission classifier or runtime implementation.
 ## Verification and limits
 
 `webmcp-browser-agent` is the browser-task journey: real engine plugins with a
-deterministic provider and controlled website witnesses for consent, signed-in
+deterministic provider and controlled website witnesses for the single session allow, signed-in
 invocation, DOM/image fallback, popup isolation, exact iframe delegation,
 cancellation, stale observations and observed completion.
 `browser-tabs-owned-by-thread` and `browser-panel-viewport-recovery` own
