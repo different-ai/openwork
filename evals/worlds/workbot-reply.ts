@@ -21,12 +21,13 @@ export function gmailStep(status: "running" | "done"): ReplyPart {
  * Real Workbot client and styles, with Workbot's reply played one model call at a time from the fixture (streamed words,
  * then the stored copy), so a spec can watch how the conversation moves while Workbot answers.
  */
-export async function workbotReplyWorld(_seed: Seed, { place }: { place: Place }, options: { natural?: boolean } = {}) {
+export async function workbotReplyWorld(_seed: Seed, { place }: { place: Place }, options: { natural?: boolean; welcome?: boolean } = {}) {
   if (place.kind !== "local") throw new Error("Workbot reply UI proof requires local placement.");
   const resources = new AsyncDisposableStack();
   const streams = new Set<ServerResponse>();
   const now = Date.now();
   const turns: Turn[] = [{ id: "earlier", text: "What's on today?", sentAt: now - 60_000, finishedAt: now - 55_000, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "A design review at 3:30, then nothing after 5.", step: 0 }], modelSteps: 1, error: null, tasks: [] }];
+  if (options.welcome) turns.length = 0;
   const send = (event: Record<string, unknown>) => {
     for (const stream of streams) stream.write(`data: ${JSON.stringify(event)}\n\n`);
   };
@@ -56,6 +57,14 @@ export async function workbotReplyWorld(_seed: Seed, { place }: { place: Place }
           }
           response.setHeader("content-type", "application/json");
           if (path === "/v1/workbot/me") { response.end(JSON.stringify({ name: "Alex", email: "alex@acme.test", organizationName: "Acme", enabled: true, naturalChat: options.natural === true, denUrl: null })); return; }
+          if (path === "/v1/workbot/connections") {
+            response.end(JSON.stringify({ connections: [
+              { id: "slack", name: "Slack", app: "slack", ready: true, connectUrl: null },
+              { id: "gmail", name: "Gmail", app: "gmail", ready: true, connectUrl: null },
+              { id: "calendar", name: "Google Calendar", app: "googleCalendar", ready: true, connectUrl: null },
+            ] })); return;
+          }
+          if (path === "/v1/workbot/hello") { response.end(JSON.stringify({ started: false })); return; }
           if (path === "/v1/workbot" && request.method === "GET") {
             response.end(JSON.stringify({ available: true, name: "Workbot", organizationName: "Acme", status: turns.some((turn) => turn.status === "working") ? "busy" : "idle", turns, hasEarlier: false, filesEnabled: false })); return;
           }
@@ -159,4 +168,9 @@ export async function workbotReplyWorld(_seed: Seed, { place }: { place: Place }
 /** The same, with natural replies on: a message sent while Workbot answers interrupts that answer. */
 export function workbotNaturalReplyWorld(seed: Seed, context: { place: Place }) {
   return workbotReplyWorld(seed, context, { natural: true });
+}
+
+/** A first visit with all three everyday demo apps connected. */
+export function workbotWelcomeWorld(seed: Seed, context: { place: Place }) {
+  return workbotReplyWorld(seed, context, { natural: true, welcome: true });
 }

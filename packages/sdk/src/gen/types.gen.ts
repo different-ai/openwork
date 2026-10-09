@@ -28561,7 +28561,7 @@ export type ListWorkbotConnectionsResponses = {
     connections: Array<{
       id: string;
       name: string;
-      app: "gmail" | "slack" | "microsoft";
+      app: "gmail" | "googleCalendar" | "slack" | "microsoft";
       ready: boolean;
       connectUrl: string | null;
     }>;

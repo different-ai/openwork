@@ -86,16 +86,17 @@ const workbotConnectionsSchema = z.object({
   connections: z.array(z.object({
     id: z.string(),
     name: z.string(),
-    app: z.enum(["gmail", "slack", "microsoft"]),
+    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft"]),
     ready: z.boolean(),
     connectUrl: z.string().nullable(),
   })),
 })
 
 /** Which everyday app a connection is, for Workbot's welcome: Gmail (or Google Workspace), Slack, or Microsoft 365. */
-function everydayApp(fact: { name: string; url: string; nativeProviderKey: string | null }): "gmail" | "slack" | "microsoft" | null {
+function everydayApp(fact: { name: string; url: string; nativeProviderKey: string | null }): "gmail" | "googleCalendar" | "slack" | "microsoft" | null {
   const key = fact.nativeProviderKey?.toLowerCase() ?? ""
   const text = `${fact.name} ${fact.url}`.toLowerCase()
+  if (/google[ -]calendar|\bgcal\b/.test(text)) return "googleCalendar"
   if (key.includes("google") || /gmail|google workspace/.test(text)) return "gmail"
   if (key.includes("microsoft") || /microsoft|outlook|office ?365|m365/.test(text)) return "microsoft"
   if (/slack/.test(text)) return "slack"

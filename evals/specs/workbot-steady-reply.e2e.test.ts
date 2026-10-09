@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { gmailStep, workbotNaturalReplyWorld, workbotReplyWorld, type ReplyPart } from "../worlds/workbot-reply.ts";
+import { gmailStep, workbotNaturalReplyWorld, workbotReplyWorld, workbotWelcomeWorld, type ReplyPart } from "../worlds/workbot-reply.ts";
 
 const test = spec.world(workbotReplyWorld, { resources: { surfaces: ["appWeb"], services: [] }, needs: { placement: "local" }, timeout: 120_000 });
 const composer = { label: "Message Workbot" };
@@ -123,5 +123,21 @@ natural("a member's follow-up changes Workbot's answer instead of waiting behind
       "The answer about the week stopped where it was, with no Stopped label and nothing waiting Up next; the answer about today came under the correction with Copy beside its last bubble, and the conversation never moved back down.",
       true,
     );
+  });
+});
+
+const welcome = spec.world(workbotWelcomeWorld, { resources: { surfaces: ["appWeb"], services: [] }, needs: { placement: "local" }, timeout: 120_000 });
+welcome("the welcome shows Google Calendar alongside Gmail and Slack", async ({ world, user, probe, step, evidence }) => {
+  await step("the member opens the connected apps step", async () => {
+    await user.navigate(world.url);
+    await user.see({ text: "Get started" });
+    await user.click({ role: "button", label: "Get started" });
+    await user.see({ text: "You're all connected" });
+    await user.see({ text: "Google Calendar" });
+    await user.see({ text: "Gmail" });
+    await user.see({ text: "Slack" });
+    expect((await probe.dom("li")).elements.filter((row) => row.text.includes("Connected"))).toHaveLength(3);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("All three connected apps remain visible", "Google Calendar has its own connected row alongside Gmail and Slack; the additive calendar app kind does not discard the connections response.", true);
   });
 });

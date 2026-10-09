@@ -160,7 +160,7 @@ function ConnectStep(props: {
   );
 }
 
-const APP_NAMES: Record<WorkbotConnection["app"], string> = { gmail: "Gmail", slack: "Slack", microsoft: "Microsoft 365" };
+const APP_NAMES: Record<WorkbotConnection["app"], string> = { gmail: "Gmail", googleCalendar: "Google Calendar", slack: "Slack", microsoft: "Microsoft 365" };
 
 /** One part of a step, rising in after the parts before it. */
 function Rise({ order, children }: { order: number; children: ReactNode }) {
