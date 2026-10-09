@@ -2,23 +2,26 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowUpRight, BarChart3, Sparkles, ScrollText } from "lucide-react";
-import { getAnalyticsRoute, getModelsAnalyticsRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
+import { ArrowUpRight, BarChart3, Puzzle, Sparkles, ScrollText } from "lucide-react";
+import { getAnalyticsRoute, getModelsAnalyticsRoute, getSkillUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
+import { useSkillUsageAvailable } from "../skill-usage/use-skill-usage";
 
 export const analyticsSurfaceClass = "rounded-2xl border border-[#e3e7ee] bg-white";
 export const analyticsPageClass = "mx-auto grid w-full max-w-[1160px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8";
 
 export function AnalyticsPageHeader({ orgSlug, active, title, description, action, caption }: {
-  orgSlug?: string | null; active: "adoption" | "models" | "workflows";
+  orgSlug?: string | null; active: "adoption" | "models" | "skills" | "workflows";
   title: string; description: string; action?: ReactNode; caption?: ReactNode;
 }) {
   const { runtimeConfig } = useDenFlow();
   const { orgContext } = useOrgDashboard();
+  const skillUsage = useSkillUsageAvailable();
   const pages = [
     { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 },
     ...(runtimeConfig.orgMode === "single_org" ? [] : [{ id: "models", label: "Models & usage", href: getModelsAnalyticsRoute(orgSlug), icon: Sparkles }]),
+    ...(skillUsage ? [{ id: "skills", label: "Skills", href: getSkillUsageRoute(orgSlug), icon: Puzzle }] : []),
     ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [{ id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText }] : []),
   ];
   return <header className="grid gap-5">

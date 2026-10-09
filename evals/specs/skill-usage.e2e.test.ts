@@ -17,10 +17,10 @@ test("an owner sees which skills teammates use and which nobody uses, while a te
   const { draftReply, summarizeTicket, quoteBuilder } = world.skills;
   const usagePath = "/v1/skill-usage?days=30";
 
-  await step("before: the owner opens Skill usage from Plugins and every skill reads Not used", async () => {
-    await owner.see({ testId: "skill-usage-link" }, { timeoutMs: 90_000 });
-    await owner.click({ testId: "skill-usage-link" });
-    await owner.see({ role: "heading", label: "Skill usage" }, { timeoutMs: 60_000 });
+  await step("before: the owner opens Skills in Analytics and every skill reads Not used", async () => {
+    await owner.see({ role: "link", label: "Skills" }, { timeoutMs: 90_000 });
+    await owner.click({ role: "link", label: "Skills" });
+    await owner.see({ role: "heading", label: "Skills" }, { timeoutMs: 60_000 });
     await owner.see({ testId: "skill-usage-not-counting" }, { timeoutMs: 60_000 });
     const unused = (await page.dom('[data-skill-unused]')).elements;
     expect(unused).toHaveLength(3);
@@ -40,7 +40,7 @@ test("an owner sees which skills teammates use and which nobody uses, while a te
     evidence.recordAssertionEvidence("each agent received the skill", `${served} of 4 loads returned the SKILL.md (get_skill twice for Alice, execute_capability and get_skill for Blair)`, served === 4);
     expect(served).toBe(4);
     await owner.reload();
-    await owner.see({ role: "heading", label: "Skill usage" }, { timeoutMs: 60_000 });
+    await owner.see({ role: "heading", label: "Skills" }, { timeoutMs: 60_000 });
   });
 
   await step("after: Draft reply shows 2 uses by 2 people today, and Quote builder still reads Not used", async () => {
@@ -76,8 +76,8 @@ test("an owner sees which skills teammates use and which nobody uses, while a te
   });
 
   await step("a teammate cannot read skill usage", async () => {
-    await teammate.navigate(`${world.baseUrl}/dashboard/plugins?view=usage`);
-    await teammate.notSee({ role: "heading", label: "Skill usage" });
+    await teammate.navigate(`${world.baseUrl}/dashboard/analytics/skills`);
+    await teammate.notSee({ role: "heading", label: "Skills" });
     const alice = world.den.members.alice;
     if (!alice) throw new Error("Missing teammate session.");
     const denied = await probe.api(alice, usagePath);

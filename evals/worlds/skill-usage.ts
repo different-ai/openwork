@@ -94,7 +94,7 @@ export async function skillUsage(seed: Seed) {
   }
 
   const viewport = { width: 1280, height: 900 };
-  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/plugins", headless: true, viewport });
+  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/analytics", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: den.members.alice, startPath: "/dashboard", headless: true, viewport });
   return { den, web, memberWeb, orgId, skills: capabilities, loadSkill, baseUrl: den.ref.webUrl };
 }

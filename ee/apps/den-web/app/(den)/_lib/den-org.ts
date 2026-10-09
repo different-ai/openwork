@@ -553,6 +553,10 @@ export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
   return `${getAnalyticsRoute(orgSlug)}/models`;
 }
 
+export function getSkillUsageRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/skills`;
+}
+
 export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
 }
@@ -732,10 +736,6 @@ export function getMarketplaceRoute(orgSlug: string | null | undefined, marketpl
 
 export function getIntegrationsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/integrations`;
-}
-
-export function getSkillUsageRoute(orgSlug?: string | null): string {
-  return `${getPluginsRoute(orgSlug)}?view=usage`;
 }
 
 export function getPluginSourcesRoute(orgSlug?: string | null): string {
