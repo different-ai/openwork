@@ -26,13 +26,15 @@ const specs = new Set([
   "evals/specs/sent-message-matches-composer.e2e.test.ts",
   "evals/specs/agent-connection-sign-in-journey.e2e.test.ts",
   "evals/specs/opencode-v2-built-in-browser.e2e.test.ts",
+  "evals/specs/opencode-v2-drive-upload.e2e.test.ts",
 ]);
 
 export function parityProofPlan(spec) {
   if (!specs.has(spec)) throw new Error(`Unsupported parity proof: ${spec}`);
   const engines = ["evals/specs/opencode-v2-context-activity.e2e.test.ts", "evals/specs/opencode-v2-tool-discovery.e2e.test.ts", "evals/specs/opencode-v2-session-home.e2e.test.ts", "evals/specs/opencode-v2-skill-jit.e2e.test.ts",
     "evals/specs/engine-provider-filters.e2e.test.ts", "evals/specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts", "evals/specs/opencode-v2-send-during-connection-refresh.e2e.test.ts",
-    "evals/specs/agent-background-journey.e2e.test.ts", "evals/specs/opencode-v2-built-in-browser.e2e.test.ts"].includes(spec) ? ["v2"] : ["v1", "v2"];
+    "evals/specs/agent-background-journey.e2e.test.ts", "evals/specs/opencode-v2-built-in-browser.e2e.test.ts",
+    "evals/specs/opencode-v2-drive-upload.e2e.test.ts"].includes(spec) ? ["v2"] : ["v1", "v2"];
   return engines.map(engine => ({ engine, args: ["evals/bin/evals.mjs", spec.slice("evals/".length), "--local", "--engine", engine] }));
 }
 
