@@ -654,8 +654,8 @@ export function getOrgSettingsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/org-settings`;
 }
 
-export function getAwsDeploymentsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/aws-deployments`;
+export function getDeploymentsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/deployments`;
 }
 
 export function getDiagnosticsRoute(orgSlug?: string | null): string {

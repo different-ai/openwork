@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "6afc322d-5a2e-40d5-8972-163b1134c12c",
+  "id": "0d74a32e-cd43-4811-9e7c-af63eab858e3",
   "prevId": "bb3e6fdc-3b26-4411-84b0-17d9aafb311b",
   "tables": {
     "account": {
@@ -2506,8 +2506,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "aws_deployment_event": {
-      "name": "aws_deployment_event",
+    "managed_deployment_event": {
+      "name": "managed_deployment_event",
       "columns": {
         "id": {
           "name": "id",
@@ -2560,8 +2560,8 @@
         }
       },
       "indexes": {
-        "aws_deployment_event_run_sequence": {
-          "name": "aws_deployment_event_run_sequence",
+        "managed_deployment_event_run_sequence": {
+          "name": "managed_deployment_event_run_sequence",
           "columns": [
             "run_id",
             "sequence"
@@ -2571,8 +2571,8 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "aws_deployment_event_id": {
-          "name": "aws_deployment_event_id",
+        "managed_deployment_event_id": {
+          "name": "managed_deployment_event_id",
           "columns": [
             "id"
           ]
@@ -2581,8 +2581,60 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "aws_deployment_run": {
-      "name": "aws_deployment_run",
+    "managed_deployment_health": {
+      "name": "managed_deployment_health",
+      "columns": {
+        "deployment_id": {
+          "name": "deployment_id",
+          "type": "varchar(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "checks": {
+          "name": "checks",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reported_at": {
+          "name": "reported_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "signed_at": {
+          "name": "signed_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "managed_deployment_health_deployment_id": {
+          "name": "managed_deployment_health_deployment_id",
+          "columns": [
+            "deployment_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "managed_deployment_run": {
+      "name": "managed_deployment_run",
       "columns": {
         "id": {
           "name": "id",
@@ -2598,9 +2650,44 @@
           "notNull": true,
           "autoincrement": false
         },
+        "kind": {
+          "name": "kind",
+          "type": "enum('install','update','retry')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "version": {
           "name": "version",
           "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "template_url": {
+          "name": "template_url",
+          "type": "varchar(2048)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bundle_url": {
+          "name": "bundle_url",
+          "type": "varchar(2048)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bundle_sha256": {
+          "name": "bundle_sha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "api_origin": {
+          "name": "api_origin",
+          "type": "varchar(512)",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -2614,7 +2701,7 @@
         },
         "state": {
           "name": "state",
-          "type": "enum('awaiting_aws','provisioning','ready','failed')",
+          "type": "enum('awaiting_approval','provisioning','ready','failed')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -2666,8 +2753,8 @@
         }
       },
       "indexes": {
-        "aws_deployment_run_deployment": {
-          "name": "aws_deployment_run_deployment",
+        "managed_deployment_run_deployment": {
+          "name": "managed_deployment_run_deployment",
           "columns": [
             "deployment_id"
           ],
@@ -2676,8 +2763,8 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "aws_deployment_run_id": {
-          "name": "aws_deployment_run_id",
+        "managed_deployment_run_id": {
+          "name": "managed_deployment_run_id",
           "columns": [
             "id"
           ]
@@ -2686,8 +2773,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "aws_deployment": {
-      "name": "aws_deployment",
+    "managed_deployment": {
+      "name": "managed_deployment",
       "columns": {
         "id": {
           "name": "id",
@@ -2703,6 +2790,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "provider": {
+          "name": "provider",
+          "type": "enum('aws','azure','gcp')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "name": {
           "name": "name",
           "type": "varchar(80)",
@@ -2710,16 +2804,9 @@
           "notNull": true,
           "autoincrement": false
         },
-        "account_id": {
-          "name": "account_id",
-          "type": "varchar(12)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "region": {
-          "name": "region",
-          "type": "varchar(32)",
+        "target": {
+          "name": "target",
+          "type": "json",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -2731,13 +2818,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "route53_zone_id": {
-          "name": "route53_zone_id",
-          "type": "varchar(32)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "owner_email": {
           "name": "owner_email",
           "type": "varchar(254)",
@@ -2745,9 +2825,23 @@
           "notNull": true,
           "autoincrement": false
         },
+        "size": {
+          "name": "size",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "active_run_id": {
           "name": "active_run_id",
           "type": "varchar(36)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "installed_version": {
+          "name": "installed_version",
+          "type": "varchar(80)",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -2770,8 +2864,8 @@
         }
       },
       "indexes": {
-        "aws_deployment_org": {
-          "name": "aws_deployment_org",
+        "managed_deployment_org": {
+          "name": "managed_deployment_org",
           "columns": [
             "org_id"
           ],
@@ -2780,8 +2874,8 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "aws_deployment_id": {
-          "name": "aws_deployment_id",
+        "managed_deployment_id": {
+          "name": "managed_deployment_id",
           "columns": [
             "id"
           ]

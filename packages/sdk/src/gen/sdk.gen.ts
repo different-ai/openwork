@@ -88,6 +88,8 @@ import type {
   DeleteV1LlmProvidersByLlmProviderIdMyCredentialErrors,
   DeleteV1LlmProvidersByLlmProviderIdMyCredentialResponses,
   DeleteV1LlmProvidersByLlmProviderIdResponses,
+  DeleteV1ManagedDeploymentsByDeploymentIdErrors,
+  DeleteV1ManagedDeploymentsByDeploymentIdResponses,
   DeleteV1MarketplacesByKeyByExternalKeyResponses,
   DeleteV1MarketplacesByMarketplaceIdAccessByGrantIdErrors,
   DeleteV1MarketplacesByMarketplaceIdAccessByGrantIdResponses,
@@ -201,10 +203,6 @@ import type {
   GetV1AuthBootstrapStatusResponses,
   GetV1AuthLoginOptionsErrors,
   GetV1AuthLoginOptionsResponses,
-  GetV1AwsDeploymentsConfigurationErrors,
-  GetV1AwsDeploymentsConfigurationResponses,
-  GetV1AwsDeploymentsErrors,
-  GetV1AwsDeploymentsResponses,
   GetV1BootstrapWorkspaceByBootstrapIdClaimErrors,
   GetV1BootstrapWorkspaceByBootstrapIdClaimResponses,
   GetV1BrandAssetsByOrganizationIdByKindByVersionErrors,
@@ -368,6 +366,10 @@ import type {
   GetV1LlmProvidersByLlmProviderIdResponses,
   GetV1LlmProvidersErrors,
   GetV1LlmProvidersResponses,
+  GetV1ManagedDeploymentsConfigurationErrors,
+  GetV1ManagedDeploymentsConfigurationResponses,
+  GetV1ManagedDeploymentsErrors,
+  GetV1ManagedDeploymentsResponses,
   GetV1MarketplacesByKeyByExternalKeyErrors,
   GetV1MarketplacesByKeyByExternalKeyResponses,
   GetV1MarketplacesByMarketplaceIdAccessErrors,
@@ -606,14 +608,6 @@ import type {
   PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
   PostV1AuthBootstrapVerifyErrors,
   PostV1AuthBootstrapVerifyResponses,
-  PostV1AwsDeploymentsByDeploymentIdLaunchErrors,
-  PostV1AwsDeploymentsByDeploymentIdLaunchResponses,
-  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
-  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
-  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
-  PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
-  PostV1AwsDeploymentsErrors,
-  PostV1AwsDeploymentsResponses,
   PostV1BootstrapClaimsAcceptErrors,
   PostV1BootstrapClaimsAcceptResponses,
   PostV1BootstrapWorkspaceByBootstrapIdClaimErrors,
@@ -768,6 +762,16 @@ import type {
   PostV1LlmProvidersResponses,
   PostV1LlmProvidersTestConnectionErrors,
   PostV1LlmProvidersTestConnectionResponses,
+  PostV1ManagedDeploymentsByDeploymentIdHeartbeatErrors,
+  PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponses,
+  PostV1ManagedDeploymentsByDeploymentIdLaunchErrors,
+  PostV1ManagedDeploymentsByDeploymentIdLaunchResponses,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
+  PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
+  PostV1ManagedDeploymentsErrors,
+  PostV1ManagedDeploymentsResponses,
   PostV1MarketplacesByMarketplaceIdAccessErrors,
   PostV1MarketplacesByMarketplaceIdAccessResponses,
   PostV1MarketplacesByMarketplaceIdArchiveErrors,
@@ -3071,46 +3075,51 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Read AWS deployment availability
+   * Read which clouds can be launched
    */
-  public getV1AwsDeploymentsConfiguration<ThrowOnError extends boolean = false>(
+  public getV1ManagedDeploymentsConfiguration<ThrowOnError extends boolean = false>(
     options?: Options<never, ThrowOnError>,
   ) {
     return (options?.client ?? this.client).get<
-      GetV1AwsDeploymentsConfigurationResponses,
-      GetV1AwsDeploymentsConfigurationErrors,
+      GetV1ManagedDeploymentsConfigurationResponses,
+      GetV1ManagedDeploymentsConfigurationErrors,
       ThrowOnError
-    >({ url: "/v1/aws-deployments/configuration", ...options });
+    >({ url: "/v1/managed-deployments/configuration", ...options });
   }
 
   /**
-   * List organization AWS deployments
+   * List the organization's managed deployments
    */
-  public getV1AwsDeployments<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<GetV1AwsDeploymentsResponses, GetV1AwsDeploymentsErrors, ThrowOnError>({
-      url: "/v1/aws-deployments",
-      ...options,
-    });
+  public getV1ManagedDeployments<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1ManagedDeploymentsResponses,
+      GetV1ManagedDeploymentsErrors,
+      ThrowOnError
+    >({ url: "/v1/managed-deployments", ...options });
   }
 
   /**
-   * Create an AWS deployment
+   * Create a managed deployment
    */
-  public postV1AwsDeployments<ThrowOnError extends boolean = false>(
+  public postV1ManagedDeployments<ThrowOnError extends boolean = false>(
     parameters: {
       name: string;
-      accountId: string;
-      region:
-        | "us-east-1"
-        | "us-east-2"
-        | "us-west-2"
-        | "eu-west-1"
-        | "eu-central-1"
-        | "ap-southeast-1"
-        | "ap-southeast-2";
       domainName: string;
-      route53ZoneId: string;
       ownerEmail: string;
+      size?: "small";
+      provider: "aws";
+      target: {
+        accountId: string;
+        region:
+          | "us-east-1"
+          | "us-east-2"
+          | "us-west-2"
+          | "eu-west-1"
+          | "eu-central-1"
+          | "ap-southeast-1"
+          | "ap-southeast-2";
+        route53ZoneId: string;
+      };
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3120,21 +3129,21 @@ export class DenClient extends HeyApiClient {
         {
           args: [
             { in: "body", key: "name" },
-            { in: "body", key: "accountId" },
-            { in: "body", key: "region" },
             { in: "body", key: "domainName" },
-            { in: "body", key: "route53ZoneId" },
             { in: "body", key: "ownerEmail" },
+            { in: "body", key: "size" },
+            { in: "body", key: "provider" },
+            { in: "body", key: "target" },
           ],
         },
       ],
     );
     return (options?.client ?? this.client).post<
-      PostV1AwsDeploymentsResponses,
-      PostV1AwsDeploymentsErrors,
+      PostV1ManagedDeploymentsResponses,
+      PostV1ManagedDeploymentsErrors,
       ThrowOnError
     >({
-      url: "/v1/aws-deployments",
+      url: "/v1/managed-deployments",
       ...options,
       ...params,
       headers: {
@@ -3146,30 +3155,67 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Prepare an approved AWS deployment launch
+   * Remove a deployment that was never installed
    */
-  public postV1AwsDeploymentsByDeploymentIdLaunch<ThrowOnError extends boolean = false>(
+  public deleteV1ManagedDeploymentsByDeploymentId<ThrowOnError extends boolean = false>(
     parameters: {
       deploymentId: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
     const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "deploymentId" }] }]);
-    return (options?.client ?? this.client).post<
-      PostV1AwsDeploymentsByDeploymentIdLaunchResponses,
-      PostV1AwsDeploymentsByDeploymentIdLaunchErrors,
+    return (options?.client ?? this.client).delete<
+      DeleteV1ManagedDeploymentsByDeploymentIdResponses,
+      DeleteV1ManagedDeploymentsByDeploymentIdErrors,
       ThrowOnError
     >({
-      url: "/v1/aws-deployments/{deploymentId}/launch",
+      url: "/v1/managed-deployments/{deploymentId}",
       ...options,
       ...params,
     });
   }
 
   /**
-   * Enroll an AWS provisioning runner
+   * Prepare an install, retry or approved update
    */
-  public postV1AwsDeploymentsByDeploymentIdRunsByRunIdEnroll<ThrowOnError extends boolean = false>(
+  public postV1ManagedDeploymentsByDeploymentIdLaunch<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+      kind?: "install" | "update" | "retry";
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "deploymentId" },
+            { in: "body", key: "kind" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1ManagedDeploymentsByDeploymentIdLaunchResponses,
+      PostV1ManagedDeploymentsByDeploymentIdLaunchErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments/{deploymentId}/launch",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Enroll a customer-side installer run
+   */
+  public postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnroll<ThrowOnError extends boolean = false>(
     parameters: {
       deploymentId: string;
       runId: string;
@@ -3177,7 +3223,7 @@ export class DenClient extends HeyApiClient {
         authorization: string;
         "x-amz-date": string;
         "x-amz-security-token": string;
-        "x-openwork-run": string;
+        "x-openwork-proof": string;
       };
     },
     options?: Options<never, ThrowOnError>,
@@ -3195,11 +3241,11 @@ export class DenClient extends HeyApiClient {
       ],
     );
     return (options?.client ?? this.client).post<
-      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
-      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollResponses,
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnrollErrors,
       ThrowOnError
     >({
-      url: "/v1/aws-deployments/{deploymentId}/runs/{runId}/enroll",
+      url: "/v1/managed-deployments/{deploymentId}/runs/{runId}/enroll",
       ...options,
       ...params,
       headers: {
@@ -3211,9 +3257,9 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Report sanitized AWS provisioning progress
+   * Report an installer milestone
    */
-  public postV1AwsDeploymentsByDeploymentIdRunsByRunIdEvents<ThrowOnError extends boolean = false>(
+  public postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEvents<ThrowOnError extends boolean = false>(
     parameters: {
       deploymentId: string;
       runId: string;
@@ -3251,11 +3297,11 @@ export class DenClient extends HeyApiClient {
       ],
     );
     return (options?.client ?? this.client).post<
-      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
-      PostV1AwsDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsResponses,
+      PostV1ManagedDeploymentsByDeploymentIdRunsByRunIdEventsErrors,
       ThrowOnError
     >({
-      url: "/v1/aws-deployments/{deploymentId}/runs/{runId}/events",
+      url: "/v1/managed-deployments/{deploymentId}/runs/{runId}/events",
       ...options,
       ...params,
       headers: {
@@ -3263,6 +3309,27 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Report installation health
+   */
+  public postV1ManagedDeploymentsByDeploymentIdHeartbeat<ThrowOnError extends boolean = false>(
+    parameters: {
+      deploymentId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "deploymentId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1ManagedDeploymentsByDeploymentIdHeartbeatResponses,
+      PostV1ManagedDeploymentsByDeploymentIdHeartbeatErrors,
+      ThrowOnError
+    >({
+      url: "/v1/managed-deployments/{deploymentId}/heartbeat",
+      ...options,
+      ...params,
     });
   }
 

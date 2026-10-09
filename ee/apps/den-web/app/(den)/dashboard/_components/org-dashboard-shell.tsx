@@ -23,9 +23,10 @@ import {
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
-  getAwsDeploymentsRoute,
+  getDeploymentsRoute,
   getDesktopPoliciesRoute,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   getIntegrationsRoute,
   getLibraryRoute,
   getMcpConnectionsRoute,
@@ -260,8 +261,8 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   ) {
     return "Advanced";
   }
-  if (pathname.startsWith(getAwsDeploymentsRoute(orgSlug))) {
-    return "AWS deployments";
+  if (pathname.startsWith(getDeploymentsRoute(orgSlug))) {
+    return "Deployments";
   }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";
@@ -450,6 +451,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     },
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
+    managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
   });
 
   const orgSwitcher = isSingleOrgMode ? (

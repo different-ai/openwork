@@ -832,7 +832,7 @@
           "key": {
             "type": "string",
             "enum": [
-              "awsManagedDeployments",
+              "managedDeployments",
               "installLinks",
               "mcpConnections",
               "driveResumableUploads",
@@ -1026,7 +1026,7 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
-                    "awsManagedDeployments": {
+                    "managedDeployments": {
                       "type": "boolean"
                     },
                     "installLinks": {
@@ -1094,7 +1094,7 @@
                     }
                   },
                   "required": [
-                    "awsManagedDeployments",
+                    "managedDeployments",
                     "installLinks",
                     "mcpConnections",
                     "driveResumableUploads",
@@ -1120,7 +1120,7 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
-                    "awsManagedDeployments": {
+                    "managedDeployments": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -2242,7 +2242,7 @@
                     }
                   },
                   "required": [
-                    "awsManagedDeployments",
+                    "managedDeployments",
                     "installLinks",
                     "mcpConnections",
                     "driveResumableUploads",
@@ -2635,7 +2635,7 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
-                    "awsManagedDeployments": {
+                    "managedDeployments": {
                       "type": "boolean"
                     },
                     "installLinks": {
@@ -2703,7 +2703,7 @@
                     }
                   },
                   "required": [
-                    "awsManagedDeployments",
+                    "managedDeployments",
                     "installLinks",
                     "mcpConnections",
                     "driveResumableUploads",
@@ -2729,7 +2729,7 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
-                    "awsManagedDeployments": {
+                    "managedDeployments": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -3851,7 +3851,7 @@
                     }
                   },
                   "required": [
-                    "awsManagedDeployments",
+                    "managedDeployments",
                     "installLinks",
                     "mcpConnections",
                     "driveResumableUploads",
@@ -8700,7 +8700,7 @@
           "capability": {
             "type": "string",
             "enum": [
-              "awsManagedDeployments",
+              "managedDeployments",
               "installLinks",
               "mcpConnections",
               "driveResumableUploads",
@@ -23797,7 +23797,7 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
-                        "awsManagedDeployments": {
+                        "managedDeployments": {
                           "type": "boolean"
                         },
                         "installLinks": {
@@ -23865,7 +23865,7 @@
                         }
                       },
                       "required": [
-                        "awsManagedDeployments",
+                        "managedDeployments",
                         "installLinks",
                         "mcpConnections",
                         "driveResumableUploads",
@@ -23891,7 +23891,7 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
-                        "awsManagedDeployments": {
+                        "managedDeployments": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -25013,7 +25013,7 @@
                         }
                       },
                       "required": [
-                        "awsManagedDeployments",
+                        "managedDeployments",
                         "installLinks",
                         "mcpConnections",
                         "driveResumableUploads",
@@ -25151,7 +25151,7 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
-                        "awsManagedDeployments": {
+                        "managedDeployments": {
                           "type": "boolean"
                         },
                         "installLinks": {
@@ -25219,7 +25219,7 @@
                         }
                       },
                       "required": [
-                        "awsManagedDeployments",
+                        "managedDeployments",
                         "installLinks",
                         "mcpConnections",
                         "driveResumableUploads",
@@ -25245,7 +25245,7 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
-                        "awsManagedDeployments": {
+                        "managedDeployments": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -26367,7 +26367,7 @@
                         }
                       },
                       "required": [
-                        "awsManagedDeployments",
+                        "managedDeployments",
                         "installLinks",
                         "mcpConnections",
                         "driveResumableUploads",
@@ -31989,31 +31989,64 @@
         }
       }
     },
-    "/v1/aws-deployments/configuration": {
+    "/v1/managed-deployments/configuration": {
       "get": {
-        "operationId": "getV1AwsDeploymentsConfiguration",
+        "operationId": "getV1ManagedDeploymentsConfiguration",
         "tags": [
-          "AWS deployments"
+          "Managed deployments"
         ],
-        "summary": "Read AWS deployment availability",
+        "summary": "Read which clouds can be launched",
         "responses": {
           "200": {
-            "description": "Read AWS deployment availability",
+            "description": "Read which clouds can be launched",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "available": {
-                      "type": "boolean"
+                    "providers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "provider": {
+                            "type": "string",
+                            "enum": [
+                              "aws",
+                              "azure",
+                              "gcp"
+                            ]
+                          },
+                          "available": {
+                            "type": "boolean"
+                          },
+                          "version": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "provider",
+                          "available",
+                          "version"
+                        ]
+                      }
                     },
                     "updateMode": {
                       "type": "string",
-                      "const": "manual"
+                      "const": "approval"
                     }
                   },
                   "required": [
-                    "available",
+                    "providers",
                     "updateMode"
                   ]
                 }
@@ -32057,7 +32090,7 @@
             }
           },
           "403": {
-            "description": "Administrator approval required.",
+            "description": "Owner or super-admin approval required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32093,7 +32126,25 @@
             }
           },
           "409": {
-            "description": "Run cannot accept this operation.",
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32111,7 +32162,7 @@
             }
           },
           "503": {
-            "description": "Release is not configured.",
+            "description": "No installer release is configured.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32139,21 +32190,21 @@
         ],
         "x-mint": {
           "metadata": {
-            "og:description": "Read AWS deployment availability API reference in OpenWork Docs."
+            "og:description": "Read which clouds can be launched API reference in OpenWork Docs."
           }
         }
       }
     },
-    "/v1/aws-deployments": {
+    "/v1/managed-deployments": {
       "get": {
-        "operationId": "getV1AwsDeployments",
+        "operationId": "getV1ManagedDeployments",
         "tags": [
-          "AWS deployments"
+          "Managed deployments"
         ],
-        "summary": "List organization AWS deployments",
+        "summary": "List the organization's managed deployments",
         "responses": {
           "200": {
-            "description": "List organization AWS deployments",
+            "description": "List the organization's managed deployments",
             "content": {
               "application/json": {
                 "schema": {
@@ -32164,50 +32215,66 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "name": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 80
-                          },
-                          "accountId": {
-                            "type": "string",
-                            "pattern": "^\\d{12}$"
-                          },
-                          "region": {
-                            "type": "string",
-                            "enum": [
-                              "us-east-1",
-                              "us-east-2",
-                              "us-west-2",
-                              "eu-west-1",
-                              "eu-central-1",
-                              "ap-southeast-1",
-                              "ap-southeast-2"
-                            ]
-                          },
-                          "domainName": {
-                            "type": "string",
-                            "maxLength": 253,
-                            "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
-                          },
-                          "route53ZoneId": {
-                            "type": "string",
-                            "pattern": "^Z[A-Z0-9]{1,31}$"
-                          },
-                          "ownerEmail": {
-                            "type": "string",
-                            "maxLength": 254,
-                            "format": "email",
-                            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
-                          },
                           "id": {
                             "type": "string",
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                           },
+                          "name": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string",
+                            "enum": [
+                              "aws",
+                              "azure",
+                              "gcp"
+                            ]
+                          },
+                          "target": {
+                            "type": "object",
+                            "properties": {
+                              "accountId": {
+                                "type": "string",
+                                "pattern": "^\\d{12}$"
+                              },
+                              "region": {
+                                "type": "string",
+                                "enum": [
+                                  "us-east-1",
+                                  "us-east-2",
+                                  "us-west-2",
+                                  "eu-west-1",
+                                  "eu-central-1",
+                                  "ap-southeast-1",
+                                  "ap-southeast-2"
+                                ]
+                              },
+                              "route53ZoneId": {
+                                "type": "string",
+                                "pattern": "^Z[A-Z0-9]{1,31}$"
+                              }
+                            },
+                            "required": [
+                              "accountId",
+                              "region",
+                              "route53ZoneId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "domainName": {
+                            "type": "string"
+                          },
+                          "ownerEmail": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "string",
+                            "const": "small"
+                          },
                           "updateMode": {
                             "type": "string",
-                            "const": "manual"
+                            "const": "approval"
                           },
                           "createdAt": {
                             "type": "string",
@@ -32218,9 +32285,145 @@
                             "type": "string",
                             "format": "uri"
                           },
-                          "stackUrl": {
+                          "consoleUrl": {
                             "type": "string",
                             "format": "uri"
+                          },
+                          "installedVersion": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "availableVersion": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "updateAvailable": {
+                            "type": "boolean"
+                          },
+                          "health": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "operational",
+                                  "degraded",
+                                  "down",
+                                  "not_reporting",
+                                  "awaiting_report"
+                                ]
+                              },
+                              "reportedAt": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 80,
+                                    "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "checks": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "enum": [
+                                        "api_health",
+                                        "database_ready",
+                                        "web_available",
+                                        "services_running",
+                                        "load_balancer_targets",
+                                        "database_instance",
+                                        "database_storage",
+                                        "database_backups",
+                                        "certificate"
+                                      ]
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "enum": [
+                                        "ok",
+                                        "warning",
+                                        "failing",
+                                        "unknown"
+                                      ]
+                                    },
+                                    "value": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 1000000000
+                                    },
+                                    "total": {
+                                      "type": "number",
+                                      "minimum": 0,
+                                      "maximum": 1000000000
+                                    },
+                                    "code": {
+                                      "type": "string",
+                                      "enum": [
+                                        "http_error",
+                                        "unreachable",
+                                        "slow",
+                                        "not_running",
+                                        "unhealthy",
+                                        "unavailable",
+                                        "permission_denied",
+                                        "low_storage",
+                                        "stale_backup",
+                                        "backups_disabled",
+                                        "not_issued",
+                                        "expiring",
+                                        "expired"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "status"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "reportedAt",
+                              "version",
+                              "checks"
+                            ]
                           },
                           "run": {
                             "anyOf": [
@@ -32232,13 +32435,21 @@
                                     "format": "uuid",
                                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                                   },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "install",
+                                      "update",
+                                      "retry"
+                                    ]
+                                  },
                                   "version": {
                                     "type": "string"
                                   },
                                   "state": {
                                     "type": "string",
                                     "enum": [
-                                      "awaiting_aws",
+                                      "awaiting_approval",
                                       "provisioning",
                                       "ready",
                                       "failed"
@@ -32325,6 +32536,7 @@
                                 },
                                 "required": [
                                   "id",
+                                  "kind",
                                   "version",
                                   "state",
                                   "createdAt",
@@ -32341,20 +32553,23 @@
                           }
                         },
                         "required": [
-                          "name",
-                          "accountId",
-                          "region",
-                          "domainName",
-                          "route53ZoneId",
-                          "ownerEmail",
                           "id",
+                          "name",
+                          "provider",
+                          "target",
+                          "domainName",
+                          "ownerEmail",
+                          "size",
                           "updateMode",
                           "createdAt",
                           "webUrl",
-                          "stackUrl",
+                          "consoleUrl",
+                          "installedVersion",
+                          "availableVersion",
+                          "updateAvailable",
+                          "health",
                           "run"
-                        ],
-                        "additionalProperties": false
+                        ]
                       }
                     }
                   },
@@ -32402,7 +32617,7 @@
             }
           },
           "403": {
-            "description": "Administrator approval required.",
+            "description": "Owner or super-admin approval required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32438,7 +32653,25 @@
             }
           },
           "409": {
-            "description": "Run cannot accept this operation.",
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32456,7 +32689,7 @@
             }
           },
           "503": {
-            "description": "Release is not configured.",
+            "description": "No installer release is configured.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32484,68 +32717,84 @@
         ],
         "x-mint": {
           "metadata": {
-            "og:description": "List organization AWS deployments API reference in OpenWork Docs."
+            "og:description": "List the organization's managed deployments API reference in OpenWork Docs."
           }
         }
       },
       "post": {
-        "operationId": "postV1AwsDeployments",
+        "operationId": "postV1ManagedDeployments",
         "tags": [
-          "AWS deployments"
+          "Managed deployments"
         ],
-        "summary": "Create an AWS deployment",
+        "summary": "Create a managed deployment",
         "responses": {
           "200": {
-            "description": "Create an AWS deployment",
+            "description": "Create a managed deployment",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "name": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 80
-                    },
-                    "accountId": {
-                      "type": "string",
-                      "pattern": "^\\d{12}$"
-                    },
-                    "region": {
-                      "type": "string",
-                      "enum": [
-                        "us-east-1",
-                        "us-east-2",
-                        "us-west-2",
-                        "eu-west-1",
-                        "eu-central-1",
-                        "ap-southeast-1",
-                        "ap-southeast-2"
-                      ]
-                    },
-                    "domainName": {
-                      "type": "string",
-                      "maxLength": 253,
-                      "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
-                    },
-                    "route53ZoneId": {
-                      "type": "string",
-                      "pattern": "^Z[A-Z0-9]{1,31}$"
-                    },
-                    "ownerEmail": {
-                      "type": "string",
-                      "maxLength": 254,
-                      "format": "email",
-                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
-                    },
                     "id": {
                       "type": "string",
                       "format": "uuid",
                       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                     },
+                    "name": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "aws",
+                        "azure",
+                        "gcp"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "pattern": "^\\d{12}$"
+                        },
+                        "region": {
+                          "type": "string",
+                          "enum": [
+                            "us-east-1",
+                            "us-east-2",
+                            "us-west-2",
+                            "eu-west-1",
+                            "eu-central-1",
+                            "ap-southeast-1",
+                            "ap-southeast-2"
+                          ]
+                        },
+                        "route53ZoneId": {
+                          "type": "string",
+                          "pattern": "^Z[A-Z0-9]{1,31}$"
+                        }
+                      },
+                      "required": [
+                        "accountId",
+                        "region",
+                        "route53ZoneId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "domainName": {
+                      "type": "string"
+                    },
+                    "ownerEmail": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "string",
+                      "const": "small"
+                    },
                     "updateMode": {
                       "type": "string",
-                      "const": "manual"
+                      "const": "approval"
                     },
                     "createdAt": {
                       "type": "string",
@@ -32556,9 +32805,145 @@
                       "type": "string",
                       "format": "uri"
                     },
-                    "stackUrl": {
+                    "consoleUrl": {
                       "type": "string",
                       "format": "uri"
+                    },
+                    "installedVersion": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "availableVersion": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "updateAvailable": {
+                      "type": "boolean"
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "operational",
+                            "degraded",
+                            "down",
+                            "not_reporting",
+                            "awaiting_report"
+                          ]
+                        },
+                        "reportedAt": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "version": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "checks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "enum": [
+                                  "api_health",
+                                  "database_ready",
+                                  "web_available",
+                                  "services_running",
+                                  "load_balancer_targets",
+                                  "database_instance",
+                                  "database_storage",
+                                  "database_backups",
+                                  "certificate"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "ok",
+                                  "warning",
+                                  "failing",
+                                  "unknown"
+                                ]
+                              },
+                              "value": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1000000000
+                              },
+                              "total": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1000000000
+                              },
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "http_error",
+                                  "unreachable",
+                                  "slow",
+                                  "not_running",
+                                  "unhealthy",
+                                  "unavailable",
+                                  "permission_denied",
+                                  "low_storage",
+                                  "stale_backup",
+                                  "backups_disabled",
+                                  "not_issued",
+                                  "expiring",
+                                  "expired"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "status"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reportedAt",
+                        "version",
+                        "checks"
+                      ]
                     },
                     "run": {
                       "anyOf": [
@@ -32570,13 +32955,21 @@
                               "format": "uuid",
                               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                             },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "install",
+                                "update",
+                                "retry"
+                              ]
+                            },
                             "version": {
                               "type": "string"
                             },
                             "state": {
                               "type": "string",
                               "enum": [
-                                "awaiting_aws",
+                                "awaiting_approval",
                                 "provisioning",
                                 "ready",
                                 "failed"
@@ -32663,6 +33056,7 @@
                           },
                           "required": [
                             "id",
+                            "kind",
                             "version",
                             "state",
                             "createdAt",
@@ -32679,20 +33073,23 @@
                     }
                   },
                   "required": [
-                    "name",
-                    "accountId",
-                    "region",
-                    "domainName",
-                    "route53ZoneId",
-                    "ownerEmail",
                     "id",
+                    "name",
+                    "provider",
+                    "target",
+                    "domainName",
+                    "ownerEmail",
+                    "size",
                     "updateMode",
                     "createdAt",
                     "webUrl",
-                    "stackUrl",
+                    "consoleUrl",
+                    "installedVersion",
+                    "availableVersion",
+                    "updateAvailable",
+                    "health",
                     "run"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               }
             }
@@ -32734,7 +33131,7 @@
             }
           },
           "403": {
-            "description": "Administrator approval required.",
+            "description": "Owner or super-admin approval required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32770,7 +33167,25 @@
             }
           },
           "409": {
-            "description": "Run cannot accept this operation.",
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32788,7 +33203,7 @@
             }
           },
           "503": {
-            "description": "Release is not configured.",
+            "description": "No installer release is configured.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32811,54 +33226,77 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 80
-                  },
-                  "accountId": {
-                    "type": "string",
-                    "pattern": "^\\d{12}$"
-                  },
-                  "region": {
-                    "type": "string",
-                    "enum": [
-                      "us-east-1",
-                      "us-east-2",
-                      "us-west-2",
-                      "eu-west-1",
-                      "eu-central-1",
-                      "ap-southeast-1",
-                      "ap-southeast-2"
-                    ]
-                  },
-                  "domainName": {
-                    "type": "string",
-                    "maxLength": 253,
-                    "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
-                  },
-                  "route53ZoneId": {
-                    "type": "string",
-                    "pattern": "^Z[A-Z0-9]{1,31}$"
-                  },
-                  "ownerEmail": {
-                    "type": "string",
-                    "maxLength": 254,
-                    "format": "email",
-                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "domainName": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+                      },
+                      "ownerEmail": {
+                        "type": "string",
+                        "maxLength": 254,
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "size": {
+                        "default": "small",
+                        "type": "string",
+                        "const": "small"
+                      },
+                      "provider": {
+                        "type": "string",
+                        "const": "aws"
+                      },
+                      "target": {
+                        "type": "object",
+                        "properties": {
+                          "accountId": {
+                            "type": "string",
+                            "pattern": "^\\d{12}$"
+                          },
+                          "region": {
+                            "type": "string",
+                            "enum": [
+                              "us-east-1",
+                              "us-east-2",
+                              "us-west-2",
+                              "eu-west-1",
+                              "eu-central-1",
+                              "ap-southeast-1",
+                              "ap-southeast-2"
+                            ]
+                          },
+                          "route53ZoneId": {
+                            "type": "string",
+                            "pattern": "^Z[A-Z0-9]{1,31}$"
+                          }
+                        },
+                        "required": [
+                          "accountId",
+                          "region",
+                          "route53ZoneId"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "domainName",
+                      "ownerEmail",
+                      "provider",
+                      "target"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "name",
-                  "accountId",
-                  "region",
-                  "domainName",
-                  "route53ZoneId",
-                  "ownerEmail"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           }
@@ -32873,21 +33311,202 @@
         ],
         "x-mint": {
           "metadata": {
-            "og:description": "Create an AWS deployment API reference in OpenWork Docs."
+            "og:description": "Create a managed deployment API reference in OpenWork Docs."
           }
         }
       }
     },
-    "/v1/aws-deployments/{deploymentId}/launch": {
-      "post": {
-        "operationId": "postV1AwsDeploymentsByDeploymentIdLaunch",
+    "/v1/managed-deployments/{deploymentId}": {
+      "delete": {
+        "operationId": "deleteV1ManagedDeploymentsByDeploymentId",
         "tags": [
-          "AWS deployments"
+          "Managed deployments"
         ],
-        "summary": "Prepare an approved AWS deployment launch",
+        "summary": "Remove a deployment that was never installed",
         "responses": {
           "200": {
-            "description": "Prepare an approved AWS deployment launch",
+            "description": "Remove a deployment that was never installed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or super-admin approval required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment or feature unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No installer release is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploymentId",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-mint": {
+          "metadata": {
+            "og:description": "Remove a deployment that was never installed API reference in OpenWork Docs."
+          }
+        }
+      }
+    },
+    "/v1/managed-deployments/{deploymentId}/launch": {
+      "post": {
+        "operationId": "postV1ManagedDeploymentsByDeploymentIdLaunch",
+        "tags": [
+          "Managed deployments"
+        ],
+        "summary": "Prepare an install, retry or approved update",
+        "responses": {
+          "200": {
+            "description": "Prepare an install, retry or approved update",
             "content": {
               "application/json": {
                 "schema": {
@@ -32896,50 +33515,66 @@
                     "deployment": {
                       "type": "object",
                       "properties": {
-                        "name": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 80
-                        },
-                        "accountId": {
-                          "type": "string",
-                          "pattern": "^\\d{12}$"
-                        },
-                        "region": {
-                          "type": "string",
-                          "enum": [
-                            "us-east-1",
-                            "us-east-2",
-                            "us-west-2",
-                            "eu-west-1",
-                            "eu-central-1",
-                            "ap-southeast-1",
-                            "ap-southeast-2"
-                          ]
-                        },
-                        "domainName": {
-                          "type": "string",
-                          "maxLength": 253,
-                          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
-                        },
-                        "route53ZoneId": {
-                          "type": "string",
-                          "pattern": "^Z[A-Z0-9]{1,31}$"
-                        },
-                        "ownerEmail": {
-                          "type": "string",
-                          "maxLength": 254,
-                          "format": "email",
-                          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
-                        },
                         "id": {
                           "type": "string",
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "name": {
+                          "type": "string"
+                        },
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "aws",
+                            "azure",
+                            "gcp"
+                          ]
+                        },
+                        "target": {
+                          "type": "object",
+                          "properties": {
+                            "accountId": {
+                              "type": "string",
+                              "pattern": "^\\d{12}$"
+                            },
+                            "region": {
+                              "type": "string",
+                              "enum": [
+                                "us-east-1",
+                                "us-east-2",
+                                "us-west-2",
+                                "eu-west-1",
+                                "eu-central-1",
+                                "ap-southeast-1",
+                                "ap-southeast-2"
+                              ]
+                            },
+                            "route53ZoneId": {
+                              "type": "string",
+                              "pattern": "^Z[A-Z0-9]{1,31}$"
+                            }
+                          },
+                          "required": [
+                            "accountId",
+                            "region",
+                            "route53ZoneId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "domainName": {
+                          "type": "string"
+                        },
+                        "ownerEmail": {
+                          "type": "string"
+                        },
+                        "size": {
+                          "type": "string",
+                          "const": "small"
+                        },
                         "updateMode": {
                           "type": "string",
-                          "const": "manual"
+                          "const": "approval"
                         },
                         "createdAt": {
                           "type": "string",
@@ -32950,9 +33585,145 @@
                           "type": "string",
                           "format": "uri"
                         },
-                        "stackUrl": {
+                        "consoleUrl": {
                           "type": "string",
                           "format": "uri"
+                        },
+                        "installedVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "availableVersion": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 80,
+                              "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "updateAvailable": {
+                          "type": "boolean"
+                        },
+                        "health": {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "operational",
+                                "degraded",
+                                "down",
+                                "not_reporting",
+                                "awaiting_report"
+                              ]
+                            },
+                            "reportedAt": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "version": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "checks": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "enum": [
+                                      "api_health",
+                                      "database_ready",
+                                      "web_available",
+                                      "services_running",
+                                      "load_balancer_targets",
+                                      "database_instance",
+                                      "database_storage",
+                                      "database_backups",
+                                      "certificate"
+                                    ]
+                                  },
+                                  "status": {
+                                    "type": "string",
+                                    "enum": [
+                                      "ok",
+                                      "warning",
+                                      "failing",
+                                      "unknown"
+                                    ]
+                                  },
+                                  "value": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1000000000
+                                  },
+                                  "total": {
+                                    "type": "number",
+                                    "minimum": 0,
+                                    "maximum": 1000000000
+                                  },
+                                  "code": {
+                                    "type": "string",
+                                    "enum": [
+                                      "http_error",
+                                      "unreachable",
+                                      "slow",
+                                      "not_running",
+                                      "unhealthy",
+                                      "unavailable",
+                                      "permission_denied",
+                                      "low_storage",
+                                      "stale_backup",
+                                      "backups_disabled",
+                                      "not_issued",
+                                      "expiring",
+                                      "expired"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "status"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "reportedAt",
+                            "version",
+                            "checks"
+                          ]
                         },
                         "run": {
                           "anyOf": [
@@ -32964,13 +33735,21 @@
                                   "format": "uuid",
                                   "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                                 },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "install",
+                                    "update",
+                                    "retry"
+                                  ]
+                                },
                                 "version": {
                                   "type": "string"
                                 },
                                 "state": {
                                   "type": "string",
                                   "enum": [
-                                    "awaiting_aws",
+                                    "awaiting_approval",
                                     "provisioning",
                                     "ready",
                                     "failed"
@@ -33057,6 +33836,7 @@
                               },
                               "required": [
                                 "id",
+                                "kind",
                                 "version",
                                 "state",
                                 "createdAt",
@@ -33073,24 +33853,52 @@
                         }
                       },
                       "required": [
-                        "name",
-                        "accountId",
-                        "region",
-                        "domainName",
-                        "route53ZoneId",
-                        "ownerEmail",
                         "id",
+                        "name",
+                        "provider",
+                        "target",
+                        "domainName",
+                        "ownerEmail",
+                        "size",
                         "updateMode",
                         "createdAt",
                         "webUrl",
-                        "stackUrl",
+                        "consoleUrl",
+                        "installedVersion",
+                        "availableVersion",
+                        "updateAvailable",
+                        "health",
                         "run"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
-                    "launchUrl": {
+                    "kind": {
                       "type": "string",
-                      "format": "uri"
+                      "enum": [
+                        "install",
+                        "update",
+                        "retry"
+                      ]
+                    },
+                    "approvalUrl": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "command": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "expiresAt": {
                       "type": "string",
@@ -33100,7 +33908,9 @@
                   },
                   "required": [
                     "deployment",
-                    "launchUrl",
+                    "kind",
+                    "approvalUrl",
+                    "command",
                     "expiresAt"
                   ]
                 }
@@ -33144,7 +33954,7 @@
             }
           },
           "403": {
-            "description": "Administrator approval required.",
+            "description": "Owner or super-admin approval required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33180,7 +33990,25 @@
             }
           },
           "409": {
-            "description": "Run cannot accept this operation.",
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33198,7 +34026,7 @@
             }
           },
           "503": {
-            "description": "Release is not configured.",
+            "description": "No installer release is configured.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33228,6 +34056,28 @@
             "required": true
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "default": "install",
+                    "type": "string",
+                    "enum": [
+                      "install",
+                      "update",
+                      "retry"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "security": [
           {
             "denApiKey": []
@@ -33238,22 +34088,22 @@
         ],
         "x-mint": {
           "metadata": {
-            "og:description": "Prepare an approved AWS deployment launch API reference in OpenWork Docs."
+            "og:description": "Prepare an install, retry or approved update API reference in OpenWork Docs."
           }
         }
       }
     },
-    "/v1/aws-deployments/{deploymentId}/runs/{runId}/enroll": {
+    "/v1/managed-deployments/{deploymentId}/runs/{runId}/enroll": {
       "post": {
-        "operationId": "postV1AwsDeploymentsByDeploymentIdRunsByRunIdEnroll",
+        "operationId": "postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEnroll",
         "tags": [
-          "AWS deployments"
+          "Managed deployments"
         ],
-        "summary": "Enroll an AWS provisioning runner",
+        "summary": "Enroll a customer-side installer run",
         "security": [],
         "responses": {
           "200": {
-            "description": "Enroll an AWS provisioning runner",
+            "description": "Enroll a customer-side installer run",
             "content": {
               "application/json": {
                 "schema": {
@@ -33313,7 +34163,7 @@
             }
           },
           "403": {
-            "description": "Administrator approval required.",
+            "description": "Owner or super-admin approval required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33349,7 +34199,25 @@
             }
           },
           "409": {
-            "description": "Run cannot accept this operation.",
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33367,7 +34235,7 @@
             }
           },
           "503": {
-            "description": "Release is not configured.",
+            "description": "No installer release is configured.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33429,16 +34297,16 @@
                         "type": "string",
                         "maxLength": 8192
                       },
-                      "x-openwork-run": {
+                      "x-openwork-proof": {
                         "type": "string",
-                        "maxLength": 200
+                        "maxLength": 300
                       }
                     },
                     "required": [
                       "authorization",
                       "x-amz-date",
                       "x-amz-security-token",
-                      "x-openwork-run"
+                      "x-openwork-proof"
                     ],
                     "additionalProperties": false
                   }
@@ -33453,18 +34321,18 @@
         },
         "x-mint": {
           "metadata": {
-            "og:description": "Enroll an AWS provisioning runner API reference in OpenWork Docs."
+            "og:description": "Enroll a customer-side installer run API reference in OpenWork Docs."
           }
         }
       }
     },
-    "/v1/aws-deployments/{deploymentId}/runs/{runId}/events": {
+    "/v1/managed-deployments/{deploymentId}/runs/{runId}/events": {
       "post": {
-        "operationId": "postV1AwsDeploymentsByDeploymentIdRunsByRunIdEvents",
+        "operationId": "postV1ManagedDeploymentsByDeploymentIdRunsByRunIdEvents",
         "tags": [
-          "AWS deployments"
+          "Managed deployments"
         ],
-        "summary": "Report sanitized AWS provisioning progress",
+        "summary": "Report an installer milestone",
         "security": [
           {
             "bearerAuth": []
@@ -33472,7 +34340,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Report sanitized AWS provisioning progress",
+            "description": "Report an installer milestone",
             "content": {
               "application/json": {
                 "schema": {
@@ -33527,7 +34395,7 @@
             }
           },
           "403": {
-            "description": "Administrator approval required.",
+            "description": "Owner or super-admin approval required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33563,7 +34431,25 @@
             }
           },
           "409": {
-            "description": "Run cannot accept this operation.",
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33581,7 +34467,7 @@
             }
           },
           "503": {
-            "description": "Release is not configured.",
+            "description": "No installer release is configured.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33674,7 +34560,181 @@
         },
         "x-mint": {
           "metadata": {
-            "og:description": "Report sanitized AWS provisioning progress API reference in OpenWork Docs."
+            "og:description": "Report an installer milestone API reference in OpenWork Docs."
+          }
+        }
+      }
+    },
+    "/v1/managed-deployments/{deploymentId}/heartbeat": {
+      "post": {
+        "operationId": "postV1ManagedDeploymentsByDeploymentIdHeartbeat",
+        "tags": [
+          "Managed deployments"
+        ],
+        "summary": "Report installation health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Report installation health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or super-admin approval required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Deployment or feature unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The deployment cannot accept this operation now.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No installer release is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploymentId",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "required": true
+          }
+        ],
+        "x-mint": {
+          "metadata": {
+            "og:description": "Report installation health API reference in OpenWork Docs."
           }
         }
       }

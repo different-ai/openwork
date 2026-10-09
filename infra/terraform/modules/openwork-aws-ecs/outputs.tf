@@ -91,3 +91,18 @@ output "log_groups" {
     workbot         = one(aws_cloudwatch_log_group.workbot[*].name)
   } : k => v if v != null }
 }
+
+output "target_group_arns" {
+  description = "Load balancer target groups for health monitoring. Null with alb_listener_arn-only setups is not applicable; groups are always created."
+  value       = { den_api = aws_lb_target_group.api.arn, den_web = aws_lb_target_group.web.arn }
+}
+
+output "database_identifier" {
+  description = "RDS instance identifier, for health monitoring. Null with database_url."
+  value       = var.create_database ? aws_db_instance.this[0].identifier : null
+}
+
+output "certificate_arn" {
+  description = "ACM certificate serving the HTTPS listener."
+  value       = local.certificate_arn
+}

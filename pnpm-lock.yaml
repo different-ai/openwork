@@ -605,9 +605,6 @@ importers:
       '@openwork/automations':
         specifier: workspace:*
         version: link:../../../packages/automations
-      '@openwork/aws-deployments':
-        specifier: workspace:*
-        version: link:../../../packages/aws-deployments
       '@openwork/codemode':
         specifier: workspace:*
         version: link:../../../packages/codemode
@@ -632,6 +629,9 @@ importers:
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../../packages/install-config
+      '@openwork/managed-deployments':
+        specifier: workspace:*
+        version: link:../../../packages/managed-deployments
       '@openwork/mcp-apps':
         specifier: workspace:*
         version: link:../../../packages/mcp-apps
@@ -1414,15 +1414,6 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/aws-deployments:
-    dependencies:
-      fast-xml-parser:
-        specifier: 5.8.0
-        version: 5.8.0
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-
   packages/browser-tabs:
     devDependencies:
       '@types/node':
@@ -1640,6 +1631,15 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/managed-deployments:
+    dependencies:
+      fast-xml-parser:
+        specifier: 5.8.0
+        version: 5.8.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+
   packages/mcp-apps:
     dependencies:
       '@modelcontextprotocol/ext-apps':
@@ -1795,9 +1795,9 @@ importers:
 
   packages/types:
     dependencies:
-      '@openwork/aws-deployments':
+      '@openwork/managed-deployments':
         specifier: workspace:*
-        version: link:../aws-deployments
+        version: link:../managed-deployments
       zod:
         specifier: ^4.3.6
         version: 4.3.6
