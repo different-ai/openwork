@@ -145,6 +145,17 @@ function createHost(options: Record<string, unknown> = {}) {
   }
 }
 
+for (const domain of ["integration", "provider", "mcp", "storage", "event"]) {
+  test(`an older host missing ${domain} gets V2 guidance before any registration or network request`, async () => {
+    const den = createFakeDen()
+    const host = createHost()
+    Reflect.deleteProperty(host.ctx, domain)
+    await assert.rejects(createPlugin({ fetch: den.fetch }).setup(host.ctx), /needs OpenCode V2.*does not install or upgrade/)
+    assert.equal(host.methods.length, 0)
+    assert.equal(den.calls.length, 0)
+  })
+}
+
 function signedIn(): OAuthCredential {
   return {
     type: "oauth",

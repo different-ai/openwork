@@ -42,6 +42,111 @@ test("polls through pending and slow_down, then returns the session token", asyn
   assert.deepEqual(waits, [5_000, 5_000, 10_000])
 })
 
+for (const body of ["Too many requests", "", JSON.stringify({ message: "Rate limited" }), JSON.stringify({ error: "authorization_pending" })]) {
+  test(`backs off after a plain 429 (${body || "empty body"}) without starting another sign-in`, async () => {
+    const den = createFakeDen()
+    let clock = 0
+    let polls = 0
+    const waits: number[] = []
+    const authorization = await startDeviceAuthorization({ fetcher: den.fetch, apiBaseUrl: API, now: () => clock })
+    const token = await pollDeviceToken({
+      fetcher: async (url, init) => {
+        polls++
+        if (polls <= 2) return new Response(body, { status: 429 })
+        return den.fetch(url, init)
+      },
+      apiBaseUrl: API,
+      authorization,
+      now: () => clock,
+      waker: { wait: async (ms) => { waits.push(ms); clock += ms } },
+    })
+    assert.equal(token, SESSION_TOKEN)
+    assert.equal(polls, 3)
+    assert.deepEqual(waits, [5_000, 10_000, 15_000])
+    assert.equal(den.calls.filter((call) => call.endsWith("/device/code")).length, 1)
+  })
+}
+
+for (const { retryAfter, nextPollAt } of [
+  { retryAfter: "20", nextPollAt: 25_000 },
+  { retryAfter: "Thu, 01 Jan 1970 00:00:25 GMT", nextPollAt: 25_000 },
+  { retryAfter: "Thursday, 01-Jan-70 00:00:25 GMT", nextPollAt: 25_000 },
+  { retryAfter: "Thu Jan  1 00:00:25 1970", nextPollAt: 25_000 },
+  { retryAfter: "invalid", nextPollAt: 15_000 },
+  { retryAfter: "-1", nextPollAt: 15_000 },
+]) {
+  test(`honors Retry-After ${retryAfter} and ignores browser wakeups during cooldown`, async () => {
+    const den = createFakeDen()
+    let clock = 0
+    let polls = 0
+    let wakeEarly = true
+    const pollTimes: number[] = []
+    const authorization = await startDeviceAuthorization({ fetcher: den.fetch, apiBaseUrl: API, now: () => clock })
+    const token = await pollDeviceToken({
+      fetcher: async (url, init) => {
+        pollTimes.push(clock)
+        polls++
+        if (polls === 1) return new Response("", { status: 429, headers: { "retry-after": retryAfter } })
+        return den.fetch(url, init)
+      },
+      apiBaseUrl: API,
+      authorization,
+      now: () => clock,
+      waker: { wait: async (ms) => {
+        if (polls === 1 && wakeEarly) { clock += 1_000; wakeEarly = false }
+        else clock += ms
+      } },
+    })
+    assert.equal(token, SESSION_TOKEN)
+    assert.deepEqual(pollTimes, [5_000, nextPollAt])
+  })
+}
+
+test("expires during a rate-limit cooldown without polling again", async () => {
+  const den = createFakeDen()
+  let clock = 0
+  let polls = 0
+  const authorization = await startDeviceAuthorization({ fetcher: den.fetch, apiBaseUrl: API, now: () => clock })
+  await assert.rejects(pollDeviceToken({
+    fetcher: async () => { polls++; return new Response("", { status: 429, headers: { "retry-after": "900" } }) },
+    apiBaseUrl: API,
+    authorization: { ...authorization, expiresAt: 20_000 },
+    now: () => clock,
+    waker: { wait: async (ms) => { clock += ms } },
+  }), /code expired/)
+  assert.equal(polls, 1)
+  assert.equal(clock, 20_000)
+})
+
+test("cancellation during cooldown stops polling", async () => {
+  const den = createFakeDen()
+  let clock = 0
+  let polls = 0
+  const authorization = await startDeviceAuthorization({ fetcher: den.fetch, apiBaseUrl: API, now: () => clock })
+  await assert.rejects(pollDeviceToken({
+    fetcher: async () => { polls++; return new Response("", { status: 429 }) },
+    apiBaseUrl: API,
+    authorization,
+    now: () => clock,
+    isCancelled: () => polls > 0,
+    waker: { wait: async (ms) => { clock += ms } },
+  }), /cancelled/)
+  assert.equal(polls, 1)
+})
+
+test("a terminal server error is not retried", async () => {
+  const den = createFakeDen()
+  const authorization = await startDeviceAuthorization({ fetcher: den.fetch, apiBaseUrl: API })
+  let polls = 0
+  await assert.rejects(pollDeviceToken({
+    fetcher: async () => { polls++; return new Response("", { status: 500 }) },
+    apiBaseUrl: API,
+    authorization,
+    waker: instant,
+  }), /sign-in failed \(500\)/)
+  assert.equal(polls, 1)
+})
+
 test("reports a denied sign-in", async () => {
   const den = createFakeDen()
   den.pollAnswers = [{ status: 400, body: { error: "access_denied" } }]

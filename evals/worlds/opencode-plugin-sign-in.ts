@@ -1,6 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createServer, request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { denFetch } from "@openwork/behaviors";
@@ -81,11 +83,62 @@ export async function opencodePluginSignIn(seed: Seed) {
   const web = await seed.web({ den, signedInAs: "admin", headless: true, viewport: { width: 1280, height: 900 } });
   const home = seed.tmpPath("opencode-plugin-home");
   const binary = await installOpenCode(seed.tmpPath(`opencode-${OPENCODE_VERSION}`));
+  await using setup = new AsyncDisposableStack();
+  let throttleNextTokenPoll = false;
+  let observeTokenPollFault = false;
+  const tokenPollFault = { injected: 0, http429s: 0, authorizations: 0, retriedPolls: 0 };
+  // Keep real Den responses (including MCP streams); only the browser attempt's
+  // first token poll gets a plain HTTP throttle, never OAuth slow_down.
+  const proxy = createServer((request, response) => {
+    const upstreamUrl = new URL(`${den.ref.apiUrl}${request.url ?? "/"}`);
+    const tokenPoll = request.method === "POST" && upstreamUrl.pathname === "/api/auth/device/token";
+    if (observeTokenPollFault && request.method === "POST" && upstreamUrl.pathname === "/api/auth/device/code") {
+      tokenPollFault.authorizations++;
+    }
+    if (tokenPoll && throttleNextTokenPoll) {
+      throttleNextTokenPoll = false;
+      tokenPollFault.injected++;
+      tokenPollFault.http429s++;
+      request.resume();
+      response.writeHead(429, { "content-type": "application/json", "retry-after": "1" });
+      response.end(JSON.stringify({ error: "rate_limited" }));
+      return;
+    }
+    const upstream = (upstreamUrl.protocol === "https:" ? httpsRequest : httpRequest)(upstreamUrl, {
+      method: request.method,
+      headers: { ...request.headers, host: upstreamUrl.host },
+    }, (result) => {
+      if (tokenPoll && observeTokenPollFault) {
+        if (result.statusCode === 429) tokenPollFault.http429s++;
+        if (tokenPollFault.injected === 1) tokenPollFault.retriedPolls++;
+      }
+      response.writeHead(result.statusCode ?? 502, result.headers);
+      result.pipe(response);
+    });
+    upstream.on("error", () => {
+      if (!response.headersSent) response.writeHead(502);
+      response.end("Fixture forwarding failed");
+    });
+    if (tokenPoll) upstream.setTimeout(30_000, () => upstream.destroy());
+    response.on("close", () => upstream.destroy());
+    request.pipe(upstream);
+  });
+  setup.defer(async () => {
+    proxy.closeAllConnections();
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  });
+  await new Promise<void>((resolve, reject) => {
+    proxy.once("error", reject);
+    proxy.listen(0, "127.0.0.1", resolve);
+  });
+  const address = proxy.address();
+  if (!address || typeof address === "string") throw new Error("Sign-in fault proxy did not bind");
+  const apiBaseUrl = `http://127.0.0.1:${address.port}`;
   const configDirectory = join(home, ".config", "opencode");
   mkdirSync(configDirectory, { recursive: true });
   writeFileSync(join(configDirectory, "opencode.json"), JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    plugins: [{ package: pathToFileURL(pluginDirectory).href, options: { apiBaseUrl: den.ref.apiUrl } }],
+    plugins: [{ package: pathToFileURL(pluginDirectory).href, options: { apiBaseUrl } }],
   }, null, 2));
 
   // Only this world's OpenCode: none of the host's OpenCode or OpenWork settings.
@@ -125,14 +178,21 @@ export async function opencodePluginSignIn(seed: Seed) {
   if (configured.status !== 0) throw new Error(`Configuring the OpenCode service failed: ${configured.stdout}${configured.stderr}`);
 
   /** Start `opencode auth login openwork` and resolve once it has printed the link and code. */
-  function startLogin(method: "browser" | "code"): Promise<PluginLogin> {
+  function startLogin(method: "browser" | "code", options: { throttleTokenPoll?: boolean } = {}): Promise<PluginLogin> {
+    if (options.throttleTokenPoll) {
+      if (method !== "browser" || observeTokenPollFault) throw new Error("Token poll fault can only be armed once, for browser sign-in");
+      observeTokenPollFault = true;
+      throttleNextTokenPoll = true;
+    }
     return new Promise((ready, fail) => {
       const child = spawn(binary, ["auth", "login", "openwork", "--method", method], { env, cwd: home });
       children.add(child);
+      const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
       let output = "";
       let announced = false;
       const finished = new Promise<OpenCodeRun>((done) => {
         child.on("close", (status) => {
+          clearTimeout(timer);
           children.delete(child);
           if (!announced) fail(new Error(`login exited before showing a code: ${plain(output).slice(0, 800)}`));
           done({ status, stdout: plain(output), stderr: "" });
@@ -163,15 +223,18 @@ export async function opencodePluginSignIn(seed: Seed) {
     if (!result.response.ok) throw new Error(`Turning opencodePlugin ${enabled ? "on" : "off"} failed: HTTP ${result.response.status} ${result.text.slice(0, 300)}`);
   }
 
+  const cleanup = setup.move();
   return {
     den,
     web,
     run,
     startLogin,
     setPluginSignIn,
+    tokenPollFault: () => ({ ...tokenPollFault }),
     async [Symbol.asyncDispose]() {
       for (const child of children) child.kill("SIGKILL");
       spawnSync(binary, ["service", "stop"], { env, cwd: home, timeout: 30_000 });
+      await cleanup.disposeAsync();
     },
   };
 }

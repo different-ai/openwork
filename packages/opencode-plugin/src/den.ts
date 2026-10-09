@@ -96,7 +96,7 @@ export async function postPublic(fetcher: Fetch, apiBaseUrl: string, path: strin
     redirect: "error",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
-  return { status: response.status, body: await readJson(response) }
+  return { status: response.status, body: await readJson(response), retryAfter: response.headers.get("retry-after") }
 }
 
 /** Authenticated JSON request. 401/403 become DenAuthError; other non-2xx become DenRequestError. */

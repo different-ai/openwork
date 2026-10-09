@@ -8,7 +8,7 @@ const test = spec.world(opencodePluginSignIn, {
   resources: { surfaces: ["web"], services: ["den"] },
 });
 
-test("a person signs OpenCode in to OpenWork from the browser and lands back on OpenCode", async ({ world, user, step, evidence }) => {
+test("a person signs OpenCode in from the browser despite one rate-limited token poll and lands back on OpenCode", async ({ world, user, probe, step, evidence }) => {
   const person = user.on(world.web);
 
   await step("before: with the plugin sign-in switched off, OpenCode still signs in as the OpenWork CLI", async () => {
@@ -32,7 +32,7 @@ test("a person signs OpenCode in to OpenWork from the browser and lands back on 
 
   const login = await (async () => {
     await world.setPluginSignIn(true);
-    return world.startLogin("browser");
+    return world.startLogin("browser", { throttleTokenPoll: true });
   })();
 
   await step("the browser names OpenCode and shows the code from the terminal", async () => {
@@ -52,7 +52,27 @@ test("a person signs OpenCode in to OpenWork from the browser and lands back on 
     await person.screenshot();
   });
 
-  await step("after: approving sends the browser back to OpenCode, which is now signed in", async () => {
+  await step("when one token poll is rate-limited, the same sign-in keeps waiting for browser approval", async () => {
+    const fault = await probe.eventually(() => world.tokenPollFault(), {
+      within: 60_000,
+      intervalMs: 200,
+      label: "one plain HTTP 429 followed by a retry before approval",
+      until: (value) => value.injected === 1 && value.retriedPolls > 0,
+    });
+    await person.see({ testId: "device-user-code", text: login.userCode });
+    await person.see({ role: "button", label: "Sign in OpenWork - OpenCode Plugin" });
+    const survived = fault.http429s === 1 && fault.authorizations === 1;
+    evidence.recordAssertionEvidence(
+      "One plain HTTP throttle does not restart or end the person's sign-in",
+      `POST /api/auth/device/token: ${fault.http429s} HTTP 429, Retry-After: 1, body {"error":"rate_limited"} (not slow_down); ${fault.retriedPolls} subsequent polls; ${fault.authorizations} device authorization; ${login.userCode} still awaiting approval`,
+      survived,
+    );
+    expect(fault.http429s).toBe(1);
+    expect(fault.authorizations).toBe(1);
+    await person.screenshot();
+  });
+
+  await step("after: approving the same code sends the browser back to OpenCode, which is now signed in", async () => {
     await person.click({ role: "button", label: "Sign in OpenWork - OpenCode Plugin" });
     await person.see({ text: "OpenCode is connected to OpenWork" }, { timeoutMs: 30_000 });
     await person.see({ text: "You can close this tab and go back to OpenCode." });
@@ -62,12 +82,14 @@ test("a person signs OpenCode in to OpenWork from the browser and lands back on 
     expect(result.stdout).toContain("Connected to OpenWork Cloud");
     const accounts = await world.run(["auth", "list"]);
     const listed = accounts.stdout.includes(world.den.admin.email);
+    const fault = world.tokenPollFault();
+    const recovered = listed && fault.injected === 1 && fault.http429s === 1 && fault.authorizations === 1;
     evidence.recordAssertionEvidence(
-      "OpenCode stores the OpenWork account the person approved",
-      `opencode auth login exit 0 ("Connected to OpenWork Cloud"); opencode auth list shows ${world.den.admin.email}: ${listed}`,
-      listed,
+      "OpenCode stores the approved account without restarting after the single throttle",
+      `opencode auth login exit 0 ("Connected to OpenWork Cloud"); opencode auth list shows ${world.den.admin.email}: ${listed}; ${fault.injected} injected throttle, ${fault.http429s} total HTTP 429, ${fault.authorizations} device authorization`,
+      recovered,
     );
-    expect(listed).toBe(true);
+    expect(recovered).toBe(true);
   });
 
   await step("after: OpenCode loads OpenWork's MCP gateway with that sign-in", async () => {

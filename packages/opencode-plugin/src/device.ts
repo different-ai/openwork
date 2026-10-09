@@ -110,6 +110,20 @@ export function timerWaker(): PollWaker & { wake(): void } {
   }
 }
 
+function retryAfterMs(value: string | null, now: number): number {
+  if (!value) return 0
+  const trimmed = value.trim()
+  if (/^\d+$/.test(trimmed)) {
+    const milliseconds = Number(trimmed) * 1000
+    return Number.isFinite(milliseconds) ? milliseconds : 0
+  }
+  // Accept current and legacy HTTP-date formats, not numeric junk such as "-1".
+  if (!/^(?:[A-Za-z]{3}, |[A-Za-z]+, \d{2}-|[A-Za-z]{3} [A-Za-z]{3} )/.test(trimmed)) return 0
+  // asctime has no timezone suffix, but HTTP dates are always GMT, not local time.
+  const date = Date.parse(/^[A-Za-z]{3} [A-Za-z]{3} /.test(trimmed) ? `${trimmed} GMT` : trimmed)
+  return Number.isFinite(date) ? Math.max(0, date - now) : 0
+}
+
 /** Polls /api/auth/device/token until approved, denied, or expired. Returns the Den session token. */
 export async function pollDeviceToken(input: {
   fetcher: Fetch
@@ -122,9 +136,16 @@ export async function pollDeviceToken(input: {
   const now = input.now ?? Date.now
   const waker = input.waker ?? timerWaker()
   let intervalMs = input.authorization.intervalMs
+  let cooldownUntil = 0
   while (now() < input.authorization.expiresAt) {
-    await waker.wait(Math.min(intervalMs, Math.max(0, input.authorization.expiresAt - now())))
+    await waker.wait(Math.min(Math.max(intervalMs, cooldownUntil - now()), Math.max(0, input.authorization.expiresAt - now())))
     if (input.isCancelled?.()) throw new DeviceFlowError("Sign-in was cancelled.")
+    // A browser callback may wake the wait early, but must not bypass a server cooldown.
+    while (now() < cooldownUntil && now() < input.authorization.expiresAt) {
+      await waker.wait(Math.min(cooldownUntil, input.authorization.expiresAt) - now())
+      if (input.isCancelled?.()) throw new DeviceFlowError("Sign-in was cancelled.")
+    }
+    if (now() >= input.authorization.expiresAt) break
     const polled = await postPublic(input.fetcher, input.apiBaseUrl, "/api/auth/device/token", {
       grant_type: DEVICE_CODE_GRANT,
       device_code: input.authorization.deviceCode,
@@ -134,13 +155,15 @@ export async function pollDeviceToken(input: {
       return polled.body.access_token
     }
     const error = errorCode(polled.body)
-    if (error === "authorization_pending") continue
-    if (error === "slow_down") {
-      intervalMs += 5_000
-      continue
-    }
     if (error === "access_denied") throw new DeviceFlowError("Sign-in was denied in the browser.")
     if (error === "expired_token") break
+    if (polled.status === 429 || error === "slow_down") {
+      intervalMs += 5_000
+      // Keep this attempt alive; starting a fresh device flow would add more traffic.
+      if (polled.status === 429) cooldownUntil = now() + Math.max(intervalMs, retryAfterMs(polled.retryAfter, now()))
+      continue
+    }
+    if (error === "authorization_pending") continue
     throw new DeviceFlowError(`OpenWork sign-in failed (${polled.status}${error ? `: ${error}` : ""}).`)
   }
   throw new DeviceFlowError("The sign-in code expired before it was approved. Run the sign-in again.")

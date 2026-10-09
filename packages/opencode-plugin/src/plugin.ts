@@ -150,6 +150,16 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
   return {
     id: PLUGIN_ID,
     async setup(ctx: PluginContext): Promise<Cleanup> {
+      if (typeof ctx.integration?.transform !== "function"
+        || typeof ctx.integration?.connection?.active !== "function"
+        || typeof ctx.provider?.transform !== "function"
+        || typeof ctx.provider?.reload !== "function"
+        || typeof ctx.mcp?.transform !== "function"
+        || typeof ctx.mcp?.reload !== "function"
+        || typeof ctx.storage?.get !== "function"
+        || typeof ctx.event?.subscribe !== "function") {
+        throw new Error("OpenWork needs OpenCode V2 with the integration, provider and MCP plugin APIs (tested with 2.0.26). The plugin does not install or upgrade OpenCode.")
+      }
       const options = readOptions(ctx.options)
       let snapshot: Snapshot = EMPTY
       let applied = { providers: "", mcp: "" }
