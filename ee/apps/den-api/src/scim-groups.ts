@@ -16,6 +16,7 @@ import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "./organization-team-roles.js"
 import { archiveTeamPermissionSets } from "./permissions/team-set-archive.js"
+import { requireHeldInTransaction } from "./permissions/in-transaction.js"
 
 export const SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
 export const SCIM_LIST_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
@@ -595,8 +596,11 @@ export async function serializeScimGroup(group: ScimGroup, baseUrl: string): Pro
 export async function setScimGroupMappingMode(input: {
   provider: ScimProvider
   mode: ScimGroupMappingMode
+  /** The member changing it; scim.manage is re-checked inside the transaction (throws PermissionRevokedError). */
+  actorMemberId?: typeof MemberTable.$inferSelect.id
 }, capture: AuditChangeCapture | null = null): Promise<string[]> {
   return withOrganizationMembershipUsageMutation(input.provider.organizationId, async (tx) => {
+    if (input.actorMemberId) await requireHeldInTransaction(tx, { organizationId: input.provider.organizationId, memberId: input.actorMemberId, key: "scim.manage" })
     const provider = await loadScimProvider(tx, input.provider)
     if (!provider) return []
     if (provider.groupMappingMode !== input.mode) {

@@ -10,6 +10,8 @@ import { scimReconciledEvent, scimTokenRotatedEvent } from "../../audit/domain/s
 import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
+import { permissionDeniedResponse, permissionFailureHeaders } from "./shared.js"
+import { PermissionRevokedError } from "../../permissions/in-transaction.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -302,7 +304,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
 
       const input = c.req.valid("json")
       const capture = auditChangeCapture(c)
-      const auditEventIds = await setScimGroupMappingMode({ provider: connection, mode: input.groupMappingMode }, capture)
+      let auditEventIds: string[]
+      try {
+        auditEventIds = await setScimGroupMappingMode({ provider: connection, mode: input.groupMappingMode, actorMemberId: payload.currentMember.id }, capture)
+      } catch (error) {
+        if (!(error instanceof PermissionRevokedError)) throw error
+        const denied = permissionDeniedResponse(error.key)
+        return c.json(denied, 403, permissionFailureHeaders(denied))
+      }
       await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
@@ -437,7 +446,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const capture = auditChangeCapture(c)
-      const deleted = await deleteOrganizationScimConnection(payload.organization.id, capture)
+      let deleted: Awaited<ReturnType<typeof deleteOrganizationScimConnection>>
+      try {
+        deleted = await deleteOrganizationScimConnection(payload.organization.id, capture, payload.currentMember.id)
+      } catch (error) {
+        if (!(error instanceof PermissionRevokedError)) throw error
+        const denied = permissionDeniedResponse(error.key)
+        return c.json(denied, 403, permissionFailureHeaders(denied))
+      }
       if (deleted) {
         await finishLegacyAuditAction(capture, {
           organizationId: payload.organization.id,

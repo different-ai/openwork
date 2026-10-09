@@ -570,9 +570,15 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       if (invitation.status !== "pending") {
         return { status: "not_pending" as const, invitation }
       }
+      // The route checked Invite people (and, below, Manage Admin teams) against the request's
+      // permissions; re-check them against the caller resolved through this transaction before the
+      // invitation is canceled or its placeholder member removed.
+      const canceler = await resolvePermissionsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id, database: tx })
+      if (!canceler.has("invitations.manage")) return { status: "team_forbidden" as const, response: permissionDeniedResponse("invitations.manage") }
       if (await invitationHasAdminTeam(tx, invitation)) {
         const permission = await requirePermission(c, "teams.manage_admin")
         if (!permission.ok) return { status: "team_forbidden" as const, response: permission.response }
+        if (!canceler.has("teams.manage_admin")) return { status: "team_forbidden" as const, response: permissionDeniedResponse("teams.manage_admin") }
       }
 
       const invitedMemberRows = await tx
@@ -619,9 +625,11 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         organizationId: payload.organization.id,
         memberId: invitedMember.id,
         removedByOrgMemberId: payload.currentMember.id,
+        // Re-checked in the removal's own transaction too.
+        requiredPermission: "invitations.manage",
       })
       if (!removed.ok && removed.error !== "member_not_found") {
-        return c.json({ error: removed.error, message: removed.message }, 400)
+        return c.json({ error: removed.error, message: removed.message }, removed.error === "forbidden" ? 403 : 400)
       }
     }
 

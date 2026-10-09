@@ -50,7 +50,8 @@ import { isEffectiveOrganizationAdmin } from "../../organization-role-hierarchy.
 import type { OrganizationContext } from "../../orgs.js"
 import { ensureCurrentDefaultPermissionSets } from "../../permissions/default-sets.js"
 import type { MemberPermissions } from "../../permissions/effective.js"
-import { explainPermissionsForMember } from "../../permissions/resolve.js"
+import { explainPermissionsForMember, resolvePermissionsForMember } from "../../permissions/resolve.js"
+import { withOrganizationTeamMutation, type TeamMutationTransaction } from "../../organization-team-roles.js"
 import {
   permissionEditProblemMessage,
   permissionKeyDelta,
@@ -585,6 +586,21 @@ async function callerPermissions(c: PermissionRouteContext): Promise<MemberPermi
   return c.get("memberPermissions") ?? await memberPermissionsForRequest(c)
 }
 
+/**
+ * The editor of a permission set write, resolved through its transaction.
+ * Writes run in withOrganizationTeamMutation, so they hold the organization
+ * row FOR UPDATE before locking any permission_set row, like team and member
+ * writes; the editor's share-locked reads (default sets, their team sets) can
+ * then never wait on another permission set write holding a set row. The
+ * route checked permissions.manage against the request's permissions (with
+ * the recent sign-in); this re-check sees a revocation committed since, and
+ * the edit is planned against these permissions, not the request's.
+ */
+async function editorInTransaction(tx: TeamMutationTransaction, organizationId: OrganizationContext["organization"]["id"], memberId: OrganizationContext["currentMember"]["id"]): Promise<{ ok: true; editor: MemberPermissions } | { ok: false; error: "permission_revoked"; response: ReturnType<typeof permissionDeniedResponse> }> {
+  const editor = await resolvePermissionsForMember({ organizationId, memberId, database: tx })
+  return editor.has("permissions.manage") ? { ok: true, editor } : { ok: false, error: "permission_revoked", response: permissionDeniedResponse("permissions.manage") }
+}
+
 function organizationContext(c: { get(key: "organizationContext"): OrganizationContext | undefined }): OrganizationContext | null {
   return c.get("organizationContext") ?? null
 }
@@ -705,7 +721,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const actorMemberId = payload.currentMember.id
       const allowed = plan.changes.map((change) => change.key)
 
-      const result = await db.transaction(async (tx) => {
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
         // The team row serializes concurrent creates for the same team. The
         // set is new, so its rows need no notBefore.
         const [team] = await tx.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable)
@@ -713,6 +729,10 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
           .limit(1)
           .for("update")
         if (!team) return { ok: false as const, error: "team_not_found" as const }
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
+        const livePlan = planPermissionSetCreate({ permissions: body.permissions, editor: live.editor })
+        if (!livePlan.ok) return { ok: false as const, error: "invalid_create" as const, problem: livePlan.problem }
 
         const [existing] = await tx.select({ id: PermissionSetTable.id }).from(PermissionSetTeamTable)
           .innerJoin(PermissionSetTable, eq(PermissionSetTable.id, PermissionSetTeamTable.permissionSetId))
@@ -774,6 +794,8 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
 
       if (!result.ok) {
         if (result.error === "team_not_found") return c.json({ error: "team_not_found" as const, message: "This team doesn't exist in your organization." }, 404)
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
+        if (result.error === "invalid_create") return c.json(problemBody(result.problem), problemStatus(result.problem))
         return c.json({
           error: "team_permission_set_exists" as const,
           message: "This team already has permissions. Edit them instead.",
@@ -865,14 +887,18 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const capture = auditChangeCapture(c)
       const actorMemberId = payload.currentMember.id
 
-      const result = await db.transaction(async (tx) => {
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
         if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
         const set = await readPermissionSet(tx, organizationId, permissionSetId)
         if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
         if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
+        // Planned against the editor resolved here: owner/effective-admin for Admin permissions and
+        // the hold-the-key rule both use the latest committed permissions.
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
 
         const current = (await readPermissionSetStates(tx, [set.id], { lock: "share" })).get(set.id) ?? new Map<string, PermissionStatus>()
-        const plan = planPermissionSetEdit({ defaultKey: set.defaultKey, current, changes: requested, editor })
+        const plan = planPermissionSetEdit({ defaultKey: set.defaultKey, current, changes: requested, editor: live.editor })
         if (!plan.ok) return { ok: false as const, error: "invalid_edit" as const, problem: plan.problem }
         if (plan.changes.length === 0) return { ok: true as const, set, changes: [], granted: [], revoked: [], auditEventIds: [] }
 
@@ -910,6 +936,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         if (result.error === "permission_set_archived") {
           return c.json({ error: "permission_set_archived" as const, message: "This permission set was deleted and can't be changed." }, 409)
         }
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
         return c.json(problemBody(result.problem), problemStatus(result.problem))
       }
 
@@ -1008,12 +1035,14 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
       const capture = auditChangeCapture(c)
       const actorMemberId = payload.currentMember.id
 
-      const result = await db.transaction(async (tx) => {
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
         if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
         const set = await readPermissionSet(tx, organizationId, permissionSetId)
         if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
         if (set.defaultKey !== null) return { ok: false as const, error: "default_permission_set" as const }
         if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
 
         const now = new Date()
         const links = (await readTeamLinks(tx, organizationId, [set.id])).get(set.id) ?? []
@@ -1042,6 +1071,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         if (result.error === "default_permission_set") {
           return c.json({ error: "default_permission_set" as const, message: "Member and Admin permissions can't be deleted. Turn permissions off instead." }, 400)
         }
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
         return c.json({ error: "permission_set_archived" as const, message: "This permission set was already deleted." }, 409)
       }
 

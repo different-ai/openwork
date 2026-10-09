@@ -90,17 +90,14 @@ async function teamSetPermissionKeys(
  * already hold the organization row and, when editing a team, that team's
  * row FOR UPDATE.
  *
- * Why this order cannot deadlock with permission set writes, none of which
- * touch the organization row or team memberships:
- * - Editing a set locks its permission_set row FOR UPDATE, then reads and
- *   inserts its history. Archiving a set locks its row, then its team links.
- *   Both take the set row first, as this does before reading links or
- *   history, so whichever transaction reaches the set row second waits
- *   holding nothing the other needs.
- * - Creating a team set locks the team row FOR UPDATE, then inserts the set,
- *   its link and history. Team rows are locked here before any permission_set
- *   row, so a create for one of these teams finishes first or waits for this;
- *   a create for another team never needs anything held here.
+ * Permission set writes (create, edit, archive in routes/org/permissions.ts)
+ * also take the organization row FOR UPDATE first, so they never interleave
+ * with a team write. The fixed order still matters against everything else
+ * that takes these rows without the organization lock (default-set
+ * reconciliation, permission reads in other transactions): set rows are
+ * always taken before their links and history, as edits (set row, then
+ * history) and archives (set row, then links) do, and team rows before set
+ * rows, as a team set create does (team row, then set, link and history).
  */
 async function lockTeamGrantInputs(tx: PermissionDatabase, organizationId: OrganizationId, actorMemberId: MemberId) {
   await tx.select({ id: TeamTable.id })

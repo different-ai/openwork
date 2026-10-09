@@ -2,6 +2,7 @@ import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } fr
 import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { withOrganizationTeamMutation } from "./organization-team-roles.js"
 import { archiveTeamPermissionSets } from "./permissions/team-set-archive.js"
+import { requireHeldInTransaction } from "./permissions/in-transaction.js"
 import { appendDomainChanges } from "./audit/domain/legacy.js"
 import { scimConnectionDeletedEvent } from "./audit/domain/scim.js"
 import type { AuditChangeCapture } from "./audit/request-capture.js"
@@ -318,17 +319,22 @@ export async function rotateOrganizationScimToken(input: {
 }
 
 /** null when there is no connection; otherwise the scim_connection.deleted event ids (capture active). */
-export async function deleteOrganizationScimConnection(organizationId: OrganizationId, capture: AuditChangeCapture | null = null) {
+/**
+ * `actorMemberId` is the member deleting the connection: scim.manage is re-checked inside the
+ * cleanup transaction (throws PermissionRevokedError).
+ */
+export async function deleteOrganizationScimConnection(organizationId: OrganizationId, capture: AuditChangeCapture | null = null, actorMemberId?: typeof MemberTable.$inferSelect.id) {
   const connection = await getOrganizationScimConnection(organizationId)
   if (!connection) {
     return null
   }
 
-  return { auditEventIds: await cleanupExternalIdentitiesForDeletedScimConnection(connection, capture) }
+  return { auditEventIds: await cleanupExternalIdentitiesForDeletedScimConnection(connection, capture, actorMemberId) }
 }
 
-async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typeof ScimProviderTable.$inferSelect, capture: AuditChangeCapture | null = null): Promise<string[]> {
+async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typeof ScimProviderTable.$inferSelect, capture: AuditChangeCapture | null = null, actorMemberId?: typeof MemberTable.$inferSelect.id): Promise<string[]> {
   return withOrganizationTeamMutation(connection.organizationId, async (db) => {
+    if (actorMemberId) await requireHeldInTransaction(db, { organizationId: connection.organizationId, memberId: actorMemberId, key: "scim.manage" })
     const providers = await db.select().from(ScimProviderTable)
       .where(and(eq(ScimProviderTable.id, connection.id), eq(ScimProviderTable.organizationId, connection.organizationId), eq(ScimProviderTable.providerId, connection.providerId))).limit(1)
     const provider = providers[0]
