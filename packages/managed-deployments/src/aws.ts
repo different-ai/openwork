@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser"
 import { z } from "zod"
-import { awsRegionSchema, type AwsTarget } from "./schema.js"
+import { awsRegionSchema, type AwsTarget } from "@openwork/managed-deployments/schema"
 
 /**
  * AWS adapter: bootstrap (CloudFormation), naming shared with the Terraform

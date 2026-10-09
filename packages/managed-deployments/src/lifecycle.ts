@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto"
-import { deploymentStepSchema, type DeploymentEventInput, type DeploymentHealth, type HealthCheck } from "./schema.js"
+import { deploymentStepSchema, type DeploymentEventInput, type DeploymentHealth, type HealthCheck } from "@openwork/managed-deployments/schema"
 
 /** Health reports arrive every 5 minutes; three missed reports mean not reporting. */
 export const HEALTH_STALE_AFTER_MS = 16 * 60 * 1000
