@@ -30,7 +30,10 @@ function matchingStrings(value: unknown, pattern: RegExp): string[] | undefined 
   return value.filter((entry): entry is string => typeof entry === "string" && pattern.test(entry))
 }
 
-/** An http(s) URL without userinfo, query string or fragment; undefined when it isn't one. */
+/**
+ * The origin (scheme, host and port) of an http(s) URL; undefined when it isn't one. Path, userinfo,
+ * query string and fragment are all dropped: any of them can carry a credential (e.g. /key/<secret>/v1).
+ */
 export function credentialFreeUrl(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > 2048) return undefined
   let url: URL
@@ -40,7 +43,7 @@ export function credentialFreeUrl(value: unknown): string | undefined {
     return undefined
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return undefined
-  return `${url.origin}${url.pathname}`
+  return url.origin
 }
 
 function numberRecord(value: unknown, keys: readonly string[]): JsonRecord | undefined {

@@ -362,6 +362,37 @@ test("with Permissions on, a member who may change roles through a team cannot m
     expect(maya.role).toBe("member");
   });
 
+  await step("even with every Admin permission turned off, so there is nothing for her to lack, Tess cannot make Maya an admin or invite one", async () => {
+    const adminSet = await adminSetId(world);
+    const detail = await world.request(world.owner, "GET", `/v1/permissions/sets/${adminSet}`);
+    expect(detail.status, summary(detail)).toBe(200);
+    const allowed = rows(field(field(detail.body, "set"), "permissions")).filter((state) => state.status === "allow").map((state) => String(state.key));
+    const emptied = await world.request(world.owner, "PUT", `/v1/permissions/sets/${adminSet}/permissions`, { changes: allowed.map((key) => ({ key, status: "deny" })) });
+    expect(emptied.status, summary(emptied)).toBe(200);
+    const promote = await world.request(world.tess, "POST", `/v1/members/${world.ids.maya}/role`, { role: "admin" });
+    const invite = await world.request(world.tess, "POST", "/v1/invitations", { email: `permissions-invitee+${Date.now().toString(36)}@example.test`, role: "admin" });
+    const maya = { role: await rosterRole(world, world.ids.maya) };
+    const restored = await world.request(world.owner, "PUT", `/v1/permissions/sets/${adminSet}/permissions`, { changes: allowed.map((key) => ({ key, status: "allow" })) });
+    const message = "Only the owner or an admin can make someone an admin while Admin permissions allow nothing.";
+    const ok = allowed.length > 0 && field(field(emptied.body, "set"), "allowedCount") === 0
+      && promote.status === 403 && field(promote.body, "message") === message && field(promote.body, "requiredPermission") === undefined
+      && invite.status === 403 && field(invite.body, "message") === message
+      && maya.role === "member" && restored.status === 200;
+    evidence.recordAssertionEvidence(
+      "Granting admin while Admin permissions allow nothing needs the owner or an admin",
+      `owner turns off all ${allowed.length} Admin permissions → ${emptied.status}, set allows ${String(field(field(emptied.body, "set"), "allowedCount"))}; Tess POST /v1/members/:maya/role admin → ${said(promote)}: “${String(field(promote.body, "message"))}”; Tess POST /v1/invitations role admin → ${said(invite)}: “${String(field(invite.body, "message"))}”; Maya is still ${maya.role}; owner restores them → ${restored.status}`,
+      ok,
+    );
+    expect(allowed.length).toBeGreaterThan(0);
+    expect(field(field(emptied.body, "set"), "allowedCount")).toBe(0);
+    expect(promote.status, summary(promote)).toBe(403);
+    expect(promote.body).toMatchObject({ error: "forbidden", message });
+    expect(invite.status, summary(invite)).toBe(403);
+    expect(invite.body).toMatchObject({ error: "forbidden", message });
+    expect(maya.role).toBe("member");
+    expect(restored.status, summary(restored)).toBe(200);
+  });
+
   await step("Tess cannot make herself an admin, or demote Adam", async () => {
     const self = await world.request(world.tess, "POST", `/v1/members/${world.ids.tess}/role`, { role: "admin" });
     const demote = await world.request(world.tess, "POST", `/v1/members/${world.ids.adam}/role`, { role: "member" });

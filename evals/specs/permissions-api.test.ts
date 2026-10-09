@@ -391,10 +391,10 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
         name: "Inline credential",
         npm: "@ai-sdk/openai-compatible",
         env: ["INLINE_API_KEY"],
-        api: `https://proxy:${inlineSecret}@inference.eval.invalid/v1?api_key=${inlineSecret}`,
+        api: `https://proxy:${inlineSecret}@inference.eval.invalid/v1/key/${inlineSecret}?api_key=${inlineSecret}`,
         bearer: inlineSecret,
         routing: [[{ region: "eu", credential: inlineSecret }], [[inlineSecret]]],
-        options: { baseURL: "https://inference.eval.invalid/v1", apiKey: inlineSecret, headers: { Authorization: `Bearer ${inlineSecret}` } },
+        options: { baseURL: `https://inference.eval.invalid/${inlineSecret}/v1`, apiKey: inlineSecret, headers: { Authorization: `Bearer ${inlineSecret}` } },
         models: [{ id: "witness", name: "Witness", bearer: inlineSecret, fallbacks: [[inlineSecret]], options: { apiKey: inlineSecret }, limit: { context: 32000, input: 32000, output: 32000 } }],
       },
     });
@@ -411,13 +411,13 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
     const ok = tessKeys.includes("llm_providers.view") && !tessKeys.includes("llm_providers.update")
       && tessById.status === 200 && tessList.status === 200 && tessListed !== undefined && !leaked
       && field(field(tessById.body, "llmProvider"), "configRedacted") === true && field(tessListed, "configRedacted") === true
-      && field(tessConfig, "api") === "https://inference.eval.invalid/v1"
-      && field(field(tessConfig, "options"), "baseURL") === "https://inference.eval.invalid/v1"
+      && field(tessConfig, "api") === "https://inference.eval.invalid"
+      && field(field(tessConfig, "options"), "baseURL") === "https://inference.eval.invalid"
       && field(field(field(tessModel, "config"), "limit"), "context") === 32000
       && ownerById.status === 200 && ownerById.text.includes(inlineSecret) && field(field(ownerById.body, "llmProvider"), "configRedacted") === false;
     evidence.recordAssertionEvidence(
       "A View-only caller gets no inline provider credential",
-      `Stored: api with userinfo and api_key query, options.apiKey, Authorization header, top-level bearer, routing[[{credential}],[[secret]]], model bearer and fallbacks[[secret]]. Tess holds llm_providers.view: ${tessKeys.includes("llm_providers.view")}, llm_providers.update: ${tessKeys.includes("llm_providers.update")}; Tess GET provider → ${tessById.status} configRedacted ${String(field(field(tessById.body, "llmProvider"), "configRedacted"))} providerConfig ${JSON.stringify(tessConfig)} model config ${JSON.stringify(field(tessModel, "config"))}; Tess GET scope=manageable → ${tessList.status}, lists it: ${tessListed !== undefined}; inline secret anywhere in Tess's responses: ${leaked}; owner GET provider → ${ownerById.status}, configRedacted ${String(field(field(ownerById.body, "llmProvider"), "configRedacted"))}, inline secret present: ${ownerById.text.includes(inlineSecret)}`,
+      `Stored: api with userinfo, a secret path segment and api_key query, options.baseURL with a secret path segment, options.apiKey, Authorization header, top-level bearer, routing[[{credential}],[[secret]]], model bearer and fallbacks[[secret]]. Tess holds llm_providers.view: ${tessKeys.includes("llm_providers.view")}, llm_providers.update: ${tessKeys.includes("llm_providers.update")}; Tess GET provider → ${tessById.status} configRedacted ${String(field(field(tessById.body, "llmProvider"), "configRedacted"))} providerConfig ${JSON.stringify(tessConfig)} model config ${JSON.stringify(field(tessModel, "config"))}; Tess GET scope=manageable → ${tessList.status}, lists it: ${tessListed !== undefined}; inline secret anywhere in Tess's responses: ${leaked}; owner GET provider → ${ownerById.status}, configRedacted ${String(field(field(ownerById.body, "llmProvider"), "configRedacted"))}, inline secret present: ${ownerById.text.includes(inlineSecret)}`,
       ok,
     );
     expect(tessKeys).toContain("llm_providers.view");
@@ -428,8 +428,8 @@ test("with Permissions on, an owner grants a team, then every member, exactly th
     expect(leaked).toBe(false);
     expect(field(field(tessById.body, "llmProvider"), "configRedacted")).toBe(true);
     expect(field(tessListed, "configRedacted")).toBe(true);
-    expect(field(tessConfig, "api")).toBe("https://inference.eval.invalid/v1");
-    expect(field(field(tessConfig, "options"), "baseURL")).toBe("https://inference.eval.invalid/v1");
+    expect(field(tessConfig, "api")).toBe("https://inference.eval.invalid");
+    expect(field(field(tessConfig, "options"), "baseURL")).toBe("https://inference.eval.invalid");
     expect(field(field(field(tessModel, "config"), "limit"), "context")).toBe(32000);
     expect(ownerById.status, summary(ownerById)).toBe(200);
     expect(field(field(ownerById.body, "llmProvider"), "configRedacted")).toBe(false);

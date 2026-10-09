@@ -5388,7 +5388,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by stable key
    *
-   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).
+   * Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, URL origins only, model metadata and limits).
    */
   public getV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5497,7 +5497,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read llm-providers by id
    *
-   * Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).
+   * Reads a single LLM provider by id. Requires the View all providers permission. Callers who can't edit the provider (no Edit any provider permission, not its creator) and aren't granted it get configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, URL origins only, model metadata and limits).
    */
   public getV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5660,7 +5660,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List organization LLM providers
    *
-   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, credential-free URLs, model metadata and limits).
+   * Lists usable providers by default. Pass scope=manageable to list providers the current member can administer in Den. Providers the caller can't edit (no Edit any provider permission, not its creator) and isn't granted are returned with configRedacted: true and only the non-secret fields of providerConfig and model configs (identity, npm package, env names, URL origins only, model metadata and limits).
    */
   public getV1LlmProviders<ThrowOnError extends boolean = false>(
     parameters?: {

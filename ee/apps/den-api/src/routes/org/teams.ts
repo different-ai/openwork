@@ -19,7 +19,6 @@ import {
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { PermissionKey } from "@openwork/types/den/permissions"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -34,24 +33,20 @@ import {
 } from "../../middleware/index.js"
 import {
   ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE,
-  adminDefaultPermissionKeys,
-  firstMissingPermission,
-  teamGrantedPermissionKeys,
+  teamGrantDecisionInTransaction,
   teamGrantsForbiddenResponse,
   TEAM_GRANTS_FORBIDDEN_MESSAGE,
 } from "../../permissions/team-grants.js"
-import { decideAdminTeamChange } from "../../permissions/role-assignment.js"
-import { requiresAdminError } from "../../agent-error-envelope.js"
+import { ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE, decideAdminTeamChange } from "../../permissions/role-assignment.js"
+import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError, type AgentErrorEnvelope } from "../../agent-error-envelope.js"
+import type { PermissionDeniedResponse } from "../../permissions/check.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import {
   idParamSchema,
-  memberPermissionsForRequest,
   orgAccessFailureStatus,
   permissionFailureHeaders,
   requirePermission,
-  type PermissionCheckResult,
-  type PermissionRouteContext,
 } from "./shared.js"
 
 const createTeamSchema = z.object({
@@ -118,30 +113,42 @@ async function ensureMembersBelongToOrganization(input: {
   return input.memberIds.every((memberId) => memberIds.has(memberId))
 }
 
+type TeamGrantsFailure = PermissionDeniedResponse | (AgentErrorEnvelope & { error: "forbidden" })
+
 /**
- * Safety rule 9.3 (docs/permissions/overview.md): with the Permissions feature
- * on, the caller must already hold every key the team would grant. The owner
- * bypasses it. SCIM writes team membership through scim-groups.ts, not these
- * routes, so identity-provider membership is exempt.
+ * Safety rule 9.3 (docs/permissions/overview.md) and the Admin-team rule
+ * (role-assignment.ts decideAdminTeamChange), decided inside the team's write
+ * transaction against the actor and permission sets read there under share
+ * locks (team-grants.ts teamGrantDecisionInTransaction). The owner bypasses
+ * both. SCIM writes team membership through scim-groups.ts, not these routes,
+ * so identity-provider membership is exempt. Null means allowed.
  */
-async function checkHoldsTeamGrants(
-  c: PermissionRouteContext,
-  grantedKeys: () => Promise<Iterable<PermissionKey>>,
-  message: string,
-): Promise<PermissionCheckResult> {
-  const held = await memberPermissionsForRequest(c)
-  if (!held) return { ok: false, response: { error: "organization_not_found" } }
-  if (!held.featureEnabled || held.isOwner) return { ok: true }
-  const missing = firstMissingPermission(held, await grantedKeys())
-  return missing ? { ok: false, response: teamGrantsForbiddenResponse(missing, message) } : { ok: true }
+async function teamGrantsDenial(tx: TeamMutationTransaction, payload: ResourceOrganizationContext, input: {
+  teamId: TeamId | null
+  grantsOrganizationAdmin: boolean
+  adminDefaultsOnly?: boolean
+  adminTeamChange: { makesAdminTeam: boolean; addsMembersToAdminTeam: boolean } | null
+  message: string
+}): Promise<TeamGrantsFailure | null> {
+  const { actor, decision } = await teamGrantDecisionInTransaction({
+    tx,
+    organizationId: payload.organization.id,
+    actorMemberId: payload.currentMember.id,
+    teamId: input.teamId,
+    grantsOrganizationAdmin: input.grantsOrganizationAdmin,
+    adminDefaultsOnly: input.adminDefaultsOnly,
+  })
+  if (input.adminTeamChange) {
+    const denial = decideAdminTeamChange({ actor, ...input.adminTeamChange })
+    if (denial) return { error: "forbidden", ...requiresAdminError(denial.message) }
+  }
+  if (decision.ok) return null
+  if (decision.reason === "requires_admin") return { error: "forbidden", ...requiresAdminError(ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE) }
+  return teamGrantsForbiddenResponse(decision.requiredPermission, input.message)
 }
 
-/** Admin teams make their members effective admins, so with Permissions on only the owner or an admin may grow them (role-assignment.ts). */
-async function adminTeamChangeDenial(c: PermissionRouteContext, change: { makesAdminTeam: boolean; addsMembersToAdminTeam: boolean }) {
-  const actor = await memberPermissionsForRequest(c)
-  if (!actor) return { error: "organization_not_found" as const }
-  const denial = decideAdminTeamChange({ actor, ...change })
-  return denial ? { error: "forbidden" as const, ...requiresAdminError(denial.message) } : null
+function teamGrantsFailureHeaders(response: TeamGrantsFailure): Record<string, string> {
+  return "requiredPermission" in response ? { "WWW-Authenticate": INSUFFICIENT_SCOPE_CHALLENGE } : {}
 }
 
 async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
@@ -151,11 +158,14 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     if (!rolePermission.ok) return c.json(rolePermission.response, orgAccessFailureStatus(rolePermission.response), permissionFailureHeaders(rolePermission.response))
   }
   if (input.grantsOrganizationAdmin === true) {
-    const adminTeamDenial = await adminTeamChangeDenial(c, { makesAdminTeam: true, addsMembersToAdminTeam: input.memberIds.length > 0 })
-    if (adminTeamDenial) return c.json(adminTeamDenial, orgAccessFailureStatus(adminTeamDenial))
     // A new team has no team permission set yet, so it grants only the Admin defaults.
-    const grants = await checkHoldsTeamGrants(c, () => adminDefaultPermissionKeys(payload.organization.id, tx), ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE)
-    if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
+    const denied = await teamGrantsDenial(tx, payload, {
+      teamId: null,
+      grantsOrganizationAdmin: true,
+      adminTeamChange: { makesAdminTeam: true, addsMembersToAdminTeam: input.memberIds.length > 0 },
+      message: ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE,
+    })
+    if (denied) return c.json(denied, 403, teamGrantsFailureHeaders(denied))
   }
 
   let memberIds: MemberId[]
@@ -241,11 +251,14 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "team_not_found" }, 404)
   }
 
+  // Locked first: creating a team permission set locks the team row before its set, link and
+  // history, so the grant check below (team-grants.ts lockTeamGrantInputs) cannot interleave with it.
   const teamRows = await tx
     .select()
     .from(TeamTable)
     .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, payload.organization.id)))
     .limit(1)
+    .for("update")
 
   const team = teamRows[0]
   if (!team) {
@@ -261,10 +274,14 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }
   const nextGrantsOrganizationAdmin = input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin
   if (nextGrantsOrganizationAdmin && !team.grantsOrganizationAdmin) {
-    const adminTeamDenial = await adminTeamChangeDenial(c, { makesAdminTeam: true, addsMembersToAdminTeam: false })
-    if (adminTeamDenial) return c.json(adminTeamDenial, orgAccessFailureStatus(adminTeamDenial))
-    const grants = await checkHoldsTeamGrants(c, () => adminDefaultPermissionKeys(payload.organization.id, tx), ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE)
-    if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
+    const denied = await teamGrantsDenial(tx, payload, {
+      teamId: team.id,
+      grantsOrganizationAdmin: true,
+      adminDefaultsOnly: true,
+      adminTeamChange: { makesAdminTeam: true, addsMembersToAdminTeam: false },
+      message: ADMIN_TEAM_GRANTS_FORBIDDEN_MESSAGE,
+    })
+    if (denied) return c.json(denied, 403, teamGrantsFailureHeaders(denied))
   }
 
   let memberIds: MemberId[] | undefined
@@ -289,17 +306,13 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
       .where(eq(TeamMemberTable.teamId, team.id)))
       .map((row) => row.id))
     if (memberIds.some((memberId) => !currentMemberIds.has(memberId))) {
-      if (nextGrantsOrganizationAdmin) {
-        const adminTeamDenial = await adminTeamChangeDenial(c, { makesAdminTeam: false, addsMembersToAdminTeam: true })
-        if (adminTeamDenial) return c.json(adminTeamDenial, orgAccessFailureStatus(adminTeamDenial))
-      }
-      const grants = await checkHoldsTeamGrants(c, () => teamGrantedPermissionKeys({
-        organizationId: payload.organization.id,
+      const denied = await teamGrantsDenial(tx, payload, {
         teamId: team.id,
         grantsOrganizationAdmin: nextGrantsOrganizationAdmin,
-        database: tx,
-      }), TEAM_GRANTS_FORBIDDEN_MESSAGE)
-      if (!grants.ok) return c.json(grants.response, orgAccessFailureStatus(grants.response), permissionFailureHeaders(grants.response))
+        adminTeamChange: nextGrantsOrganizationAdmin ? { makesAdminTeam: false, addsMembersToAdminTeam: true } : null,
+        message: TEAM_GRANTS_FORBIDDEN_MESSAGE,
+      })
+      if (denied) return c.json(denied, 403, teamGrantsFailureHeaders(denied))
     }
   }
 

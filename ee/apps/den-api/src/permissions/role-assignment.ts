@@ -40,7 +40,7 @@ export type RoleAssignmentInput = {
 }
 
 export type RoleAssignmentDenial = {
-  reason: "own_role" | "admin_permissions_missing" | "admin_role_change_requires_admin"
+  reason: "own_role" | "admin_permissions_missing" | "admin_grant_requires_admin" | "admin_role_change_requires_admin"
   message: string
   /** The first Admin default key the caller lacks, when that is the reason. */
   requiredPermission: PermissionKey | null
@@ -49,6 +49,25 @@ export type RoleAssignmentDenial = {
 export const OWN_ROLE_CHANGE_MESSAGE = "You can't change your own role. Ask the owner or another admin."
 export const ADMIN_ROLE_GRANT_FORBIDDEN_MESSAGE = "You can't make someone an admin because admins have permissions you don't have."
 export const ADMIN_ROLE_CHANGE_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can change an admin's role."
+export const ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can make someone an admin while Admin permissions allow nothing."
+
+/**
+ * Granting admin (the role, an Admin team, or a place in one) with the
+ * feature on needs every Admin default key. When the Admin default set allows
+ * nothing that check holds for everyone, yet admins still carry powers beyond
+ * the catalog (changing Admin permissions, changing and removing admins), so
+ * an empty set instead needs the caller to be the owner or an effective admin.
+ * Returns the first missing key, "requires_admin", or null when allowed.
+ */
+export function adminGrantDenial(
+  caller: Pick<MemberPermissions, "isOwner" | "isAdmin" | "has">,
+  adminDefaultKeys: Iterable<PermissionKey>,
+): PermissionKey | "requires_admin" | null {
+  if (caller.isOwner) return null
+  const keys = [...adminDefaultKeys]
+  if (keys.length === 0) return caller.isAdmin ? null : "requires_admin"
+  return firstMissingPermission(caller, keys)
+}
 
 /** The first key (in sorted order) the caller lacks, or null when they hold all of them. The owner holds everything. */
 export function firstMissingPermission(held: Pick<MemberPermissions, "isOwner" | "has">, keys: Iterable<PermissionKey>): PermissionKey | null {
@@ -80,7 +99,8 @@ export function decideRoleAssignment(
   }
 
   if (input.nextIsAdmin && !(target?.isDirectAdmin ?? false)) {
-    const missing = firstMissingPermission(caller, input.adminDefaultKeys ?? permissionDefaultKeys("admin"))
+    const missing = adminGrantDenial(caller, input.adminDefaultKeys ?? permissionDefaultKeys("admin"))
+    if (missing === "requires_admin") return { reason: "admin_grant_requires_admin", message: ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE, requiredPermission: null }
     return missing
       ? { reason: "admin_permissions_missing", message: ADMIN_ROLE_GRANT_FORBIDDEN_MESSAGE, requiredPermission: missing }
       : null

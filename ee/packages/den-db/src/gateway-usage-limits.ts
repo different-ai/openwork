@@ -355,7 +355,9 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     members(scope: GatewayUsageScope, query = "") {
       return transaction(async (tx) => {
-        await activeUsageMember(tx, scope)
+        // Returns other members' names and emails: share-lock the caller's active membership so a
+        // concurrent removal can't land between this check and the read (as listResets does).
+        await activeUsageMember(tx, scope, true)
         return {
           members: await tx
             .select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
@@ -380,7 +382,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     getStatus(scope: GatewayUsageScope, memberId?: GatewayUsageScope["memberId"]) {
       return transaction(async (tx, now) => {
-        if (memberId !== undefined) await activeUsageMember(tx, scope)
+        // Another member's usage: share-lock the caller's active membership for the read.
+        if (memberId !== undefined) await activeUsageMember(tx, scope, true)
         return (await readUsageStatus(tx, { ...scope, memberId: memberId ?? scope.memberId }, now))
           .usage
       })

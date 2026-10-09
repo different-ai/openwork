@@ -10,6 +10,7 @@ import {
   organizationRoleValueSatisfies,
 } from "../src/organization-role-hierarchy.ts"
 import {
+  adminGrantDenial,
   decideAdminTeamChange,
   decideMemberRemoval,
   decideRequiredPermission,
@@ -190,4 +191,28 @@ test("an admin assignment decided in the transaction uses the Admin default set 
   const denial = decideRoleAssignment({ caller: held, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [...ADMIN_DEFAULTS, "billing.manage"] })
   assert.equal(denial?.reason, "admin_permissions_missing")
   assert.equal(denial?.requiredPermission, "billing.manage")
+})
+
+test("with Permissions on and an empty Admin default set, only the owner or an admin can grant admin", () => {
+  const teamGranted = caller({ keys: ["members.update", "invitations.manage"] })
+  // Making a member an admin: firstMissingPermission over no keys would allow anyone.
+  const denial = decideRoleAssignment({ caller: teamGranted, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [] })
+  assert.equal(denial?.reason, "admin_grant_requires_admin")
+  assert.equal(denial?.requiredPermission, null)
+  assert.equal(denial?.message, "Only the owner or an admin can make someone an admin while Admin permissions allow nothing.")
+  // Inviting as admin decides with no target, through the same rule.
+  assert.equal(decideRoleAssignment({ caller: teamGranted, callerMemberId: "member_caller", target: null, nextIsAdmin: true, adminDefaultKeys: [] })?.reason, "admin_grant_requires_admin")
+  assert.equal(decideRoleAssignment({ caller: caller({ isAdmin: true }), callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [] }), null)
+  assert.equal(decideRoleAssignment({ caller: caller({ isOwner: true }), callerMemberId: "member_caller", target: null, nextIsAdmin: true, adminDefaultKeys: [] }), null)
+  // Feature off: unchanged (only the owner holds members.update there).
+  assert.equal(decideRoleAssignment({ caller: caller({ featureEnabled: false }), callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [] }), null)
+
+  // The shared rule the team-grant check uses for Admin teams.
+  assert.equal(adminGrantDenial(teamGranted, []), "requires_admin")
+  assert.equal(adminGrantDenial(caller({ isAdmin: true }), []), null)
+  assert.equal(adminGrantDenial(caller({ isOwner: true }), []), null)
+  assert.equal(adminGrantDenial(teamGranted, ["members.update"]), null)
+  assert.equal(adminGrantDenial(teamGranted, ["members.update", "billing.manage"]), "billing.manage")
+  // Making an Admin team or adding people to one needs the owner or an admin regardless of the set.
+  assert.equal(decideAdminTeamChange({ actor: caller({ keys: ["teams.manage", "teams.manage_admin"] }), makesAdminTeam: true, addsMembersToAdminTeam: false })?.reason, "admin_team_requires_admin")
 })

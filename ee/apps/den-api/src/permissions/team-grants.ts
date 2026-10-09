@@ -8,7 +8,7 @@ import {
   readPermissionSetStates,
   type PermissionDatabase,
 } from "@openwork-ee/den-db/permissions"
-import { MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { MemberTable, PermissionSetTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError, type AgentErrorEnvelope } from "../agent-error-envelope.js"
 import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
@@ -17,7 +17,9 @@ import { permissionDeniedResponse, type PermissionDeniedResponse } from "./check
 import type { MemberPermissions } from "./effective.js"
 import { resolvePermissionsForMember } from "./resolve.js"
 import {
+  adminGrantDenial,
   decideRoleAssignment,
+  firstMissingPermission,
   roleAssignmentNeedsAdminDefaultKeys,
   type RoleAssignmentDenial,
   type RoleAssignmentTarget,
@@ -62,38 +64,94 @@ export async function adminDefaultPermissionKeys(
   return allowedKeys(states.get(sets.admin.id))
 }
 
-/**
- * Every key a member gains by joining the team. Pass `grantsOrganizationAdmin`
- * when the request is changing it; otherwise the stored value is read.
- */
-export async function teamGrantedPermissionKeys(input: {
-  organizationId: OrganizationId
-  teamId: TeamId
-  grantsOrganizationAdmin?: boolean
-  database?: PermissionDatabase
-}): Promise<Set<PermissionKey>> {
-  const database = input.database ?? db
-  let grantsOrganizationAdmin = input.grantsOrganizationAdmin
-  if (grantsOrganizationAdmin === undefined) {
-    const [team] = await database.select({ grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin })
-      .from(TeamTable)
-      .where(and(eq(TeamTable.id, input.teamId), eq(TeamTable.organizationId, input.organizationId)))
-      .limit(1)
-    grantsOrganizationAdmin = team?.grantsOrganizationAdmin ?? false
-  }
-
-  const teamSets = await listActiveTeamPermissionSetsForTeams(database, input.organizationId, [input.teamId])
+/** Keys the team's active team permission sets allow (not the Admin defaults). */
+async function teamSetPermissionKeys(
+  database: PermissionDatabase,
+  organizationId: OrganizationId,
+  teamId: TeamId,
+  options: { lock?: "share" } = {},
+): Promise<Set<PermissionKey>> {
+  const teamSets = await listActiveTeamPermissionSetsForTeams(database, organizationId, [teamId], options)
   const keys = new Set<PermissionKey>()
-  if (teamSets.length > 0) {
-    const states = await readPermissionSetStates(database, teamSets.map((teamSet) => teamSet.permissionSetId))
-    for (const teamSet of teamSets) {
-      for (const key of allowedKeys(states.get(teamSet.permissionSetId))) keys.add(key)
-    }
-  }
-  if (grantsOrganizationAdmin) {
-    for (const key of await adminDefaultPermissionKeys(input.organizationId, database)) keys.add(key)
+  if (teamSets.length === 0) return keys
+  const states = await readPermissionSetStates(database, teamSets.map((teamSet) => teamSet.permissionSetId), options)
+  for (const teamSet of teamSets) {
+    for (const key of allowedKeys(states.get(teamSet.permissionSetId))) keys.add(key)
   }
   return keys
+}
+
+/**
+ * Share-locks what a team grant decision reads, in a fixed order and before
+ * any team link or permission history row: the actor's team rows, then every
+ * permission_set row of the organization (a handful; the decision reads the
+ * default sets, the actor's team sets and the target team's sets). Callers
+ * already hold the organization row and, when editing a team, that team's
+ * row FOR UPDATE.
+ *
+ * Why this order cannot deadlock with permission set writes, none of which
+ * touch the organization row or team memberships:
+ * - Editing a set locks its permission_set row FOR UPDATE, then reads and
+ *   inserts its history. Archiving a set locks its row, then its team links.
+ *   Both take the set row first, as this does before reading links or
+ *   history, so whichever transaction reaches the set row second waits
+ *   holding nothing the other needs.
+ * - Creating a team set locks the team row FOR UPDATE, then inserts the set,
+ *   its link and history. Team rows are locked here before any permission_set
+ *   row, so a create for one of these teams finishes first or waits for this;
+ *   a create for another team never needs anything held here.
+ */
+async function lockTeamGrantInputs(tx: PermissionDatabase, organizationId: OrganizationId, actorMemberId: MemberId) {
+  await tx.select({ id: TeamTable.id })
+    .from(TeamMemberTable)
+    .innerJoin(TeamTable, eq(TeamMemberTable.teamId, TeamTable.id))
+    .where(and(eq(TeamTable.organizationId, organizationId), eq(TeamMemberTable.orgMembershipId, actorMemberId)))
+    .for("share")
+  await tx.select({ id: PermissionSetTable.id })
+    .from(PermissionSetTable)
+    .where(eq(PermissionSetTable.organizationId, organizationId))
+    .for("share")
+}
+
+export type TeamGrantDecision =
+  | { ok: true }
+  | { ok: false; reason: "permission_missing"; requiredPermission: PermissionKey }
+  | { ok: false; reason: "requires_admin" }
+
+/**
+ * Safety rule 9.3 (docs/permissions/overview.md), decided inside the team's
+ * write transaction `tx`: with the Permissions feature on, the actor must hold
+ * every key members would gain (the team's sets unless `adminDefaultsOnly`,
+ * plus the Admin defaults when `grantsOrganizationAdmin`). Granting admin with
+ * an empty Admin default set needs the owner or an effective admin
+ * (adminGrantDenial). The actor and every set are read through `tx` under
+ * share locks (lockTeamGrantInputs), so a concurrent permission set edit
+ * either commits first and is seen, or waits for the membership write.
+ * Returns the actor so callers can apply further rules to the same snapshot.
+ */
+export async function teamGrantDecisionInTransaction(input: {
+  tx: PermissionDatabase
+  organizationId: OrganizationId
+  actorMemberId: MemberId
+  /** The team members join; null for a team being created (no sets yet). */
+  teamId: TeamId | null
+  grantsOrganizationAdmin: boolean
+  /** Only the Admin defaults count (making an existing team an Admin team). */
+  adminDefaultsOnly?: boolean
+}): Promise<{ actor: MemberPermissions; decision: TeamGrantDecision }> {
+  await lockTeamGrantInputs(input.tx, input.organizationId, input.actorMemberId)
+  const actor = await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.actorMemberId, database: input.tx })
+  if (!actor.featureEnabled || actor.isOwner) return { actor, decision: { ok: true } }
+  const teamKeys = input.teamId && !input.adminDefaultsOnly
+    ? await teamSetPermissionKeys(input.tx, input.organizationId, input.teamId, { lock: "share" })
+    : new Set<PermissionKey>()
+  if (input.grantsOrganizationAdmin) {
+    const adminDenial = adminGrantDenial(actor, await adminDefaultPermissionKeys(input.organizationId, input.tx, { lock: "share" }))
+    if (adminDenial === "requires_admin") return { actor, decision: { ok: false, reason: "requires_admin" } }
+    if (adminDenial) return { actor, decision: { ok: false, reason: "permission_missing", requiredPermission: adminDenial } }
+  }
+  const missing = firstMissingPermission(actor, teamKeys)
+  return { actor, decision: missing ? { ok: false, reason: "permission_missing", requiredPermission: missing } : { ok: true } }
 }
 
 /** 403 body for a team grant the caller does not fully hold. */

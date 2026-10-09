@@ -19,6 +19,7 @@ import { ORGANIZATION_ADMIN_ROLE, ORGANIZATION_MEMBER_ROLE, ORGANIZATION_OWNER_R
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
 import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import { roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, roleAssignmentDenialInTransaction, type RoleAssignmentDenial } from "../../permissions/team-grants.js"
+import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -30,6 +31,7 @@ import {
   memberPermissionsForRequest,
   normalizeRoleName,
   orgAccessFailureStatus,
+  permissionDeniedResponse,
   permissionFailureHeaders,
   requirePermission,
   splitRoles,
@@ -137,8 +139,11 @@ const BUILT_IN_INVITATION_ROLES: ReadonlySet<string> = new Set([ORGANIZATION_MEM
  * `invitations.manage`; any role other than `member` also needs
  * `members.update`, and with Permissions on an admin invitation needs every
  * Admin default permission (src/permissions/role-assignment.ts). Only Member
- * and Admin can be assigned. `database` is the open transaction, if any, so
- * the Admin default set is read on the same connection.
+ * and Admin can be assigned. `database` is the open transaction, if any:
+ * inside it `members.update` is re-checked against the caller's permissions
+ * resolved through it, and the admin rule is decided through it too
+ * (adminInvitationCheck), so a permission change committed after the route
+ * check is seen before the invitation is written.
  */
 async function validateInvitationRole(c: PermissionRouteContext, input: {
   role: string
@@ -160,6 +165,12 @@ async function validateInvitationRole(c: PermissionRouteContext, input: {
 
   const permission = await requirePermission(c, "members.update")
   if (!permission.ok) return { ok: false, error: "permission", response: permission.response }
+  if (input.database !== db) {
+    const payload = c.get("organizationContext")
+    if (!payload) return { ok: false, error: "permission", response: { error: "organization_not_found" } }
+    const held = await resolvePermissionsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id, database: input.database })
+    if (!held.has("members.update")) return { ok: false, error: "permission", response: permissionDeniedResponse("members.update") }
+  }
 
   if (requestedRoles.some((role) => !input.availableRoles.has(role) || !BUILT_IN_INVITATION_ROLES.has(role))) {
     return { ok: false, error: "invalid_role", message: "Choose Member or Admin." }
@@ -290,15 +301,11 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         }
       }
 
-      // The admin role was allowed before the transaction; decide again through it so a permission
-      // or Admin permissions change committed since is seen before the invitation is written.
-      if (splitRoles(assignedRole).map((value) => normalizeRoleName(value)).includes(ORGANIZATION_ADMIN_ROLE)) {
-        const denial = await adminCheck(tx)
-        if (denial === "organization_not_found") {
-          return { status: "role_error" as const, validation: { ok: false as const, error: "permission" as const, response: { error: "organization_not_found" as const } } }
-        }
-        if (denial) return { status: "role_error" as const, validation: { ok: false as const, error: "role_assignment" as const, denial } }
-      }
+      // The role was allowed before the transaction; validate it again through the transaction
+      // (members.update and, for admin, the role-assignment rule) so a permission or Admin
+      // permissions change committed since is seen before the invitation is written.
+      const writeRole = await validateInvitationRole(c, { role: assignedRole, availableRoles, adminCheck, database: tx })
+      if (!writeRole.ok) return { status: "role_error" as const, validation: writeRole }
 
       const now = new Date()
       const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 7)
