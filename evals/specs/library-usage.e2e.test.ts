@@ -100,7 +100,8 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
 
   await step("when a teammate's agent tries to create an issue, the connector really refuses the archived project", async () => {
     const failed = await world.callConnector("blair", "tracker", "create_issue");
-    const refused = failed.status === 200 && failed.isError && failed.text.includes("Project is archived.");
+    // The gateway deliberately replaces provider tool text with a sanitized provider_error and a diagnostic reference.
+    const refused = failed.status === 200 && failed.isError && failed.text.includes('"error":"provider_error"') && failed.text.includes("requested provider operation failed");
     evidence.recordAssertionEvidence("the third connector call really fails through the gateway", `HTTP ${failed.status}; tool failure ${failed.isError}; ${failed.text}`, refused);
     expect(refused).toBe(true);
   });
