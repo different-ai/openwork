@@ -42,8 +42,9 @@ const CLAIMED_GRACE_MS = 5 * 60_000
 const PERMANENT_SLACK_ERRORS = ["invalid_auth", "token_revoked", "account_inactive", "channel_not_found", "is_archived", "not_in_channel", "missing_scope"]
 
 function eventIdFromMessageId(messageId: string | undefined) {
-  // The Slack worker sends each run's turn as `msg_<event id>`.
-  const match = /^msg_([a-f0-9]{64})$/.exec(messageId ?? "")
+  // The Slack worker sends each run's turn as `msg_<event id>`; background tasks it starts (resumed with a fresh
+  // token) are `msg_<event id>.t<n>`, and their reports `.t<n>.r`. All belong to the thread that asked.
+  const match = /^msg_([a-f0-9]{64})(?:\.t\d{1,3}(?:\.r)?)?$/.exec(messageId ?? "")
   return match?.[1] ?? null
 }
 

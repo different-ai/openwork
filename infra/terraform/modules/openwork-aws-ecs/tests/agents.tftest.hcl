@@ -100,7 +100,6 @@ run "runner_workbot_and_slack" {
       local.environment.DEN_HEADLESS_RUNNER_URL == "http://headless-runner:8795",
       local.environment.DEN_FEATURE_HEADLESS_AUTOMATIONS == "true",
       local.environment.DEN_FEATURE_SLACK_ASSISTANT == "true",
-      local.environment.DEN_FEATURE_SLACK_ASSISTANT_HEADLESS == "true",
       local.environment.DEN_AUTOMATIONS_RUNTIME_ENABLED == "true",
       local.environment.DEN_WORKBOT_URL == "https://chat.openwork.example.com",
       local.environment.DEN_FEATURE_WORKBOT == "true",
@@ -144,7 +143,7 @@ run "runner_workbot_and_slack" {
   }
 }
 
-run "slack_without_runner_uses_web" {
+run "slack_without_runner" {
   command = apply
 
   variables {
@@ -152,8 +151,8 @@ run "slack_without_runner_uses_web" {
   }
 
   assert {
-    condition     = local.environment.DEN_FEATURE_SLACK_ASSISTANT == "true" && local.environment.DEN_FEATURE_SLACK_ASSISTANT_HEADLESS == ""
-    error_message = "Without the runner, Slack replies stay on OpenWork Web."
+    condition     = local.environment.DEN_FEATURE_SLACK_ASSISTANT == "true" && local.environment.DEN_HEADLESS_RUNNER_URL == ""
+    error_message = "Without the runner, the Slack assistant stays on and Den reports that the runner is missing."
   }
 }
 

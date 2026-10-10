@@ -174,7 +174,7 @@ export type AdminFeature = {
     | "auditLogs"
     | "orgManagedDashboards"
     | "slackAssistant"
-    | "slackAssistantHeadless"
+    | "slackWorkbotReplies"
     | "headlessAutomations"
     | "workbot"
     | "automationCalendar"
@@ -236,7 +236,7 @@ export type AdminOrganizationsPageResponse = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
@@ -359,7 +359,7 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -550,7 +550,7 @@ export type AdminOverviewResponse = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
@@ -673,7 +673,7 @@ export type AdminOverviewResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2071,7 +2071,7 @@ export type CapabilityDisabledError = {
     | "auditLogs"
     | "orgManagedDashboards"
     | "slackAssistant"
-    | "slackAssistantHeadless"
+    | "slackWorkbotReplies"
     | "headlessAutomations"
     | "workbot"
     | "automationCalendar"
@@ -6375,7 +6375,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
@@ -6498,7 +6498,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6677,7 +6677,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
@@ -6800,7 +6800,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -30359,7 +30359,7 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30378,7 +30378,7 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30404,12 +30404,15 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
     rolloutEnabled: boolean;
     hasSigningSecret: boolean;
     eligible: boolean;
-    webAccess: boolean;
+    /**
+     * Whether this deployment has the headless runner Slack replies run on. Without it the assistant can't be enabled.
+     */
+    runnerAvailable: boolean;
     channelIds: Array<string>;
     shadowMode: boolean;
     dailyLimit: number;
     /**
-     * Model chosen for headless runs, or null for the runner default.
+     * Model chosen for Slack runs, or null for the runner default.
      */
     model: string | null;
     /**
@@ -30417,7 +30420,7 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
      */
     modelManagedByOrganization?: boolean;
     /**
-     * The headless runner's default model, when this workspace uses it.
+     * The headless runner's default model, when the runner is available.
      */
     defaultModel: string | null;
     /**
@@ -30425,7 +30428,7 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
      */
     progressUpdates: boolean;
     /**
-     * Models the headless runner can use; empty when the workspace doesn't use the headless runner.
+     * Models the headless runner can use; empty when the runner is unavailable.
      */
     models: Array<{
       id: string;
@@ -30493,7 +30496,7 @@ export type PutV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30512,7 +30515,7 @@ export type PutV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30565,7 +30568,7 @@ export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30584,7 +30587,7 @@ export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**

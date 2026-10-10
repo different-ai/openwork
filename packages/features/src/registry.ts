@@ -130,9 +130,9 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  slackAssistantHeadless: {
-    label: "Slack Assistant: headless runtime",
-    description: "Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.",
+  slackWorkbotReplies: {
+    label: "Slack: replies like Workbot",
+    description: "OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

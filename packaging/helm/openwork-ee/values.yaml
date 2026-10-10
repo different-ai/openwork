@@ -26,30 +26,30 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
-    managedDeployments: ""     # default off (cloud only) · Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork.
-    installLinks: ""           # default on · Workspace admins can create desktop install links for their organization.
-    mcpConnections: ""         # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
-    driveResumableUploads: ""  # default off · Members upload larger workspace files to Google Drive and prepare upload sessions for external clients.
-    implicitCloudSkills: ""    # default off · Agents discover organization skills automatically without waiting for Cloud before starting a task.
-    dashboardActivity: ""      # default off · Organization admins see recent additions and skill updates on their dashboard instead of Quick add.
-    skillUsage: ""             # default off · Organization admins see how often each skill is used, by how many people, and which ones nobody uses, so they can decide what to keep.
-    modelsAnalytics: ""        # default off · Organization admins can opt in to task analytics for OpenWork Models.
-    auditLogs: ""              # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
-    orgManagedDashboards: ""   # default off · Organization admins publish dashboards to members in Den and the desktop app.
-    slackAssistant: ""         # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
-    slackAssistantHeadless: "" # default off · Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.
-    headlessAutomations: ""    # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
-    workbot: ""                # default off · Members can use Workbot. Needs the deployment's Workbot app.
-    automationCalendar: ""     # default off · Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.
-    workbotCalendar: ""        # default off · Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot.
-    workbotSideChats: ""       # default off · Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot.
-    workbotDefaultModel: ""    # default off · Organization admins choose, in Manage › Workbot, the model Workbot, the Slack assistant and cloud Automations set to the cloud default answer with. Needs Workbot.
-    litellm: ""                # default off · Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.
-    permissions: ""            # default off · Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults.
-    gatewayCloudSignIn: ""     # default off · Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.
-    engineV2Upgrade: ""        # default off · Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.
-    opencodePlugin: ""         # default off · People can sign in to OpenWork from the OpenCode plugin, approve it as "OpenWork - OpenCode Plugin", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect.
-    platformAuditReads: ""     # default off · Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.
+    managedDeployments: ""    # default off (cloud only) · Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork.
+    installLinks: ""          # default on · Workspace admins can create desktop install links for their organization.
+    mcpConnections: ""        # default on · Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab.
+    driveResumableUploads: "" # default off · Members upload larger workspace files to Google Drive and prepare upload sessions for external clients.
+    implicitCloudSkills: ""   # default off · Agents discover organization skills automatically without waiting for Cloud before starting a task.
+    dashboardActivity: ""     # default off · Organization admins see recent additions and skill updates on their dashboard instead of Quick add.
+    skillUsage: ""            # default off · Organization admins see how often each skill is used, by how many people, and which ones nobody uses, so they can decide what to keep.
+    modelsAnalytics: ""       # default off · Organization admins can opt in to task analytics for OpenWork Models.
+    auditLogs: ""             # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
+    orgManagedDashboards: ""  # default off · Organization admins publish dashboards to members in Den and the desktop app.
+    slackAssistant: ""        # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
+    slackWorkbotReplies: ""   # default off · OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done.
+    headlessAutomations: ""   # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
+    workbot: ""               # default off · Members can use Workbot. Needs the deployment's Workbot app.
+    automationCalendar: ""    # default off · Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.
+    workbotCalendar: ""       # default off · Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot.
+    workbotSideChats: ""      # default off · Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot.
+    workbotDefaultModel: ""   # default off · Organization admins choose, in Manage › Workbot, the model Workbot, the Slack assistant and cloud Automations set to the cloud default answer with. Needs Workbot.
+    litellm: ""               # default off · Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.
+    permissions: ""           # default off · Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults.
+    gatewayCloudSignIn: ""    # default off · Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.
+    engineV2Upgrade: ""       # default off · Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.
+    opencodePlugin: ""        # default off · People can sign in to OpenWork from the OpenCode plugin, approve it as "OpenWork - OpenCode Plugin", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect.
+    platformAuditReads: ""    # default off · Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.
   # END GENERATED features
   tenancy:
     mode: single_org

@@ -420,7 +420,7 @@ variable "workbot_listener_rule_priority" {
 }
 
 variable "slack_assistant_enabled" {
-  description = "Turn on the Slack assistant (members mention OpenWork in Slack and get replies in the thread). Replies run on the headless runner when it is enabled, otherwise on OpenWork Web. You still create the Slack app in Den's connector settings."
+  description = "Turn on the Slack assistant (members mention OpenWork in Slack and get replies in the thread). Replies run on the headless runner, so enable it too. You still create the Slack app in Den's connector settings."
   type        = bool
   default     = false
 }
