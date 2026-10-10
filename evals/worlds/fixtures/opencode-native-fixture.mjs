@@ -215,6 +215,11 @@ async function initialize() {
   const configured = await run(["service", "set", "port", String(servicePort)]);
   if (configured.status !== 0) throw new Error(`Configuring the native service failed: ${configured.stdout}${configured.stderr}`);
   serviceConfigured = true;
+  // plugin.list starts Location activation but only reads its current inventory.
+  // In native 2.0.26 integration.list waits for Plugin.awaitActivation, without
+  // creating a session or admitting a prompt.
+  const activation = await run(["api", "get", `/api/integration?location%5Bdirectory%5D=${encodeURIComponent(home)}`]);
+  if (activation.status !== 0) throw new Error(`Native plugin activation barrier failed: ${activation.stdout}${activation.stderr}`);
   return {
     home, directory: realpathSync(home), platform, binaryIntegrity, artifactSha, servicePort,
     helperPid: process.pid,
@@ -292,7 +297,7 @@ async function dispatch(body) {
     runnerOffline = false;
     const started = await run(["service", "start"], 60_000);
     if (started.status !== 0) throw new Error(`Starting the native service failed: ${started.stdout}${started.stderr}`);
-    const activation = await run(["api", "get", `/api/plugin?location%5Bdirectory%5D=${encodeURIComponent(home)}`]);
+    const activation = await run(["api", "get", `/api/integration?location%5Bdirectory%5D=${encodeURIComponent(home)}`]);
     if (activation.status !== 0) throw new Error(`Native plugin activation failed: ${activation.stdout}${activation.stderr}`);
     const after = await nativeInfo();
     if (before.pid === after.pid) throw new Error("Native restart did not change the actual service PID");

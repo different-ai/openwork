@@ -154,8 +154,11 @@ export async function opencodePluginSignIn(seed: Seed, options: { remoteSessions
     setup.defer(async () => {
       try { if (helper) await control("shutdown", {}, 40_000); }
       finally {
-        if (helper) await helper.stop();
-        else await remoteExec(`pkill -f "[o]penwork-${label}-" || true`, "Stop partial native fixture helper");
+        // The generic helper stop script repeats its path in a later rm
+        // command; pkill can match that shell and return 143. This unique
+        // bracketed prefix cannot match its own invocation.
+        await remoteExec(`pkill -f "[o]penwork-${label}-" || true`, "Stop owned native fixture helper");
+        await remoteExec(`rm -f /tmp/openwork-${label}-${sourceFingerprint.slice(0, 16)}.mjs`, "Remove owned native fixture source");
         await remoteExec(`rm -rf ${root}`, "Remove private native fixture files");
       }
     });
