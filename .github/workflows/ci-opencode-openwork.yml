@@ -1,0 +1,102 @@
+name: opencode-openwork
+
+on:
+  pull_request:
+    paths:
+      - "packages/opencode-plugin/**"
+      - ".github/workflows/ci-opencode-openwork.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "packages/opencode-plugin/**"
+      - ".github/workflows/ci-opencode-openwork.yml"
+    tags:
+      - "opencode-openwork-v*"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/opencode-plugin
+
+jobs:
+  check:
+    name: Test, typecheck & dry-run publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter opencode-openwork
+
+      - name: Test
+        run: pnpm test
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Dry-run publish
+        run: npm publish --dry-run --access public
+
+  publish:
+    name: Publish to npm
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/opencode-openwork-v')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter opencode-openwork
+
+      - name: Tag matches package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "$TAG" != "opencode-openwork-v$version" ]; then
+            echo "Tag $TAG does not match package.json version $version" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

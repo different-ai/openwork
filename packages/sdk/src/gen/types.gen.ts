@@ -174,16 +174,18 @@ export type AdminFeature = {
     | "auditLogs"
     | "orgManagedDashboards"
     | "slackAssistant"
-    | "slackAssistantHeadless"
+    | "slackWorkbotReplies"
     | "headlessAutomations"
     | "workbot"
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotDefaultModel"
     | "litellm"
     | "permissions"
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
+    | "opencodePlugin"
     | "platformAuditReads";
   label: string;
   description: string;
@@ -234,16 +236,18 @@ export type AdminOrganizationsPageResponse = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -355,7 +359,7 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -409,6 +413,15 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      workbotDefaultModel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -437,6 +450,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -528,16 +550,18 @@ export type AdminOverviewResponse = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -649,7 +673,7 @@ export type AdminOverviewResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -703,6 +727,15 @@ export type AdminOverviewResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      workbotDefaultModel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -731,6 +764,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2031,16 +2073,18 @@ export type CapabilityDisabledError = {
     | "auditLogs"
     | "orgManagedDashboards"
     | "slackAssistant"
-    | "slackAssistantHeadless"
+    | "slackWorkbotReplies"
     | "headlessAutomations"
     | "workbot"
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotDefaultModel"
     | "litellm"
     | "permissions"
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
+    | "opencodePlugin"
     | "platformAuditReads";
 };
 
@@ -5531,6 +5575,31 @@ export type WebOriginNotFoundError = {
 
 export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
 
+export type WorkbotSettings = {
+  model: string | null;
+  defaultModel: string | null;
+  models: Array<{
+    id: string;
+    name: string;
+  }>;
+  modelAvailable: boolean;
+  runnerReachable: boolean;
+};
+
+export type WorkbotUnknownModelError = {
+  error: "unknown_model";
+  message: string;
+};
+
+export type WorkbotRunnerUnavailableError = {
+  error: "workbot_runner_unavailable";
+  message: string;
+};
+
+export type WorkbotSettingsInput = {
+  model: string | null;
+};
+
 export type WorkbotSession = {
   user: {
     id: string;
@@ -5547,6 +5616,7 @@ export type WorkbotSession = {
   canSchedule: boolean;
   calendar?: boolean;
   sideChats: boolean;
+  model?: string | null;
 };
 
 export type WorkbotRunToken = {
@@ -6307,16 +6377,18 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -6428,7 +6500,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6482,6 +6554,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      workbotDefaultModel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -6510,6 +6591,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6589,16 +6679,18 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
-      slackAssistantHeadless: boolean;
+      slackWorkbotReplies: boolean;
       headlessAutomations: boolean;
       workbot: boolean;
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
+      opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
@@ -6710,7 +6802,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
-      slackAssistantHeadless: {
+      slackWorkbotReplies: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6764,6 +6856,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      workbotDefaultModel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       litellm: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -6792,6 +6893,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       engineV2Upgrade: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      opencodePlugin: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -30148,6 +30258,86 @@ export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
 export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
   DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
 
+export type GetV1OrgWorkbotSettingsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/workbot-settings";
+};
+
+export type GetV1OrgWorkbotSettingsErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller lacks the View OpenWork Models settings permission.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found, or Workbot or its workbotDefaultModel feature is off.
+   */
+  404: {
+    error: "feature_disabled";
+    feature: string;
+  };
+};
+
+export type GetV1OrgWorkbotSettingsError = GetV1OrgWorkbotSettingsErrors[keyof GetV1OrgWorkbotSettingsErrors];
+
+export type GetV1OrgWorkbotSettingsResponses = {
+  /**
+   * Workbot settings returned.
+   */
+  200: WorkbotSettings;
+};
+
+export type GetV1OrgWorkbotSettingsResponse = GetV1OrgWorkbotSettingsResponses[keyof GetV1OrgWorkbotSettingsResponses];
+
+export type PutV1OrgWorkbotSettingsData = {
+  body: WorkbotSettingsInput;
+  path?: never;
+  query?: never;
+  url: "/v1/org/workbot-settings";
+};
+
+export type PutV1OrgWorkbotSettingsErrors = {
+  /**
+   * The model is not one the runner serves, or the request was invalid.
+   */
+  400: WorkbotUnknownModelError | InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller lacks the Manage OpenWork Models permission or needs to sign in again.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found, or Workbot or its workbotDefaultModel feature is off.
+   */
+  404: {
+    error: "feature_disabled";
+    feature: string;
+  };
+  /**
+   * The headless runner could not be reached to check the model.
+   */
+  503: WorkbotRunnerUnavailableError;
+};
+
+export type PutV1OrgWorkbotSettingsError = PutV1OrgWorkbotSettingsErrors[keyof PutV1OrgWorkbotSettingsErrors];
+
+export type PutV1OrgWorkbotSettingsResponses = {
+  /**
+   * Workbot settings saved.
+   */
+  200: WorkbotSettings;
+};
+
+export type PutV1OrgWorkbotSettingsResponse = PutV1OrgWorkbotSettingsResponses[keyof PutV1OrgWorkbotSettingsResponses];
+
 export type GetV1McpConnectionsByConnectionIdSlackAssistantData = {
   body?: never;
   path: {
@@ -30173,7 +30363,7 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30192,7 +30382,7 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30218,16 +30408,23 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
     rolloutEnabled: boolean;
     hasSigningSecret: boolean;
     eligible: boolean;
-    webAccess: boolean;
+    /**
+     * Whether this deployment has the headless runner Slack replies run on. Without it the assistant can't be enabled.
+     */
+    runnerAvailable: boolean;
     channelIds: Array<string>;
     shadowMode: boolean;
     dailyLimit: number;
     /**
-     * Model chosen for headless runs, or null for the runner default.
+     * Model chosen for Slack runs, or null for the runner default.
      */
     model: string | null;
     /**
-     * The headless runner's default model, when this workspace uses it.
+     * The organization's default model (Manage › Workbot) is used instead of a model chosen here; `model` is that model.
+     */
+    modelManagedByOrganization?: boolean;
+    /**
+     * The headless runner's default model, when the runner is available.
      */
     defaultModel: string | null;
     /**
@@ -30235,7 +30432,7 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
      */
     progressUpdates: boolean;
     /**
-     * Models the headless runner can use; empty when the workspace doesn't use the headless runner.
+     * Models the headless runner can use; empty when the runner is unavailable.
      */
     models: Array<{
       id: string;
@@ -30303,7 +30500,7 @@ export type PutV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30322,7 +30519,7 @@ export type PutV1McpConnectionsByConnectionIdSlackAssistantErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30375,7 +30572,7 @@ export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**
@@ -30394,7 +30591,7 @@ export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors = {
           | "setup_required"
           | "browser_session_required"
           | "slack_assistant_not_enabled"
-          | "openwork_web_access_required";
+          | "slack_runner_unavailable";
         message?: string;
       };
   /**

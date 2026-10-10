@@ -23,7 +23,7 @@ import { isDesktopRuntime } from "./runtime-env";
 import type { McpStatusMap, OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
 import { dispatchProviderCatalogChanged } from "./provider-events";
-import { composeV2Prompt, splitV2Prompt, wrapPastedText } from "./v2-prompt-context";
+import { attachmentMarker, attachmentNoteFilenames, composeV2Prompt, splitV2Prompt, wrapPastedText, type PromptAttachment } from "./v2-prompt-context";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -75,7 +75,12 @@ function partText(part: PromptPart): string | null {
  * transcript can show the words without them (see v2-prompt-context).
  */
 export function v2PromptText(parts: readonly PromptPart[]): string {
+  const attached = new Set(parts.flatMap((part) => {
+    const text = partText(part);
+    return text !== null && part.synthetic === true ? attachmentNoteFilenames(text) : [];
+  }));
   const words = parts.flatMap((part) => {
+    if (part.type === "file" && typeof part.filename === "string" && attached.has(part.filename)) return [attachmentMarker(part.filename)];
     const text = partText(part);
     if (text === null || part.synthetic === true) return [];
     return [isPastedText(part) ? wrapPastedText(text) : text];
@@ -796,19 +801,24 @@ function mapV2ReplyModel(value: Record<string, unknown>) {
 function mapV2UserPart(part: Part): Part[] {
   if (part.type !== "text") return [part];
   const { segments, context, attachments } = splitV2Prompt(part.text);
-  if (!context && !segments.some((segment) => segment.kind === "pasted")) return [part];
-  const words = segments.map((segment, index): Part => ({
-    ...part,
-    id: index === 0 ? part.id : `${part.id}:${index}`,
-    text: segment.text,
-    ...(segment.kind === "pasted" ? { metadata: { openworkPastedText: true } } : {}),
-  }));
+  if (!context && !segments.some((segment) => segment.kind !== "text")) return [part];
+  // A marked attachment shows where it was attached; the rest follow the words.
+  const unplaced: PromptAttachment[] = [...attachments];
+  const words = segments.map((segment, index): Part => {
+    const id = index === 0 ? part.id : `${part.id}:${index}`;
+    if (segment.kind !== "attachment") {
+      return { ...part, id, text: segment.text, ...(segment.kind === "pasted" ? { metadata: { openworkPastedText: true } } : {}) };
+    }
+    const at = unplaced.findIndex((item) => item.filename === segment.filename);
+    const placed = at < 0 ? [] : unplaced.splice(at, 1);
+    return { ...part, id, text: "", synthetic: true, ...(placed.length ? { metadata: { openworkAttachments: placed } } : {}) };
+  });
   return context === null ? words : [...words, {
     ...part,
     id: `${part.id}:context`,
     text: context,
     synthetic: true,
-    ...(attachments.length ? { metadata: { openworkAttachments: attachments } } : {}),
+    ...(unplaced.length ? { metadata: { openworkAttachments: unplaced } } : {}),
   }];
 }
 

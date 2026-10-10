@@ -198,8 +198,8 @@ export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?:
 /**
  * What a conversation may use beyond chat: kept files, a Linux computer, emoji reactions to the person's message,
  * and background tasks it can hand longer work to while it keeps talking. All are off unless asked for (files and
- * the computer must be configured on the runner too), so a caller that never asks (Slack, Automations) never gets
- * any of them.
+ * the computer must be configured on the runner too), so a caller that never asks (Automations) never gets any of
+ * them. Slack asks for reactions and tasks where `slackWorkbotReplies` is on.
  */
 export type RunnerCapabilities = { files?: boolean; computer?: boolean; reactions?: boolean; tasks?: boolean }
 
@@ -250,7 +250,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      */
     async putSession(
       id: string,
-      input: { title?: string; instructions?: string } & RunnerCapabilities & RunnerSessionSettings & {
+      input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } & RunnerCapabilities & RunnerSessionSettings & {
         /**
          * Fail rather than keep the conversation without settings an older runner doesn't know. For a conversation
          * that can only be found again through them (a side chat is listed by `owner` and `ref`).
@@ -262,7 +262,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         ...(input.title ? { title: input.title.slice(0, 200) } : {}),
         ...(input.instructions !== undefined ? { instructions: input.instructions.slice(0, 20_000) } : {}),
       }
-      const extras = capabilityFields(input)
+      const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       // A runner older than per-session capabilities or settings rejects them: keep the conversation, without them.
       if (unknownSetting(status, payload) && Object.keys(extras).length && !input.strict) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))

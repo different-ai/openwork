@@ -446,6 +446,8 @@ import type {
   GetV1OrgsInvitationsPreviewResponses,
   GetV1OrgWebOriginsErrors,
   GetV1OrgWebOriginsResponses,
+  GetV1OrgWorkbotSettingsErrors,
+  GetV1OrgWorkbotSettingsResponses,
   GetV1PermissionsCatalogErrors,
   GetV1PermissionsCatalogResponses,
   GetV1PermissionsKeysByPermissionKeyErrors,
@@ -938,6 +940,8 @@ import type {
   PutV1McpConnectionsByConnectionIdToolPolicyResponses,
   PutV1McpConnectionsByKeyByExternalKeyErrors,
   PutV1McpConnectionsByKeyByExternalKeyResponses,
+  PutV1OrgWorkbotSettingsErrors,
+  PutV1OrgWorkbotSettingsResponses,
   PutV1PermissionsSetsByPermissionSetIdPermissionsErrors,
   PutV1PermissionsSetsByPermissionSetIdPermissionsResponses,
   PutV1TeamsByKeyByExternalKeyErrors,
@@ -977,6 +981,7 @@ import type {
   UpdateMicrosoft365MailMessageErrors,
   UpdateMicrosoft365MailMessageResponses,
   UpdatePermissionSetPermissionsBody,
+  WorkbotSettingsInput,
 } from "./types.gen.js";
 
 export type Options<
@@ -14988,6 +14993,47 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Get Workbot settings
+   *
+   * Returns the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default (null means the headless runner's default), and the models the runner can serve. Requires the View OpenWork Models settings permission, Workbot and the workbotDefaultModel feature.
+   */
+  public getV1OrgWorkbotSettings<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1OrgWorkbotSettingsResponses,
+      GetV1OrgWorkbotSettingsErrors,
+      ThrowOnError
+    >({ url: "/v1/org/workbot-settings", ...options });
+  }
+
+  /**
+   * Set Workbot's default model
+   *
+   * Sets the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default, from their next message or run; null uses the headless runner's default. Automations with their own model keep it. Only models the runner serves are accepted. Requires the Manage OpenWork Models permission, a recent sign-in, Workbot and the workbotDefaultModel feature.
+   */
+  public putV1OrgWorkbotSettings<ThrowOnError extends boolean = false>(
+    parameters: {
+      workbotSettingsInput: WorkbotSettingsInput;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ key: "workbotSettingsInput", map: "body" }] }]);
+    return (options?.client ?? this.client).put<
+      PutV1OrgWorkbotSettingsResponses,
+      PutV1OrgWorkbotSettingsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/workbot-settings",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
    * Read Slack assistant setup
    *
    * Read connector configuration, organization eligibility, recent activity metrics, and the Slack app manifest. Requires the View all connections permission; stored credentials are never returned.
@@ -15013,7 +15059,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Configure Slack assistant installation
    *
-   * Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires the Manage connections permission, a browser session and recent verification.
+   * Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and the deployment's headless runner. Requires the Manage connections permission, a browser session and recent verification.
    */
   public putV1McpConnectionsByConnectionIdSlackAssistant<ThrowOnError extends boolean = false>(
     parameters: {

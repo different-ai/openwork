@@ -5,6 +5,7 @@
  * both directions so the sent message renders the way v1 renders its parts.
  *
  * - Pasted text is wrapped in `<pasted-text>` where it was pasted.
+ * - An attached file is named in `<attachment>` where it was attached.
  * - Hidden context follows the words in one `<openwork-context>` block.
  */
 
@@ -25,7 +26,7 @@ const NOTE_FOOTER = "Use these paths with Read/Bash/MCP/Docling when a tool need
 const NOTE_RE = /Attached files were copied into this worker workspace for tool access:\n((?:- [^\n]*\n)*)Use these paths with Read\/Bash\/MCP\/Docling when a tool needs the file bytes\./;
 const NOTE_LINE_RE = /^- ([^:\n]+?)(?: \((\d+(?:\.\d+)? (?:B|KB|MB|GB))\))?: .+ \((file:\/\/[^\n]*)\)$/;
 const CONTEXT_RE = /(?:^|\n\n)<openwork-context>\n([\s\S]*)\n<\/openwork-context>$/;
-const PASTED_RE = /<pasted-text>\n([\s\S]*?)\n<\/pasted-text>/g;
+const INLINE_RE = /<pasted-text>\n([\s\S]*?)\n<\/pasted-text>|<attachment>([^<>\n]+)<\/attachment>/g;
 
 const BYTE_UNITS = ["B", "KB", "MB", "GB"] as const;
 
@@ -70,6 +71,17 @@ export function wrapPastedText(text: string): string {
   return `${PASTED_OPEN}\n${text}\n${PASTED_CLOSE}`;
 }
 
+/** Marks where an attached file sat among the words; the note in the context block has its path. */
+export function attachmentMarker(filename: string): string {
+  return `<attachment>${filename}</attachment>`;
+}
+
+/** File names listed in an attachment note, so only real attachments get a marker. */
+export function attachmentNoteFilenames(text: string): string[] {
+  const note = text.match(NOTE_RE);
+  return note ? parseAttachmentNote(note[0]).map((item) => item.filename) : [];
+}
+
 /** One prompt string: the person's words, then hidden context in one block. */
 export function composeV2Prompt(words: string, context: readonly string[]): string {
   const blocks = context.filter((block) => block.trim());
@@ -78,7 +90,10 @@ export function composeV2Prompt(words: string, context: readonly string[]): stri
   return words.trim() ? `${words}\n\n${block}` : block;
 }
 
-export type V2PromptSegment = { kind: "text"; text: string } | { kind: "pasted"; text: string };
+export type V2PromptSegment =
+  | { kind: "text"; text: string }
+  | { kind: "pasted"; text: string }
+  | { kind: "attachment"; filename: string };
 
 export type SplitV2Prompt = {
   /** What the person typed and pasted, in order. */
@@ -111,9 +126,9 @@ export function splitV2Prompt(text: string): SplitV2Prompt {
   const note = context?.match(NOTE_RE);
   const segments: V2PromptSegment[] = [];
   let cursor = 0;
-  for (const match of words.matchAll(PASTED_RE)) {
+  for (const match of words.matchAll(INLINE_RE)) {
     if (match.index > cursor) segments.push({ kind: "text", text: words.slice(cursor, match.index) });
-    segments.push({ kind: "pasted", text: match[1] ?? "" });
+    segments.push(match[2] === undefined ? { kind: "pasted", text: match[1] ?? "" } : { kind: "attachment", filename: match[2] });
     cursor = match.index + match[0].length;
   }
   if (cursor < words.length) segments.push({ kind: "text", text: words.slice(cursor) });

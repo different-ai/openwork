@@ -128,7 +128,7 @@
               ],
               "description": "Slack Assistant: Answers Slack mentions and DMs for the organization after the Slack connector is set up. Renders DEN_FEATURE_SLACK_ASSISTANT."
             },
-            "slackAssistantHeadless": {
+            "slackWorkbotReplies": {
               "enum": [
                 "",
                 "true",
@@ -136,7 +136,7 @@
                 true,
                 false
               ],
-              "description": "Slack Assistant: headless runtime: Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. Renders DEN_FEATURE_SLACK_ASSISTANT_HEADLESS."
+              "description": "Slack: replies like Workbot: OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done. Renders DEN_FEATURE_SLACK_WORKBOT_REPLIES."
             },
             "headlessAutomations": {
               "enum": [
@@ -188,6 +188,16 @@
               ],
               "description": "Workbot: side chats: Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. Renders DEN_FEATURE_WORKBOT_SIDE_CHATS."
             },
+            "workbotDefaultModel": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: default model: Organization admins choose, in Manage › Workbot, the model Workbot, the Slack assistant and cloud Automations set to the cloud default answer with. Needs Workbot. Renders DEN_FEATURE_WORKBOT_DEFAULT_MODEL."
+            },
             "litellm": {
               "enum": [
                 "",
@@ -227,6 +237,16 @@
                 false
               ],
               "description": "Desktop: upgrade prompt to OpenCode v2: Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. Renders DEN_FEATURE_ENGINE_V2_UPGRADE."
+            },
+            "opencodePlugin": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenCode plugin sign-in: People can sign in to OpenWork from the OpenCode plugin, approve it as \"OpenWork - OpenCode Plugin\", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect. Renders DEN_FEATURE_OPENCODE_PLUGIN."
             },
             "platformAuditReads": {
               "enum": [

@@ -38,6 +38,7 @@ import {
   getSsoRoute,
   getToolTesterRoute,
   getWebRoute,
+  getWorkbotSettingsRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 import { canOpenAdminRoute } from "./admin-route-access";
@@ -88,6 +89,8 @@ export type BuildDashboardNavSectionsInput = {
   permissionsEnabled?: boolean;
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
+  /** Workbot and its workbotDefaultModel feature are on: admins choose the organization's default model. */
+  workbotSettings?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -98,6 +101,7 @@ export function buildDashboardNavSections({
   libraryNeedsSignIn = 0,
   permissionsEnabled = false,
   managedDeployments = false,
+  workbotSettings = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
@@ -129,6 +133,7 @@ export function buildDashboardNavSections({
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
+        ...(workbotSettings ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))
     : [];
@@ -225,6 +230,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Settings: ["organization", "workspace"],
   SSO: ["single sign on", "saml", "oidc"],
   "Tool Tester": ["tools", "test", "mcp"],
+  Workbot: ["model", "default model", "assistant", "slack", "automations"],
 };
 
 function keywordsFor(...labels: string[]): string[] {

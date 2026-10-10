@@ -851,16 +851,18 @@
               "auditLogs",
               "orgManagedDashboards",
               "slackAssistant",
-              "slackAssistantHeadless",
+              "slackWorkbotReplies",
               "headlessAutomations",
               "workbot",
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
+              "workbotDefaultModel",
               "litellm",
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "opencodePlugin",
               "platformAuditReads"
             ]
           },
@@ -1069,7 +1071,7 @@
                     "slackAssistant": {
                       "type": "boolean"
                     },
-                    "slackAssistantHeadless": {
+                    "slackWorkbotReplies": {
                       "type": "boolean"
                     },
                     "headlessAutomations": {
@@ -1087,6 +1089,9 @@
                     "workbotSideChats": {
                       "type": "boolean"
                     },
+                    "workbotDefaultModel": {
+                      "type": "boolean"
+                    },
                     "litellm": {
                       "type": "boolean"
                     },
@@ -1097,6 +1102,9 @@
                       "type": "boolean"
                     },
                     "engineV2Upgrade": {
+                      "type": "boolean"
+                    },
+                    "opencodePlugin": {
                       "type": "boolean"
                     },
                     "platformAuditReads": {
@@ -1121,16 +1129,18 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
+                    "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
                   ]
@@ -1754,7 +1764,7 @@
                         "overrideApplies"
                       ]
                     },
-                    "slackAssistantHeadless": {
+                    "slackWorkbotReplies": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -2090,6 +2100,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "workbotDefaultModel": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "litellm": {
                       "type": "object",
                       "properties": {
@@ -2314,6 +2380,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "opencodePlugin": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "platformAuditReads": {
                       "type": "object",
                       "properties": {
@@ -2383,16 +2505,18 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
+                    "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads"
                   ],
                   "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -2800,7 +2924,7 @@
                     "slackAssistant": {
                       "type": "boolean"
                     },
-                    "slackAssistantHeadless": {
+                    "slackWorkbotReplies": {
                       "type": "boolean"
                     },
                     "headlessAutomations": {
@@ -2818,6 +2942,9 @@
                     "workbotSideChats": {
                       "type": "boolean"
                     },
+                    "workbotDefaultModel": {
+                      "type": "boolean"
+                    },
                     "litellm": {
                       "type": "boolean"
                     },
@@ -2828,6 +2955,9 @@
                       "type": "boolean"
                     },
                     "engineV2Upgrade": {
+                      "type": "boolean"
+                    },
+                    "opencodePlugin": {
                       "type": "boolean"
                     },
                     "platformAuditReads": {
@@ -2852,16 +2982,18 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
+                    "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
                   ]
@@ -3485,7 +3617,7 @@
                         "overrideApplies"
                       ]
                     },
-                    "slackAssistantHeadless": {
+                    "slackWorkbotReplies": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -3821,6 +3953,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "workbotDefaultModel": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "litellm": {
                       "type": "object",
                       "properties": {
@@ -4045,6 +4233,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "opencodePlugin": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "platformAuditReads": {
                       "type": "object",
                       "properties": {
@@ -4114,16 +4358,18 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
+                    "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "opencodePlugin",
                     "platformAuditReads"
                   ],
                   "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -9554,16 +9800,18 @@
               "auditLogs",
               "orgManagedDashboards",
               "slackAssistant",
-              "slackAssistantHeadless",
+              "slackWorkbotReplies",
               "headlessAutomations",
               "workbot",
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
+              "workbotDefaultModel",
               "litellm",
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "opencodePlugin",
               "platformAuditReads"
             ]
           }
@@ -23944,6 +24192,115 @@
           }
         ]
       },
+      "WorkbotSettings": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "modelAvailable": {
+            "type": "boolean"
+          },
+          "runnerReachable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "model",
+          "defaultModel",
+          "models",
+          "modelAvailable",
+          "runnerReachable"
+        ]
+      },
+      "WorkbotUnknownModelError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "unknown_model"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      },
+      "WorkbotRunnerUnavailableError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "workbot_runner_unavailable"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      },
+      "WorkbotSettingsInput": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "additionalProperties": false
+      },
       "WorkbotSession": {
         "type": "object",
         "properties": {
@@ -24013,6 +24370,16 @@
           },
           "sideChats": {
             "type": "boolean"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -26055,7 +26422,7 @@
                         "slackAssistant": {
                           "type": "boolean"
                         },
-                        "slackAssistantHeadless": {
+                        "slackWorkbotReplies": {
                           "type": "boolean"
                         },
                         "headlessAutomations": {
@@ -26073,6 +26440,9 @@
                         "workbotSideChats": {
                           "type": "boolean"
                         },
+                        "workbotDefaultModel": {
+                          "type": "boolean"
+                        },
                         "litellm": {
                           "type": "boolean"
                         },
@@ -26083,6 +26453,9 @@
                           "type": "boolean"
                         },
                         "engineV2Upgrade": {
+                          "type": "boolean"
+                        },
+                        "opencodePlugin": {
                           "type": "boolean"
                         },
                         "platformAuditReads": {
@@ -26107,16 +26480,18 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
+                        "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
                       ]
@@ -26740,7 +27115,7 @@
                             "overrideApplies"
                           ]
                         },
-                        "slackAssistantHeadless": {
+                        "slackWorkbotReplies": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -27076,6 +27451,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "workbotDefaultModel": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "litellm": {
                           "type": "object",
                           "properties": {
@@ -27300,6 +27731,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "opencodePlugin": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "platformAuditReads": {
                           "type": "object",
                           "properties": {
@@ -27369,16 +27856,18 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
+                        "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads"
                       ],
                       "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -27531,7 +28020,7 @@
                         "slackAssistant": {
                           "type": "boolean"
                         },
-                        "slackAssistantHeadless": {
+                        "slackWorkbotReplies": {
                           "type": "boolean"
                         },
                         "headlessAutomations": {
@@ -27549,6 +28038,9 @@
                         "workbotSideChats": {
                           "type": "boolean"
                         },
+                        "workbotDefaultModel": {
+                          "type": "boolean"
+                        },
                         "litellm": {
                           "type": "boolean"
                         },
@@ -27559,6 +28051,9 @@
                           "type": "boolean"
                         },
                         "engineV2Upgrade": {
+                          "type": "boolean"
+                        },
+                        "opencodePlugin": {
                           "type": "boolean"
                         },
                         "platformAuditReads": {
@@ -27583,16 +28078,18 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
+                        "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
                       ]
@@ -28216,7 +28713,7 @@
                             "overrideApplies"
                           ]
                         },
-                        "slackAssistantHeadless": {
+                        "slackWorkbotReplies": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -28552,6 +29049,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "workbotDefaultModel": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "litellm": {
                           "type": "object",
                           "properties": {
@@ -28776,6 +29329,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "opencodePlugin": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "platformAuditReads": {
                           "type": "object",
                           "properties": {
@@ -28845,16 +29454,18 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
+                        "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "opencodePlugin",
                         "platformAuditReads"
                       ],
                       "description": "Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect."
@@ -91497,6 +92108,187 @@
         ]
       }
     },
+    "/v1/org/workbot-settings": {
+      "get": {
+        "operationId": "getV1OrgWorkbotSettings",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Get Workbot settings",
+        "description": "Returns the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default (null means the headless runner's default), and the models the runner can serve. Requires the View OpenWork Models settings permission, Workbot and the workbotDefaultModel feature.",
+        "responses": {
+          "200": {
+            "description": "Workbot settings returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbotSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller lacks the View OpenWork Models settings permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The organization was not found, or Workbot or its workbotDefaultModel feature is off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "const": "feature_disabled"
+                    },
+                    "feature": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "feature"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "putV1OrgWorkbotSettings",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Set Workbot's default model",
+        "description": "Sets the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default, from their next message or run; null uses the headless runner's default. Automations with their own model keep it. Only models the runner serves are accepted. Requires the Manage OpenWork Models permission, a recent sign-in, Workbot and the workbotDefaultModel feature.",
+        "responses": {
+          "200": {
+            "description": "Workbot settings saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbotSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The model is not one the runner serves, or the request was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkbotUnknownModelError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InvalidRequestError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller lacks the Manage OpenWork Models permission or needs to sign in again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The organization was not found, or Workbot or its workbotDefaultModel feature is off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "const": "feature_disabled"
+                    },
+                    "feature": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "feature"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The headless runner could not be reached to check the model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbotRunnerUnavailableError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkbotSettingsInput"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/mcp-connections/{connectionId}/slack-assistant": {
       "get": {
         "operationId": "getV1McpConnectionsByConnectionIdSlackAssistant",
@@ -91539,8 +92331,9 @@
                     "eligible": {
                       "type": "boolean"
                     },
-                    "webAccess": {
-                      "type": "boolean"
+                    "runnerAvailable": {
+                      "type": "boolean",
+                      "description": "Whether this deployment has the headless runner Slack replies run on. Without it the assistant can't be enabled."
                     },
                     "channelIds": {
                       "type": "array",
@@ -91565,7 +92358,11 @@
                           "type": "null"
                         }
                       ],
-                      "description": "Model chosen for headless runs, or null for the runner default."
+                      "description": "Model chosen for Slack runs, or null for the runner default."
+                    },
+                    "modelManagedByOrganization": {
+                      "description": "The organization's default model (Manage › Workbot) is used instead of a model chosen here; `model` is that model.",
+                      "type": "boolean"
                     },
                     "defaultModel": {
                       "anyOf": [
@@ -91576,7 +92373,7 @@
                           "type": "null"
                         }
                       ],
-                      "description": "The headless runner's default model, when this workspace uses it."
+                      "description": "The headless runner's default model, when the runner is available."
                     },
                     "progressUpdates": {
                       "type": "boolean",
@@ -91599,7 +92396,7 @@
                           "name"
                         ]
                       },
-                      "description": "Models the headless runner can use; empty when the workspace doesn't use the headless runner."
+                      "description": "Models the headless runner can use; empty when the runner is unavailable."
                     },
                     "metrics": {
                       "type": "object",
@@ -91688,7 +92485,7 @@
                     "rolloutEnabled",
                     "hasSigningSecret",
                     "eligible",
-                    "webAccess",
+                    "runnerAvailable",
                     "channelIds",
                     "shadowMode",
                     "dailyLimit",
@@ -91723,7 +92520,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -91769,7 +92566,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -91825,7 +92622,7 @@
           "Authentication"
         ],
         "summary": "Configure Slack assistant installation",
-        "description": "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires the Manage connections permission, a browser session and recent verification.",
+        "description": "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and the deployment's headless runner. Requires the Manage connections permission, a browser session and recent verification.",
         "responses": {
           "200": {
             "description": "Slack assistant settings saved.",
@@ -91857,7 +92654,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -91903,7 +92700,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -92079,7 +92876,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -92125,7 +92922,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {

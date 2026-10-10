@@ -130,9 +130,9 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  slackAssistantHeadless: {
-    label: "Slack Assistant: headless runtime",
-    description: "Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.",
+  slackWorkbotReplies: {
+    label: "Slack: replies like Workbot",
+    description: "OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done.",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -172,6 +172,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotDefaultModel: {
+    label: "Workbot: default model",
+    description: "Organization admins choose, in Manage › Workbot, the model Workbot, the Slack assistant and cloud Automations set to the cloud default answer with. Needs Workbot.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   litellm: {
     label: "AI Gateway: LiteLLM",
     description: "Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person.",
@@ -196,6 +203,13 @@ export const FEATURES = defineFeatures({
   engineV2Upgrade: {
     label: "Desktop: upgrade prompt to OpenCode v2",
     description: "Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  opencodePlugin: {
+    label: "OpenCode plugin sign-in",
+    description: "People can sign in to OpenWork from the OpenCode plugin, approve it as \"OpenWork - OpenCode Plugin\", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

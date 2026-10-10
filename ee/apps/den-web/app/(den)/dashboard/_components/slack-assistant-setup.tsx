@@ -1,8 +1,10 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
+import { getWorkbotSettingsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
@@ -14,10 +16,11 @@ const setupSchema = z.object({
   hasSigningSecret: z.boolean(),
   eligible: z.boolean(),
   rolloutEnabled: z.boolean(),
-  webAccess: z.boolean(),
+  runnerAvailable: z.boolean(),
   shadowMode: z.boolean(),
   dailyLimit: z.number(),
   model: z.string().nullable().default(null),
+  modelManagedByOrganization: z.boolean().default(false),
   defaultModel: z.string().nullable().default(null),
   progressUpdates: z.boolean().default(false),
   models: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
@@ -35,7 +38,7 @@ const setupSchema = z.object({
   manifest: z.unknown(),
 });
 export function SlackAssistantSetup({ connection }: { connection: ExternalMcpConnection }) {
-  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const client = useQueryClient();
   const [secret, setSecret] = useState("");
   const [channels, setChannels] = useState<string | null>(null);
@@ -118,8 +121,8 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
       <div>
         <h2 className="text-base font-semibold">OpenWork in Slack</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Mention @openwork to use your own workspace, connections, and permissions. Each member connects their own
-          Slack account.
+          Mention @openwork to work as yourself, with your own connections and permissions. Each member connects their
+          own Slack account.
         </p>
       </div>
       {query.isPending ? <p role="status">Loading Slack setup…</p> : null}
@@ -130,7 +133,12 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
           Ask a platform admin to enable Slack Assistant for this workspace in /admin.
         </p>
       ) : null}
-      {data && !data.webAccess ? <p>OpenWork Web access is required for this workspace.</p> : null}
+      {data && !data.runnerAvailable ? (
+        <p className="text-sm text-gray-500" role="status">
+          Not available on this deployment: the Slack assistant runs on OpenWork&apos;s cloud runner, which isn&apos;t set up
+          here. Whoever runs this OpenWork deployment can turn it on.
+        </p>
+      ) : null}
       {data ? (
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4" aria-label="Last 24 hours">
           {[
@@ -159,7 +167,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             <input
               type="checkbox"
               checked={data.enabled}
-              disabled={busy || (!data.enabled && (!data.rolloutEnabled || !data.webAccess || (!data.hasSigningSecret && !secret)))}
+              disabled={busy || (!data.enabled && (!data.rolloutEnabled || !data.runnerAvailable || (!data.hasSigningSecret && !secret)))}
               onChange={(e) => void save(e.target.checked)}
             />
             Enable @openwork in Slack
@@ -179,7 +187,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             <DenButton variant="secondary" disabled={busy || !secret} onClick={() => void save(data.enabled)}>
               Save secret
             </DenButton>
-            <DenButton disabled={busy || !data.hasSigningSecret || !data.webAccess} onClick={() => void install()}>
+            <DenButton disabled={busy || !data.hasSigningSecret || !data.runnerAvailable} onClick={() => void install()}>
               {data.installed ? "Reinstall in Slack" : "Add to Slack"}
             </DenButton>
           </div>
@@ -206,7 +214,14 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             Access follows this connector’s workspace, team, and member grants. Turning the assistant off stops
             accepting new requests.
           </p>
-          {data.models.length > 0 ? (
+          {data.models.length > 0 && data.modelManagedByOrganization ? (
+            <p className="text-sm" data-testid="slack-assistant-model">
+              Model: {data.models.find((m) => m.id === data.model)?.name ?? data.model ?? `Default${data.defaultModel ? ` (${data.models.find((m) => m.id === data.defaultModel)?.name ?? data.defaultModel})` : ""}`}{" "}
+              <Link href={getWorkbotSettingsRoute(orgSlug)} className="text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline">
+                Change in Manage › Workbot
+              </Link>
+            </p>
+          ) : data.models.length > 0 ? (
             <label className="block text-sm">
               Model
               <select

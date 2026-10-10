@@ -46,7 +46,7 @@ export type DesktopHandoffNotice =
   | { kind: "failed"; message: string | null }
   | { kind: "waiting"; waitingFor: "permission" | "question" | null }
   | { kind: "expired" }
-  | { kind: "undeliverable"; message: string | null }
+  | { kind: "undeliverable"; message: string | null; code?: string | null }
 
 export function desktopHandoffMessage(recipientUserId: string, notice: DesktopHandoffNotice) {
   const to = mention(recipientUserId)
@@ -66,6 +66,10 @@ export function desktopHandoffMessage(recipientUserId: string, notice: DesktopHa
     case "expired":
       return `${to}Your desktop didn't pick up the task in time, so it didn't run. Make sure OpenWork is open on that computer, then ask again.`
     case "undeliverable": {
+      // The desktop app took the task but OpenWork itself was not running there.
+      if (notice.code === "openwork_unreachable") {
+        return `${to}Couldn't start the task: OpenWork isn't running on your desktop. Open it, then ask me again.`
+      }
       const reason = notice.message?.trim() ? `: ${slackSafeText(sentence(excerpt(notice.message, ERROR_TEXT_LIMIT)))}` : ""
       return `${to}The task couldn't start on your desktop${reason}.`
     }

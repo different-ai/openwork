@@ -21,6 +21,7 @@ import {
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import {
   createPastedTextChip,
+  insertDraftToken,
   resolvePastedTextPlaceholders,
   type PastedTextChip,
 } from "@/react-app/domains/session/surface/composer/pasted-text";
@@ -340,10 +341,10 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     updateMentions({ ...continuationHolderRef.current.state.mentions, [value]: kind });
   };
 
-  const handlePasteText = (text: string) => {
+  const handlePasteText = (text: string, draftOffset?: number) => {
     const pasted = createPastedTextChip(text);
     updatePasteParts([...continuationHolderRef.current.state.pasteParts, pasted]);
-    updateDraft(`${continuationHolderRef.current.state.draft}[pasted text ${pasted.label}]`);
+    updateDraft(insertDraftToken(continuationHolderRef.current.state.draft, `[pasted text ${pasted.label}]`, draftOffset));
   };
 
   const handleExpandPastedText = (id: string) => {
@@ -375,7 +376,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     updateDraft(value);
   };
 
-  const handleAttachFiles = (files: File[]) => {
+  const handleAttachFiles = (files: File[], draftOffset?: number) => {
     if (!files.length) return;
     const next: ComposerAttachment[] = files.map((file) => {
       const metadata = resolveAttachmentFileMetadata(file);
@@ -390,7 +391,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       };
     });
     updateAttachments([...continuationHolderRef.current.state.attachments, ...next]);
-    updateDraft(`${continuationHolderRef.current.state.draft}${next.map((attachment) => `[attachment ${attachment.id}]`).join("")}`);
+    updateDraft(insertDraftToken(continuationHolderRef.current.state.draft, next.map((attachment) => `[attachment ${attachment.id}]`).join(""), draftOffset));
   };
 
   const handleRemoveAttachment = (id: string) => {

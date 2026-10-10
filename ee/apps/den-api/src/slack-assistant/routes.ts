@@ -34,13 +34,14 @@ import { resolvePermissionsForMember } from "../permissions/resolve.js"
 import { ensureFreshPrivilegedSession } from "../privileged-session.js"
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
-import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
-import { listHeadlessModels, slackRuntimeForOrganization } from "./headless.js"
+import { listHeadlessModels, slackRunnerAvailable } from "./headless.js"
 import { getOrganizationFeatures } from "../features.js"
+import { defaultModelFeatureOn, organizationDefaultModel } from "../workbot/model.js"
 import { publicRequestUrl } from "../request-url.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   BOT_SCOPES,
+  REQUIRED_BOT_SCOPES,
   isInvocation,
   scopeKey,
   slackEnvelopeSchema,
@@ -89,16 +90,22 @@ const setupResponseSchema = z.object({
   rolloutEnabled: z.boolean().describe("Whether the platform admin enabled Slack Assistant for this organization."),
   hasSigningSecret: z.boolean(),
   eligible: z.boolean(),
-  webAccess: z.boolean(),
+  runnerAvailable: z
+    .boolean()
+    .describe("Whether this deployment has the headless runner Slack replies run on. Without it the assistant can't be enabled."),
   channelIds: z.array(z.string()),
   shadowMode: z.boolean(),
   dailyLimit: z.number().int(),
-  model: z.string().nullable().describe("Model chosen for headless runs, or null for the runner default."),
-  defaultModel: z.string().nullable().describe("The headless runner's default model, when this workspace uses it."),
+  model: z.string().nullable().describe("Model chosen for Slack runs, or null for the runner default."),
+  modelManagedByOrganization: z
+    .boolean()
+    .optional()
+    .describe("The organization's default model (Manage › Workbot) is used instead of a model chosen here; `model` is that model."),
+  defaultModel: z.string().nullable().describe("The headless runner's default model, when the runner is available."),
   progressUpdates: z.boolean().describe("Whether Slack shows steps and notes while a task works, or only its working status."),
   models: z
     .array(z.object({ id: z.string(), name: z.string() }))
-    .describe("Models the headless runner can use; empty when the workspace doesn't use the headless runner."),
+    .describe("Models the headless runner can use; empty when the runner is unavailable."),
   metrics: z.object({
     completed: z.number().int(),
     failed: z.number().int(),
@@ -119,7 +126,7 @@ const setupErrorSchema = z.object({
     "setup_required",
     "browser_session_required",
     "slack_assistant_not_enabled",
-    "openwork_web_access_required",
+    "slack_runner_unavailable",
   ]),
   message: z.string().optional(),
 })
@@ -171,10 +178,9 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       const connection = await getExternalMcpConnection({ organizationId: org.organization.id, connectionId })
       if (!connection) return c.json({ error: "not_found" }, 404)
       const installation = await getInstallation(connectionId)
-      const web = await getOpenWorkWebRuntimeAccess(org.organization.id)
       const features = await getOrganizationFeatures(org.organization.id)
-      const catalog =
-        slackRuntimeForOrganization(features) === "headless" ? await listHeadlessModels() : null
+      const runnerAvailable = slackRunnerAvailable()
+      const catalog = runnerAvailable ? await listHeadlessModels() : null
       return c.json({
         enabled: installation?.enabled ?? false,
         installed: Boolean(installation?.botToken),
@@ -182,11 +188,13 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         rolloutEnabled: features.slackAssistant,
         hasSigningSecret: Boolean(installation?.signingSecret),
         eligible: isSlackConnection(connection),
-        webAccess: slackRuntimeForOrganization(features) === "headless" || web.hasAccess,
+        runnerAvailable,
         channelIds: installation?.channelIds ?? [],
         shadowMode: installation?.shadowMode ?? false,
         dailyLimit: installation?.dailyLimit ?? 100,
-        model: installation?.model ?? null,
+        ...(defaultModelFeatureOn(features)
+          ? { model: await organizationDefaultModel(org.organization.id, { features: async () => features }), modelManagedByOrganization: true }
+          : { model: installation?.model ?? null, modelManagedByOrganization: false }),
         defaultModel: catalog?.defaultModel ?? null,
         progressUpdates: installation?.progressUpdates ?? false,
         models: catalog?.models ?? [],
@@ -201,7 +209,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       tags: ["Authentication"],
       summary: "Configure Slack assistant installation",
       description:
-        "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires the Manage connections permission, a browser session and recent verification.",
+        "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and the deployment's headless runner. Requires the Manage connections permission, a browser session and recent verification.",
       responses: {
         ...adminResponses,
         200: jsonResponse("Slack assistant settings saved.", okSchema),
@@ -224,8 +232,10 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           { error: "individual_accounts_required", message: "Choose a Slack connection in Individual accounts mode." },
           400,
         )
-      const body = c.req.valid("json")
       const features = await getOrganizationFeatures(org.organization.id)
+      // While the organization's default model applies, the installation's own model is kept as it was.
+      const { model: _keptModel, ...settings } = c.req.valid("json")
+      const body = defaultModelFeatureOn(features) ? settings : c.req.valid("json")
       if (body.enabled && !features.slackAssistant) {
         return c.json(
           {
@@ -235,12 +245,14 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           403,
         )
       }
-      if (
-        body.enabled &&
-        slackRuntimeForOrganization(features) !== "headless" &&
-        !(await getOpenWorkWebRuntimeAccess(org.organization.id)).hasAccess
-      )
-        return c.json({ error: "openwork_web_access_required" }, 403)
+      if (body.enabled && !slackRunnerAvailable())
+        return c.json(
+          {
+            error: "slack_runner_unavailable",
+            message: "The Slack assistant runs on OpenWork's headless runner, which this deployment doesn't have.",
+          },
+          403,
+        )
       const previous = await getInstallation(connectionId)
       const signingSecret = body.signingSecret ?? previous?.signingSecret
       if (!signingSecret) return c.json({ error: "signing_secret_required" }, 400)
@@ -391,7 +403,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           scope: z.string(),
         })
         .safeParse(await response.json())
-      if (!result.success || BOT_SCOPES.some((scope) => !result.data.scope.split(",").includes(scope)))
+      if (!result.success || REQUIRED_BOT_SCOPES.some((scope) => !result.data.scope.split(",").includes(scope)))
         return c.text("Slack did not grant the required bot permissions. Check the app manifest and reinstall.", 400)
       const token = result.data
       if (installation.teamId && installation.teamId !== token.team.id)
