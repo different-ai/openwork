@@ -32,7 +32,7 @@ for (const engine of ["v1", "v2"]) {
       engine === "v1" ? versions.opencodeVersion.replace(/^v/, "") : `opencode v${versions.opencodeV2Version}`,
     );
 
-    const requests: { model: unknown; effort: unknown; tier: unknown; verbosity: unknown; generation: boolean }[] = [];
+    const requests: { model: unknown; effort: unknown; effortUpdates: unknown[]; tier: unknown; verbosity: unknown; generation: boolean }[] = [];
     const witness = createServer(async (request, response) => {
       if (request.method === "GET") {
         response.writeHead(200, { "content-type": "application/json" });
@@ -43,8 +43,14 @@ for (const engine of ["v1", "v2"]) {
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       if (request.url === "/v1/responses" && isRecord(body)) {
-        requests.push({ model: body.model, effort: isRecord(body.reasoning) ? body.reasoning.effort ?? null : null,
-          tier: body.service_tier ?? null, verbosity: isRecord(body.text) ? body.text.verbosity ?? null : null,
+        // Stable V2 sends GPT-6 effort changes as ordered input updates, not
+        // just the request-level reasoning field. The last update is effective.
+        const effortUpdates = Array.isArray(body.input) ? body.input.flatMap((item: unknown) =>
+          isRecord(item) && item.type === "configuration_update" && isRecord(item.reasoning)
+            ? [item.reasoning.effort] : []) : [];
+        requests.push({ model: body.model,
+          effort: effortUpdates.at(-1) ?? (isRecord(body.reasoning) ? body.reasoning.effort ?? null : null),
+          effortUpdates, tier: body.service_tier ?? null, verbosity: isRecord(body.text) ? body.text.verbosity ?? null : null,
           generation: Array.isArray(body.tools) && body.tools.length > 0 });
       }
       // Capture dispatch only: never run a real model or execute a tool. A 400
@@ -143,13 +149,14 @@ for (const engine of ["v1", "v2"]) {
         expect(variants.sort()).toEqual([...efforts, fastVariantId(null), ...efforts.map(fastVariantId)].sort());
         evidence.recordAssertionEvidence(`${engine} ${modelId} exposes only advertised efforts and Fast combinations`, JSON.stringify(variants), true);
       }
-      const dispatches: { model: string; variant: string | null; effort: unknown; tier: unknown; verbosity: unknown }[] = [];
+      const dispatches: { model: string; variant: string | null; effort: unknown; effortUpdates: unknown[]; tier: unknown; verbosity: unknown }[] = [];
       for (const model of Object.keys(models)) {
         const created = await request(engine === "v1" ? "/session" : "/api/session", engine === "v1"
           ? { title: "Synthetic dispatch witness" }
-          : { model: { providerID: "witness", id: model } });
+          : { location: { directory }, model: { providerID: "witness", id: model } });
         const data = engine === "v2" && isRecord(created) ? created.data : created;
         if (!isRecord(data) || typeof data.id !== "string") throw new Error("Session ID missing");
+        if (engine === "v2") expect(data.location).toEqual({ directory });
         const sessionID = data.id;
         const selections: Array<string | null> = [
           "high", fastVariantId("high"), fastVariantId("low"), "low",
@@ -169,7 +176,8 @@ for (const engine of ["v1", "v2"]) {
             { within: 30_000, intervalMs: 100, label: `${engine} ${model} ${variant} reaches the wire`, until: (value) => value !== undefined },
           );
           if (!dispatched) throw new Error("No generation request reached the witness");
-          dispatches.push({ model, variant, effort: dispatched.effort, tier: dispatched.tier, verbosity: dispatched.verbosity });
+          dispatches.push({ model, variant, effort: dispatched.effort, effortUpdates: dispatched.effortUpdates,
+            tier: dispatched.tier, verbosity: dispatched.verbosity });
           if (engine === "v2") await eventually(async () => {
             const active = await request("/api/session/active");
             if (!isRecord(active) || !isRecord(active.data)) return false;
@@ -179,9 +187,18 @@ for (const engine of ["v1", "v2"]) {
         }
       }
       evidence.recordAssertionEvidence("Synthetic provider wire dispatches", JSON.stringify({ engine, dispatches }), true);
+      if (engine === "v2") {
+        expect(dispatches.some((row) => row.model === "gpt-6-astra" && row.effortUpdates.length > 0),
+          "GPT-6 sends per-turn effort updates on the wire").toBe(true);
+      }
       for (const row of dispatches) {
+        // A GPT-6 reset update explicitly uses medium; with no update the
+        // default is implicit. Neither path may retain the previous effort.
         const expectedEffort = advertisedEfforts.find((effort) => row.variant === effort || row.variant === fastVariantId(effort))
-          ?? (row.model === "gpt-5.4" ? "medium" : null);
+          ?? (row.model === "gpt-5.4" || row.effortUpdates.length > 0 ? "medium" : null);
+        if (row.effortUpdates.length > 0) {
+          expect(row.effortUpdates.at(-1), "GPT-6's latest input update controls effort").toBe(expectedEffort);
+        }
         expect(row.effort, `${engine} ${row.model} ${row.variant}: reasoning effort on the wire`).toBe(expectedEffort);
         expect(row.verbosity).toBe("high");
         expect(row.tier, `${engine} ${row.model} ${row.variant}: service_tier on the wire`)
