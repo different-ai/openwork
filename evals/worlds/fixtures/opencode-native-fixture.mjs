@@ -197,6 +197,8 @@ async function initialize() {
   }
   if (!seen.has("server.js")) throw new Error("Plugin artifact has no compiled server entrypoint");
   writeFileSync(join(plugin, "package.json"), JSON.stringify({ name: "opencode-openwork", version: "0.1.0", type: "module", exports: { ".": "./dist/server.js", "./server": "./dist/server.js" } }));
+  // Native folder plugins resolve root server.* / index.*, not package exports.
+  writeFileSync(join(plugin, "server.js"), 'export { default } from "./dist/server.js"\n');
   const binaryIntegrity = await install();
   proxy = startProxy();
   const apiPort = await listen(proxy);
