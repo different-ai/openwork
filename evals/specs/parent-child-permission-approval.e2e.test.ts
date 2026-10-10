@@ -262,6 +262,11 @@ questionTest("a parent answers and stops real child questions, then finishes fre
 
   const delegate = async () => {
     await open(world.root.sessionId, "Delegated question parent");
+    // The hash changes before the selected conversation finishes rendering.
+    // Wait for the parent's composer before the strict absence observation;
+    // notSee requires absence throughout its interval, rather than waiting
+    // for the previous conversation's question to disappear.
+    await user.see("composer", { editable: true, timeoutMs: 30_000 });
     await user.notSee({ text: world.unrelated.question });
     await send(world.root.prompt);
     const requests = await probe.eventually(pending, {
