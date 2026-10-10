@@ -180,6 +180,7 @@ export type AdminFeature = {
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotDefaultModel"
     | "litellm"
     | "permissions"
     | "gatewayCloudSignIn"
@@ -241,6 +242,7 @@ export type AdminOrganizationsPageResponse = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
@@ -403,6 +405,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotDefaultModel: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -545,6 +556,7 @@ export type AdminOverviewResponse = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
@@ -707,6 +719,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotDefaultModel: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2056,6 +2077,7 @@ export type CapabilityDisabledError = {
     | "automationCalendar"
     | "workbotCalendar"
     | "workbotSideChats"
+    | "workbotDefaultModel"
     | "litellm"
     | "permissions"
     | "gatewayCloudSignIn"
@@ -5551,6 +5573,31 @@ export type WebOriginNotFoundError = {
 
 export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
 
+export type WorkbotSettings = {
+  model: string | null;
+  defaultModel: string | null;
+  models: Array<{
+    id: string;
+    name: string;
+  }>;
+  modelAvailable: boolean;
+  runnerReachable: boolean;
+};
+
+export type WorkbotUnknownModelError = {
+  error: "unknown_model";
+  message: string;
+};
+
+export type WorkbotRunnerUnavailableError = {
+  error: "workbot_runner_unavailable";
+  message: string;
+};
+
+export type WorkbotSettingsInput = {
+  model: string | null;
+};
+
 export type WorkbotSession = {
   user: {
     id: string;
@@ -5567,6 +5614,7 @@ export type WorkbotSession = {
   canSchedule: boolean;
   calendar?: boolean;
   sideChats: boolean;
+  model?: string | null;
 };
 
 export type WorkbotRunToken = {
@@ -6333,6 +6381,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
@@ -6495,6 +6544,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotDefaultModel: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6625,6 +6683,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       automationCalendar: boolean;
       workbotCalendar: boolean;
       workbotSideChats: boolean;
+      workbotDefaultModel: boolean;
       litellm: boolean;
       permissions: boolean;
       gatewayCloudSignIn: boolean;
@@ -6787,6 +6846,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       workbotSideChats: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      workbotDefaultModel: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -30186,6 +30254,86 @@ export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
 export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
   DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
 
+export type GetV1OrgWorkbotSettingsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/workbot-settings";
+};
+
+export type GetV1OrgWorkbotSettingsErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller lacks the View OpenWork Models settings permission.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found, or Workbot or its workbotDefaultModel feature is off.
+   */
+  404: {
+    error: "feature_disabled";
+    feature: string;
+  };
+};
+
+export type GetV1OrgWorkbotSettingsError = GetV1OrgWorkbotSettingsErrors[keyof GetV1OrgWorkbotSettingsErrors];
+
+export type GetV1OrgWorkbotSettingsResponses = {
+  /**
+   * Workbot settings returned.
+   */
+  200: WorkbotSettings;
+};
+
+export type GetV1OrgWorkbotSettingsResponse = GetV1OrgWorkbotSettingsResponses[keyof GetV1OrgWorkbotSettingsResponses];
+
+export type PutV1OrgWorkbotSettingsData = {
+  body: WorkbotSettingsInput;
+  path?: never;
+  query?: never;
+  url: "/v1/org/workbot-settings";
+};
+
+export type PutV1OrgWorkbotSettingsErrors = {
+  /**
+   * The model is not one the runner serves, or the request was invalid.
+   */
+  400: WorkbotUnknownModelError | InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * The caller lacks the Manage OpenWork Models permission or needs to sign in again.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization was not found, or Workbot or its workbotDefaultModel feature is off.
+   */
+  404: {
+    error: "feature_disabled";
+    feature: string;
+  };
+  /**
+   * The headless runner could not be reached to check the model.
+   */
+  503: WorkbotRunnerUnavailableError;
+};
+
+export type PutV1OrgWorkbotSettingsError = PutV1OrgWorkbotSettingsErrors[keyof PutV1OrgWorkbotSettingsErrors];
+
+export type PutV1OrgWorkbotSettingsResponses = {
+  /**
+   * Workbot settings saved.
+   */
+  200: WorkbotSettings;
+};
+
+export type PutV1OrgWorkbotSettingsResponse = PutV1OrgWorkbotSettingsResponses[keyof PutV1OrgWorkbotSettingsResponses];
+
 export type GetV1McpConnectionsByConnectionIdSlackAssistantData = {
   body?: never;
   path: {
@@ -30264,6 +30412,10 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
      * Model chosen for headless runs, or null for the runner default.
      */
     model: string | null;
+    /**
+     * The organization's default model (Manage › Workbot) is used instead of a model chosen here; `model` is that model.
+     */
+    modelManagedByOrganization?: boolean;
     /**
      * The headless runner's default model, when this workspace uses it.
      */

@@ -162,6 +162,11 @@
       "development": "./src/den/organization-web-origins.ts",
       "default": "./src/den/organization-web-origins.ts"
     },
+    "./den/workbot-settings": {
+      "types": "./src/den/workbot-settings.ts",
+      "development": "./src/den/workbot-settings.ts",
+      "default": "./src/den/workbot-settings.ts"
+    },
     "./den/mcp-connection-action": {
       "types": "./src/den/mcp-connection-action.ts",
       "development": "./src/den/mcp-connection-action.ts",

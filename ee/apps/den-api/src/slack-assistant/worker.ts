@@ -13,6 +13,7 @@ import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { executeRemoteSessionCapability, type RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
 import { buildSlackPrompt, SlackApiError, slackClient, slackEventSchema } from "./protocol.js"
 import { headlessRemoteCall } from "./headless.js"
+import { slackAssistantModel } from "../workbot/model.js"
 import {
   slackAssistantEnabledForInstallation,
   admitSlackRun,
@@ -322,7 +323,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
     webHandoff: !headless,
-    model: headless ? (installation.model ?? undefined) : undefined,
+    model: headless && cp.phase === "send" ? await slackAssistantModel(installation) : undefined,
     quietAfterMs: headless ? LONG_TASK_QUIET_AFTER_MS : undefined,
   })
   if (result.done) await releaseSlackThread(event)
