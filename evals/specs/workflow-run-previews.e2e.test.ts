@@ -33,7 +33,7 @@ const test = spec.world(async (seed) => {
   const organization = record((await seed.api(den.admin, "/v1/org")).body);
   const organizationId = field(organization.organization, "id");
   if (!Array.isArray(organization.members)) throw new Error("Expected organization members");
-  const planViewerMember = organization.members.map(record).find((member) => record(member.user).email === den.members.planViewer.email);
+  const planViewerMember = organization.members.map(record).find((member) => String(record(member.user).email).toLowerCase() === den.members.planViewer.email.toLowerCase()); // Den stores emails lowercased.
   // A non-owner admin can open Analytics, while the ordinary teammate below
   // keeps their existing billing and run-visibility boundaries.
   const promoted = await seed.api(den.admin, `/v1/members/${encodeURIComponent(field(planViewerMember, "id"))}/role`, {

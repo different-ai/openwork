@@ -524,14 +524,15 @@ test("a flagged owner records and filters audit history by default while an unfl
       await seeGroupedOperation();
       await enterPastDate(owner, "From (local time)", "1");
       await enterPastDate(owner, "To (local time)", "2");
-      // Focus and edit the real native AM/PM segment, then restore the excluding
-      // morning range. No injected values or screenshot-only date controls.
+      // Focus and edit the real native hour segment (fourth in both 12- and 24-hour
+      // layouts), then restore the excluding morning range. No injected values or
+      // screenshot-only date controls.
       await owner.click({ label: "From (local time)" });
       for (let index = 0; index < 8; index += 1) await owner.press("ArrowLeft");
-      for (let index = 0; index < 5; index += 1) await owner.press("ArrowRight");
-      await owner.press("p");
-      await owner.see({ label: "From (local time)" }, { value: "2000-01-01T13:00" });
-      await owner.press("a");
+      for (let index = 0; index < 3; index += 1) await owner.press("ArrowRight");
+      await owner.press("ArrowUp");
+      await owner.see({ label: "From (local time)" }, { value: "2000-01-01T02:00" });
+      await owner.press("ArrowDown");
       await owner.see({ label: "From (local time)" }, { value: "2000-01-01T01:00" });
       expect((await audit.dom('input[aria-label="From (local time)"]')).elements[0]?.focused).toBe(true);
       await owner.press("Tab");

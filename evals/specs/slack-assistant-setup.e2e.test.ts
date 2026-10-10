@@ -143,15 +143,16 @@ test("an owner configures OpenWork in Slack with consistent controls while a tea
     await user.click(secretField);
     for (let index = 0; index < 4; index += 1) await user.press("Tab");
     await focused(probe, `${section} select`);
-    // A focused native select commits a single arrow-key choice in place.
-    // Wait for each save and re-acquire focus after its temporary busy lock.
-    await user.press("ArrowDown");
+    // Typeahead commits a closed native select in place on every platform (macOS
+    // opens its menu for arrow keys); "S" moves to the next "Slack fixture …"
+    // model. Wait for each save and re-acquire focus after its temporary busy lock.
+    await user.press("S");
     await saved("model", world.models[0].id);
     await user.see({ label: "Model" }, { value: world.models[0].id, editable: true });
     await user.click(secretField);
     for (let index = 0; index < 4; index += 1) await user.press("Tab");
     await focused(probe, `${section} select`);
-    await user.press("ArrowDown");
+    await user.press("S");
     await saved("model", world.models[1].id);
     await user.reload();
     await user.see({ role: "heading", label: "OpenWork in Slack" }, { timeoutMs: 90_000 });
