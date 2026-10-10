@@ -52,6 +52,8 @@ writeSentryBuildConfig();
 run(nodeCmd, [resolve(__dirname, "prepare-desktop-free-release.mjs")], desktopRoot);
 // The packaged server imports @openwork/free-auto, which plain node loads from its dist build.
 run(pnpmCmd, ["--filter", "@openwork/free-auto", "build"], repoRoot);
+run(pnpmCmd, ["--filter", "@openwork/remote-access", "build"], repoRoot);
+cpSync(resolve(repoRoot, "packages/remote-access/dist"), resolve(desktopRoot, "remote-access"), { recursive: true });
 // Build the server TS → JS so Electron can import it in-process
 // CI already compiles this exact checkout in the required build job.
 if (!process.argv.includes("--server-built")) {

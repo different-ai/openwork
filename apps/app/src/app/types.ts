@@ -184,6 +184,7 @@ export type EngineRuntime = "direct";
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
 export const SETTINGS_TAB_VALUES = [
+  "remote-access",
   "general",
   "ai",
   "ollama",

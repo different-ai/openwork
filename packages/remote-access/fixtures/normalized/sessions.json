@@ -1,0 +1,13 @@
+{
+  "type": "SessionList",
+  "value": [
+    {
+      "id": "ses_test",
+      "workspaceId": "ws_test",
+      "title": "Synthetic chat",
+      "updatedAt": "2026-10-08T00:00:00.000Z",
+      "modelLabel": "test-model",
+      "status": "unknown"
+    }
+  ]
+}

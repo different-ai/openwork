@@ -1,3 +1,4 @@
+import { RemoteAccessView } from "@/react-app/domains/settings/pages/remote-access-view";
 /** @jsxImportSource react */
 import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
 import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
@@ -291,6 +292,7 @@ export function parseSettingsPath(pathname: string): {
 
   const [head, tail] = trimmed.split("/");
   switch (head) {
+    case "remote-access":
     case "general":
     case "ai":
     case "ollama":
@@ -2139,6 +2141,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const settingsView = (() => {
     switch (route.tab) {
+      case "remote-access": return <RemoteAccessView />;
       case "general":
         return (
           <GeneralSettingsView

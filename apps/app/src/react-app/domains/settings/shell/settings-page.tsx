@@ -14,6 +14,7 @@ import {
   Puzzle,
   RefreshCcw,
   ShieldCheck,
+  Smartphone,
   SlidersHorizontal,
   Sparkles,
   Store,
@@ -64,6 +65,7 @@ import { SidebarDestination } from "../../session/sidebar/sidebar-destination";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
+    case "remote-access": return Smartphone;
     case "ai":
       return Zap;
     case "preferences":
@@ -105,6 +107,7 @@ export function getSettingsTabIcon(tab: SettingsTab) {
 
 export function getSettingsTabLabel(tab: SettingsTab) {
   switch (tab) {
+    case "remote-access": return "Remote access";
     case "ai":
       return "AI Providers";
     case "ollama":
@@ -150,6 +153,7 @@ export function getSettingsTabLabel(tab: SettingsTab) {
 
 export function getSettingsTabDescription(tab: SettingsTab) {
   switch (tab) {
+    case "remote-access": return "";
     case "ai":
       return "Connect OpenAI, Anthropic, local models and more";
     case "ollama":
@@ -201,7 +205,7 @@ export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
+  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "remote-access", "environment"];
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
   return tabs;

@@ -53,6 +53,13 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  remoteAccess: {
+    label: "Remote access",
+    description: "Pair a phone to continue and rename this computer's chats with explicit project access.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   managedDeployments: {
     label: "Managed deployments",
     description: "Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork.",

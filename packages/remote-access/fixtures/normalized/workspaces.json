@@ -1,0 +1,9 @@
+{
+  "type": "WorkspaceList",
+  "value": [
+    {
+      "id": "ws_test",
+      "name": "Synthetic workspace"
+    }
+  ]
+}

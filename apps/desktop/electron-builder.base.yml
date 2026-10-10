@@ -5,6 +5,7 @@ toolsets:
 files:
   - electron/**/*
   - server/**/*
+  - remote-access/**/*
   - "!server/dist/opencode-plugins/**"
   - package.json
   - from: .electron-runtime/node_modules

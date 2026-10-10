@@ -345,7 +345,36 @@ export type UiControlBridgeInfo = {
 // The command map
 // ---------------------------------------------------------------------------
 
+export type RemoteProjectScope = { workspaceIds: string[]; allWorkspaces: boolean };
+export type RemoteDevice = RemoteProjectScope & { id: string; name: string; active: boolean };
+export type RemoteAccessStatus = {
+  available: boolean;
+  enabled: boolean;
+  phase: "off" | "ready" | "error" | "unavailable";
+  errorCode: string | null;
+  origin: string | null;
+  devices: RemoteDevice[];
+  workspaces: { id: string; name: string }[];
+  pending: { id: string; deviceName: string; expiresAt: string }[];
+};
+export type RemotePairing = {
+  payload: { protocolVersion: number; origin: string; pairingId: string; secret: string };
+  qrSvg: string;
+  qrDataURL: string;
+};
+
 export type DesktopCommandMap = {
+  remoteAccessStatus: { args: []; result: RemoteAccessStatus };
+  remoteAccessSetEnabled: { args: [enabled: boolean]; result: RemoteAccessStatus };
+  remoteAccessFeatureSession: {
+    args: [session: { baseUrl: string; token: string; orgId: string } | { pending: true } | null];
+    result: RemoteAccessStatus;
+  };
+  remoteAccessPair: { args: []; result: RemotePairing };
+  remoteAccessApprove: { args: [id: string, scope: RemoteProjectScope]; result: { approved: boolean } };
+  remoteAccessDeny: { args: [id: string]; result: { denied: boolean } };
+  remoteAccessUpdateScope: { args: [id: string, scope: RemoteProjectScope]; result: { updated: boolean } };
+  remoteAccessRevoke: { args: [id: string]; result: { revoked: boolean } };
   // Workspace state
   workspaceBootstrap: { args: []; result: WorkspaceList };
   workspaceSetSelected: { args: [workspaceId: string]; result: WorkspaceList };

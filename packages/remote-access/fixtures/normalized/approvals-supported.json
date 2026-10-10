@@ -1,0 +1,15 @@
+{
+  "type": "ApprovalList",
+  "value": [
+    {
+      "id": "per_test",
+      "sessionId": "ses_test",
+      "kind": "external_directory",
+      "title": "Review folder access",
+      "details": "Synthetic folder access request",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "supportedDecisions": ["allowOnce", "deny"],
+      "createdAt": "2026-10-08T00:00:00.000Z"
+    }
+  ]
+}

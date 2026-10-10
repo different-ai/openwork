@@ -1,0 +1,15 @@
+{
+  "type": "ApprovalList",
+  "value": [
+    {
+      "id": "per_test",
+      "sessionId": "ses_test",
+      "kind": "future",
+      "title": "Continue on computer",
+      "details": "Synthetic folder access request",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "supportedDecisions": [],
+      "createdAt": "2026-10-08T00:00:00.000Z"
+    }
+  ]
+}

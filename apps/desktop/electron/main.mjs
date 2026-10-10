@@ -87,6 +87,9 @@ import {
   runDetachedTask,
 } from "./process-resilience.mjs";
 import { createQuitSequencer } from "./quit-sequence.mjs";
+import { createRemoteAccessManager, assertRemoteAccessSender } from "./remote-access.mjs";
+import { createRemoteNetwork } from "./remote-access-network.mjs";
+import { createRemoteAccessFeature } from "./remote-access-feature.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -1295,6 +1298,46 @@ const legacyRunnerBaseUrls = [
   `${DEFAULT_DEN_BASE_URL}/api/den`,
 ].map((value) => normalizeRunnerBaseUrl(value)).filter(Boolean);
 const automationRunnerDisabledBy = automationRunnerDisabledReason(process.env);
+/** @type {typeof import('../../../packages/remote-access/dist/index.js')} */
+const remoteAccessLibrary = require(existsSync(path.join(__dirname, "../remote-access/index.cjs"))
+  ? "../remote-access/index.cjs" : "../../../packages/remote-access/dist/index.cjs");
+const remoteServerVersion = require(existsSync(path.join(__dirname, "../server/package.json"))
+  ? "../server/package.json" : "../../server/package.json").version;
+const remotePlatform = process.platform === "darwin" ? "macos" : "linux";
+const remoteSupported = process.platform === "darwin" || process.platform === "linux";
+// Match the engine's explicit shared-state development option. Ordinary dev
+// profiles stay isolated and cannot acquire the installed app's pairing store.
+const remoteStateRoot = app.isPackaged || process.env.OPENWORK_DEV_SHARED_STATE === "1"
+  ? remoteAccessLibrary.platformDirectories(remotePlatform, os.homedir(), process.env).state
+  : path.join(app.getPath("userData"), "remote-access");
+const remotePreference = remoteAccessLibrary.remoteAccessPreference(remoteStateRoot);
+const remoteFeature = createRemoteAccessFeature({
+  baseUrls: legacyRunnerBaseUrls,
+  localPolicy: app.isPackaged ? null : remoteAccessLibrary.localRemoteAccessPolicy(process.env),
+});
+const remoteAccess = createRemoteAccessManager({
+  featureEnabled: async () => remoteSupported && await remoteFeature.enabled(),
+  readEnabled: async () => remoteSupported && await remotePreference.read(),
+  writeEnabled: (enabled) => remotePreference.write(enabled),
+  readDevices: async () => remoteSupported ? remoteAccessLibrary.readSavedDevices(remoteStateRoot) : [],
+  network: createRemoteNetwork(),
+  start: async (origin) => {
+    await ensureRuntimeBootstrap();
+    const adapter = new remoteAccessLibrary.OpenWorkV2(async () => {
+      const info = assertOpenworkServerReady(await runtimeManager.openworkServerInfo());
+      return { origin: info.baseUrl, token: info.ownerToken ?? info.clientToken };
+    }, true, remoteServerVersion);
+    await adapter.requireChatEngine();
+    return remoteAccessLibrary.startBridge({ adapter, stateDirectory: remoteStateRoot,
+      platform: remotePlatform, architecture: process.arch, origin });
+  },
+});
+// Re-check deployment policy even when Settings is closed. Cached feature decisions
+// expire after 15 seconds; a disabled rollout closes streams on the next refresh.
+const remoteAccessRefresh = setInterval(() => {
+  void remoteAccess.refresh().catch(() => {});
+}, 15000);
+remoteAccessRefresh.unref();
 if (automationRunnerDisabledBy) {
   console.info(`[automation-runner] disabled by ${automationRunnerDisabledBy}; renderer runner configuration will be ignored`);
 }
@@ -1386,6 +1429,8 @@ async function disposeRuntimeBeforeQuit() {
   if (runtimeDisposedForQuit || runtimeDisposeInProgress) return;
   runtimeDisposeInProgress = true;
   try {
+    clearInterval(remoteAccessRefresh);
+    await remoteAccess.dispose().catch(() => undefined);
     await runtimeManager.dispose().catch(() => undefined);
     runtimeDisposedForQuit = true;
   } finally {
@@ -1739,6 +1784,18 @@ function applyNativeTheme(mode) {
 // typecheck:electron`.
 /** @type {import("@openwork/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
+  "remoteAccessStatus": async (event) => remoteAccess.status(),
+  "remoteAccessSetEnabled": async (event, enabled) => remoteAccess.setEnabled(enabled),
+  "remoteAccessFeatureSession": async (event, session) => {
+    try { remoteFeature.configure(session); }
+    catch { await remoteAccess.refresh(); throw new Error("REMOTE_FEATURE_SESSION_REJECTED"); }
+    return remoteAccess.refresh();
+  },
+  "remoteAccessPair": async (event) => remoteAccess.pair(),
+  "remoteAccessApprove": async (event, id, scope) => remoteAccess.approve(id, scope),
+  "remoteAccessDeny": async (event, id) => remoteAccess.deny(id),
+  "remoteAccessUpdateScope": async (event, id, scope) => remoteAccess.access(id, scope),
+  "remoteAccessRevoke": async (event, id) => remoteAccess.revoke(id),
   "workspaceBootstrap": async (event, ...args) => {
       return workspaceStore.readWorkspaceState();
   },
@@ -2361,6 +2418,9 @@ function assertDesktopActivation() {
 }
 
 async function handleDesktopInvoke(event, command, ...args) {
+  if (typeof command === "string" && command.startsWith("remoteAccess")) {
+    assertRemoteAccessSender(event, mainWindow);
+  }
   if (!enterprisePreactivationCommandAllowed(command)) {
     assertDesktopActivation();
   }

@@ -1,0 +1,26 @@
+{
+  "type": "Host",
+  "value": {
+    "hostId": "00000000-0000-4000-8000-000000000001",
+    "displayName": "Test computer",
+    "platform": "macos",
+    "architecture": "arm64",
+    "runtimeKind": "desktop",
+    "protocolVersion": 1,
+    "upstreamVersion": "0.18.57",
+    "compatibility": "supported",
+    "capabilities": {
+      "readSessions": true,
+      "readMessages": true,
+      "readStatus": true,
+      "events": true,
+      "createSession": true,
+      "sendText": true,
+      "stop": true,
+      "readApprovals": true,
+      "replyApproval": true,
+      "maxPromptBytes": 32768,
+      "protocolVersion": 1
+    }
+  }
+}

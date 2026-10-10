@@ -1,0 +1,50 @@
+{
+  "type": "MessageList",
+  "value": [
+    {
+      "id": "msg_user",
+      "sessionId": "ses_test",
+      "role": "user",
+      "createdAt": "2026-10-08T00:00:00.000Z",
+      "state": "complete",
+      "blocks": [
+        {
+          "kind": "text",
+          "text": "Synthetic prompt"
+        }
+      ]
+    },
+    {
+      "id": "msg_reply",
+      "sessionId": "ses_test",
+      "role": "assistant",
+      "createdAt": "2026-10-08T00:00:00.000Z",
+      "state": "cancelled",
+      "blocks": [
+        {
+          "kind": "text",
+          "text": "Synthetic reply"
+        },
+        {
+          "kind": "code",
+          "text": "print(\"hello\")",
+          "language": "python"
+        },
+        {
+          "kind": "tool",
+          "name": "read",
+          "status": "complete",
+          "summary": "Tool activity on computer"
+        },
+        {
+          "kind": "omitted",
+          "label": "Large content available on computer"
+        },
+        {
+          "kind": "unsupported",
+          "label": "Content available on computer"
+        }
+      ]
+    }
+  ]
+}

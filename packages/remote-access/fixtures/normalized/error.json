@@ -1,0 +1,11 @@
+{
+  "type": "Error",
+  "value": {
+    "error": {
+      "code": "UPSTREAM_UNAVAILABLE",
+      "message": "Check your computer.",
+      "retryable": true,
+      "requestId": "00000000-0000-4000-8000-000000000001"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "type": "SessionStatus",
+  "value": {
+    "phase": "running",
+    "observedAt": "2026-10-08T00:00:00.000Z",
+    "activeTurnId": "turn_test",
+    "errorCode": null
+  }
+}

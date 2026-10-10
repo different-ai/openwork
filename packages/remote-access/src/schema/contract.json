@@ -1,0 +1,601 @@
+{
+  "$id": "https://openwork-remote.invalid/contract/v1",
+  "$defs": {
+    "Capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "readSessions",
+        "readMessages",
+        "readStatus",
+        "events",
+        "createSession",
+        "sendText",
+        "stop",
+        "readApprovals",
+        "replyApproval",
+        "maxPromptBytes",
+        "protocolVersion"
+      ],
+      "properties": {
+        "readSessions": {
+          "type": "boolean"
+        },
+        "readMessages": {
+          "type": "boolean"
+        },
+        "readStatus": {
+          "type": "boolean"
+        },
+        "events": {
+          "type": "boolean"
+        },
+        "createSession": {
+          "type": "boolean"
+        },
+        "sendText": {
+          "type": "boolean"
+        },
+        "stop": {
+          "type": "boolean"
+        },
+        "readApprovals": {
+          "type": "boolean"
+        },
+        "replyApproval": {
+          "type": "boolean"
+        },
+        "maxPromptBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "protocolVersion": {
+          "const": 1
+        },
+        "renameSession": { "type": "boolean" },
+        "modelSettings": {
+          "type": "boolean"
+        },
+        "savedPermissions": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostId",
+        "displayName",
+        "platform",
+        "architecture",
+        "runtimeKind",
+        "protocolVersion",
+        "upstreamVersion",
+        "compatibility",
+        "capabilities"
+      ],
+      "properties": {
+        "hostId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["macos", "linux"]
+        },
+        "architecture": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "runtimeKind": {
+          "type": "string",
+          "enum": ["desktop", "standalone"]
+        },
+        "protocolVersion": {
+          "const": 1
+        },
+        "upstreamVersion": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "compatibility": {
+          "type": "string",
+          "enum": ["supported", "incompatible", "unavailable"]
+        },
+        "capabilities": {
+          "$ref": "#/$defs/Capabilities"
+        }
+      }
+    },
+    "Workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      }
+    },
+    "Session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "workspaceId",
+        "title",
+        "updatedAt",
+        "modelLabel",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "updatedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "modelLabel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "running",
+            "stopping",
+            "waitingApproval",
+            "error",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "MessageBlock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "text"],
+          "properties": {
+            "kind": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "text", "language"],
+          "properties": {
+            "kind": {
+              "const": "code"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            },
+            "language": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "status", "summary"],
+          "properties": {
+            "kind": {
+              "const": "tool"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "status": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "label"],
+          "properties": {
+            "kind": {
+              "const": "omitted"
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "label"],
+          "properties": {
+            "kind": {
+              "const": "unsupported"
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        }
+      ]
+    },
+    "Message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sessionId", "role", "createdAt", "blocks", "state"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "assistant", "system"]
+        },
+        "createdAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MessageBlock"
+          },
+          "maxItems": 1000
+        },
+        "state": {
+          "type": "string",
+          "enum": ["streaming", "complete", "error", "cancelled"]
+        }
+      }
+    },
+    "SessionStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "observedAt", "activeTurnId", "errorCode"],
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "running",
+            "stopping",
+            "waitingApproval",
+            "error",
+            "unknown"
+          ]
+        },
+        "observedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        },
+        "activeTurnId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,200}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "errorCode": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sessionId",
+        "kind",
+        "title",
+        "details",
+        "revision",
+        "supportedDecisions",
+        "createdAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "details": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "supportedDecisions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["allowOnce", "deny"]
+          },
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "createdAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      }
+    },
+    "MutationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "resourceId", "state", "observedAt"],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "resourceId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,200}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "accepted",
+            "confirmed",
+            "rejected",
+            "outcome_unknown"
+          ]
+        },
+        "observedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      }
+    },
+    "PairClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claimId", "pollToken", "expiresAt"],
+      "properties": {
+        "claimId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "pollToken": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "expiresAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$"
+        }
+      }
+    },
+    "PairPoll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["pending", "denied", "expired", "approved"]
+        },
+        "credential": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "host": {
+          "$ref": "#/$defs/Host"
+        },
+        "allowedWorkspaces": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,200}$"
+          },
+          "maxItems": 1000
+        }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "retryable", "requestId"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[A-Z0-9_]{1,100}$"
+            },
+            "message": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "requestId": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "EventHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "sessionChanged",
+            "messageChanged",
+            "statusChanged",
+            "approvalsChanged",
+            "hostChanged"
+          ]
+        },
+        "workspaceId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        },
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,200}$"
+        }
+      }
+    },
+    "RequestId": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId"],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      }
+    },
+    "ApprovalReply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "decision", "revision"],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["allowOnce", "deny"]
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "WorkspaceList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Workspace"
+      },
+      "maxItems": 1000
+    },
+    "SessionList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Session"
+      },
+      "maxItems": 50
+    },
+    "MessageList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Message"
+      },
+      "maxItems": 50
+    },
+    "ApprovalList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Approval"
+      },
+      "maxItems": 50
+    }
+  }
+}

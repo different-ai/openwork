@@ -1,0 +1,8 @@
+{
+  "type": "EventHint",
+  "value": {
+    "kind": "messageChanged",
+    "workspaceId": "ws_test",
+    "sessionId": "ses_test"
+  }
+}

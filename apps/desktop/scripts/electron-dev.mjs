@@ -227,6 +227,7 @@ if (process.env.OPENWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
 if (process.env.OPENWORK_ELECTRON_SKIP_WORKSPACE_BUILD !== "1") {
   console.log("[electron-dev] Building Electron workspace dependencies...");
   runSync(pnpmCmd, ["--filter", "@openwork/headless-threads", "build"], { cwd: repoRoot });
+  runSync(pnpmCmd, ["--filter", "@openwork/remote-access", "build"], { cwd: repoRoot });
   runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
 }
 

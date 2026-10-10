@@ -1,0 +1,32 @@
+{
+  "name": "@openwork/remote-access",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Scoped phone access with host-owned pairing and recoverable mutations.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@openwork/features": "workspace:*",
+    "ajv": "8.20.0",
+    "fastify": "5.12.5",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "1.5.6",
+    "esbuild": "0.25.12",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.11"
+  }
+}

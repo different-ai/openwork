@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "remoteAccess": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Remote access: Pair a phone to continue and rename this computer's chats with explicit project access. Renders DEN_FEATURE_REMOTE_ACCESS."
+            },
             "managedDeployments": {
               "enum": [
                 "",

@@ -35,6 +35,9 @@ supportedArchitectures:
     - x64
     - arm64
 overrides:
+  # Keep the new phone HTTP stack on the patched validator (GHSA-2g4f-4pwh-qvx6).
+  "@fastify/ajv-compiler>ajv": 8.20.0
+  "fast-json-stringify>ajv": 8.20.0
   "@babel/code-frame@<7.29.6": 7.29.7
   "@babel/compat-data@<7.29.6": 7.29.7
   "@babel/core@<7.29.6": 7.29.7

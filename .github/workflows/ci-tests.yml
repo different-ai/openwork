@@ -91,6 +91,12 @@ jobs:
           pnpm --filter @openwork-ee/headless-computer build
           pnpm --filter @openwork-ee/headless-computer test
           pnpm --filter @openwork-ee/headless-runner test:computer-config
+      - name: Test scoped desktop Remote access
+        run: |
+          pnpm --filter @openwork/remote-access build
+          pnpm --filter @openwork/remote-access test
+          node --test apps/desktop/tests/remote-access*.test.mjs
+          pnpm --dir apps/app exec bun test tests/remote-access.test.tsx
       - name: Test headless conversations (follow-ups, read-only lookups, waiting messages)
         run: pnpm --filter @openwork-ee/headless-runner test:conversation
       - name: Boot the app provider tree

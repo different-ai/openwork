@@ -840,6 +840,7 @@
           "key": {
             "type": "string",
             "enum": [
+              "remoteAccess",
               "managedDeployments",
               "installLinks",
               "mcpConnections",
@@ -1037,6 +1038,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "remoteAccess": {
+                      "type": "boolean"
+                    },
                     "managedDeployments": {
                       "type": "boolean"
                     },
@@ -1114,6 +1118,7 @@
                     }
                   },
                   "required": [
+                    "remoteAccess",
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
@@ -1143,6 +1148,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "remoteAccess": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "managedDeployments": {
                       "type": "object",
                       "properties": {
@@ -2433,6 +2494,7 @@
                     }
                   },
                   "required": [
+                    "remoteAccess",
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
@@ -2829,6 +2891,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "remoteAccess": {
+                      "type": "boolean"
+                    },
                     "managedDeployments": {
                       "type": "boolean"
                     },
@@ -2906,6 +2971,7 @@
                     }
                   },
                   "required": [
+                    "remoteAccess",
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
@@ -2935,6 +3001,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "remoteAccess": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "managedDeployments": {
                       "type": "object",
                       "properties": {
@@ -4225,6 +4347,7 @@
                     }
                   },
                   "required": [
+                    "remoteAccess",
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
@@ -9630,6 +9753,7 @@
           "capability": {
             "type": "string",
             "enum": [
+              "remoteAccess",
               "managedDeployments",
               "installLinks",
               "mcpConnections",
@@ -26110,6 +26234,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "remoteAccess": {
+                          "type": "boolean"
+                        },
                         "managedDeployments": {
                           "type": "boolean"
                         },
@@ -26187,6 +26314,7 @@
                         }
                       },
                       "required": [
+                        "remoteAccess",
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
@@ -26216,6 +26344,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "remoteAccess": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "managedDeployments": {
                           "type": "object",
                           "properties": {
@@ -27506,6 +27690,7 @@
                         }
                       },
                       "required": [
+                        "remoteAccess",
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
@@ -27647,6 +27832,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "remoteAccess": {
+                          "type": "boolean"
+                        },
                         "managedDeployments": {
                           "type": "boolean"
                         },
@@ -27724,6 +27912,7 @@
                         }
                       },
                       "required": [
+                        "remoteAccess",
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
@@ -27753,6 +27942,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "remoteAccess": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "managedDeployments": {
                           "type": "object",
                           "properties": {
@@ -29043,6 +29288,7 @@
                         }
                       },
                       "required": [
+                        "remoteAccess",
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
