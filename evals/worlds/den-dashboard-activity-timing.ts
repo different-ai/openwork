@@ -1,4 +1,4 @@
-import { evaluate, type Surface } from "@openwork/cdp";
+import { addInitScript, evaluate, type Surface } from "@openwork/cdp";
 
 export function activityApiTimings(log: string) {
   return log.split("\n").flatMap((line) => {
@@ -14,16 +14,16 @@ export function activityApiTimings(log: string) {
 
 /** Observe DOM readiness and browser request timings; never write app data/cache. */
 export async function activityTiming(web: Surface) {
-  await web.client.send("Page.addScriptToEvaluateOnNewDocument", { source: `
+  await addInitScript(web.client, () => {
     performance.setResourceTimingBufferSize(2000);
-    let state = '';
+    let state = "";
     new MutationObserver(() => {
-      const next = document.querySelector('[data-testid="dashboard-activity-loading"]') ? 'loading'
-        : document.querySelector('[data-testid="dashboard-activity-row"]') ? 'rows' : '';
-      if (next && next !== state) performance.mark('activity-' + next);
+      const next = document.querySelector('[data-testid="dashboard-activity-loading"]') ? "loading"
+        : document.querySelector('[data-testid="dashboard-activity-row"]') ? "rows" : "";
+      if (next && next !== state) performance.mark("activity-" + next);
       state = next;
     }).observe(document, { childList: true, subtree: true });
-  ` });
+  });
   return async () => evaluate(web.client, () => {
     const loading = performance.getEntriesByName("activity-loading")[0]?.startTime ?? null;
     const rows = performance.getEntriesByName("activity-rows")[0]?.startTime ?? null;
