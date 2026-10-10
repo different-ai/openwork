@@ -240,6 +240,25 @@ function stringHeaders(value: unknown): Record<string, string> {
   );
 }
 
+/**
+ * Match OpenCode ConfigVariable.substitute for `{env:VAR}` only.
+ * Missing variables become "" (never leave the literal template).
+ * See anomalyco/opencode packages/opencode/src/config/variable.ts
+ * and https://opencode.ai/docs/config/
+ */
+export function expandEnvTemplates(value: string, env: NodeJS.ProcessEnv = process.env): string {
+  return value.replace(/\{env:([^}]+)\}/g, (_, varName: string) => (env[varName] ?? "") || "");
+}
+
+export function expandEnvInHeaders(
+  headers: Record<string, string>,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, headerValue]) => [key, expandEnvTemplates(headerValue, env)]),
+  );
+}
+
 export function projectedMcpToolName(serverName: string, toolName: string): string {
   const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_");
   return `${sanitize(serverName)}_${sanitize(toolName)}`;
@@ -393,7 +412,7 @@ async function withRemoteClient<T>(
     return response;
   };
   const requestInit = {
-    headers: stringHeaders(config.headers),
+    headers: expandEnvInHeaders(stringHeaders(config.headers)),
   };
   const attempts = [
     () => new StreamableHTTPClientTransport(url, { requestInit, fetch: guardedFetch }),
