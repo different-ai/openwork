@@ -105,10 +105,10 @@ async function withWitness(
     if (!address || typeof address === "string") throw new Error("Missing witness address");
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const handle = { baseUrl: `${baseUrl}/local`, token: "synthetic-local" };
-    const local = resolveWorkspaceEndpoint({ id: "local workspace", workspaceType: "local" }, handle);
+    const local = resolveWorkspaceEndpoint({ id: "local workspace" }, handle);
     // A second OpenWork server: its mount, directory, and credential must stay isolated.
     const remote = resolveWorkspaceEndpoint(
-      { id: "remote/id", workspaceType: "local" },
+      { id: "remote/id" },
       { baseUrl: `${baseUrl}/remote`, token: "synthetic-remote" },
     );
     if (!local || !remote) throw new Error("Missing witness endpoints");
