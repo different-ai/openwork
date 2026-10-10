@@ -36,14 +36,21 @@ function luminance(color: string): number {
 
 /** The hour label's actual ink and nearest painted ancestor; no page evaluation or style overrides. */
 export async function readCalendarRail(surface: Surface) {
-  const labelId = await nodeFor(surface, '[data-calendar-hour="8"]');
-  const label = await styleFor(surface, labelId);
+  // getFlattenedDocument rebuilds the inspector's node ids, so read the tree first and query the label within that same snapshot.
   const flattened = await surface.client.send("DOM.getFlattenedDocument", { depth: -1 });
   if (!isRecord(flattened) || !Array.isArray(flattened.nodes)) throw new Error("Missing ancestor tree");
   const nodes = new Map<number, { parent: number; element: boolean }>();
+  let rootId = 0;
   for (const node of flattened.nodes) {
-    if (isRecord(node) && typeof node.nodeId === "number") nodes.set(node.nodeId, { parent: typeof node.parentId === "number" ? node.parentId : 0, element: node.nodeType === 1 });
+    if (!isRecord(node) || typeof node.nodeId !== "number") continue;
+    nodes.set(node.nodeId, { parent: typeof node.parentId === "number" ? node.parentId : 0, element: node.nodeType === 1 });
+    if (node.nodeType === 9 && typeof node.parentId !== "number" && rootId === 0) rootId = node.nodeId;
   }
+  if (rootId === 0) throw new Error("Missing document in ancestor tree");
+  const found = await surface.client.send("DOM.querySelector", { nodeId: rootId, selector: '[data-calendar-hour="8"]' });
+  if (!isRecord(found) || typeof found.nodeId !== "number" || found.nodeId === 0) throw new Error('Missing [data-calendar-hour="8"]');
+  const labelId = found.nodeId;
+  const label = await styleFor(surface, labelId);
   let ancestor = labelId;
   let background = "";
   while (ancestor > 0) {

@@ -41,7 +41,15 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
   const chosen = options.find((option) => option.id === repeat) ?? options[0];
   // The clicked slot is a virtual anchor; Base UI tracks viewport changes and shifts the actual card, not
   // a guessed height. Shift on both axes lets a short screen use its full height instead of half of it.
-  const positionAnchor = useMemo(() => ({ getBoundingClientRect: () => new DOMRect(anchor.x, anchor.y, 0, 0) }), [anchor.x, anchor.y]);
+  // The card stays touching its anchor, so a slot point left outside a rotated or resized window is pulled back inside the 12px inset.
+  const positionAnchor = useMemo(() => ({
+    getBoundingClientRect: () => new DOMRect(
+      Math.max(12, Math.min(anchor.x, window.innerWidth - 12)),
+      Math.max(12, Math.min(anchor.y, window.innerHeight - 12)),
+      0,
+      0,
+    ),
+  }), [anchor.x, anchor.y]);
   const ready = canSchedule && instructions.trim().length > 0 && !create.isPending;
   const submit = () => {
     if (!ready || !chosen) return;
@@ -54,7 +62,7 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
       <Popover.Portal>
         <Popover.Backdrop className="fixed inset-0 z-40" />
         <Popover.Positioner anchor={positionAnchor} positionMethod="fixed" side="bottom" align="start" collisionPadding={12} collisionAvoidance={{ side: "shift", align: "shift" }} className="z-50">
-          <Popover.Popup initialFocus={field} data-calendar-create className="workbot flex max-h-[calc(100dvh-24px)] w-[min(22rem,calc(100vw-24px))] flex-col rounded-xl bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+          <Popover.Popup initialFocus={field} data-calendar-create className="workbot flex max-h-[min(calc(100dvh-24px),var(--available-height,calc(100dvh-24px)))] w-[min(22rem,calc(100vw-24px))] flex-col rounded-xl bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
             <form className="flex min-h-0 flex-col" onSubmit={(event) => { event.preventDefault(); submit(); }}>
               <div className="flex shrink-0 flex-col gap-0.5 px-4 pb-3 pt-4">
                 <span className="text-[12px] leading-4 text-[var(--wb-muted)]">{slotLabel(anchor.slot)}</span>

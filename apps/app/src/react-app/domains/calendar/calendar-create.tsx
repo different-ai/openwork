@@ -90,7 +90,15 @@ export function CreateAutomationCard(props: {
   const busy = busyAction === "create"
 
   // Keep the slot placement while letting the installed positioner shift the actual card on resize.
-  const positionAnchor = useMemo(() => ({ getBoundingClientRect: () => new DOMRect(props.anchor.x, props.anchor.y, 0, 0) }), [props.anchor.x, props.anchor.y])
+  // The positioner keeps the card touching its anchor, so a slot point left outside a rotated or resized window is pulled back inside the same 12px inset.
+  const positionAnchor = useMemo(() => ({
+    getBoundingClientRect: () => new DOMRect(
+      Math.max(12, Math.min(props.anchor.x, window.innerWidth - 12)),
+      Math.max(12, Math.min(props.anchor.y, window.innerHeight - 12)),
+      0,
+      0,
+    ),
+  }), [props.anchor.x, props.anchor.y])
   const ready = instructions.trim().length > 0 && Boolean(model) && !busy
 
   const submit = async () => {
@@ -128,7 +136,7 @@ export function CreateAutomationCard(props: {
         <PopoverPrimitive.Backdrop className="fixed inset-0 z-40" />
         {/* The shared PopoverContent does not expose a virtual slot anchor; compose its installed primitive. */}
         <PopoverPrimitive.Positioner anchor={positionAnchor} positionMethod="fixed" side="bottom" align="start" collisionPadding={12} collisionAvoidance={{ side: "shift", align: "shift" }} className="z-50">
-          <PopoverPrimitive.Popup initialFocus={field} data-calendar-create className="flex max-h-[calc(100dvh-24px)] w-[min(24rem,calc(100vw-24px))] flex-col rounded-xl bg-popover text-popover-foreground shadow-[var(--dls-card-shadow)] ring-1 ring-border outline-hidden">
+          <PopoverPrimitive.Popup initialFocus={field} data-calendar-create className="flex max-h-[min(calc(100dvh-24px),var(--available-height,calc(100dvh-24px)))] w-[min(24rem,calc(100vw-24px))] flex-col rounded-xl bg-popover text-popover-foreground shadow-[var(--dls-card-shadow)] ring-1 ring-border outline-hidden">
             <form className="flex min-h-0 flex-col" onSubmit={(event) => { event.preventDefault(); void submit() }}>
               <div className="shrink-0 px-4 pb-3 pt-4">
                 <p className="text-xs text-muted-foreground">{slotLabel(props.anchor.slot)}</p>
