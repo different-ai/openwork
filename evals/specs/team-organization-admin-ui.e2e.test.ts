@@ -1,92 +1,112 @@
 import { expect } from "vitest";
-import { denFetch, evalIn, fill, waitFor, type DenSession } from "@openwork/behaviors";
-import { browserScript, navigate } from "@openwork/cdp";
-import { chrome } from "@openwork/hosts";
-import { eventually, needs, server, test } from "@openwork/testkit";
+import { spec } from "@openwork/testkit";
+import { permissionsUiWorld } from "../worlds/permissions-ui.ts";
 import { parseTeamAdminContext } from "./helpers/team-admin-context.ts";
 
-// Super-admin was retired. Managing Admin teams used to need super-admin, so
-// it is the owner's alone by default (Manage Admin teams is not an Admin
-// permission). An inherited admin still sees the checkbox, locked, with who
-// can change it.
-test("owners toggle team Admin in Den Web while inherited admins see a locked checkbox naming the owner, and provenance", { timeout: 600_000 }, async ({ place, evidence }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
-  await using den = await server({ place, web: true, org: { name: "Team Admin UI", admin: { name: "Team Admin Owner" }, members: { teammate: { name: "Inherited Teammate" } } } });
-  const teammate = den.members.teammate;
-  if (!teammate) throw new Error("Missing teammate");
-  const org = async (session = den.admin) => {
-    const result = await denFetch(session, "/v1/org", { headers: { authorization: `Bearer ${session.token}` } });
-    expect(result.response.status, result.text).toBe(200);
-    return parseTeamAdminContext(result.body);
+// Managing Admin teams belongs to the owner by default. Use the same real Den
+// members world as the Permissions journey; trusted UI clicks grant and remove
+// team Admin, while the inherited admin's checkbox stays visible but locked.
+const test = spec.world(permissionsUiWorld, {
+  timeout: 600_000,
+  resources: { surfaces: ["web"], services: ["den"] },
+});
+
+test("an owner grants team Admin while inherited admins keep Admin team changes locked", async ({ world, user, probe, step, evidence }) => {
+  const owner = user.on(world.ownerWeb);
+  const ownerProbe = probe.on(world.ownerWeb);
+  const teammate = user.on(world.mayaWeb);
+  const teammateProbe = probe.on(world.mayaWeb);
+  const teamPath = `/dashboard/members/teams/${world.supportTeamId}`;
+  const grantLabel = "Grant organisation Admin to all members of Support";
+  const teammateContext = async () => {
+    const response = await probe.api(world.maya, "/v1/org", { headers: world.scope });
+    expect(response.response.status).toBe(200);
+    return parseTeamAdminContext(response.body);
   };
-  const initial = await org();
-  const member = initial.members.find((entry) => entry.user.email === teammate.email);
-  if (!member) throw new Error("Missing member");
-  const teamName = "UI Operations";
-  const created = await denFetch(den.admin, "/v1/teams", { method: "POST", headers: { authorization: `Bearer ${den.admin.token}` }, body: JSON.stringify({ name: teamName, memberIds: [member.id] }) });
-  expect(created.response.status, created.text).toBe(201);
-  const team = (await org()).teams.find((entry) => entry.name === teamName);
-  if (!team) throw new Error("Missing team");
-  await using browser = await chrome({ name: "team-admin-ui", host: place.host(), startUrl: den.ref.webUrl, headless: true });
-  await navigate(browser.client, den.ref.webUrl);
-  await waitFor(browser, browserScript((url) => location.href.startsWith(url) && document.readyState === "complete", [den.ref.webUrl]), { timeoutMs: 60_000, label: "Den Web origin loaded" });
-  const teamPath = `/dashboard/members/teams/${team.id}`;
-  const clickButton = (label: string) => evalIn(browser, browserScript((label) => {
-    const button = [...document.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
-    if (!button) throw new Error(`Missing button ${label}`);
-    button.click();
-  }, [label]));
-  const clickCheckbox = () => evalIn(browser, () => {
-    const input = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (!input) throw new Error("Missing checkbox");
-    input.click();
+
+  await step("before: the owner sees members and a readable, selectable Teams tab", async () => {
+    await owner.navigate(world.url("/dashboard/members"));
+    await owner.see({ role: "tab", label: /^Teams/ }, { timeoutMs: 60_000 });
+    const typography = await world.typography();
+    const ok = typography.inactiveTabs.length === 1 && typography.inactiveTabs.every((tab) => tab.contrast >= 4.5)
+      && typography.memberBadges.length === 1 && typography.memberBadges.every((badge) => badge.text === "Owner" && badge.fontSize >= 11 && badge.textTransform === "none")
+      && typography.memberEmails.length === 3 && typography.memberEmails.every((email) => email.contrast >= 4.5);
+    evidence.recordAssertionEvidence("The shared member identity and inactive Teams tab remain readable", `tabs=${JSON.stringify(typography.inactiveTabs)}; badges=${JSON.stringify(typography.memberBadges)}; emails=${JSON.stringify(typography.memberEmails)}`, ok);
+    expect(ok).toBe(true);
+    await owner.screenshot();
   });
-  const checkboxState = () => evalIn(browser, () => {
-    const input = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (!input) throw new Error("Missing checkbox");
-    return { disabled: input.disabled, checked: input.checked };
+
+  await step("the owner opens the team editor from a narrow-screen row action", async () => {
+    await owner.resizeViewport({ width: 390, height: 900, deviceScaleFactor: 1 });
+    await owner.click({ role: "tab", label: /^Teams/ });
+    await owner.see({ role: "link", label: "Support" });
+    const controls = await ownerProbe.dom('[data-testid="team-row"] button');
+    const typography = await world.typography();
+    const fits = controls.viewportWidth === 390 && controls.documentWidth <= controls.viewportWidth && typography.bodyWidth <= typography.viewportWidth
+      && controls.elements.length === 2 && controls.elements.every((element) => element.rect.left >= 0 && element.rect.right <= controls.viewportWidth && element.rect.width > 0);
+    expect(fits).toBe(true);
+    await owner.click({ role: "button", label: "Edit" });
+    await owner.see({ role: "button", label: "Save team" });
+    evidence.recordAssertionEvidence("Team row actions are reachable at 390px without page overflow", `viewport=${controls.viewportWidth}px; body=${typography.bodyWidth}px; Edit and Delete both fit; Edit opens the real team form`, fits);
+    await owner.screenshot();
+    await owner.click({ role: "button", label: "Cancel" });
   });
-  const showAs = async (session: DenSession) => {
-    await evalIn(browser, async () => {
-      await fetch("/api/auth/sign-out", { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: "{}" });
-      localStorage.removeItem("openwork:web:auth-token");
-    }, { awaitPromise: true, timeoutMs: 30_000 });
-    await navigate(browser.client, den.ref.webUrl);
-    await waitFor(browser, () => Boolean(document.querySelector('input[type="email"]')), { timeoutMs: 30_000, label: "email sign-in step" });
-    await fill(browser, 'input[type="email"]', session.email);
-    await clickButton("Next");
-    await waitFor(browser, () => Boolean(document.querySelector('input[type="password"]')), { timeoutMs: 30_000, label: "password sign-in step" });
-    await fill(browser, 'input[type="password"]', session.password);
-    await clickButton("Sign in");
-    await waitFor(browser, () => location.pathname.startsWith("/dashboard") && Boolean(document.querySelector('a[href="/dashboard/members"]')), { timeoutMs: 30_000, label: "signed-in dashboard navigation" });
-    await evalIn(browser, () => document.querySelector<HTMLAnchorElement>('a[href="/dashboard/members"]')?.click());
-    await waitFor(browser, () => [...document.querySelectorAll("button")].some((button) => button.textContent?.includes("Teams")), { timeoutMs: 30_000, label: "Members page" });
-    await clickButton("Teams");
-    await waitFor(browser, browserScript((path) => Boolean(document.querySelector(`a[href="${path}"]`)), [teamPath]), { timeoutMs: 30_000, label: "Teams list" });
-    await evalIn(browser, browserScript((path) => document.querySelector<HTMLAnchorElement>(`a[href="${path}"]`)?.click(), [teamPath]));
-    await waitFor(browser, browserScript((path) => location.pathname === path && document.body.innerText.includes("Grant organisation Admin to all members of UI Operations") && Boolean(document.querySelector('[role="tablist"]')) && Boolean(document.querySelector('input[type="checkbox"]')), [teamPath]), { timeoutMs: 60_000, label: "team detail Admin checkbox visible" });
-  };
-  await showAs(den.admin);
-  expect(await checkboxState()).toEqual({ disabled: false, checked: false });
-  await clickCheckbox();
-  await eventually(async () => (await org(teammate)).currentMember.role, { within: 15_000, until: (role) => role === "member,admin", label: "owner checkbox saved Admin grant" });
-  await eventually(checkboxState, { within: 15_000, until: (state) => state.checked && !state.disabled, label: "saved checkbox reloaded" });
-  await showAs(teammate);
-  expect(await checkboxState()).toEqual({ disabled: true, checked: true });
-  await clickButton("Overview");
-  await waitFor(browser, () => document.body.innerText.includes("Admin via UI Operations") && document.body.innerText.includes("Needs the “Manage Admin teams” permission. Ask the organization owner."), { timeoutMs: 15_000, label: "inherited role provenance and the locked reason naming the owner visible" });
-  expect((await org(teammate)).currentMember.directRole).toBe("member");
-  for (const width of [1280, 390]) {
-    await browser.client.send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
-    await waitFor(browser, browserScript((width) => window.innerWidth === width, [width]), { timeoutMs: 10_000, label: `viewport ${width}` });
-    expect(await evalIn(browser, () => {
-      const label = document.querySelector('input[type="checkbox"]')?.closest("label")?.getBoundingClientRect();
-      return Boolean(label && label.left >= 0 && label.right <= window.innerWidth && document.documentElement.scrollWidth <= window.innerWidth);
-    }), `checkbox fits viewport ${width}`).toBe(true);
-  }
-  await showAs(den.admin);
-  await clickCheckbox();
-  await eventually(async () => (await org(teammate)).currentMember.role, { within: 15_000, until: (role) => role === "member", label: "owner unchecked Admin grant" });
-  expect((await org(teammate)).currentMember.adminTeams).toEqual([]);
-  evidence.recordAssertionEvidence("Team Admin checkbox persists grants and displays provenance without granting Admin team management", "With Manage Admin teams owner-only by default, the owner checked and unchecked the real checkbox; API authority changed both times. The inherited admin saw it checked but locked with “Ask the organization owner”, saw Admin via UI Operations, and the control fit desktop and mobile viewports without horizontal overflow.", true);
+
+  await step("the owner grants Support members team Admin with the real checkbox", async () => {
+    await owner.click({ role: "link", label: "Support" });
+    await owner.see({ role: "checkbox", label: grantLabel }, { timeoutMs: 60_000 });
+    const before = await ownerProbe.dom('input[type="checkbox"]:not(:checked):not(:disabled)');
+    expect(before.elements.length).toBe(1);
+    await owner.click({ role: "checkbox", label: grantLabel });
+    const context = await probe.eventually(teammateContext, { within: 15_000, until: (value) => value.currentMember.role === "member,admin", label: "Support members inherit Admin" });
+    await ownerProbe.eventually(() => ownerProbe.dom('input[type="checkbox"]:checked:not(:disabled)'), { within: 15_000, until: (value) => value.elements.length === 1, label: "saved Admin grant" });
+    const typography = await world.typography();
+    const readable = typography.inactiveTabs.length === 1 && typography.inactiveTabs.every((tab) => tab.contrast >= 4.5);
+    evidence.recordAssertionEvidence("The checkbox persists the grant and the shared Overview tab stays readable", `Maya role=${context.currentMember.role}; grant checked and editable; inactive tab=${JSON.stringify(typography.inactiveTabs)}`, readable && context.currentMember.role === "member,admin");
+    expect(readable).toBe(true);
+    await owner.screenshot();
+  });
+
+  await step("after: the inherited admin sees the checked grant locked, with its owner and provenance", async () => {
+    await teammate.navigate(world.url(teamPath));
+    await teammate.see({ role: "checkbox", label: grantLabel }, { timeoutMs: 60_000 });
+    await teammate.click({ role: "tab", label: "Overview" });
+    await teammate.see({ text: "Admin via Support" });
+    await teammate.see({ text: /Needs the “Manage Admin teams” permission\. Ask the organization owner\./ });
+    const locked = await teammateProbe.dom('input[type="checkbox"]:checked:disabled');
+    const context = await teammateContext();
+    const typography = await world.typography("maya");
+    const ok = locked.elements.length === 1 && context.currentMember.directRole === "member"
+      && context.currentMember.adminTeams.some((team) => team.id === world.supportTeamId)
+      && typography.inactiveTabs.length === 1 && typography.inactiveTabs.every((tab) => tab.contrast >= 4.5)
+      && typography.memberEmails.length === 1 && typography.memberEmails.every((email) => email.contrast >= 4.5);
+    evidence.recordAssertionEvidence("Inherited Admin does not grant Admin team management", `checked, disabled checkbox=${locked.elements.length}; direct role=${context.currentMember.directRole}; Admin via Support; locked reason names the owner; inactive tabs=${JSON.stringify(typography.inactiveTabs)}`, ok);
+    expect(ok).toBe(true);
+    await teammate.screenshot();
+  });
+
+  await step("the inherited admin can still read the locked checkbox and provenance on a narrow screen", async () => {
+    await teammate.resizeViewport({ width: 390, height: 900, deviceScaleFactor: 1 });
+    await teammate.see({ role: "checkbox", label: grantLabel });
+    await teammate.see({ text: "Admin via Support" });
+    const labels = await teammateProbe.dom('label:has(input[type="checkbox"]:disabled)');
+    const typography = await world.typography("maya");
+    const ok = labels.viewportWidth === 390 && labels.documentWidth <= labels.viewportWidth && typography.bodyWidth <= typography.viewportWidth
+      && labels.elements.length === 1 && labels.elements.every((element) => element.rect.left >= 0 && element.rect.right <= labels.viewportWidth)
+      && typography.inactiveTabs.length === 1 && typography.inactiveTabs.every((tab) => tab.contrast >= 4.5);
+    evidence.recordAssertionEvidence("The locked grant remains present and readable at 390px", `checkbox label bounds=${JSON.stringify(labels.elements.map((element) => element.rect))}; page=${labels.documentWidth}px; body=${typography.bodyWidth}px; inactive tabs=${JSON.stringify(typography.inactiveTabs)}`, ok);
+    expect(ok).toBe(true);
+    await teammate.screenshot();
+  });
+
+  await step("the owner removes team Admin without changing the member's direct role", async () => {
+    await owner.see({ role: "checkbox", label: grantLabel });
+    await owner.click({ role: "checkbox", label: grantLabel });
+    const context = await probe.eventually(teammateContext, { within: 15_000, until: (value) => value.currentMember.role === "member", label: "team Admin removed" });
+    await ownerProbe.eventually(() => ownerProbe.dom('input[type="checkbox"]:not(:checked):not(:disabled)'), { within: 15_000, until: (value) => value.elements.length === 1, label: "saved unchecked grant" });
+    const ok = context.currentMember.directRole === "member" && context.currentMember.adminTeams.length === 0;
+    evidence.recordAssertionEvidence("The narrow-screen owner checkbox also persists removal", `Maya role=${context.currentMember.role}; direct role=${context.currentMember.directRole}; inherited Admin teams=${context.currentMember.adminTeams.length}; owner checkbox unchecked and editable`, ok);
+    expect(ok).toBe(true);
+    await owner.screenshot();
+  });
 });

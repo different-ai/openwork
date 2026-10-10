@@ -1,5 +1,6 @@
 import type { DenSession } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
+import { evaluateOnSurface, type Surface } from "@openwork/cdp";
 import { setPermissionsFeature, type PermissionsCall } from "./permissions.ts";
 
 /**
@@ -19,6 +20,71 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function text(value: unknown, label: string): string {
   if (typeof value !== "string" || !value) throw new Error(`${label} was missing from the Den response`);
   return value;
+}
+
+// probe.dom exposes geometry, not computed typography or contrast. This fixed,
+// read-only CDP witness measures real rendered ink and ancestor backgrounds; it
+// never changes the page, clicks a control, or matches Tailwind class names.
+function permissionsTypography(surface: Surface) {
+  return evaluateOnSurface(surface, () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const paint = canvas.getContext("2d", { willReadFrequently: true });
+    if (!paint) throw new Error("Could not measure permission text colors.");
+    const color = (value: string) => {
+      paint.clearRect(0, 0, 1, 1);
+      paint.fillStyle = value;
+      paint.fillRect(0, 0, 1, 1);
+      const data = paint.getImageData(0, 0, 1, 1).data;
+      return { red: data[0] ?? 0, green: data[1] ?? 0, blue: data[2] ?? 0, alpha: (data[3] ?? 0) / 255 };
+    };
+    const luminance = (value: ReturnType<typeof color>) => {
+      const linear = (channel: number) => {
+        const srgb = channel / 255;
+        return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * linear(value.red) + 0.7152 * linear(value.green) + 0.0722 * linear(value.blue);
+    };
+    const read = (selector: string) => Array.from(document.querySelectorAll(selector))
+      .filter((element) => element.getClientRects().length > 0 && Boolean(element.textContent?.trim()))
+      .map((element) => {
+        const style = getComputedStyle(element);
+        const layers: ReturnType<typeof color>[] = [];
+        for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+          layers.unshift(color(getComputedStyle(ancestor).backgroundColor));
+        }
+        const blend = (front: ReturnType<typeof color>, back: ReturnType<typeof color>) => ({
+          red: front.red * front.alpha + back.red * (1 - front.alpha),
+          green: front.green * front.alpha + back.green * (1 - front.alpha),
+          blue: front.blue * front.alpha + back.blue * (1 - front.alpha),
+          alpha: 1,
+        });
+        const background = layers.reduce((back, front) => blend(front, back), { red: 255, green: 255, blue: 255, alpha: 1 });
+        const ink = luminance(blend(color(style.color), background));
+        const backdrop = luminance(background);
+        return {
+          text: element.textContent?.trim() ?? "",
+          fontSize: Number.parseFloat(style.fontSize),
+          fontFamily: style.fontFamily,
+          textTransform: style.textTransform,
+          contrast: (Math.max(ink, backdrop) + 0.05) / (Math.min(ink, backdrop) + 0.05),
+        };
+      });
+    return {
+      inactiveTabs: read('[role="tab"][aria-selected="false"]'),
+      memberHeaders: read('[data-testid="members-column-header"] > span'),
+      memberJoined: read('[data-testid="member-joined"]'),
+      memberLocked: read('[data-testid="member-owner-locked"]'),
+      memberEmails: read('[data-testid="org-member-identity"] > div:last-child > p'),
+      memberBadges: read('[data-testid="org-member-identity"] > div:last-child > div > span'),
+      permissionCounts: read('[data-testid="permission-set-row"] > span'),
+      permissionHeadings: read('[data-testid="permission-set"] h1'),
+      permissionAreaHeaders: read('[data-testid^="permission-area-"] h2'),
+      bodyWidth: document.body.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+    };
+  });
 }
 
 export async function permissionsUiWorld(seed: Seed) {
@@ -72,6 +138,9 @@ export async function permissionsUiWorld(seed: Seed) {
     ownerWeb,
     mayaWeb,
     noraWeb,
+    typography(person: "owner" | "maya" = "owner") {
+      return permissionsTypography(person === "maya" ? mayaWeb : ownerWeb);
+    },
     /** Absolute Den Web URL for a dashboard path. */
     url(path: string): string {
       return new URL(path, den.ref.webUrl).toString();

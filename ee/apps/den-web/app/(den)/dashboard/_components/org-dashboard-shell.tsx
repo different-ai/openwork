@@ -655,7 +655,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         <div className="space-y-5">
           {navSections.map((section) => (
             <div key={section.label} data-sidebar-section={section.label.toLowerCase()}>
-              <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+              <p className="px-3 pb-2 text-[11px] font-medium text-gray-500">
                 {section.label}
               </p>
               <div className="space-y-1">
@@ -711,7 +711,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label={item.attention} title={item.attention} data-testid="nav-attention" />
                           ) : null}
                           {item.badge ? (
-                            <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
+                            <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                               {item.badge}
                             </span>
                           ) : null}
@@ -737,7 +737,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             >
                               <span className="min-w-0 truncate">{child.label}</span>
                               {child.badge ? (
-                                <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
+                                <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                                   {child.badge}
                                 </span>
                               ) : null}

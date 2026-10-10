@@ -68,6 +68,16 @@
               ],
               "description": "Implicit Cloud skills: Agents discover organization skills automatically without waiting for Cloud before starting a task. Renders DEN_FEATURE_IMPLICIT_CLOUD_SKILLS."
             },
+            "denFlatPageHeaders": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Den: flat page headers: Members see compact, readable page headings in Den instead of decorative gradient banners. Renders DEN_FEATURE_DEN_FLAT_PAGE_HEADERS."
+            },
             "dashboardActivity": {
               "enum": [
                 "",

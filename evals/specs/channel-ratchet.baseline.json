@@ -44,7 +44,7 @@
   "sidebar-title-overflow-fade.e2e.test.ts": 8,
   "sso-redirect-screen.e2e.test.ts": 22,
   "task-activity-shimmer.e2e.test.ts": 2,
-  "team-organization-admin-ui.e2e.test.ts": 10,
+  "team-organization-admin-ui.e2e.test.ts": 0,
   "v2-sessionless-first-send.e2e.test.ts": 9,
   "web-workspace-startup.e2e.test.ts": 3,
   "workflow-run-previews.e2e.test.ts": 3,

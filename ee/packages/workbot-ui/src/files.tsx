@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
+import { Tooltip } from "@base-ui/react/tooltip";
 import { Download, FileText, Paperclip, Trash2, X } from "lucide-react";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workbotHost } from "./host";
@@ -240,26 +241,27 @@ export function AttachButton({ enabled, onFiles }: { enabled: boolean; onFiles: 
   const [showLock, setShowLock] = useState(false);
   if (!enabled) {
     return (
-      <span className="relative shrink-0">
-        <button
+      <Tooltip.Root open={showLock} onOpenChange={setShowLock}>
+        <Tooltip.Trigger
           type="button"
           aria-disabled="true"
           aria-label="Attach files. Files aren't set up on this server; your admin can turn them on."
-          onClick={() => setShowLock((open) => !open)}
-          onBlur={() => setShowLock(false)}
-          onMouseEnter={() => setShowLock(true)}
-          onMouseLeave={() => setShowLock(false)}
-          className="grid h-9 w-9 place-items-center rounded-full bg-[var(--wb-chip)] text-[var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+          delay={0}
+          closeOnClick={false}
+          onClick={() => setShowLock(true)}
+          className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           <Paperclip size={18} strokeWidth={1.75} aria-hidden />
-        </button>
-        {showLock ? (
-          <span role="tooltip" className="absolute bottom-[calc(100%+10px)] left-0 z-10 flex w-[300px] items-center gap-2 rounded-xl bg-[var(--wb-text)] px-3 py-2 text-[13px] leading-4 text-[var(--wb-mark-text)]">
-            <LockGlyph />
-            Files aren&apos;t set up on this server. Your admin can turn them on.
-          </span>
-        ) : null}
-      </span>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Positioner side="top" align="start" sideOffset={10} collisionPadding={8} positionMethod="fixed" collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }} className="z-50">
+            <Tooltip.Popup data-workbot-attachment-hint className="workbot flex w-[300px] max-w-[min(var(--available-width),calc(100vw-1rem))] max-h-[var(--available-height)] items-center gap-2 overflow-y-auto rounded-xl bg-[var(--wb-text)] px-3 py-2 text-[13px] leading-4 text-[var(--wb-mark-text)]">
+              <LockGlyph />
+              <span className="min-w-0">Files aren&apos;t set up on this server. Your admin can turn them on.</span>
+            </Tooltip.Popup>
+          </Tooltip.Positioner>
+        </Tooltip.Portal>
+      </Tooltip.Root>
     );
   }
   return (

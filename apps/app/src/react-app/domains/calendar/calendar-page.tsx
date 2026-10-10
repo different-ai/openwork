@@ -4,7 +4,6 @@ import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Lock, Plus, Refre
 import { useNavigate, useSearchParams } from "react-router"
 import type { AutomationRun } from "@openwork/types/automations"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
@@ -229,13 +228,13 @@ export function CalendarPage(props: {
   }
   if (!organizationId || !client) {
     return (
-      <div className="mx-auto max-w-xl p-6 pt-16">
-        <Alert variant="warning">
-          <AlertCircle aria-hidden="true" />
-          <AlertTitle>Select an organization</AlertTitle>
-          <AlertDescription>Your Calendar shows the Automations of your active organization.</AlertDescription>
-        </Alert>
-      </div>
+      <Empty className="pt-16" data-calendar-no-organization>
+        <EmptyHeader>
+          <EmptyMedia variant="icon"><CalendarDays /></EmptyMedia>
+          <EmptyTitle>Select an organization</EmptyTitle>
+        </EmptyHeader>
+        <Button variant="outline" onClick={() => navigate(globalSettingsRoute("cloud-account"))}>Open account settings</Button>
+      </Empty>
     )
   }
   if (feature.isLoading || (enabled && listQuery.isLoading)) return <CalendarSkeleton />
@@ -270,7 +269,7 @@ export function CalendarPage(props: {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-calendar-page>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2.5" data-calendar-toolbar>
         <Button variant="outline" size="sm" onClick={goToday}>Today</Button>
         <div className="flex items-center">
           <Button variant="ghost" size="icon-sm" aria-label="Previous" onClick={() => setAnchor((current) => shiftAnchor(view, current, -1))}><ChevronLeft /></Button>
@@ -330,7 +329,7 @@ export function CalendarPage(props: {
           if (info?.presence === "not_connected") {
             return (
               <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground" data-calendar-provider-status={provider} data-state="not_connected">
-                <Lock className="size-3" aria-hidden="true" />
+                <ProviderLogo provider={provider} />
                 <Button variant="link" size="xs" className="h-auto p-0" onClick={() => info.connectionId ? void orgConnections.connect(info.connectionId) : props.onOpenConnections?.()}>
                   Connect {CALENDAR_PROVIDER_LABEL[provider]}
                 </Button>
@@ -344,7 +343,7 @@ export function CalendarPage(props: {
                 <TooltipTrigger
                   render={<span className="flex items-center gap-1.5 text-xs text-muted-foreground" data-calendar-provider-status={provider} data-state={query.error.kind} />}
                 >
-                  {copy ? <Lock className="size-3" aria-hidden="true" /> : <AlertCircle className="size-3" aria-hidden="true" />}
+                  {query.error.kind === "policy_blocked" ? <Lock className="size-3" aria-hidden="true" /> : <ProviderLogo provider={provider} />}
                   {copy ? (
                     copy.canConnect && (info?.connectionId || props.onOpenConnections) ? (
                       <Button variant="link" size="xs" className="h-auto p-0" onClick={() => info?.connectionId ? void orgConnections.connect(info.connectionId, { forceFreshAuthorization: true }) : props.onOpenConnections?.()}>{copy.label}</Button>
@@ -384,8 +383,8 @@ export function CalendarPage(props: {
         {transport?.kind === "mock" ? <span className="ml-auto rounded bg-amber-3 px-1.5 py-0.5 text-[11px] text-amber-11" data-calendar-mock>Mock calendar</span> : null}
       </div>
 
-      <div className="flex min-h-0 flex-1">
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <div className="relative flex h-[max(24rem,calc(100dvh-10rem))] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1">
           {view === "month" ? (
             <CalendarMonthGrid
               range={range}
@@ -413,8 +412,8 @@ export function CalendarPage(props: {
           {noAutomations && layers.automations ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
               <div className="pointer-events-auto flex items-center gap-3 rounded-xl border border-border bg-background px-4 py-2.5 text-sm shadow-[var(--dls-card-shadow)]" data-calendar-empty>
-                <span>No Automations yet.</span>
-                <Button size="sm" onClick={() => navigate("/automations?create=1")}>New Automation</Button>
+                <span>No automations yet.</span>
+                <Button size="sm" onClick={() => navigate("/automations?create=1")}>New automation</Button>
               </div>
             </div>
           ) : null}

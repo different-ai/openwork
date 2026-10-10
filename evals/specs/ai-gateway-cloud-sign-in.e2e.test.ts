@@ -37,10 +37,17 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     await owner.see({ role: "heading", label: "Add a provider" }, { timeoutMs: 30_000 });
     await owner.type({ testId: "gateway-provider-catalog-filter" }, "Foundry");
     await owner.notSee({ testId: "gateway-provider-pick-microsoft-foundry" }, { timeoutMs: 10_000 });
+    await owner.screenshot();
     await owner.type({ testId: "gateway-provider-catalog-filter" }, "Bedrock", { replace: true });
     await owner.click({ testId: "gateway-provider-pick-amazon-bedrock" });
     await owner.see({ testId: "gateway-provider-title" }, { text: "Add Amazon Bedrock", timeoutMs: 30_000 });
-    await owner.see({ testId: "gateway-member-sign-in-locked" }, { text: "AWS sign-in isn't turned on for your organization yet." });
+    await owner.see({ testId: "gateway-member-sign-in-locked" }, { text: "AWS sign-in isn't turned on for your organization yet. Ask an OpenWork platform admin to turn it on." });
+    const locked = (await probe.on(world.web).dom('[data-testid="gateway-member-sign-in-locked"]')).elements;
+    expect(locked).toHaveLength(1);
+    expect(locked[0]?.text).toContain("OpenWork platform admin");
+    const disabled = (await probe.on(world.web).dom('[role="radio"]:disabled')).elements;
+    expect(disabled).toHaveLength(1);
+    evidence.recordAssertionEvidence("the locked AWS sign-in names the person who can enable it", `${locked[0]?.text}; member sign-in remains disabled and Microsoft Foundry is absent from the catalog.`, locked[0]?.text.includes("OpenWork platform admin") === true && disabled.length === 1);
     await owner.screenshot();
   });
 
@@ -53,6 +60,8 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     await owner.reload();
     await owner.see({ testId: "gateway-provider-title" }, { text: "Add Amazon Bedrock", timeoutMs: 30_000 });
     await owner.notSee({ testId: "gateway-member-sign-in-locked" });
+    expect((await probe.on(world.web).dom('[role="radio"]:disabled')).elements).toHaveLength(0);
+    await owner.screenshot();
   });
 
   await step("the owner adds Amazon Bedrock where each person signs in with IAM Identity Center, without any AWS keys", async () => {
@@ -122,6 +131,18 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     await teammate.navigate(authUrl);
     await teammate.see({ role: "heading", label: "Sign in to AWS" }, { timeoutMs: 60_000 });
     await teammate.see({ testId: "gateway-connect-aws-start" }, { text: "Continue to AWS" });
+    await teammate.screenshot();
+  });
+
+  await step("a teammate can sign in to use models but still cannot configure cloud sign-in", async () => {
+    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/ai-gateway/providers/new?provider=amazon-bedrock`);
+    await teammate.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
+    await teammate.notSee({ testId: "gateway-provider-save" }, { timeoutMs: 30_000 });
+    await teammate.notSee({ testId: "gateway-aws-sso-startUrl" });
+    await teammate.notSee({ testId: "gateway-aws-access-key-id" });
+    const denied = await probe.api(world.teammate, manageable);
+    expect(denied.response.status).toBe(403);
+    evidence.recordAssertionEvidence("enabling cloud sign-in preserves the administration boundary", `The teammate sees no sign-in configuration or Save; manageable providers returns HTTP ${denied.response.status}.`, denied.response.status === 403);
     await teammate.screenshot();
   });
 });

@@ -28,6 +28,7 @@ import { Progress } from "@/components/ui/progress";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
 import { resolveOpenworkConnection } from "./openwork-connection";
 
@@ -660,7 +661,7 @@ function EngineUpgradeNotice(props: { candidate: UpgradeCandidate; onLater: () =
         data-testid="engine-upgrade-notice"
         className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-2xl bg-popover px-4 py-3 text-popover-foreground shadow-[var(--dls-card-shadow)] ring-1 ring-foreground/5"
       >
-        <TriangleAlert className="size-4 shrink-0 text-amber-11" aria-hidden />
+        <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-4 shrink-0 opacity-80 dark:invert" />
         <p className="min-w-0 flex-1 text-sm">{t("engine_migration.upgrade_notice")}</p>
         <div className="flex shrink-0 items-center gap-2">
           <Button type="button" size="xs" variant="ghost" onClick={props.onLater}>

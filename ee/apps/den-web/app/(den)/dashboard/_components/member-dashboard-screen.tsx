@@ -20,14 +20,10 @@ export function MemberDashboardScreen() {
 
   return (
     <div className="flex min-h-[72vh] items-center justify-center px-4" data-testid="member-dashboard">
-      <div className="flex w-full max-w-xl flex-col items-center pb-12 text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">Your workspace</p>
-        <h1 className="mt-3 text-[30px] font-semibold leading-[1.15] tracking-[-0.04em] text-gray-950 sm:text-[34px]">
-          {orgName} is set up for you
+      <div className="flex min-w-0 w-full max-w-xl flex-col items-center pb-12 text-center">
+        <h1 className="max-w-full wrap-anywhere text-[20px] font-semibold leading-normal tracking-[-0.02em] text-gray-950">
+          {`${orgName} is set up for you`}
         </h1>
-        <p className="mt-3 max-w-md text-[15px] leading-6 text-gray-500">
-          {`Your download is already preconfigured for ${orgName} — open it, sign in, and your team's models and plugins are there.`}
-        </p>
 
         <DenButton
           className="mt-8"
@@ -38,12 +34,14 @@ export function MemberDashboardScreen() {
           Get OpenWork
         </DenButton>
 
-        <p className="mt-3 text-[12px] text-gray-500">macOS · Windows · Linux</p>
+        <p className="mt-3 max-w-md text-[13px] leading-5 text-gray-500">
+          Your team&apos;s models and plugins are included when you sign in.
+        </p>
 
         <p className="mt-10 w-full border-t border-gray-100 pt-5 text-[13px] text-gray-500">
           Already installed?{" "}
           <a href={OPEN_APP_URL} className="font-medium text-gray-900 underline-offset-2 hover:underline">
-            Open OpenWork →
+            Open OpenWork
           </a>
         </p>
       </div>

@@ -18,6 +18,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function intersects(a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
 function migrationOf(status: Record<string, unknown>) {
   const migration = isRecord(status.migration) ? status.migration : {};
   return {
@@ -29,7 +33,7 @@ function migrationOf(status: Record<string, unknown>) {
   };
 }
 
-test("a member still on OpenCode v1 upgrades in one click: chats are copied with a backup and OpenWork switches to v2", async ({ world, user, probe, step, evidence }) => {
+test("a member chooses a chat upgrade: chats are copied with a backup and OpenWork switches to v2", async ({ world, user, probe, step, evidence }) => {
   const workspaceId = world.workspace.workspaceId;
   const status = async () => {
     const response = await probe.desktopApi("/experimental/engine-v2-preview/status");
@@ -45,32 +49,112 @@ test("a member still on OpenCode v1 upgrades in one click: chats are copied with
   };
   const fixtureIds = world.chats.map(chat => chat.id).sort();
 
-  await step("before: on OpenCode v1 with four v1 chats, the member is asked to upgrade", async () => {
+  await step("before: the member's existing chats have an optional upgrade, not a warning", async () => {
+    await user.resizeViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
     const before = await probe.eventually(status, {
       within: 60_000, label: "v1 engine with v1 history",
       until: value => value.chatRouting !== true && value.v1HistoryAvailable === true,
     });
     await user.see({ testId: "engine-upgrade-notice" }, { timeoutMs: 60_000 });
-    await user.see({ text: "OpenWork needs to upgrade its chat engine. Your chats are copied over and backed up first." });
-    if (world.fixture) await user.see({ text: world.chats[0]!.title }, { timeoutMs: 60_000 });
+    await user.see({ text: "A chat upgrade is available in OpenWork." });
+    await user.see({ role: "button", text: /^Later$/ });
+    await user.notSee({ text: /OpenWork needs to upgrade its chat engine/ });
+    if (world.fixture) {
+      const first = world.chats[0]!;
+      await user.see({ text: first.title }, { timeoutMs: 60_000 });
+      await user.click({ testId: `sidebar-session-${first.id}` });
+      await user.see({ text: first.reply }, { timeoutMs: 60_000 });
+    }
+    const mark = await probe.dom('[data-testid="engine-upgrade-notice"] img[src$="/openwork-mark.svg"]');
+    const warnings = await probe.dom('[data-testid="engine-upgrade-notice"] .lucide-triangle-alert, [data-testid="engine-upgrade-notice"] [class*="amber"]');
+    expect(mark.elements).toHaveLength(1);
+    expect(warnings.elements).toHaveLength(0);
     await user.screenshot();
     evidence.recordAssertionEvidence(
-      "the upgrade is offered to a member still on v1",
-      `engine v1 (chatRouting ${String(before.chatRouting)}), v1 history ${String(before.v1HistoryAvailable)}, ${world.before.sessions} v1 chats seeded`,
-      before.chatRouting !== true && world.before.sessions === world.expectedChats,
+      "the upgrade is offered without a warning or a mandatory instruction",
+      `neutral OpenWork mark ${mark.elements.length}, warning marks ${warnings.elements.length}; engine v1 (chatRouting ${String(before.chatRouting)}), ${world.before.sessions} v1 chats unchanged`,
+      mark.elements.length === 1 && warnings.elements.length === 0 && before.chatRouting !== true && world.before.sessions === world.expectedChats,
     );
+  });
+
+  await step("before: Later and Upgrade remain reachable in a small desktop window", async () => {
+    // This is a small desktop window, not a phone or a mobile keyboard simulation.
+    await user.resizeViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
+    await user.see({ testId: "engine-upgrade-notice" });
+    // The real pointer hit test proves the controls are not covered by the shell.
+    await user.hover({ role: "button", text: /^Later$/ });
+    await user.hover({ role: "button", text: /^Upgrade$/ });
+    const [notice, controls, header] = await Promise.all([
+      probe.dom('[data-testid="engine-upgrade-notice"]'),
+      probe.dom('[data-testid="engine-upgrade-notice"] button'),
+      probe.dom('[data-session-header] button, [data-session-header-title], [data-sidebar-titlebar] button'),
+    ]);
+    expect(notice.viewportWidth).toBe(800);
+    expect(notice.documentWidth).toBeLessThanOrEqual(800);
+    expect(notice.elements).toHaveLength(1);
+    expect(controls.elements.map(control => control.text)).toEqual(["Later", "Upgrade"]);
+    for (const element of [...notice.elements, ...controls.elements]) {
+      expect(element.rect.width).toBeGreaterThan(0);
+      expect(element.rect.height).toBeGreaterThan(0);
+      expect(element.rect.left).toBeGreaterThanOrEqual(0);
+      expect(element.rect.right).toBeLessThanOrEqual(800);
+      expect(element.rect.top).toBeGreaterThanOrEqual(0);
+      expect(element.rect.bottom).toBeLessThanOrEqual(600);
+    }
+    const visibleHeader = header.elements.filter(element => element.rect.width > 0 && element.rect.height > 0);
+    const noticeBounds = notice.elements[0]!.rect;
+    for (const control of controls.elements) {
+      expect(control.rect.left).toBeGreaterThanOrEqual(noticeBounds.left);
+      expect(control.rect.right).toBeLessThanOrEqual(noticeBounds.right);
+      expect(control.rect.top).toBeGreaterThanOrEqual(noticeBounds.top);
+      expect(control.rect.bottom).toBeLessThanOrEqual(noticeBounds.bottom);
+    }
+    const overlaps = visibleHeader.filter(element => intersects(noticeBounds, element.rect));
+    // Placement is not assumed from source: preserve real rectangles for the
+    // test owner to reproduce the review's unconfirmed header-overlap note.
+    evidence.recordJsonArtifact("Small desktop upgrade notice and header bounds", {
+      viewport: { width: 800, height: 600 }, notice: noticeBounds,
+      controls: controls.elements, header: visibleHeader, overlaps,
+    });
+    evidence.recordAssertionEvidence(
+      "both upgrade choices fit and accept the real pointer in the small desktop window",
+      `800×600; notice ${JSON.stringify(noticeBounds)}; controls ${controls.elements.map(control => `${control.text} ${Math.round(control.rect.width)}×${Math.round(control.rect.height)}`).join(", ")}; both hover hit tests passed`,
+      true,
+    );
+    await user.screenshot();
   });
 
   await step("the upgrade says what changes before anything is copied", async () => {
     await user.click({ role: "button", text: /^Upgrade$/ });
-    await user.see({ text: "Upgrade to OpenCode v2?" });
-    await user.see({ text: /keeps a backup, then switches OpenWork to v2/ });
+    await user.see({ text: "Upgrade chats?" });
+    await user.see({ text: /backing up its existing chats first, then switches OpenWork to v2/ });
+    await user.see({ text: /Your v1 chats stay as they are/ });
     await user.click({ text: "What changes in migrated chats" });
     await user.see({ text: /Chat permissions and undo history reset/ });
     await user.screenshot();
     const migration = migrationOf(await status());
-    evidence.recordAssertionEvidence("nothing is copied until the member confirms", `migration ${String(migration.state)}`, migration.state === "idle");
+    evidence.recordAssertionEvidence("nothing is copied until the member confirms", `migration ${String(migration.state)}; consent names the local copy, existing v2 backup and unchanged v1 chats`, migration.state === "idle");
     expect(migration.state).toBe("idle");
+  });
+
+  await step("the member can cancel without copying chats or switching OpenWork", async () => {
+    await user.click({ role: "button", text: /^Cancel$/ });
+    await user.notSee({ testId: "engine-migration-consent" });
+    await user.see({ testId: "engine-upgrade-notice" });
+    const cancelled = await status();
+    const migration = migrationOf(cancelled);
+    const history = world.readV1History();
+    expect(migration.state).toBe("idle");
+    expect(cancelled.chatRouting).not.toBe(true);
+    expect(history).toEqual(world.before);
+    evidence.recordAssertionEvidence(
+      "declining consent leaves the member's chats and current version unchanged",
+      `migration ${String(migration.state)}, chatRouting ${String(cancelled.chatRouting)}, v1 sha256 ${history.sha256.slice(0, 12)} unchanged`,
+      migration.state === "idle" && cancelled.chatRouting !== true && history.sha256 === world.before.sha256,
+    );
+    await user.screenshot();
+    await user.click({ role: "button", text: /^Upgrade$/ });
+    await user.see({ testId: "engine-migration-consent" });
   });
 
   // Every phase change with its time and counts: the recorded process.

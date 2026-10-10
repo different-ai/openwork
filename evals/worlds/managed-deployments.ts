@@ -1,5 +1,6 @@
 import { createOrg, type Seed } from "@openwork/env";
 import type { DenSession } from "@openwork/behaviors";
+import { callFunctionOnSurface } from "@openwork/cdp";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,6 +58,63 @@ export async function managedDeployments(seed: Seed) {
   const web = await signedInBrowser(den.admin, disabledOrg.id, "/dashboard/deployments");
   return {
     den, web, names, enabledOrgId, disabledOrgId: disabledOrg.id, baseUrl: den.ref.webUrl,
+    // Fixed, read-only text observations: probe.dom() has bounds, but does not
+    // expose computed text/background colors or React text-node fragmentation.
+    deploymentTextReadability: () => callFunctionOnSurface(web, () => {
+      function luminance(color: string) {
+        const match = color.match(/^rgba?\(([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/);
+        if (!match) throw new Error(`Unsupported computed text color: ${color}`);
+        const channels = match.slice(1, 4).map((value) => {
+          const channel = Number(value) / 255;
+          return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+        });
+        return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+      }
+      function background(element: Element) {
+        let parent: Element | null = element;
+        while (parent) {
+          const color = getComputedStyle(parent).backgroundColor;
+          if (color !== "rgba(0, 0, 0, 0)" && color !== "transparent") return color;
+          parent = parent.parentElement;
+        }
+        return "rgb(255, 255, 255)";
+      }
+      function sentence(selector: string) {
+        const element = document.querySelector<HTMLElement>(selector);
+        if (!element) return null;
+        const disclosure = element.closest("details");
+        return {
+          text: element.textContent?.trim() ?? "",
+          textNodeCount: Array.from(element.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()).length,
+          inlineChildren: element.childElementCount,
+          fits: element.scrollWidth <= element.clientWidth,
+          disclosed: !(disclosure instanceof HTMLDetailsElement) || disclosure.open,
+        };
+      }
+      const steps = document.querySelector('[data-testid="managed-deployment-steps"]');
+      const reference = steps?.parentElement?.querySelector("p");
+      const neutralColor = reference ? getComputedStyle(reference).color : null;
+      const labels = Array.from(document.querySelectorAll('[data-testid="managed-deployment-steps"] > li'), (row) => {
+        const label = row.querySelector("span");
+        if (!label) throw new Error("An installation check has no label.");
+        const style = getComputedStyle(label);
+        const foreground = luminance(style.color);
+        const surface = luminance(background(label));
+        return {
+          text: label.textContent?.trim() ?? "",
+          color: style.color,
+          opacity: Number(style.opacity),
+          contrast: (Math.max(foreground, surface) + 0.05) / (Math.min(foreground, surface) + 0.05),
+          pendingMarker: Boolean(row.querySelector("svg.lucide-circle-dashed")),
+          otherMarker: Boolean(row.querySelector("svg:not(.lucide-circle-dashed)")),
+        };
+      });
+      return {
+        neutralColor, labels,
+        consent: sentence('[data-testid="deployment-cost-consent"]'),
+        setup: sentence('[data-testid="deployment-setup-directions"]'),
+      };
+    }, []),
     async [Symbol.asyncDispose]() { await disabledOrg[Symbol.asyncDispose](); },
   };
 }

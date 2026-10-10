@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ArrowRight, Box, Plus, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
-import { buttonVariants } from "../../_components/ui/button";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
+import { DenSkeleton } from "../../_components/ui/skeleton";
 import { getAiGatewayProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { GatewayWhoCanUseModels } from "./gateway-who-can-use-models";
@@ -57,7 +58,6 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
       />
       <div className="min-w-0 w-[200px] shrink-0">
         <p className="truncate text-[13px] font-medium text-gray-900">{provider.name}</p>
-        <p className="truncate font-mono text-[11px] text-gray-400">{provider.providerId}</p>
       </div>
       <p className="w-[140px] shrink-0 text-[13px] text-gray-600">{modelsLabel(provider)}</p>
       <p className={`min-w-0 flex-1 truncate text-[13px] ${nobody ? "text-gray-400" : "text-gray-600"}`} data-testid="gateway-provider-audience">
@@ -80,34 +80,13 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
 }
 
 function EmptyState({ orgSlug }: { orgSlug: string | null }) {
-  const steps = [
-    ["Pick a provider", "OpenRouter, Anthropic, OpenAI, Google…"],
-    ["Paste its key, pick models", "All of them, or just the ones you want"],
-    ["Choose who gets them", "Everyone, specific teams, or specific people"],
-  ];
   return (
-    <div data-testid="gateway-providers-empty" className="rounded-[16px] border border-dashed border-gray-200 bg-white px-8 py-12">
-      <div className="mx-auto flex max-w-[420px] flex-col items-center text-center">
-        <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-gray-100 text-gray-500"><Box className="h-4 w-4" aria-hidden="true" /></span>
-        <h2 className="mt-5 text-[15px] font-medium text-gray-900">No providers yet</h2>
-        <p className="mt-2 text-[13px] leading-5 text-gray-500">Add a provider once. Its models show up in the picker for whoever you choose. Nobody but you sees the key.</p>
-        <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", className: "mt-6" })} data-testid="gateway-provider-create">
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Add a provider
-        </Link>
-      </div>
-      <ol className="mx-auto mt-10 flex max-w-[640px] items-start justify-between gap-2">
-        {steps.map(([title, detail], index) => (
-          <li key={title} className="flex flex-1 items-start gap-2">
-            <div className="flex flex-1 flex-col items-center text-center">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-[11px] font-medium text-gray-600">{index + 1}</span>
-              <p className="mt-3 text-[12px] font-medium text-gray-900">{title}</p>
-              <p className="mt-1 text-[11px] leading-4 text-gray-400">{detail}</p>
-            </div>
-            {index < steps.length - 1 ? <ArrowRight className="mt-1 h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" /> : null}
-          </li>
-        ))}
-      </ol>
+    <div data-testid="gateway-providers-empty" className="flex flex-col items-center gap-4 py-12 text-center">
+      <h2 className="text-[15px] font-medium text-gray-900">No providers yet</h2>
+      <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary" })} data-testid="gateway-provider-create">
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        Add a provider
+      </Link>
     </div>
   );
 }
@@ -115,18 +94,17 @@ function EmptyState({ orgSlug }: { orgSlug: string | null }) {
 /** The AI Providers tab of AI Gateway: who can use models, then one row per provider. */
 export function GatewayProvidersSection() {
   const { orgId, orgSlug } = useOrgDashboard();
-  const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);
+  const { inferenceProviders, busy, error, reloadProviders } = useOrgInferenceProviders(orgId);
   const [query, setQuery] = useState("");
-  const modelCount = inferenceProviders.reduce((total, provider) => total + provider.models.length, 0);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return normalized ? inferenceProviders.filter((provider) => provider.name.toLowerCase().includes(normalized) || provider.providerId.includes(normalized)) : inferenceProviders;
   }, [inferenceProviders, query]);
-  const empty = !busy && inferenceProviders.length === 0;
+  const empty = !busy && !error && inferenceProviders.length === 0;
 
   return (
     <div>
-      {error ? <DenNotice message={error} tone="error" className="mb-6" /> : null}
+      {error ? <DenNotice message="Could not load your providers. Your saved configuration has not changed." tone="error" presentation="inline" className="mb-6" action={<DenButton size="sm" variant="secondary" onClick={() => void reloadProviders()}>Retry</DenButton>} /> : null}
 
       {empty ? <EmptyState orgSlug={orgSlug} /> : (
         <>
@@ -136,21 +114,28 @@ export function GatewayProvidersSection() {
             <div className="mb-3 flex items-center justify-between gap-4">
               <h2 id="gateway-providers-heading" className="text-[14px] font-medium text-gray-900">
                 Providers
-                {!busy ? <span className="ml-2 font-normal text-gray-400">{inferenceProviders.length} · {modelCount} models</span> : null}
               </h2>
               <div className="flex items-center gap-2">
                 <div className="w-[200px]">
-                  <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name" className="h-8 text-[12px]" />
+                  <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name" aria-label="Filter by name" className="h-8 text-[12px]" />
                 </div>
                 <Link href={getNewAiGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "primary", size: "sm" })}>
                   <Plus className="h-4 w-4" aria-hidden="true" />
-                  Add provider
+                  Add a provider
                 </Link>
               </div>
             </div>
-            <div className="divide-y divide-gray-100 rounded-[12px] border border-gray-100 bg-white">
-              {busy ? <p className="px-4 py-6 text-[13px] text-gray-500">Loading providers…</p>
-                : filtered.length === 0 ? <p className="px-4 py-6 text-[13px] text-gray-500">No providers match that filter.</p>
+            <div className="divide-y divide-gray-100 rounded-[12px] border border-gray-100 bg-white" aria-busy={busy}>
+              {busy && inferenceProviders.length === 0 ? Array.from({ length: 3 }, (_, index) => (
+                <div key={index} className={ROW} aria-hidden="true">
+                  <DenSkeleton className="size-8 shrink-0 rounded-lg" />
+                  <DenSkeleton className="h-4 w-[200px] shrink-0" />
+                  <DenSkeleton className="h-4 w-[140px] shrink-0" />
+                  <DenSkeleton className="h-4 flex-1" />
+                  <DenSkeleton className="h-4 w-[110px] shrink-0" />
+                  <DenSkeleton className="h-8 w-20 shrink-0 rounded-lg" />
+                </div>
+              )) : filtered.length === 0 ? !error && !busy ? <p className="px-4 py-6 text-[13px] text-gray-500">No providers match that filter. Try another name.</p> : null
                 : filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} />)}
             </div>
           </section>

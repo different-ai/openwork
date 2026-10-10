@@ -20,6 +20,7 @@ test("an owner sees real workspace additions, keeps them during an outage, and d
   const admin = user.on(world.web);
   const page = probe.on(world.web);
   const member = user.on(world.memberWeb);
+  const memberPage = probe.on(world.memberWeb);
   const connectionTitle = `${world.names.connection} was added`;
   const rowTitles = async () => (await page.dom(`${rows} p:first-child`)).elements.map((entry) => entry.text);
   const ownHeaders = { "x-openwork-org-id": world.orgId };
@@ -235,6 +236,9 @@ test("an owner sees real workspace additions, keeps them during an outage, and d
     await admin.click({ testId: "workspace-switcher-trigger" });
     await admin.click({ role: "button", label: new RegExp(`^${world.names.disabledWorkspace}`) });
     await admin.see({ role: "heading", label: "Quick add" }, { timeoutMs: 60_000 });
+    await admin.see({ role: "heading", label: /From your workspace suite/i }, { timeoutMs: 60_000 });
+    await admin.see({ role: "heading", label: /MCP servers/i }, { timeoutMs: 60_000 });
+    await admin.screenshot();
     await admin.notSee({ testId: "dashboard-activity" });
     const context = await probe.api(world.den.admin, "/v1/org", { headers: { "x-openwork-org-id": world.disabledOrgId } });
     expect(context.response.ok).toBe(true);
@@ -242,18 +246,95 @@ test("an owner sees real workspace additions, keeps them during an outage, and d
     const stored = await probe.api(world.den.admin, `/v1/mcp-connections/${world.disabledConnectionId}`, { headers: { "x-openwork-org-id": world.disabledOrgId } });
     expect(stored.response.ok).toBe(true);
     expect(isRecord(stored.body) && stored.body.name).toBe("Retained connection");
-    evidence.recordAssertionEvidence("the rollout is off by default and preserves existing resources", "Den reports dashboardActivity=false; Quick add remains visible and the stored connector can still be read. Activity is absent.", true);
+    const typography = await world.ownerTypography();
+    expect(typography.quickAddHeadings.map((heading) => heading.text)).toEqual(["From your workspace suite", "MCP servers"]);
+    expect(typography.sidebarLabels.map((label) => label.text)).toEqual(["Work", "Manage", "Observability", "Team"]);
+    expect(typography.sidebarBadges.some((badge) => badge.text === "MCPs")).toBe(true);
+    for (const heading of typography.quickAddHeadings) {
+      expect(heading.fontSize).toBeGreaterThanOrEqual(12);
+      expect(heading.fontSize).toBeLessThanOrEqual(13);
+    }
+    for (const label of [...typography.sidebarLabels, ...typography.sidebarBadges]) {
+      expect(label.fontSize).toBeGreaterThanOrEqual(11);
+      expect(label.fontSize).toBeLessThanOrEqual(13);
+    }
+    for (const label of [...typography.quickAddHeadings, ...typography.sidebarLabels]) {
+      expect(label.fontWeight).toBe(500);
+      expect(label.textTransform).toBe("none");
+      expect(label.letterSpacing).toBe(0);
+    }
+    for (const label of [...typography.quickAddHeadings, ...typography.sidebarLabels, ...typography.sidebarBadges]) {
+      expect(label.contrast).toBeGreaterThanOrEqual(4.5);
+    }
+    const measured = [...typography.quickAddHeadings, ...typography.sidebarLabels, ...typography.sidebarBadges]
+      .map((label) => `${label.text}: ${label.fontSize}px, ${label.contrast.toFixed(2)}:1`).join("; ");
+    evidence.recordAssertionEvidence("the feature-off workspace keeps readable labels and its stored connector", `Den reports dashboardActivity=false; Quick add and Retained connection remain, Activity is absent. Section headings have no uppercase transform or tracking. Rendered typography: ${measured}.`, true);
     await admin.screenshot();
   });
 
-  await step("the ordinary member still gets the installation home, not the admin activity feed", async () => {
+  await step("after: the member gets a readable installation home, not the admin activity feed", async () => {
     await member.reload();
     await member.see({ testId: "member-dashboard" }, { timeoutMs: 60_000 });
     await member.see({ role: "heading", label: `${world.names.workspace} is set up for you` });
     await member.see({ testId: "member-download-app" }, { text: "Get OpenWork" });
+    await member.see({ role: "link", label: "Download OpenWork" });
+    await member.see({ role: "link", label: "Open OpenWork" });
+    await member.see({ text: "Your team's models and plugins are included when you sign in." });
     await member.notSee({ testId: "dashboard-activity" });
     await member.notSee({ text: connectionTitle });
-    evidence.recordAssertionEvidence("member home remains unchanged", "The member sees the preconfigured installation home and Get OpenWork; no admin Activity section or connection-added row is rendered.", true);
+    await member.notSee({ text: /Your download is already preconfigured/ });
+    const context = await probe.api(world.den.members.member, "/v1/org", { headers: ownHeaders });
+    expect(context.response.ok).toBe(true);
+    expect(isRecord(context.body) && isRecord(context.body.organization) && context.body.organization.name).toBe(world.names.workspace);
+    expect(world.names.workspace.length).toBeGreaterThanOrEqual(80);
+    const typography = await world.memberTypography();
+    expect(typography.memberHeadings).toHaveLength(1);
+    const heading = typography.memberHeadings[0];
+    expect(heading.text).toBe(`${world.names.workspace} is set up for you`);
+    expect(heading.textNodes).toBe(1);
+    expect(heading.fontSize).toBeGreaterThan(0);
+    expect(heading.fontSize).toBeLessThanOrEqual(20);
+    expect(heading.fontWeight).toBe(600);
+    expect(heading.textTransform).toBe("none");
+    expect(heading.letterSpacing).toBeLessThan(0);
+    const home = (await memberPage.dom('[data-testid="member-dashboard"]')).elements[0];
+    expect(home.text).not.toMatch(/[·→]/);
+    expect((await memberPage.dom('[data-testid="member-dashboard"] > div > p:first-child')).elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("the member's real workspace name uses one compact heading and keeps both install actions", `Den stores the ${world.names.workspace.length}-character workspace name. The ${heading.fontSize}px heading is one text node, without an eyebrow or decorative dots/arrows; Get OpenWork, header Download, and sign-in context remain. No admin Activity section or connection-added row is rendered.`, true);
     await member.screenshot();
   });
+
+  for (const width of [320, 390]) {
+    await step(`after: the member's long workspace name wraps and Get OpenWork stays reachable at ${width}px`, async () => {
+      await member.resizeViewport({ width, height: 844, deviceScaleFactor: 1 });
+      await member.see({ role: "heading", label: `${world.names.workspace} is set up for you` });
+      await member.see({ testId: "member-download-app", role: "button", label: "Get OpenWork" });
+      await member.see({ testId: "den-download-openwork", role: "link", label: "Download OpenWork" });
+      await member.see({ role: "link", label: "Open OpenWork" });
+      // hover uses the browser's real hit test: fitting a rectangle alone would
+      // not prove that the button is reachable rather than covered by the shell.
+      await member.hover({ testId: "member-download-app" });
+      await member.notSee({ testId: "dashboard-activity" });
+      await member.notSee({ text: connectionTitle });
+      const geometry = await memberPage.dom('main, [data-testid="member-dashboard"], [data-testid="member-dashboard"] h1, [data-testid="member-download-app"], header [data-testid="den-download-openwork"]');
+      expect(geometry.viewportWidth).toBe(width);
+      expect(geometry.documentWidth).toBeLessThanOrEqual(width);
+      for (const element of geometry.elements) {
+        expect(element.rect.left).toBeGreaterThanOrEqual(0);
+        expect(element.rect.right).toBeLessThanOrEqual(width);
+      }
+      const heading = (await memberPage.dom('[data-testid="member-dashboard"] h1')).elements[0];
+      const button = (await memberPage.dom('[data-testid="member-download-app"]')).elements[0];
+      expect(heading.rect.height).toBeGreaterThan(40);
+      expect(button.rect.width).toBeGreaterThan(0);
+      expect(button.rect.height).toBeGreaterThanOrEqual(24);
+      expect(button.rect.top).toBeGreaterThanOrEqual(52);
+      expect(button.rect.bottom).toBeLessThanOrEqual(844);
+      const typography = await world.memberTypography();
+      expect(typography.memberHeadings[0].fontSize).toBeLessThanOrEqual(20);
+      expect(typography.memberHeadings[0].textNodes).toBe(1);
+      evidence.recordAssertionEvidence("the narrow member home has no horizontal overflow or covered download button", `Viewport=${width}px; document=${geometry.documentWidth}px; the real workspace heading wraps to ${heading.rect.height}px. Get OpenWork is ${button.rect.width}×${button.rect.height}px at y=${button.rect.top}..${button.rect.bottom}, inside the first viewport and reachable by the real pointer hit test. Header Download remains; admin activity is absent.`, true);
+      await member.screenshot();
+    });
+  }
 });

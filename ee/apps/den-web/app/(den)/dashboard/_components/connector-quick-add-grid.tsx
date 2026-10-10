@@ -62,7 +62,7 @@ function AddedPill() {
 }
 
 function GroupHeader({ children }: { children: string }) {
-  return <h4 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">{children}</h4>;
+  return <h4 className="mb-3 text-[12px] font-medium text-gray-500">{children}</h4>;
 }
 
 export function ConnectorQuickAddGrid({

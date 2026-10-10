@@ -2,7 +2,7 @@ import { createServer as viteServer } from "vite";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { chrome } from "@openwork/hosts";
-import { evaluateOnSurface, setViewport } from "@openwork/cdp";
+import { clickAt, evaluateOnSurface, setViewport, waitForLocated, type Surface } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 
 type TaskStatus = "queued" | "working" | "paused" | "done" | "failed" | "stopped";
@@ -10,11 +10,54 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const blockedAttachLabel = "Attach files. Files aren't set up on this server; your admin can turn them on.";
+
+/** Observe the real browser's native-picker events; the regular CDP probe client doesn't expose events. */
+async function observeFilePickers(app: Surface, resources: AsyncDisposableStack) {
+  if (!app.client.webSocketDebuggerUrl) throw new Error("File-picker evidence needs the browser's CDP event URL");
+  const socket = new WebSocket(app.client.webSocketDebuggerUrl);
+  resources.defer(() => socket.close());
+  let opened = 0;
+  let ready = false;
+  let failed = false;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Native file-picker observer did not become ready")), 8_000);
+    const fail = (message: string) => { failed = true; clearTimeout(timeout); reject(new Error(message)); };
+    socket.addEventListener("error", () => fail("Native file-picker observer lost its connection"));
+    socket.addEventListener("close", () => { if (!ready) fail("Native file-picker observer closed before setup"); });
+    socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method: "Page.enable" })));
+    socket.addEventListener("message", (event) => {
+      if (typeof event.data !== "string") return;
+      const payload: unknown = JSON.parse(event.data);
+      if (!record(payload)) return;
+      if (payload.method === "Page.fileChooserOpened") opened++;
+      if (payload.id !== 1 && payload.id !== 2) return;
+      if (record(payload.error)) { fail("Chrome refused native file-picker observation"); return; }
+      if (payload.id === 1) {
+        // Intercepting makes an unexpected native picker observable without hanging headless Chrome on an OS dialog.
+        socket.send(JSON.stringify({ id: 2, method: "Page.setInterceptFileChooserDialog", params: { enabled: true } }));
+      } else {
+        ready = true;
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+  });
+  return () => ({ ready: ready && !failed && socket.readyState === WebSocket.OPEN, opened });
+}
+
 /** Real Workbot client and styles; local API responses isolate thread rendering from Den and model execution. */
 export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place }) {
   if (place.kind !== "local") throw new Error("Workbot thread UI proof requires local placement.");
   const resources = new AsyncDisposableStack();
   const streams = new Set<ServerResponse>();
+  // Match the standalone host's real contracts: /me reports these features, the thread reports filesEnabled,
+  // and /files reports { enabled, files }. Files are deliberately unavailable before any browser act.
+  const features = { calendar: false, canSchedule: false, sideChats: false };
+  const files = { enabled: false, files: [] };
+  const writes: Array<{ method: string; path: string }> = [];
+  const requests = { threadReads: 0, fileReads: 0, writes };
+  let blockedPointerClicks = 0;
   const now = Date.now();
   const task = (id: string, title: string): { id: string; title: string; status: TaskStatus; startedAt: number; finishedAt: number | null; update: string; updates: string[] } => ({ id, title, status: "working", startedAt: now, finishedAt: null, update: "Drafting", updates: ["Drafting"] });
   const tasks = [task("brief", "Launch brief"), task("notes", "Meeting notes")];
@@ -33,6 +76,8 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
         server.middlewares.use(async (request, response, next) => {
           const path = new URL(request.url ?? "/", "http://localhost").pathname;
           if (!path.startsWith("/v1/workbot")) { next(); return; }
+          const method = request.method ?? "GET";
+          if (method !== "GET" && method !== "HEAD") requests.writes.push({ method, path });
           response.setHeader("cache-control", "no-store");
           if (path === "/v1/workbot/events") {
             response.writeHead(200, { "content-type": "text/event-stream" });
@@ -42,9 +87,19 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
             return;
           }
           response.setHeader("content-type", "application/json");
-          if (path === "/v1/workbot/me") { response.end(JSON.stringify({ name: "Alex", email: "alex@acme.test", organizationName: "Acme", enabled: true, denUrl: null })); return; }
+          if (path === "/v1/workbot/me") { response.end(JSON.stringify({ name: "Alex", email: "alex@acme.test", organizationName: "Acme", enabled: true, ...features, denUrl: null })); return; }
           if (path === "/v1/workbot" && request.method === "GET") {
-            response.end(JSON.stringify({ available: true, name: "Workbot", organizationName: "Acme", status: turns.some((turn) => turn.status === "working") ? "busy" : "idle", turns, hasEarlier: false, filesEnabled: false })); return;
+            requests.threadReads++;
+            response.end(JSON.stringify({ available: true, name: "Workbot", organizationName: "Acme", status: turns.some((turn) => turn.status === "working") ? "busy" : "idle", turns, hasEarlier: false, filesEnabled: files.enabled })); return;
+          }
+          if (path === "/v1/workbot/files" || path.startsWith("/v1/workbot/files/")) {
+            if (method === "GET" && path === "/v1/workbot/files") {
+              requests.fileReads++;
+              response.end(JSON.stringify(files));
+            } else {
+              response.writeHead(409).end(JSON.stringify({ error: "files_not_enabled", message: "Files aren't set up on this server." }));
+            }
+            return;
           }
           if (path === "/v1/workbot/messages" && request.method === "POST") {
             let body = "";
@@ -71,8 +126,40 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
     // The spec proves hover-only Edit; a member on a desktop has a mouse even when the runner's headless Chrome finds none.
     const app = resources.use(await chrome({ name: "workbot-thread", host: place.host(), startUrl: "about:blank", headless: true, mouse: true }));
     await setViewport(app, { width: 1440, height: 1000, deviceScaleFactor: 1 });
+    const nativePickers = await observeFilePickers(app, resources);
     return {
       app, url,
+      fileAccessWitness: () => ({ filesEnabled: files.enabled, threadReads: requests.threadReads,
+        fileReads: requests.fileReads, fileWrites: requests.writes.filter((request) => request.path.startsWith("/v1/workbot/files")),
+        allWrites: [...requests.writes], blockedPointerClicks, nativePickers: nativePickers() }),
+      // This read-only projection is needed because probe.dom intentionally omits ARIA attributes and containment.
+      // Base UI's Tooltip is visual-only; the trigger's full accessible name carries the reason to screen readers.
+      blockedAttachmentState: () => evaluateOnSurface(app, () => {
+        const trigger = document.querySelector('button[aria-label="Attach files. Files aren\'t set up on this server; your admin can turn them on."]');
+        const tooltip = document.querySelector('[data-workbot-attachment-hint], [role="tooltip"]');
+        const accessibleName = trigger?.getAttribute("aria-label") ?? "";
+        return {
+          blocked: trigger?.getAttribute("aria-disabled") === "true",
+          focused: trigger === document.activeElement,
+          reasonInAccessibleName: accessibleName.includes("Files aren't set up on this server") && accessibleName.includes("your admin can turn them on"),
+          portaled: Boolean(trigger && tooltip && !trigger.closest(".workbot")?.contains(tooltip)),
+          nativeFileInputs: document.querySelectorAll('input[type="file"]').length,
+        };
+      }),
+      async clickBlockedAttachment(inputKind: "mouse" | "touch" = "mouse") {
+        // user.click rejects every aria-disabled control. This one intentionally accepts a click only to show why
+        // it is blocked. Keep ARIA intact and use trusted CDP input, limited to this exact, hittable reason button.
+        if (inputKind === "touch") await app.client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+        const target = await waitForLocated(app, { role: "button", label: blockedAttachLabel }, { timeoutMs: 3_000, mustHitTest: true });
+        if (target.tag !== "button" || target.disabled !== 'aria-disabled="true"') throw new Error("Expected the focusable, blocked attachment reason button");
+        if (inputKind === "touch") {
+          await app.client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ ...target.center, id: 0, radiusX: 1, radiusY: 1, force: 1 }] });
+          await app.client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        } else {
+          await clickAt(app, target.center);
+        }
+        blockedPointerClicks++;
+      },
       respond(id: string, status: TaskStatus) {
         const item = tasks.find((entry) => entry.id === id);
         if (!item) throw new Error("Unknown fixture task");

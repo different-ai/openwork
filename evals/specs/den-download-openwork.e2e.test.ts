@@ -168,13 +168,13 @@ failures("an admin can retry a failed mint and a denied clipboard without reopen
   });
 });
 
-member("a member keeps the existing download hero and uses the header to go straight to install", async ({ world, user, probe, evidence, step }) => {
-  await step("after: the member has a header download alongside the unchanged workspace hero", async () => {
+member("a member keeps both download actions and uses the header to go straight to install", async ({ world, user, probe, evidence, step }) => {
+  await step("after: the member has header and in-page download actions for the same workspace", async () => {
     await user.see({ ...download, role: "link", label: "Download OpenWork" }, { timeoutMs: 90_000 });
     await user.see({ testId: "member-dashboard" });
     await user.see({ role: "heading", label: `${world.organizationName} is set up for you` });
     await user.see({ testId: "member-download-app", role: "button", label: "Get OpenWork" });
-    await user.see({ role: "link", label: "Open OpenWork →" });
+    await user.see({ role: "link", label: "Open OpenWork" });
     await user.notSee(popover);
     const href = await probe.dom('header a[data-testid="den-download-openwork"][href="/install"]');
     expect(href.elements).toHaveLength(1);
