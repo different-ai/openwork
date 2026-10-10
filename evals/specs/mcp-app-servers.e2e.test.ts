@@ -616,6 +616,17 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       evidence.recordAssertionEvidence("A real compilation failure never becomes readiness", `${name}: create_app rejects invalid source; the creation row says Couldn’t create artifact and opens no App.`, true);
       await user.screenshot();
     });
+    await step("after: a turn that only searches leaves no artifact step behind", async () => {
+      const prompt = "Check whether I could create an app that looks up Inventory prices.";
+      await world.prepareLifecycleTurn(prompt, "search");
+      await agent.send(prompt);
+      await user.see({ text: "Inventory can look up unit prices." }, { timeoutMs: 120_000 });
+      expect(await probe.eventually(async () => (await probe.dom('button[aria-label="Stop"]')).elements, { within: 30_000, intervalMs: 200, label: "the search-only turn finishes", until: elements => elements.length === 0 })).toHaveLength(0);
+      expect((await probe.dom('[data-app-builder-step][data-app-creation-stage="needs"]')).elements).toHaveLength(0);
+      await user.notSee({ text: /Preparing artifact/ });
+      evidence.recordAssertionEvidence("Searching without building is not an artifact", `${name}: the person asked about creating an App, the model only called search_capabilities and replied. Once the turn ended, no Preparing artifact step remained.`, true);
+      await user.screenshot();
+    });
     await step("after: stopping creation pauses its step without opening an App", async () => {
       const prompt = "Create an App and hold while writing so I can stop it.";
       await world.prepareLifecycleTurn(prompt, "interrupt");
