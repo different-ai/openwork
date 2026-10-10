@@ -24,6 +24,14 @@ function field(value: unknown, key: string): string {
  * are persisted by Den. Nothing writes Activity's responses or browser cache.
  */
 export async function denDashboardActivity(seed: Seed) {
+  return activityWorkspace(seed, false);
+}
+
+export async function denDashboardActivityLoading(seed: Seed) {
+  return activityWorkspace(seed, true);
+}
+
+async function activityWorkspace(seed: Seed, populated: boolean) {
   const stamp = Date.now();
   const names = {
     workspace: `Activity workspace ${stamp}`,
@@ -104,6 +112,35 @@ export async function denDashboardActivity(seed: Seed) {
     }),
   });
 
+  const performanceEvents: { id: string; title: string; createdAt: string; href: string }[] = [];
+  if (populated) {
+    for (let p = 0; p < 12; p++) {
+      const created = await otherApi("/v1/plugins", {
+        method: "POST",
+        body: JSON.stringify({
+          name: `Reference handbook ${p}`, orgWide: true,
+          components: Array.from({ length: 8 }, (_, s) => ({ type: "skill", input: {
+            rawSourceText: `---\nname: reference-${p}-${s}\ndescription: Summarize supplied notes.\n---\n\nSummarize the supplied notes.`,
+            metadata: { name: `reference-${p}-${s}`, description: "Summarize supplied notes." },
+          } })),
+        }),
+      });
+      const id = field(isRecord(created) ? created.item : undefined, "id");
+      const contents = await otherApi(`/v1/plugins/${id}/resolved`);
+      const skills = records(isRecord(contents) ? contents.items : undefined).map((entry) => entry.configObject).filter(isRecord);
+      for (const skill of skills) {
+        performanceEvents.push({
+          id: `skill:${field(skill.latestVersion, "id")}`,
+          title: `A new version of ${field(skill, "title")} was published`,
+          createdAt: field(skill.latestVersion, "createdAt"),
+          href: `/dashboard/plugins/${id}/skills/${field(skill, "id")}`,
+        });
+      }
+    }
+    if (performanceEvents.length !== 96) throw new Error("Performance fixture must persist 96 dated skills.");
+    performanceEvents.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id));
+  }
+
   const activityPath = "/api/browser/v1/mcp-connections?scope=manageable";
   const viewport = { width: 1440, height: 900 };
   async function signedInBrowser(person: DenSession, startPath: string) {
@@ -136,11 +173,16 @@ export async function denDashboardActivity(seed: Seed) {
   const faults = await activityTransportFaults(web, new URL(den.ref.webUrl).origin, activityPath);
   return {
     den, web, memberWeb, names, orgId, otherOrgId, additions, pluginId, skillId, skillTitle,
-    disabledOrgId: disabledOrg.id, disabledConnectionId,
+    disabledOrgId: disabledOrg.id, disabledConnectionId, performanceEvents: performanceEvents.slice(0, 5),
     baseUrl: den.ref.webUrl,
     async [Symbol.asyncDispose]() {
       try { await faults[Symbol.asyncDispose](); }
-      finally { await Promise.all([otherOrg[Symbol.asyncDispose](), disabledOrg[Symbol.asyncDispose]()]); }
+      finally {
+        // Both handles use the same owner. Do not overlap their session/org
+        // deletion flows, particularly with the populated performance fixture.
+        try { await otherOrg[Symbol.asyncDispose](); }
+        finally { await disabledOrg[Symbol.asyncDispose](); }
+      }
     },
     connector: den.mocks.connector,
     activityPath,

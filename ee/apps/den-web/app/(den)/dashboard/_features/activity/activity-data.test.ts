@@ -200,6 +200,117 @@ test("reuses version metadata only while the freshly authorized latest version i
   assert.equal(refreshed[0]?.id, "skill:v2");
 });
 
+test("old skill histories cannot displace five newer authorized events", async () => {
+  const data = fixtures();
+  addPlugin(data);
+  data[connectionsPath] = { connections: dates.slice(1).map((createdAt, i) => ({ id: `c${i}`, name: `Docs ${i}`, createdAt })) };
+  const skill = membership("skill-1");
+  data["/v1/plugins/plugin-1/resolved"] = { items: [{ ...skill, configObject: { ...skill.configObject, latestVersion: version("v1", dates[0]) } }], nextCursor: null };
+  // A pruned history must not be requested, even on a cold cache.
+  delete data[versionsPath];
+  const seen: string[] = [];
+  const entries = await load(data, requestFrom(data, seen));
+  assert.equal(entries.length, 5);
+  assert(!seen.includes(versionsPath));
+});
+
+test("candidate pruning retains timestamp ties, multiple versions, and unknown bounds", async () => {
+  const data = fixtures();
+  addPlugin(data);
+  data[connectionsPath] = { connections: dates.slice(1).map((createdAt, i) => ({ id: `c${i}`, name: `Docs ${i}`, createdAt })) };
+  const skill = membership("skill-1");
+  for (const latestVersion of [
+    version("v2", dates[5]),
+    { id: "v2" }, // Older servers: no invented timestamp or assumed bound.
+    { ...version("v2", dates[0]), configObjectId: "another-skill" },
+    version("v2", "invalid"),
+    { ...version("deleted", dates[5]), isDeletedVersion: true },
+  ]) {
+    data["/v1/plugins/plugin-1/resolved"] = { items: [{ ...skill, configObject: { ...skill.configObject, latestVersion } }], nextCursor: null };
+    data[versionsPath] = { items: [version("v2", dates[5]), version("v1", dates[4])], nextCursor: null };
+    const seen: string[] = [];
+    const entries = await load(data, requestFrom(data, seen));
+    assert(seen.includes(versionsPath));
+    assert.equal(entries.filter((entry) => entry.kind === "skill").length, 2);
+  }
+});
+
+test("a history tied with the fifth event is read before applying the event-ID tiebreaker", async () => {
+  const data = fixtures();
+  addPlugin(data);
+  data[connectionsPath] = { connections: dates.slice(1).map((createdAt, i) => ({ id: `c${i}`, name: `Docs ${i}`, createdAt })) };
+  const skill = membership("skill-1");
+  data["/v1/plugins/plugin-1/resolved"] = { items: [{ ...skill, configObject: { ...skill.configObject, latestVersion: version("v2", dates[1]) } }], nextCursor: null };
+  data[versionsPath] = { items: [version("v2", dates[1]), version("v1", dates[0])], nextCursor: null };
+  const seen: string[] = [];
+  const entries = await load(data, requestFrom(data, seen));
+  assert(seen.includes(versionsPath));
+  assert.deepEqual(entries.map((entry) => entry.id), ["connection:c4", "connection:c3", "connection:c2", "connection:c1", "connection:c0"]);
+});
+
+test("a candidate-history failure keeps the previous complete snapshot while older histories are pruned", async () => {
+  const data = fixtures();
+  addPlugin(data);
+  data[connectionsPath] = { connections: dates.slice(1).map((createdAt, i) => ({ id: `c${i}`, name: `Docs ${i}`, createdAt })) };
+  const recent = membership("skill-1");
+  const old = membership("old-skill");
+  data["/v1/plugins/plugin-1/resolved"] = { items: [
+    { ...recent, configObject: { ...recent.configObject, latestVersion: version("v2", dates[5]) } },
+    { ...old, configObject: { ...old.configObject, latestVersion: { ...version("old", dates[0]), configObjectId: "old-skill" } } },
+  ], nextCursor: null };
+  data[versionsPath] = { items: [version("v2", dates[5])], nextCursor: null };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryKey = ["activity", "scoped-workspace"];
+  try {
+    const previous = await client.fetchQuery({ queryKey, queryFn: () => load(data) });
+    delete data[versionsPath];
+    await assert.rejects(client.fetchQuery({ queryKey, queryFn: () => load(data) }), /Unexpected request/);
+    assert.deepEqual(client.getQueryData(queryKey), previous);
+    assert.equal(client.getQueryState(queryKey)?.status, "error");
+  } finally {
+    client.clear();
+  }
+});
+
+test("duplicate discovery rows and deleted latest versions cannot manufacture a cutoff", async () => {
+  const data = fixtures();
+  addPlugin(data);
+  data[connectionsPath] = { connections: Array.from({ length: 5 }, () => ({ id: "same", name: "Docs", createdAt: dates[5] })) };
+  const skill = membership("skill-1");
+  data["/v1/plugins/plugin-1/resolved"] = { items: [{ ...skill, configObject: { ...skill.configObject, latestVersion: version("v1", dates[0]) } }], nextCursor: null };
+  data[versionsPath] = { items: [version("v1", dates[0])], nextCursor: null };
+  assert.deepEqual((await load(data)).map((entry) => entry.id), ["connection:same", "skill:v1"]);
+
+  data[connectionsPath] = { connections: dates.slice(2).map((createdAt, i) => ({ id: `c${i}`, name: `Docs ${i}`, createdAt })) };
+  data["/v1/plugins/plugin-1/resolved"] = { items: [{ ...skill, configObject: { ...skill.configObject, latestVersion: { ...version("deleted", dates[5]), isDeletedVersion: true } } }], nextCursor: null };
+  assert.equal((await load(data)).some((entry) => entry.id === "skill:v1"), true);
+});
+
+test("pruned and exhaustive histories produce identical events across dated workspaces", async () => {
+  for (let scenario = 0; scenario < 20; scenario++) {
+    const data = fixtures();
+    data[pluginsPath] = { items: [plugin()], nextCursor: null };
+    const memberships = Array.from({ length: 30 }, (_, i) => {
+      const skill = membership(`skill-${i}`);
+      const versions = Array.from({ length: 5 }, (_, v) => ({
+        id: `v${i}-${v}`, configObjectId: skill.configObject.id,
+        createdAt: new Date(Date.UTC(2026, 9, 1, 0, (i * 7 + scenario * 3) % 17, 5 - v)).toISOString(), isDeletedVersion: false,
+      }));
+      data[`/v1/config-objects/${skill.configObject.id}/versions?limit=5&includeDeleted=false`] = { items: versions, nextCursor: null };
+      return { ...skill, configObject: { ...skill.configObject, latestVersion: versions[0] } };
+    });
+    data["/v1/plugins/plugin-1/resolved"] = { items: memberships, nextCursor: null };
+    const seen: string[] = [];
+    const pruned = await load(data, requestFrom(data, seen));
+    data["/v1/plugins/plugin-1/resolved"] = { items: memberships.map(({ configObject, ...rest }) => ({
+      ...rest, configObject: { ...configObject, latestVersion: { id: configObject.latestVersion?.id } },
+    })), nextCursor: null };
+    const exhaustive = await load(data);
+    assert.deepEqual(pruned, exhaustive);
+    assert(seen.filter((path) => path.includes("/versions?")).length < memberships.length);
+  }
+});
+
 test("propagates cancellation and does not schedule another discovery page", async () => {
   const controller = new AbortController();
   const data = fixtures();

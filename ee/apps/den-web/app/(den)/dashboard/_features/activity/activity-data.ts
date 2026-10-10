@@ -48,7 +48,12 @@ const membershipSchema = z.object({
     objectType: labelSchema,
     status: z.string(),
     deletedAt: z.string().nullable(),
-    latestVersion: z.object({ id: labelSchema }).nullish(),
+    latestVersion: z.object({
+      id: labelSchema,
+      configObjectId: labelSchema.optional(),
+      createdAt: createdAtSchema,
+      isDeletedVersion: z.boolean().optional(),
+    }).nullish(),
   }),
 });
 const attachmentSchema = z.object({
@@ -255,7 +260,28 @@ export async function fetchDashboardActivity(input: DashboardActivityInput): Pro
       if (!skillsById.has(skill.id)) skillsById.set(skill.id, { skill, plugin });
     }
   }
-  const versions = await mapConcurrent([...skillsById.values()], input.signal, async ({ skill, plugin }) => {
+  const skills = [...skillsById.values()];
+  // Resolved contents already carry the latest version, selected by createdAt
+  // descending on the server. Five known events establish a lower bound for
+  // the final top five: a skill whose newest version is strictly older cannot
+  // contribute, so there is no reason to download its entire history again.
+  // These dates only select reads; rows still come from the version endpoint.
+  const candidateDates = new Map(entries.map((entry) => [entry.id, Date.parse(entry.occurredAt)]));
+  for (const { skill } of skills) {
+    const latest = skill.latestVersion;
+    if (latest?.configObjectId === skill.id && latest.createdAt && latest.isDeletedVersion === false) {
+      candidateDates.set(`skill:${latest.id}`, Date.parse(latest.createdAt));
+    }
+  }
+  const cutoff = [...candidateDates.values()].sort((left, right) => right - left)[ACTIVITY_LIMIT - 1];
+  const candidates = skills.filter(({ skill }) => {
+    const latest = skill.latestVersion;
+    // Unknown metadata and timestamp ties are not safe to prune. Keeping ties
+    // also preserves the final event-ID tiebreaker across all version histories.
+    return cutoff === undefined || latest?.configObjectId !== skill.id || !latest.createdAt
+      || Date.parse(latest.createdAt) >= cutoff;
+  });
+  const versions = await mapConcurrent(candidates, input.signal, async ({ skill, plugin }) => {
     // Resolved contents are freshly authorized on every visit. The immutable
     // latest-version ID, not a timestamp, determines whether history changed.
     const latestVersionId = skill.latestVersion?.id;
