@@ -30,6 +30,7 @@ import {
   selectPrimaryCredentialEnvName,
   toRuntimeProviderEnv,
 } from "./provider-credentials.js"
+import { withProviderSettingsFromEnv } from "./provider-settings-from-env.js"
 
 type JsonRecord = Record<string, unknown>
 type OrganizationId = typeof LlmProviderTable.$inferSelect.organizationId
@@ -573,7 +574,7 @@ function prepareMaterialization(providers: CloudProviderMaterializationProvider[
       return {
         provider,
         runtimeProviderId: runtimeProviderId(provider),
-        config: buildProviderConfig(provider),
+        config: withProviderSettingsFromEnv(buildProviderConfig(provider), envEntries),
         envEntries,
       }
     })
