@@ -65,7 +65,7 @@ for (const engine of ["v1", "v2"]) {
       reasoning_options: [{ type: "effort", values: advertisedEfforts }],
       // Exercise Default + Fast's merge with an existing model option without
       // pinning a reasoning effort or changing the actual wire model ID.
-      options: engine === "v1" ? { textVerbosity: "high" } : { providerOptions: { textVerbosity: "high" } },
+      options: { textVerbosity: "high" },
       cost: { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
       experimental: { modes: { fast: {
         provider: { body: { service_tier: "priority" } }, cost: { input: 20, output: 100, cache_read: 2, cache_write: 25 },
@@ -100,6 +100,7 @@ for (const engine of ["v1", "v2"]) {
         await server.injectProvider({
           id: "witness", name: "Synthetic witness", apiKey: "synthetic-only",
           baseUrl: `${baseURL}/v1`, package: "@opencode/ai/providers/openai",
+          settings: { transport: "http" },
           models: Object.entries(models).map(([id, config]) => ({ id, name: config.name ?? id, config })),
         });
       }
@@ -111,6 +112,8 @@ for (const engine of ["v1", "v2"]) {
           headers: { "content-type": "application/json", authorization:
             `Basic ${Buffer.from(`${server.username}:${server.password}`).toString("base64")}` },
           body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(60_000),
+        }).catch((error: unknown) => {
+          throw new Error(`${engine} ${body === undefined ? "GET" : "POST"} ${path} failed`, { cause: error });
         });
         if (engine === "v2" && body !== undefined && path.endsWith("/model")) {
           expect(response.status).toBe(204);
