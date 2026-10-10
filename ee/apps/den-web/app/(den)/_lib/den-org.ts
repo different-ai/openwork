@@ -732,6 +732,10 @@ export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
 }
 
+export function getWorkbotSettingsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/workbot-settings`;
+}
+
 export function getPermissionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/permissions`;
 }

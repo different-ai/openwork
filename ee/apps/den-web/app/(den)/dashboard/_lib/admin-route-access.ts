@@ -17,6 +17,7 @@ import {
   getPermissionsRoute,
   getPluginsRoute,
   getToolTesterRoute,
+  getWorkbotSettingsRoute,
 } from "../../_lib/den-org";
 import { canOpenGatewayArea } from "./gateway-dashboard-access";
 
@@ -48,6 +49,7 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: getBillingRoute(), allowed: (access) => access.canViewBilling, needs: ["billing.view"] },
   { prefix: getCustomLlmProvidersRoute(), allowed: (access) => access.canViewAllLlmProviders, needs: ["llm_providers.view"] },
   { prefix: getDesktopPoliciesRoute(), allowed: (access) => access.canViewDesktopPolicies, needs: ["desktop_policies.view"] },
+  { prefix: getWorkbotSettingsRoute(), allowed: (access) => access.canViewModelsSettings, needs: ["inference.view"] },
   { prefix: getDeploymentsRoute(), allowed: (access) => access.canViewDeployments, needs: ["deployments.view"] },
   { prefix: getAnalyticsRoute(), allowed: (access) => access.canViewUsageAnalytics, needs: ["usage_analytics.view"] },
   { prefix: getDiagnosticsRoute(), allowed: (access) => access.canViewEgressDiagnostics, needs: ["egress_diagnostics.view"] },

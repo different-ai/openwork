@@ -346,6 +346,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `automationCalendar` | `DEN_FEATURE_AUTOMATION_CALENDAR` | default off | Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. |
 | `workbotCalendar` | `DEN_FEATURE_WORKBOT_CALENDAR` | default off | Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot. |
 | `workbotSideChats` | `DEN_FEATURE_WORKBOT_SIDE_CHATS` | default off | Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. |
+| `workbotDefaultModel` | `DEN_FEATURE_WORKBOT_DEFAULT_MODEL` | default off | Organization admins choose, in Manage › Workbot, the model Workbot, the Slack assistant and cloud Automations set to the cloud default answer with. Needs Workbot. |
 | `litellm` | `DEN_FEATURE_LITELLM` | default off | Organization admins can connect their own LiteLLM proxy to AI Gateway, with one shared key, each person's own key, or keys OpenWork creates for each person. |
 | `permissions` | `DEN_FEATURE_PERMISSIONS` | default off | Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults. |
 | `gatewayCloudSignIn` | `DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN` | default off | Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key. |

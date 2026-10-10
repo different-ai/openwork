@@ -107,6 +107,7 @@ jobs:
           pnpm --filter @openwork-ee/utils test
           pnpm --filter @openwork/automations test
           pnpm --filter @openwork-ee/den-api test
+          pnpm --filter @openwork-ee/workbot test:model
       - name: Check sandbox contracts and adapters (no cloud resources)
         run: |
           pnpm --filter @openwork/sandbox build

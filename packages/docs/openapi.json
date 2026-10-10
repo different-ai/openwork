@@ -857,6 +857,7 @@
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
+              "workbotDefaultModel",
               "litellm",
               "permissions",
               "gatewayCloudSignIn",
@@ -1088,6 +1089,9 @@
                     "workbotSideChats": {
                       "type": "boolean"
                     },
+                    "workbotDefaultModel": {
+                      "type": "boolean"
+                    },
                     "litellm": {
                       "type": "boolean"
                     },
@@ -1131,6 +1135,7 @@
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
@@ -2095,6 +2100,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "workbotDefaultModel": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "litellm": {
                       "type": "object",
                       "properties": {
@@ -2450,6 +2511,7 @@
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
@@ -2880,6 +2942,9 @@
                     "workbotSideChats": {
                       "type": "boolean"
                     },
+                    "workbotDefaultModel": {
+                      "type": "boolean"
+                    },
                     "litellm": {
                       "type": "boolean"
                     },
@@ -2923,6 +2988,7 @@
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
@@ -3887,6 +3953,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "workbotDefaultModel": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "litellm": {
                       "type": "object",
                       "properties": {
@@ -4242,6 +4364,7 @@
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
+                    "workbotDefaultModel",
                     "litellm",
                     "permissions",
                     "gatewayCloudSignIn",
@@ -9647,6 +9770,7 @@
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
+              "workbotDefaultModel",
               "litellm",
               "permissions",
               "gatewayCloudSignIn",
@@ -24032,6 +24156,115 @@
           }
         ]
       },
+      "WorkbotSettings": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultModel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "modelAvailable": {
+            "type": "boolean"
+          },
+          "runnerReachable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "model",
+          "defaultModel",
+          "models",
+          "modelAvailable",
+          "runnerReachable"
+        ]
+      },
+      "WorkbotUnknownModelError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "unknown_model"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      },
+      "WorkbotRunnerUnavailableError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "workbot_runner_unavailable"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      },
+      "WorkbotSettingsInput": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "additionalProperties": false
+      },
       "WorkbotSession": {
         "type": "object",
         "properties": {
@@ -24101,6 +24334,16 @@
           },
           "sideChats": {
             "type": "boolean"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -26161,6 +26404,9 @@
                         "workbotSideChats": {
                           "type": "boolean"
                         },
+                        "workbotDefaultModel": {
+                          "type": "boolean"
+                        },
                         "litellm": {
                           "type": "boolean"
                         },
@@ -26204,6 +26450,7 @@
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
@@ -27168,6 +27415,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "workbotDefaultModel": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "litellm": {
                           "type": "object",
                           "properties": {
@@ -27523,6 +27826,7 @@
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
@@ -27698,6 +28002,9 @@
                         "workbotSideChats": {
                           "type": "boolean"
                         },
+                        "workbotDefaultModel": {
+                          "type": "boolean"
+                        },
                         "litellm": {
                           "type": "boolean"
                         },
@@ -27741,6 +28048,7 @@
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
@@ -28705,6 +29013,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "workbotDefaultModel": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "litellm": {
                           "type": "object",
                           "properties": {
@@ -29060,6 +29424,7 @@
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
+                        "workbotDefaultModel",
                         "litellm",
                         "permissions",
                         "gatewayCloudSignIn",
@@ -91694,6 +92059,187 @@
         ]
       }
     },
+    "/v1/org/workbot-settings": {
+      "get": {
+        "operationId": "getV1OrgWorkbotSettings",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Get Workbot settings",
+        "description": "Returns the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default (null means the headless runner's default), and the models the runner can serve. Requires the View OpenWork Models settings permission, Workbot and the workbotDefaultModel feature.",
+        "responses": {
+          "200": {
+            "description": "Workbot settings returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbotSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller lacks the View OpenWork Models settings permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The organization was not found, or Workbot or its workbotDefaultModel feature is off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "const": "feature_disabled"
+                    },
+                    "feature": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "feature"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "putV1OrgWorkbotSettings",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Set Workbot's default model",
+        "description": "Sets the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default, from their next message or run; null uses the headless runner's default. Automations with their own model keep it. Only models the runner serves are accepted. Requires the Manage OpenWork Models permission, a recent sign-in, Workbot and the workbotDefaultModel feature.",
+        "responses": {
+          "200": {
+            "description": "Workbot settings saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbotSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The model is not one the runner serves, or the request was invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkbotUnknownModelError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InvalidRequestError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller lacks the Manage OpenWork Models permission or needs to sign in again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The organization was not found, or Workbot or its workbotDefaultModel feature is off.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "const": "feature_disabled"
+                    },
+                    "feature": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "feature"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The headless runner could not be reached to check the model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkbotRunnerUnavailableError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkbotSettingsInput"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/mcp-connections/{connectionId}/slack-assistant": {
       "get": {
         "operationId": "getV1McpConnectionsByConnectionIdSlackAssistant",
@@ -91763,6 +92309,10 @@
                         }
                       ],
                       "description": "Model chosen for headless runs, or null for the runner default."
+                    },
+                    "modelManagedByOrganization": {
+                      "description": "The organization's default model (Manage › Workbot) is used instead of a model chosen here; `model` is that model.",
+                      "type": "boolean"
                     },
                     "defaultModel": {
                       "anyOf": [

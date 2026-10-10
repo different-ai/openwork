@@ -37,6 +37,7 @@ import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
 import { listHeadlessModels, slackRuntimeForOrganization } from "./headless.js"
 import { getOrganizationFeatures } from "../features.js"
+import { defaultModelFeatureOn, organizationDefaultModel } from "../workbot/model.js"
 import { publicRequestUrl } from "../request-url.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
@@ -94,6 +95,10 @@ const setupResponseSchema = z.object({
   shadowMode: z.boolean(),
   dailyLimit: z.number().int(),
   model: z.string().nullable().describe("Model chosen for headless runs, or null for the runner default."),
+  modelManagedByOrganization: z
+    .boolean()
+    .optional()
+    .describe("The organization's default model (Manage › Workbot) is used instead of a model chosen here; `model` is that model."),
   defaultModel: z.string().nullable().describe("The headless runner's default model, when this workspace uses it."),
   progressUpdates: z.boolean().describe("Whether Slack shows steps and notes while a task works, or only its working status."),
   models: z
@@ -186,7 +191,9 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         channelIds: installation?.channelIds ?? [],
         shadowMode: installation?.shadowMode ?? false,
         dailyLimit: installation?.dailyLimit ?? 100,
-        model: installation?.model ?? null,
+        ...(defaultModelFeatureOn(features)
+          ? { model: await organizationDefaultModel(org.organization.id, { features: async () => features }), modelManagedByOrganization: true }
+          : { model: installation?.model ?? null, modelManagedByOrganization: false }),
         defaultModel: catalog?.defaultModel ?? null,
         progressUpdates: installation?.progressUpdates ?? false,
         models: catalog?.models ?? [],
@@ -224,8 +231,10 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           { error: "individual_accounts_required", message: "Choose a Slack connection in Individual accounts mode." },
           400,
         )
-      const body = c.req.valid("json")
       const features = await getOrganizationFeatures(org.organization.id)
+      // While the organization's default model applies, the installation's own model is kept as it was.
+      const { model: _keptModel, ...settings } = c.req.valid("json")
+      const body = defaultModelFeatureOn(features) ? settings : c.req.valid("json")
       if (body.enabled && !features.slackAssistant) {
         return c.json(
           {

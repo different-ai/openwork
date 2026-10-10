@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build && esbuild src/server/main.ts --bundle --platform=node --format=esm --target=node22 --conditions=development --outfile=dist/server.js --external:hono --external:@hono/node-server --external:zod --external:vite",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:auth": "tsx --test scripts/auth.test.ts"
+    "test:auth": "tsx --test scripts/auth.test.ts",
+    "test:model": "tsx --conditions=development --test scripts/model.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
