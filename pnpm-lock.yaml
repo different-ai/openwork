@@ -350,6 +350,9 @@ importers:
       '@openwork/paths':
         specifier: workspace:*
         version: link:../../packages/paths
+      '@openwork/remote-sessions':
+        specifier: workspace:*
+        version: link:../../packages/remote-sessions
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -1730,6 +1733,8 @@ importers:
       '@types/react':
         specifier: ^19.1.13
         version: 19.2.14
+
+  packages/remote-sessions: {}
 
   packages/review:
     dependencies:

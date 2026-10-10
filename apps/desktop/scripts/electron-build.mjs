@@ -46,6 +46,8 @@ function writeSentryBuildConfig() {
 }
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
+// Build before staging: the runtime copy must contain this checkout's ESM.
+run(pnpmCmd, ["--filter", "@openwork/remote-sessions", "build"], repoRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-runtime-node-modules.mjs"), "--outdir", packagedRuntimeRoot], desktopRoot);
 writeSentryBuildConfig();
 // Records an explicit build-time Auto opt-out, if any.

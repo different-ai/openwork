@@ -248,6 +248,16 @@
               ],
               "description": "Desktop: upgrade prompt to OpenCode v2: Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. Renders DEN_FEATURE_ENGINE_V2_UPGRADE."
             },
+            "remoteSessionTargets": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Remote session targets: Members can register OpenWork and OpenCode clients as computers for remote sessions from MCP, Slack, and chat. Renders DEN_FEATURE_REMOTE_SESSION_TARGETS."
+            },
             "opencodePlugin": {
               "enum": [
                 "",

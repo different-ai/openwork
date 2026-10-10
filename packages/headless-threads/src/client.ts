@@ -95,6 +95,15 @@ function stripTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalJson(item)]));
+  }
+  return value;
+}
+
 export function createHeadlessThreadClient(options: HeadlessThreadClientOptions): HeadlessThreadClient {
   const baseUrl = stripTrailingSlashes(options.baseUrl);
   const workspaceId = options.workspaceId;
@@ -332,7 +341,8 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   interface Transport {
     engine: HeadlessThreadEngine;
     createPath: string;
-    createSession(title: string, model: HeadlessThreadModel | null, signal?: AbortSignal): Promise<SessionWire>;
+    createSession(title: string, model: HeadlessThreadModel | null, signal?: AbortSignal,
+      identity?: Pick<CreateThreadInput, "id" | "metadata">): Promise<SessionWire>;
     /** `model` null keeps the session's current model. */
     submit(threadId: string, prompt: string, model: HeadlessThreadModel | null, messageId: string | undefined, signal?: AbortSignal): Promise<void>;
     messages(threadId: string, signal?: AbortSignal): Promise<MessageWire[]>;
@@ -444,12 +454,28 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   const v2: Transport = {
     engine: "v2",
     createPath: `${v2Path}/session`,
-    async createSession(title, model, signal) {
-      // The server binds the session to this workspace's folder.
+    async createSession(title, model, signal, identity) {
+      // The server binds the session to this workspace's folder while forwarding
+      // native id/metadata intact. V2 deduplicates a repeated creation id.
       const created = await json(v2SessionSchema, "POST", `${v2Path}/session`, {
-        body: { title, ...(model === null ? {} : { model: { providerID: model.providerId, id: model.modelId } }) },
+        body: {
+          title,
+          ...(identity?.id === undefined ? {} : { id: identity.id }),
+          ...(identity?.metadata === undefined ? {} : { metadata: identity.metadata }),
+          ...(model === null ? {} : { model: { providerID: model.providerId, id: model.modelId } }),
+        },
         signal,
       });
+      const expectedMetadata = identity?.metadata;
+      const matchesMetadata = expectedMetadata === undefined || Object.entries(expectedMetadata).every(([key, value]) => (
+        JSON.stringify(canonicalJson(created.data.metadata?.[key])) === JSON.stringify(canonicalJson(value))
+      ));
+      if ((identity?.id !== undefined && created.data.id !== identity.id) || !matchesMetadata) {
+        // An existing id is not authority to adopt its session. Fail before a
+        // prompt when its ownership metadata or native identity differs.
+        throw new HeadlessThreadError({ code: "creation_identity_mismatch", message: "The native session creation receipt did not match its requested identity and metadata.",
+          method: "POST", path: `${v2Path}/session` });
+      }
       return fromV2Session(created.data);
     },
     // v2 takes a client-chosen prompt `id`, keeps it as the user message id,
@@ -542,6 +568,15 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     const prompt = initialPrompt(input.prompt);
     const title = createTitle(input.title);
     const engine = await transport(input.signal);
+    if ((input.id !== undefined || input.metadata !== undefined) && engine.engine !== "v2") {
+      return invalidCreatePayload("Native creation id and metadata are supported only by OpenCode V2; nothing was created.");
+    }
+    if (input.id !== undefined && (!/^ses_[a-zA-Z0-9]+$/.test(input.id) || input.id.length > 240)) {
+      return invalidCreatePayload("id must be a native V2 session id");
+    }
+    if (input.metadata !== undefined && !z.record(z.string(), z.json()).safeParse(input.metadata).success) {
+      return invalidCreatePayload("metadata must be a JSON object");
+    }
     let model = input.model ?? options.defaultModel ?? null;
     // v1 only needs a model to run a prompt; v2 binds one to the session.
     if (model === null && (engine.engine === "v2" || prompt !== undefined)) {
@@ -550,7 +585,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     // Refuse before creating anything, so no empty session is left behind.
     if (model === null && engine.engine === "v2") modelRequired("POST", engine.createPath);
     await requireAvailableModel(engine, model, input.signal);
-    const session = await engine.createSession(title, model, input.signal);
+    const session = await engine.createSession(title, model, input.signal, { id: input.id, metadata: input.metadata });
     if (prompt !== undefined) {
       try {
         await engine.submit(session.id, prompt, model, undefined, input.signal);

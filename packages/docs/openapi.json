@@ -863,6 +863,7 @@
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "remoteSessionTargets",
               "opencodePlugin",
               "platformAuditReads"
             ]
@@ -1108,6 +1109,9 @@
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
+                    "remoteSessionTargets": {
+                      "type": "boolean"
+                    },
                     "opencodePlugin": {
                       "type": "boolean"
                     },
@@ -1145,6 +1149,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
@@ -2441,6 +2446,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "remoteSessionTargets": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "opencodePlugin": {
                       "type": "object",
                       "properties": {
@@ -2578,6 +2639,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads"
                   ],
@@ -3022,6 +3084,9 @@
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
+                    "remoteSessionTargets": {
+                      "type": "boolean"
+                    },
                     "opencodePlugin": {
                       "type": "boolean"
                     },
@@ -3059,6 +3124,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
@@ -4355,6 +4421,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "remoteSessionTargets": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "opencodePlugin": {
                       "type": "object",
                       "properties": {
@@ -4492,6 +4614,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads"
                   ],
@@ -9935,6 +10058,7 @@
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "remoteSessionTargets",
               "opencodePlugin",
               "platformAuditReads"
             ]
@@ -26582,6 +26706,9 @@
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
+                        "remoteSessionTargets": {
+                          "type": "boolean"
+                        },
                         "opencodePlugin": {
                           "type": "boolean"
                         },
@@ -26619,6 +26746,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
@@ -27915,6 +28043,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "remoteSessionTargets": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "opencodePlugin": {
                           "type": "object",
                           "properties": {
@@ -28052,6 +28236,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads"
                       ],
@@ -28241,6 +28426,9 @@
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
+                        "remoteSessionTargets": {
+                          "type": "boolean"
+                        },
                         "opencodePlugin": {
                           "type": "boolean"
                         },
@@ -28278,6 +28466,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
@@ -29574,6 +29763,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "remoteSessionTargets": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "opencodePlugin": {
                           "type": "object",
                           "properties": {
@@ -29711,6 +29956,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads"
                       ],
@@ -32877,7 +33123,7 @@
         ],
         "x-mcp": false,
         "summary": "Connect this desktop as an Automation runner",
-        "description": "Mints a time-limited runner-only credential for the desktop SSE connection and HTTP runner APIs.",
+        "description": "Mints the existing time-limited runner-only credential. Session runners never execute scheduled Automations.",
         "responses": {
           "200": {
             "description": "Runner credential minted.",
@@ -32927,14 +33173,16 @@
                   },
                   "capabilities": {
                     "default": [],
-                    "maxItems": 3,
+                    "maxItems": 5,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "model_attention_v1",
                         "remote_session_v1",
-                        "remote_session_control_v1"
+                        "remote_session_control_v1",
+                        "remote_session_only_v1",
+                        "remote_session_recovery_v1"
                       ]
                     }
                   },

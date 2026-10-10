@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "packages/opencode-plugin/**"
+      - "packages/remote-sessions/**"
       - ".github/workflows/ci-opencode-openwork.yml"
       - ".github/workflows/publish-opencode-plugin.yml"
   push:
     branches: [dev]
     paths:
       - "packages/opencode-plugin/**"
+      - "packages/remote-sessions/**"
       - ".github/workflows/ci-opencode-openwork.yml"
       - ".github/workflows/publish-opencode-plugin.yml"
 
@@ -41,7 +43,16 @@ jobs:
           version: 11.4.0
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts --filter opencode-openwork
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter opencode-openwork --filter @different-ai/openwork-workspace
+
+      - name: Build shared offload primitives
+        run: pnpm --dir ../remote-sessions build
+
+      - name: Test shared offload primitives
+        run: pnpm --dir ../remote-sessions test
+
+      - name: Test shared installed packaging
+        run: node --test ../remote-sessions/test/built.test.mjs
 
       - name: Test
         run: pnpm test

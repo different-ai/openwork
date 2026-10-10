@@ -36,6 +36,7 @@ import type {
   RemoteMcpConfig,
 } from "./opencode.ts"
 import { fetchGatewayInventory, toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
+import type { RemoteRunnerController } from "./remote-runner.ts"
 
 export const PLUGIN_ID = "openwork"
 export const DEFAULT_API_BASE_URL = "https://api.openworklabs.com"
@@ -50,6 +51,9 @@ export interface PluginOptions {
   readonly apiBaseUrl: string
   readonly providers: boolean
   readonly mcp: boolean
+  /** Sign-in alone is not permission to remotely run prompts on this machine. */
+  readonly remoteSessions: boolean
+  readonly label?: string
   readonly refreshIntervalMs: number
 }
 
@@ -64,6 +68,8 @@ export function readOptions(options: Readonly<Record<string, unknown>>): PluginO
     apiBaseUrl,
     providers: options.providers !== false,
     mcp: options.mcp !== false,
+    remoteSessions: options.remoteSessions === true,
+    ...(typeof options.label === "string" && options.label.trim() ? { label: options.label.trim().slice(0, 120) } : {}),
     refreshIntervalMs: interval,
   }
 }
@@ -161,6 +167,8 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
         throw new Error("OpenWork needs OpenCode V2 with the integration, provider and MCP plugin APIs (tested with 2.0.26). The plugin does not install or upgrade OpenCode.")
       }
       const options = readOptions(ctx.options)
+      const remote: { current: RemoteRunnerController | null } = { current: null }
+      let remoteLoading: Promise<void> | null = null
       let snapshot: Snapshot = EMPTY
       let applied = { providers: "", mcp: "" }
       let reportedNeedsAuth = false
@@ -348,12 +356,32 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
       }
 
       // 4. Refresh now, on sign-in, sign-out and account switches, and on a timer.
+      // Explicit remote approval starts a separate background loop; it never gates a native prompt.
+      if (options.remoteSessions) {
+        // Keep ordinary Git sparse installs working without the optional shared source package.
+        // A missing optional module must never disable sign-in, providers, or MCP.
+        remoteLoading = import("./remote-runner.ts").then(async module => {
+          if (disposed) return
+          if (!module.hasNativeSessionHost(ctx)) throw new Error("native_host_unavailable")
+          remote.current = module.createRemoteRunnerController({ ctx, apiBaseUrl: options.apiBaseUrl, label: options.label, fetch: fetcher, now })
+          await ctx.storage.set("remoteSessions/status", { status: "enabled", directory: ctx.location.directory })
+          if (!disposed) remote.current.start()
+        }).catch(async () => {
+          if (disposed) return
+          const message = "Remote sessions could not start. Use OpenCode 2.0.26 or newer with native session APIs. For Git installs, run sparse-checkout set packages/opencode-plugin packages/remote-sessions and reload. Ordinary OpenWork sign-in, models, and MCP remain available."
+          await ctx.storage.set("remoteSessions/status", { status: "unavailable", directory: ctx.location.directory, message }).catch(() => {})
+          console.warn(`[OpenWork] ${message}`)
+        })
+      }
       void refresh()
       const events = new AbortController()
       void (async () => {
         try {
           for await (const event of ctx.event.subscribe({ signal: events.signal })) {
-            if (isCredentialEvent(event)) void refresh()
+            if (isCredentialEvent(event)) {
+              remote.current?.credentialsChanged()
+              void refresh()
+            }
           }
         } catch {
           // The stream ends when the plugin unloads.
@@ -363,10 +391,12 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number } = {}): 
       const timer = setInterval(() => void refresh(), options.refreshIntervalMs)
       timer.unref?.()
 
-      return () => {
+      return async () => {
         disposed = true
         clearInterval(timer)
         events.abort()
+        await remoteLoading
+        await remote.current?.close()
       }
     },
   }

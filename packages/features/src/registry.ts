@@ -214,6 +214,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteSessionTargets: {
+    label: "Remote session targets",
+    description: "Members can register OpenWork and OpenCode clients as computers for remote sessions from MCP, Slack, and chat.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   opencodePlugin: {
     label: "OpenCode plugin sign-in",
     description: "People can sign in to OpenWork from the OpenCode plugin, approve it as \"OpenWork - OpenCode Plugin\", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect.",
