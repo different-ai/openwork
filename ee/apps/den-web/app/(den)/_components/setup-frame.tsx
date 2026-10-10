@@ -104,7 +104,7 @@ function WorkPreview({ step }: { step: SetupStep }) {
  * claim codes, connection links): no stepper, no eyebrows, and the story column
  * shows who is asking through `aside` instead of the product preview.
  */
-export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false }: {
+export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false, compactHeader = false }: {
   step?: SetupStep;
   title: string;
   description: string;
@@ -112,6 +112,8 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
   aside?: ReactNode;
   panelVisual?: ReactNode;
   embedded?: boolean;
+  /** Keep the consent panel focal in a device approval flow; other callers retain display type. */
+  compactHeader?: boolean;
 }) {
   const current = step ? steps.findIndex((item) => item.id === step) : -1;
   const plain = !step;
@@ -143,7 +145,7 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
         <aside className={styles.story}>
           <div className={styles.intro}>
             {step ? <p className={styles.eyebrow}>A LITTLE LESS BUSYWORK</p> : null}
-            <h1>{title}</h1>
+            <h1 className={compactHeader ? styles.compactHeading : undefined}>{title}</h1>
             <p className={styles.description}>{description}</p>
             {step ? (
               <div className={styles.modelSupport}>

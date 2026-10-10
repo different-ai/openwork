@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { ArrowLeft, LockKeyhole, Search } from "lucide-react";
+import { ArrowLeft, LockKeyhole } from "lucide-react";
 import {
   PERMISSION_AREAS,
   PERMISSION_KEYS,
@@ -11,13 +11,13 @@ import {
   type PermissionKey,
 } from "@openwork/types/den/permissions";
 import { buttonVariants } from "../../_components/ui/button";
-import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
 import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { FilterInput } from "./item-list";
 import type { PermissionStatus } from "./permissions-data";
 
 const ENTERPRISE_CONTACT_URL =
@@ -166,18 +166,12 @@ export function permissionMatchesSearch(key: PermissionKey, search: string): boo
   return definition.label.toLowerCase().includes(needle) || (definition.description ?? "").toLowerCase().includes(needle);
 }
 
-/** Search field that filters permissions by title or description. */
+/** Compact filter over permission titles and descriptions, using the shared list control. */
 export function PermissionSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
-    <DenInput
-      type="search"
-      icon={Search}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      placeholder="Search permissions"
-      aria-label="Search permissions"
-      data-testid="permission-search"
-    />
+    <div className="w-[240px] max-w-full" data-testid="permission-search">
+      <FilterInput value={value} onChange={onChange} placeholder="Filter permissions" />
+    </div>
   );
 }
 

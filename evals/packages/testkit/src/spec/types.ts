@@ -41,6 +41,8 @@ export interface User {
   type(target: Target, text: string, options?: TypeOptions): Promise<void>;
   press(key: string): Promise<void>;
   hover(target: Target): Promise<void>;
+  /** Trusted wheel input at an observed point, without locator auto-scrolling. */
+  wheelAt(input: { x: number; y: number; deltaY: number; deltaX?: number }): Promise<void>;
   see(target: Target, options?: SeeOptions): Promise<void>;
   notSee(target: Target, options?: { timeoutMs?: number }): Promise<void>;
   reload(): Promise<void>;

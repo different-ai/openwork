@@ -132,11 +132,11 @@ function MeetingBlock(props: { event: CalendarEvent; timeZone: string; selected:
       data-calendar-provider={event.provider}
       aria-pressed={props.selected}
       aria-label={`${event.title}, ${source}${event.timing.kind === "timed" ? `, ${formatTime(event.timing.start, props.timeZone)}` : ", all day"}`}
-      title={`${event.title} — ${source}`}
+      title={`${event.title}, ${source}`}
       className={cn(meetingBlockClass(props.selected), props.fill && "h-full")}
       onClick={props.onSelect}
     >
-      <span className="truncate font-medium">{event.title} <span className="font-normal text-muted-foreground">— {source}</span></span>
+      <span className="truncate font-medium">{event.title} <span className="font-normal text-muted-foreground">{source}</span></span>
       {props.compact || event.timing.kind !== "timed" ? null : (
         <span className="truncate text-muted-foreground">{formatTime(event.timing.start, props.timeZone)}</span>
       )}
@@ -185,7 +185,8 @@ export function CalendarTimeGrid(props: GridProps) {
 
   useEffect(() => {
     const node = scrollRef.current
-    if (node) node.scrollTop = SCROLL_TO_HOUR * HOUR_HEIGHT_PX
+    // Hour labels are centered on their lines. Land half an hour earlier so the first label is fully visible.
+    if (node) node.scrollTop = SCROLL_TO_HOUR * HOUR_HEIGHT_PX - HOUR_HEIGHT_PX / 2
   }, [props.range.start])
 
   const dayBlocks = useMemo(() => props.range.days.map((day) => {
@@ -201,7 +202,7 @@ export function CalendarTimeGrid(props: GridProps) {
           const header = formatDayHeader(day)
           const isToday = isSameDate(day, today)
           return (
-            <div key={`${day.year}-${day.month}-${day.day}`} className="flex items-baseline gap-1.5 border-l border-border px-2 py-2 text-xs" data-calendar-day={`${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`}>
+            <div key={`${day.year}-${day.month}-${day.day}`} className="flex min-w-0 flex-col items-center justify-center gap-0.5 border-l border-border px-1 py-2 text-xs sm:flex-row sm:items-baseline sm:justify-start sm:gap-1.5 sm:px-2" data-calendar-day={`${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`}>
               <span className="text-muted-foreground">{header.weekday}</span>
               <span className={cn("font-medium", isToday && "flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground")}>{header.day}</span>
             </div>
@@ -227,11 +228,11 @@ export function CalendarTimeGrid(props: GridProps) {
           ))}
         </div>
       ) : null}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} data-calendar-scroll className="min-h-0 flex-1 overflow-y-auto">
         <div className="relative grid" style={{ gridTemplateColumns: columns, height: 24 * HOUR_HEIGHT_PX }}>
           <div className="relative">
             {Array.from({ length: 24 }, (_, hour) => (
-              <span key={hour} className="absolute right-2 -translate-y-1/2 text-[11px] text-muted-foreground" style={{ top: hour * HOUR_HEIGHT_PX }}>
+              <span key={hour} data-calendar-hour={hour} className="absolute right-2 -translate-y-1/2 text-xs text-muted-foreground" style={{ top: hour * HOUR_HEIGHT_PX }}>
                 {hour === 0 ? "" : formatHourLabel(hour)}
               </span>
             ))}

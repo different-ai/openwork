@@ -168,6 +168,7 @@ export type AdminFeature = {
     | "mcpConnections"
     | "driveResumableUploads"
     | "implicitCloudSkills"
+    | "denFlatPageHeaders"
     | "dashboardActivity"
     | "libraryUsage"
     | "modelsAnalytics"
@@ -230,6 +231,7 @@ export type AdminOrganizationsPageResponse = {
       mcpConnections: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
+      denFlatPageHeaders: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -297,6 +299,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       implicitCloudSkills: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      denFlatPageHeaders: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -544,6 +555,7 @@ export type AdminOverviewResponse = {
       mcpConnections: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
+      denFlatPageHeaders: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -611,6 +623,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       implicitCloudSkills: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      denFlatPageHeaders: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2067,6 +2088,7 @@ export type CapabilityDisabledError = {
     | "mcpConnections"
     | "driveResumableUploads"
     | "implicitCloudSkills"
+    | "denFlatPageHeaders"
     | "dashboardActivity"
     | "libraryUsage"
     | "modelsAnalytics"
@@ -6371,6 +6393,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       mcpConnections: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
+      denFlatPageHeaders: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -6438,6 +6461,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       implicitCloudSkills: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      denFlatPageHeaders: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6673,6 +6705,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       mcpConnections: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
+      denFlatPageHeaders: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -6740,6 +6773,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       implicitCloudSkills: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      denFlatPageHeaders: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

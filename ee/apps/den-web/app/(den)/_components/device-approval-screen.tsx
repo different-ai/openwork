@@ -128,6 +128,7 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
   const returnUrl = useMemo(() => deviceReturnUrl(returnTo, clientId), [returnTo, clientId]);
   const command = (clientId && CLIENT_COMMANDS[clientId]) || "openwork-bootstrap login";
   const returnPlace = (clientId && CLIENT_RETURN_PLACES[clientId]) || "your terminal";
+  const isOpenCodePlugin = clientId === "openwork-opencode-plugin";
 
   async function decide(decision: "approve" | "deny") {
     setBusy(decision);
@@ -168,7 +169,8 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
 
   const frame = (children: ReactNode) => (
     <SetupFrame
-      title={`Sign in ${clientName}.`}
+      title={isOpenCodePlugin ? "Approve this sign-in" : `Sign in ${clientName}.`}
+      compactHeader={isOpenCodePlugin}
       description={description}
       panelVisual={<OnboardingTexture />}
       aside={(

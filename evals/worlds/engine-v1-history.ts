@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createServer, type ServerResponse } from "node:http";
 import { promisify } from "node:util";
 import { captureBrowserFilm } from "@openwork/cdp";
 import { dirname, join } from "node:path";
@@ -268,12 +269,99 @@ export async function cloneWholeV1History(source: string, database: string): Pro
 }
 
 /**
+ * A source-built Electron-main fetch gate: only the first real v2 import of
+ * each arranged attempt waits. The engines, snapshots, backups and all status
+ * responses remain real; a renderer-only status delay would not prove this.
+ * No request headers, chat data or response bodies are retained by the witness.
+ */
+async function heldHistoryCopy(database: string, attempts: number) {
+  const token = randomBytes(24).toString("hex");
+  let held: ServerResponse | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const state = { installed: false, arrived: 0, released: 0, failed: 0, expired: false };
+  const release = (outcome: "continue" | "fail") => {
+    if (!held) throw new Error("No real history import is held");
+    clearTimeout(timer);
+    timer = undefined;
+    state.released++;
+    if (outcome === "fail") state.failed++;
+    held.end(outcome);
+    held = null;
+  };
+  const server = createServer((request, response) => {
+    if (request.method !== "GET" || request.headers.authorization !== `Bearer ${token}`) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.setHeader("content-type", "text/plain");
+    if (request.url === "/ready") { state.installed = true; response.end("ready"); return; }
+    if (request.url !== "/copy") { response.writeHead(404).end(); return; }
+    if (held) { response.writeHead(409).end("fail"); return; }
+    state.arrived++;
+    if (state.arrived > attempts) { response.end("continue"); return; }
+    held = response;
+    // The native import has a 30-second deadline. Expiry fails the witness,
+    // rather than silently completing before the person's acts finish.
+    timer = setTimeout(() => { state.expired = true; release("fail"); }, 25_000);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("History-copy witness has no loopback listener");
+  const preload = join(dirname(database), "history-copy-main-fetch.cjs");
+  // --require applies only to source-built Electron. The guard excludes the
+  // pnpm/Vite processes and every child engine sharing this environment.
+  await writeFile(preload, `
+if (process.versions.electron && process.type === "browser" && process.env.OPENCODE_DB === ${JSON.stringify(database)}) {
+  const delegate = globalThis.fetch;
+  let heldAttempts = 0;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+    if (method === "POST" && url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+        && url.pathname === "/api/session/import" && heldAttempts < ${attempts}) {
+      heldAttempts++;
+      const control = await delegate(${JSON.stringify(`http://127.0.0.1:${address.port}/copy`)}, {
+        headers: { authorization: ${JSON.stringify(`Bearer ${token}`)} }, signal: init?.signal,
+      });
+      if (!control.ok || await control.text() !== "continue") {
+        return new Response(JSON.stringify({ error: "Fixture-held copy interrupted" }), { status: 503, headers: { "content-type": "application/json" } });
+      }
+    }
+    return delegate(input, init);
+  };
+  void delegate(${JSON.stringify(`http://127.0.0.1:${address.port}/ready`)}, {
+    headers: { authorization: ${JSON.stringify(`Bearer ${token}`)} },
+  }).then(response => response.text()).catch(() => undefined);
+}
+`, { mode: 0o600 });
+  return {
+    preload,
+    read: () => ({ ...state, held: held !== null }),
+    release,
+    async [Symbol.asyncDispose]() {
+      if (held) release("fail");
+      clearTimeout(timer);
+      server.closeAllConnections();
+      try { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+      finally { await rm(preload, { force: true }); }
+    },
+  };
+}
+
+/**
  * A signed-in desktop still on OpenCode v1, with an isolated v1 history and the
  * organization's `engineV2Upgrade` feature on, so it is offered the upgrade.
  */
 export async function engineV1HistoryUpgrade(seed: Seed, { place }: { place: Place }) {
   if (place.kind !== "local") throw new SkipError("the seeded v1 history is a file the local desktop opens directly");
   if (!await localMysqlIsRunning()) throw new SkipError("local MySQL for a disposable Den database");
+  if (process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim()) {
+    throw new SkipError("the real held-copy witness requires source-built Electron's main-process preload");
+  }
+  await using resources = new AsyncDisposableStack();
   const source = process.env.OPENWORK_EVAL_V1_HISTORY_SOURCE?.trim() || null;
   const profileDir = seed.tmpPath("v1-history-profile");
   const workspaceDir = seed.tmpPath("v1-history-workspace");
@@ -294,20 +382,32 @@ export async function engineV1HistoryUpgrade(seed: Seed, { place }: { place: Pla
   const den = await seed.den({ org: { name: "Engine upgrade" } });
   await enableOrganizationCapabilities(seed, den.admin, { engineV2Upgrade: true });
   const opencode2 = process.env.OPENWORK_EVAL_OPENCODE2_BIN?.trim();
+  const copyGate = resources.use(await heldHistoryCopy(database, source === null ? 2 : 1));
+  const nodeOptions = [process.env.NODE_OPTIONS?.trim(), `--require=${JSON.stringify(copyGate.preload)}`].filter(Boolean).join(" ");
   const app = await seed.desktop({
     den, as: "admin", name: "v1-history-upgrade", profileDir, workspacePath,
     env: {
       // One file for the in-process server, the migration and the v1 engine.
       OPENCODE_DB: database,
+      NODE_OPTIONS: nodeOptions,
       ...(opencode2 ? { OPENWORK_OPENCODE2_BIN: opencode2 } : {}),
     },
   });
   const workspace = await seed.workspace(app, workspacePath);
+  const witnessDeadline = Date.now() + 5_000;
+  while (!copyGate.read().installed && Date.now() < witnessDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (!copyGate.read().installed) throw new Error("Source-built Electron did not install the real main-process copy gate");
   // Optional recording of the whole journey as CDP screencast frames.
   const filmDir = process.env.OPENWORK_EVAL_FILM_DIR?.trim();
   const film = filmDir ? await captureBrowserFilm(app, filmDir) : null;
+  resources.defer(async () => { await film?.stop(); });
+  const lifetime = resources.move();
   return {
     app, den, workspace, workspacePath, database,
+    readHeldCopy: copyGate.read,
+    releaseHeldCopy: copyGate.release,
     /** True for the committed fixture; false when a local copy of real history was seeded. */
     fixture: source === null,
     /** The entire real history (an APFS clone), not a recent slice. */
@@ -318,6 +418,6 @@ export async function engineV1HistoryUpgrade(seed: Seed, { place }: { place: Pla
     chats: source === null ? V1_FIXTURE_CHATS : [],
     readV1History: () => readV1HistoryDigest(database),
     readCoverage: async () => readMigrationCoverage(database, await findV2Database(profileDir)),
-    async [Symbol.asyncDispose]() { await film?.stop(); },
+    async [Symbol.asyncDispose]() { await lifetime.disposeAsync(); },
   };
 }

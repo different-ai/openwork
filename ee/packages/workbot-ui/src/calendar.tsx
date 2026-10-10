@@ -31,6 +31,7 @@ import {
   type CalendarView,
   type LocalDate,
 } from "@openwork/calendar";
+import { Dialog } from "@base-ui/react/dialog";
 import { useMeetingsQuery, useRunsInRangeQuery } from "@openwork/calendar/react";
 import type { AutomationList, AutomationModel, AutomationRun, AutomationSchedule } from "@openwork/types/automations";
 import { Check as CheckMark, ChevronLeft, ChevronRight, Cloud, Lock, Monitor, Plus, X } from "lucide-react";
@@ -210,7 +211,7 @@ function TimeGrid(props: {
         {props.days.map((day) => {
           const isToday = compareDates(day, today) === 0;
           return (
-            <div key={dateKey(day)} className="flex h-11 flex-1 basis-0 items-center gap-1.5 px-2.5" data-calendar-day={dateKey(day)}>
+            <div key={dateKey(day)} className="flex h-11 min-w-0 flex-1 basis-0 flex-col items-center justify-center gap-0.5 px-1 sm:flex-row sm:justify-start sm:gap-1.5 sm:px-2.5" data-calendar-day={dateKey(day)}>
               <span className="text-[12px] font-medium leading-4 text-[#687076]">{formatDate(day, "en-US", { weekday: "short" })}</span>
               {isToday
                 ? <span className="flex h-5.5 min-w-5.5 items-center justify-center rounded-full bg-[#011627] px-1.5 text-[12px] font-semibold leading-4 text-[#E6EDF3]">{day.day}</span>
@@ -237,7 +238,7 @@ function TimeGrid(props: {
           <div className="flex w-14 shrink-0 flex-col">
             {hours.map((hour) => (
               <div key={hour} className="flex h-14.5 shrink-0 justify-end pr-2.5">
-                <span className="-mt-1.75 text-[11px] leading-3.5 text-[#9BA1A6]">{hourLabel(hour)}</span>
+                <span data-calendar-hour={hour} className="-mt-1.75 text-[12px] leading-4 text-[var(--wb-muted)]">{hourLabel(hour)}</span>
               </div>
             ))}
           </div>
@@ -337,9 +338,9 @@ function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anc
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex min-h-9 items-center border-b border-[#0116270F] py-2">
-      <span className="w-24 shrink-0 text-[12px] leading-4 text-[#687076]">{label}</span>
-      <span className="min-w-0 flex-1 text-[13px] leading-4 text-black">{children}</span>
+    <div className="flex min-h-9 items-start border-b border-[var(--wb-hairline)] py-2">
+      <span className="w-24 shrink-0 text-[12px] leading-4 text-[var(--wb-muted)]">{label}</span>
+      <span className="min-w-0 flex-1 break-words text-[13px] leading-4 text-[var(--wb-text)]">{children}</span>
     </div>
   );
 }
@@ -360,11 +361,11 @@ function PastRun({ run, zone }: { run: AutomationRun; zone: string }) {
   const detail = receipt.data?.run.resultSummary ?? receipt.data?.run.error?.message ?? null;
   return (
     <li className="flex flex-col" data-calendar-past-run={run.id}>
-      <div className="flex h-8.5 shrink-0 items-center gap-2.5">
-        <RunIcon run={run} />
-        <span className="w-22.5 shrink-0 text-[13px] leading-4 text-black">{shortDate(runPlacement(run), zone)}</span>
-        <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-[#687076]">{describeRunOutcome(run)}</span>
-        <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="text-[12px] font-medium leading-4 text-black hover:underline">{open ? "Close" : "Open"}</button>
+      <div className="flex min-h-8.5 shrink-0 items-start gap-2.5 py-2">
+        <span className="mt-0.5 shrink-0"><RunIcon run={run} /></span>
+        <span className="w-22.5 shrink-0 text-[13px] leading-4 text-[var(--wb-text)]">{shortDate(runPlacement(run), zone)}</span>
+        <span data-calendar-run-outcome data-calendar-run-status={run.status} className="min-w-0 flex-1 break-words text-[12px] leading-4 text-[var(--wb-muted)]">{describeRunOutcome(run)}</span>
+        <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="shrink-0 rounded text-[12px] font-medium leading-4 text-[var(--wb-text)] hover:underline focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">{open ? "Close" : "Open"}</button>
       </div>
       {open ? (
         <p className="mb-2 ml-[23px] whitespace-pre-wrap rounded-md bg-[#F4F6F7] px-2.5 py-2 text-[12px] leading-4 text-[#11181C]">
@@ -410,16 +411,16 @@ function ScheduleFields({ draft, setDraft }: { draft: AutomationSchedule; setDra
         </div>
       ) : null}
       <div className="flex gap-2">
-        <label className="flex flex-1 flex-col gap-1">
+        <label className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="text-[12px] text-[#687076]">Time</span>
           <input type="time" value={time ?? "09:00"} onChange={(event) => {
             const [hour, minute] = event.currentTarget.value.split(":").map(Number);
             if (Number.isInteger(hour) && Number.isInteger(minute)) setDraft(draft.kind === "once" ? { kind: "daily", timezone: draft.timezone, hour, minute } : { ...draft, hour, minute });
-          }} className="h-8 rounded-md px-2 text-[13px] shadow-[0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
+          }} className="h-8 min-w-0 w-full rounded-md px-2 text-[13px] shadow-[0_0_0_1px_var(--wb-ring)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
         </label>
-        <label className="flex flex-[1.4] flex-col gap-1">
+        <label className="flex min-w-0 flex-[1.4] flex-col gap-1">
           <span className="text-[12px] text-[#687076]">Time zone</span>
-          <input value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} className="h-8 rounded-md px-2 text-[13px] shadow-[0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
+          <input value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} className="h-8 min-w-0 w-full rounded-md px-2 text-[13px] shadow-[0_0_0_1px_var(--wb-ring)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" />
         </label>
       </div>
     </>
@@ -462,44 +463,54 @@ function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boo
   };
   const changed = Object.keys(changes).length > 0;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#01162733] p-4" role="dialog" aria-modal="true" aria-label="Edit automation" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
-      <form className="flex w-full max-w-md flex-col gap-4 rounded-xl bg-white p-5 shadow-[var(--wb-panel-shadow)]" onSubmit={(event) => { event.preventDefault(); if (changed) onSave(changes); else onClose(); }}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-black">Edit automation</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><X size={15} strokeWidth={1.75} /></button>
-        </div>
-        {agent ? (
-          <label className="flex flex-col gap-1.5">
-            <FieldLabel>Instructions</FieldLabel>
-            <textarea
-              value={instructions}
-              rows={4}
-              maxLength={100_000}
-              onChange={(event) => setInstructions(event.currentTarget.value)}
-              className="min-h-24 resize-y rounded-lg bg-white px-2.5 py-2 text-[13px] leading-[19px] text-[#11181C] shadow-[inset_0_0_0_1px_#0116271F] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-            />
-          </label>
-        ) : null}
-        <div className="flex flex-col gap-2">
-          <FieldLabel>Repeats</FieldLabel>
-          <ScheduleFields draft={schedule} setDraft={setSchedule} />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <FieldLabel>Where it runs</FieldLabel>
-          <RunsOnCard target={target} />
-        </div>
-        {agent ? (
-          <div className="flex flex-col gap-1.5">
-            <FieldLabel>Model</FieldLabel>
-            <ModelPicker value={model} options={models} loading={isLoading} onChange={setModel} />
-          </div>
-        ) : null}
-        <div className="flex gap-2 pt-1">
-          <button type="button" onClick={onClose} className="h-8.5 flex-1 rounded-lg text-[13px] font-medium text-black shadow-[0_0_0_1px_#0116271F]">Cancel</button>
-          <button type="submit" disabled={busy || !changed || (agent && !instructions.trim())} className="h-8.5 flex-1 rounded-lg bg-[#011627] text-[13px] font-medium text-[#E6EDF3] disabled:opacity-50">{busy ? "Saving…" : "Save changes"}</button>
-        </div>
-      </form>
-    </div>
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="workbot fixed inset-0 z-50 bg-[var(--wb-ink)]/20" />
+        <Dialog.Popup
+          data-calendar-edit={item.automation.id}
+          className="workbot fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+        >
+          <form className="flex min-h-0 flex-col" onSubmit={(event) => { event.preventDefault(); if (changed) onSave(changes); else onClose(); }}>
+            <div className="flex shrink-0 items-center justify-between px-4 pb-3 pt-4 sm:px-5 sm:pt-5">
+              <Dialog.Title render={<h2 />} className="text-[15px] font-semibold tracking-[-0.01em] text-[var(--wb-text)]">Edit automation</Dialog.Title>
+              <Dialog.Close aria-label="Close" className="grid size-7 place-items-center rounded-[7px] text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={15} strokeWidth={1.75} /></Dialog.Close>
+            </div>
+            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-4 pb-1 sm:px-5" data-calendar-form-body>
+              {agent ? (
+                <label className="flex flex-col gap-1.5">
+                  <FieldLabel>Instructions</FieldLabel>
+                  <textarea
+                    value={instructions}
+                    rows={4}
+                    maxLength={100_000}
+                    onChange={(event) => setInstructions(event.currentTarget.value)}
+                    className="min-h-24 resize-y rounded-lg bg-[var(--wb-surface)] px-2.5 py-2 text-[13px] leading-[19px] text-[var(--wb-text)] shadow-[inset_0_0_0_1px_var(--wb-ring)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+                  />
+                </label>
+              ) : null}
+              <div className="flex flex-col gap-2">
+                <FieldLabel>Repeats</FieldLabel>
+                <ScheduleFields draft={schedule} setDraft={setSchedule} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>Where it runs</FieldLabel>
+                <RunsOnCard target={target} />
+              </div>
+              {agent ? (
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>Model</FieldLabel>
+                  <ModelPicker value={model} options={models} loading={isLoading} onChange={setModel} />
+                </div>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 gap-2 p-4 sm:p-5" data-calendar-form-actions>
+              <Dialog.Close className="h-8.5 flex-1 rounded-lg text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Cancel</Dialog.Close>
+              <button type="submit" disabled={busy || !changed || (agent && !instructions.trim())} className="h-8.5 flex-1 rounded-lg bg-[var(--wb-ink)] text-[13px] font-medium text-[var(--wb-on-ink)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:opacity-50">{busy ? "Saving…" : "Save changes"}</button>
+            </div>
+          </form>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -516,7 +527,7 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
     onError: (error) => onToast(error.message),
   });
   return (
-    <aside className="flex w-95 shrink-0 flex-col gap-4.5 border-l border-[#01162712] bg-white p-6" aria-label={automation.name} data-calendar-detail={automation.id}>
+    <aside className="flex w-full min-w-0 shrink-0 flex-col gap-4.5 border-t border-[var(--wb-hairline)] bg-[var(--wb-surface)] p-4 lg:w-95 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:p-6" aria-label={automation.name} data-calendar-detail={automation.id}>
       <div className="flex flex-col gap-1">
         <span className="text-[12px] leading-4 text-[#687076]" data-calendar-next-run>
           {blocked ? "Not scheduled until fixed" : automation.state === "inactive" ? "Paused" : when ?? "No run scheduled"}
@@ -524,9 +535,9 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
         <h2 className="text-[18px] font-semibold leading-5.5 tracking-[-0.015em] text-black">{automation.name}</h2>
       </div>
       {blocked && automation.needsAttentionReason ? (
-        <div className="flex items-start gap-2 rounded-lg bg-[#F4F6F7] px-3 py-2.5" data-calendar-blocked>
+        <div className="flex items-start gap-2 rounded-lg bg-[var(--wb-tray)] px-3 py-2.5" data-calendar-blocked>
           <span className="mt-0.5"><LockIcon size={13} /></span>
-          <span className="text-[13px] leading-4.5 text-[#11181C]">{automation.needsAttentionReason.message}</span>
+          <span data-calendar-recovery className="min-w-0 break-words text-[13px] leading-4.5 text-[var(--wb-text)]">{automation.needsAttentionReason.message}</span>
         </div>
       ) : null}
       <div className="flex flex-col border-t border-[#0116270F]">
@@ -578,7 +589,7 @@ function MeetingPanel({ event, zone }: { event: CalendarEvent; zone: string }) {
     ? `${formatInstant(event.timing.start, zone)} – ${formatTime(event.timing.end, zone)}`
     : `${formatDate(event.timing.startDate, "en-US")} · All day`;
   return (
-    <aside className="flex w-95 shrink-0 flex-col gap-4.5 border-l border-[#01162712] bg-white p-6" aria-label={event.title} data-calendar-meeting-detail={event.key}>
+    <aside className="flex w-full min-w-0 shrink-0 flex-col gap-4.5 border-t border-[var(--wb-hairline)] bg-[var(--wb-surface)] p-4 lg:w-95 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:p-6" aria-label={event.title} data-calendar-meeting-detail={event.key}>
       <div className="flex flex-col gap-1">
         <span className="text-[12px] leading-4 text-[#687076]">{when}</span>
         <h2 className="text-[18px] font-semibold leading-5.5 tracking-[-0.015em] text-black">{event.title}</h2>
@@ -599,9 +610,9 @@ function MeetingPanel({ event, zone }: { event: CalendarEvent; zone: string }) {
 
 /* ── Page ──────────────────────────────────────────────────────────────────────────────────────────────── */
 
-function Legend({ checked, onToggle, children, testId }: { checked: boolean; onToggle: () => void; children: ReactNode; testId: string }) {
+function Legend({ checked, onToggle, children, testId, title }: { checked: boolean; onToggle: () => void; children: ReactNode; testId: string; title?: string }) {
   return (
-    <button type="button" role="checkbox" aria-checked={checked} onClick={onToggle} data-calendar-layer={testId} className="flex items-center gap-1.5 rounded focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+    <button type="button" role="checkbox" aria-checked={checked} onClick={onToggle} data-calendar-layer={testId} title={title} className="flex shrink-0 items-center gap-1.5 rounded focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
       {/* A real checkbox: the colour swatch alone read as broken, with on and off nearly the same. */}
       <span aria-hidden className={`grid size-3.5 shrink-0 place-items-center rounded-[4px] transition-colors ${checked ? "bg-[#011627] text-white" : "bg-white shadow-[inset_0_0_0_1.25px_#9BA1A6]"}`}>
         {checked ? <CheckMark size={10} strokeWidth={3} /> : null}
@@ -676,33 +687,35 @@ export function WorkbotCalendar({ connectionsHref, assistantName }: { connection
   const nowParts = zonedParts(now, zone);
 
   return (
-    <div className="flex min-h-0 flex-1" data-calendar-page>
-      <div className="flex min-w-0 flex-1 flex-col pl-5 pr-7 pt-6">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 pl-2">
-          <div className="flex items-center gap-3">
-            <h2 className="text-[20px] font-semibold leading-6 tracking-[-0.015em] text-black" data-calendar-range-label>{label}</h2>
-            <div className="flex gap-0.5">
-              <button type="button" aria-label="Previous" onClick={() => setAnchor((current) => shiftAnchor(view, current, -1))} className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><ChevronLeft size={15} strokeWidth={1.75} /></button>
-              <button type="button" aria-label="Next" onClick={() => setAnchor((current) => shiftAnchor(view, current, 1))} className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><ChevronRight size={15} strokeWidth={1.75} /></button>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden" data-calendar-page>
+      <div className="flex h-[max(24rem,calc(100dvh-4rem))] min-w-0 shrink-0 flex-col px-3 pt-4 sm:px-5 lg:h-auto lg:min-h-0 lg:flex-1 lg:pr-7 lg:pt-6">
+        <div className="mb-3 flex shrink-0 flex-col gap-3 sm:pl-2 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between" data-calendar-toolbar>
+          <div className="flex flex-wrap items-center justify-between gap-2 xl:justify-start">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="text-[18px] font-semibold leading-6 tracking-[-0.015em] text-[var(--wb-text)] sm:text-[20px]" data-calendar-range-label>{label}</h2>
+              <div className="flex shrink-0 gap-0.5">
+                <button type="button" aria-label="Previous" onClick={() => setAnchor((current) => shiftAnchor(view, current, -1))} className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><ChevronLeft size={15} strokeWidth={1.75} /></button>
+                <button type="button" aria-label="Next" onClick={() => setAnchor((current) => shiftAnchor(view, current, 1))} className="grid size-7 place-items-center rounded-[7px] text-[#687076] hover:bg-[#F1F3F5]"><ChevronRight size={15} strokeWidth={1.75} /></button>
+              </div>
             </div>
-            <button
-              type="button"
-              data-calendar-new
-              onClick={(event) => {
-                const box = event.currentTarget.getBoundingClientRect();
-                setCreating({ slot: nextOpenSlot(Date.now(), zone), x: box.left, y: box.bottom + 8 });
-              }}
-              className="flex h-7 items-center gap-1.25 rounded-[7px] px-2.5 text-[12px] font-medium text-black shadow-[0_0_0_1px_#0116271A] hover:bg-[#F4F6F7] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-            >
-              <Plus size={12} strokeWidth={2} aria-hidden />New automation
-            </button>
-            {compareDates(anchor, { year: nowParts.year, month: nowParts.month, day: nowParts.day }) !== 0 ? (
-              <button type="button" onClick={() => setAnchor(localDateOf(Date.now(), zone))} className="h-7 rounded-[7px] px-2.5 text-[12px] font-medium text-black shadow-[0_0_0_1px_#0116271A]">Today</button>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                data-calendar-new
+                onClick={(event) => {
+                  const box = event.currentTarget.getBoundingClientRect();
+                  setCreating({ slot: nextOpenSlot(Date.now(), zone), x: box.left, y: box.bottom + 8 });
+                }}
+                className="flex h-7 items-center gap-1.25 rounded-[7px] px-2.5 text-[12px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+              >
+                <Plus size={12} strokeWidth={2} aria-hidden />New automation
+              </button>
+              <button type="button" data-calendar-today disabled={compareDates(anchor, { year: nowParts.year, month: nowParts.month, day: nowParts.day }) === 0} onClick={() => setAnchor(localDateOf(Date.now(), zone))} className="h-7 rounded-[7px] px-2.5 text-[12px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:text-[var(--wb-muted)]">Today</button>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <Legend testId="automations" checked={layers.automations} onToggle={() => setLayers((current) => ({ ...current, automations: !current.automations }))}>Your automations</Legend>
-            <Legend testId="meetings" checked={layers.meetings} onToggle={() => setLayers((current) => ({ ...current, meetings: !current.meetings }))}>Your meetings, from {meetingSource}</Legend>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Legend testId="automations" checked={layers.automations} onToggle={() => setLayers((current) => ({ ...current, automations: !current.automations }))}>Automations</Legend>
+            <Legend testId="meetings" checked={layers.meetings} onToggle={() => setLayers((current) => ({ ...current, meetings: !current.meetings }))} title={`From ${meetingSource}`}>Meetings</Legend>
             {layers.meetings ? PROVIDERS.map((provider) => {
               const error = meetingQueries[provider].error;
               const text = error ? blockedLabel(error) : null;
@@ -717,7 +730,7 @@ export function WorkbotCalendar({ connectionsHref, assistantName }: { connection
                 </span>
               );
             }) : null}
-            <div className="flex rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Calendar view">
+            <div className="ml-auto flex shrink-0 rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Calendar view">
               {(["day", "week", "month"] as const).map((option) => (
                 <button key={option} type="button" role="radio" aria-checked={view === option} onClick={() => setView(option)} className={`flex h-6.5 items-center px-2.5 text-[12px] leading-4 ${view === option ? "rounded-md bg-white font-semibold text-black shadow-[0_1px_2px_#0116271A]" : "font-medium text-[#687076]"}`}>
                   {option === "day" ? "Day" : option === "week" ? "Week" : "Month"}

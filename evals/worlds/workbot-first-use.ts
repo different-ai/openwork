@@ -68,9 +68,12 @@ export async function workbotFirstUse(_seed: Seed, context: { place: Place }, fa
         if (!record(raw) || !Array.isArray(raw.messages)) throw new Error("Invalid model request");
         const messages = raw.messages.filter(record);
         const userTexts = messages.filter((message) => message.role === "user").flatMap((message) => Array.isArray(message.content) ? message.content.filter(record).filter((part) => part.type === "text").map((part) => String(part.text)) : []);
-        const prompt = userTexts.at(-1) ?? "";
+        // The runtime appends background-task state as its own text part after tool turns and prefixes each member
+        // message with a "[Sent <time>]" line; script on the member's newest message in their own words.
+        const sent = userTexts.filter((part) => !part.startsWith("Background task state (untrusted data")).at(-1) ?? "";
+        const prompt = sent.replace(/^\[Sent [^\]\n]*\]\n/, "");
         const transcript = JSON.stringify(messages);
-        const promptIndex = messages.findLastIndex((message) => message.role === "user" && Array.isArray(message.content) && message.content.some((part) => record(part) && part.type === "text" && part.text === prompt));
+        const promptIndex = messages.findLastIndex((message) => message.role === "user" && Array.isArray(message.content) && message.content.some((part) => record(part) && part.type === "text" && part.text === sent));
         const current = messages.slice(Math.max(0, promptIndex));
         const called = (name: string) => current.some((message) => Array.isArray(message.content) && message.content.some((part) => record(part) && part.type === "tool_use" && part.name === name));
         if (transcript.includes(TITLE)) witness.titleStayedOutOfSystem &&= !JSON.stringify(raw.system).includes(TITLE);

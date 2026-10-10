@@ -3,14 +3,15 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { Activity, Blocks, CircleOff, Plus, Search, TriangleAlert, Zap } from "lucide-react";
+import { Activity, Blocks, CircleOff, Plus, TriangleAlert, Zap } from "lucide-react";
+import { DenBrandMark } from "../../../_components/ui/brand-mark";
 import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { getAddConnectorRoute, getMcpConnectionRoute, getNewPluginRoute, getPluginRoute, getPluginSkillRoute } from "../../../_lib/den-org";
-import { ItemRowsSkeleton } from "../../_components/item-list";
-import { LetterTile } from "../../_components/item-logo";
+import { FilterInput, ItemRowsSkeleton } from "../../_components/item-list";
+import { brandHintFor, LetterTile } from "../../_components/item-logo";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "../analytics/analytics-layout";
 import { StatCard } from "../analytics/stat-card";
@@ -49,9 +50,14 @@ function UsageRow({ kind, row, now, tracksFailures }: { kind: LibraryUsageKind; 
   const href = itemHref(kind, row, activeOrg?.slug);
   const lastUsed = lastUsedLabel(row.lastUsedAt, now);
   const failed = failureLabel(row);
+  // Usage has no provider ID or service URL: resolve only exact known names,
+  // never infer a service from a custom MCP connector's name.
+  const brand = kind === "connectors" ? brandHintFor(row.name) : null;
   const name = (
     <span className="flex min-w-0 items-center gap-3">
-      <LetterTile name={row.name} />
+      {brand && (brand.simpleIconSlug || brand.serviceUrl)
+        ? <DenBrandMark name={row.name} {...brand} className="size-8 rounded-[7px]" imageClassName="size-[18px]" />
+        : <LetterTile name={row.name} />}
       <span className="min-w-0">
         <span className="block truncate font-medium text-[#07192C]" title={row.name}>{row.name}</span>
         {row.detail ? <span className="block truncate text-[12px] text-[#637291]">{row.detail}</span> : null}
@@ -118,12 +124,13 @@ export function LibraryUsageScreen() {
   const report = usage.data?.kind === kind ? usage.data : undefined;
   const summary = report ? summarizeLibraryUsage(report.items) : null;
   const tracksFailures = summary?.failures !== null && summary?.failures !== undefined;
+  const hasFailures = (summary?.failures ?? 0) > 0;
   const rows = report ? filterLibraryUsage(report.items, filter, name) : [];
   const since = report ? countingSinceLabel(report, now) : null;
   const nothingRecorded = report ? !report.trackingSince && report.items.every((row) => row.uses === 0) : false;
 
   return (
-    <div className={analyticsPageClass} data-testid="library-usage">
+    <div className={`${analyticsPageClass} min-w-0`} data-testid="library-usage">
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="library" title="Plugins & connectors"
         caption={since ? <span data-testid="library-usage-since">{since}</span> : undefined} />
 
@@ -146,29 +153,26 @@ export function LibraryUsageScreen() {
 
               {nothingRecorded ? (
                 <div className={analyticsSurfaceClass} data-testid="library-usage-no-usage">
-                  <AnalyticsEmptyState title="No usage yet" icon={Activity}>
-                    {`Counts start the first time someone's agent uses a skill or connector through OpenWork. Your ${summary.total} ${summary.total === 1 ? copy.noun : copy.plural} ${summary.total === 1 ? "is" : "are"} listed below and ready to track.`}
-                  </AnalyticsEmptyState>
+                  <AnalyticsEmptyState title="No usage yet" icon={Activity} children={null} />
                 </div>
               ) : (
                 <div className={`grid gap-3.5 sm:grid-cols-2 ${tracksFailures ? "lg:grid-cols-4" : "lg:grid-cols-3"}`} data-testid="library-usage-summary">
                   <StatCard icon={<Blocks className="text-[#6F3DFF]" />} tone="violet" title="In use" value={`${summary.used} of ${summary.total}`} />
                   <StatCard icon={<Zap className="text-[#1D63FF]" />} tone="blue" title="Uses" value={summary.uses.toLocaleString()} />
-                  {tracksFailures ? <StatCard icon={<TriangleAlert className="text-[#B42318]" />} tone="amber" title="Failed" value={(summary.failures ?? 0).toLocaleString()} sub={summary.uses > 0 ? `${Math.round(((summary.failures ?? 0) / summary.uses) * 100)}% of uses` : "Nothing has run yet"} /> : null}
+                  {tracksFailures ? <div role="group" aria-label="Failed uses" data-testid="library-usage-failed" data-state={hasFailures ? "attention" : "neutral"}>
+                    <StatCard icon={<TriangleAlert className={hasFailures ? "text-[var(--ow-danger)]" : "text-[var(--dls-text-secondary)]"} />} tone={hasFailures ? "amber" : "neutral"} title="Failed" value={(summary.failures ?? 0).toLocaleString()} sub={summary.uses > 0 ? `${Math.round(((summary.failures ?? 0) / summary.uses) * 100)}% of uses` : "Nothing has run yet"} />
+                  </div> : null}
                   <StatCard icon={<CircleOff className="text-[#B7791F]" />} tone="amber" title="Not used" value={`${summary.unused}`} />
                 </div>
               )}
 
               {nothingRecorded ? null : <div className="flex flex-wrap items-center gap-2" data-testid="library-usage-filters">
-                <label className="flex h-9 min-w-[220px] flex-1 items-center gap-2 rounded-lg border border-[#e3e7ee] bg-white px-3 focus-within:ring-2 focus-within:ring-gray-300">
-                  <Search className="h-4 w-4 shrink-0 text-[#637291]" aria-hidden />
-                  <input type="search" value={name} onChange={(event) => setName(event.target.value)} placeholder="Filter by name" aria-label={`Filter ${copy.plural} by name`} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none" />
-                </label>
+                <FilterInput value={name} onChange={setName} className="w-[240px] max-w-full" />
                 <DenSegmented aria-label={`Which ${copy.plural}`} value={filter} onChange={setFilter}
                   options={[{ value: "all", label: "All" }, { value: "unused", label: "Not used" }, ...(tracksFailures ? [{ value: "failing" as const, label: "Failing" }] : [])]} />
               </div>}
 
-              <div className={`${analyticsSurfaceClass} overflow-x-auto`}>
+              <div className={`${analyticsSurfaceClass} min-w-0 overflow-x-auto`} data-testid="library-usage-table">
                 <div className={tracksFailures ? "min-w-[660px]" : "min-w-[580px]"}>
                   <div className={`${columnsFor(tracksFailures)} py-2.5 text-[12px] text-[#637291]`} data-testid="library-usage-columns">
                     <span>{copy.label.replace(/s$/, "")}</span><span>Uses</span><span>People</span>{tracksFailures ? <span>Failed</span> : null}<span>Last used</span>

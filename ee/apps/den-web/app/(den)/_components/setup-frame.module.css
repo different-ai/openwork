@@ -161,4 +161,6 @@
   .footer > span:last-child { display: none; }
 }
 @media (max-width: 420px) { .frame, .embedded { padding-inline: 16px; } }
+/* Explicit opt-in: do not change the display headline on other setup flows. */
+.intro h1.compactHeading { font-size: var(--text-xl); line-height: var(--text-xl--line-height); letter-spacing: -.03em; font-weight: var(--font-weight-semibold); }
 @media (prefers-reduced-motion: reduce) { .panel { animation: none; } .panel button { transition: none; } }

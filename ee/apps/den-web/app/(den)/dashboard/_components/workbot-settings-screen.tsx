@@ -27,12 +27,12 @@ function workbotName(metadata: string | null): string {
 
 function modelName(settings: WorkbotSettings, id: string | null): string {
   if (!id) return defaultLabel(settings);
-  return settings.models.find((entry) => entry.id === id)?.name ?? id;
+  return settings.models.find((entry) => entry.id === id)?.name ?? "Unavailable model";
 }
 
 function defaultModelName(settings: WorkbotSettings): string {
   if (!settings.defaultModel) return "the default model";
-  return settings.models.find((entry) => entry.id === settings.defaultModel)?.name ?? settings.defaultModel;
+  return settings.models.find((entry) => entry.id === settings.defaultModel)?.name ?? "the default model";
 }
 
 function defaultLabel(settings: WorkbotSettings): string {
@@ -47,7 +47,7 @@ function SettingsRow({ label, labelId, children }: { label: string; labelId?: st
   return (
     <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 px-6 py-3">
       <span id={labelId} className="text-[13px] font-medium text-gray-900">{label}</span>
-      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">{children}</div>
+      <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
     </div>
   );
 }
@@ -94,7 +94,7 @@ export function WorkbotSettingsScreen() {
     <div data-testid="workbot-settings-screen">
       <DashboardPageTemplate
         title="Workbot"
-        description="Workbot, the Slack assistant and cloud Automations set to the cloud default answer with this model. Changes apply to new messages within a minute."
+        description={null}
         colors={["#ECFDF5", "#064E3B", "#047857", "#A7F3D0"]}
       >
         <div className="grid gap-4">
@@ -112,7 +112,7 @@ export function WorkbotSettingsScreen() {
           {settings && settings.runnerReachable && !settings.modelAvailable && settings.model ? (
             <DenNotice
               tone="warning"
-              message={`${settings.model} is no longer available. Workbot, Slack and Automations answer with ${defaultModelName(settings)} until you choose another model.`}
+              message={`The saved model is no longer available. New messages use ${defaultModelName(settings)} until you choose another model.`}
             />
           ) : null}
 
@@ -133,11 +133,12 @@ export function WorkbotSettingsScreen() {
                   <DenSkeleton className="h-10 w-72" data-testid="workbot-model-skeleton" />
                 ) : (
                   <>
-                    <div className="w-72">
+                    <div className="w-72 min-w-0 max-w-full">
                       <DenSelect
                         aria-labelledby={labelId}
                         value={draft}
                         disabled={!canChoose}
+                        searchLabel={settings.models.length > 8 ? "Search models" : undefined}
                         onChange={(event) => {
                           setDraft(event.target.value);
                           setSaved(null);
@@ -147,7 +148,7 @@ export function WorkbotSettingsScreen() {
                         <option value="">{defaultLabel(settings)}</option>
                         {settings.model && !settings.models.some((entry) => entry.id === settings.model) ? (
                           <option value={settings.model} disabled>
-                            {settings.model}
+                            Unavailable model
                           </option>
                         ) : null}
                         {settings.models.map((entry) => (
@@ -187,7 +188,7 @@ export function WorkbotSettingsScreen() {
           ) : null}
           {saved && settings ? (
             <div role="status" className="flex items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
-              <span>Saved. New messages use {modelName(settings, settings.model)}.</span>
+              <span className="min-w-0 [overflow-wrap:anywhere]">Saved. New messages use {modelName(settings, settings.model)}.</span>
               <DenButton
                 variant="ghost"
                 size="xs"

@@ -92,7 +92,7 @@ function PaletteGroup({
   return (
     <Command.Group
       heading={heading}
-      className="pb-1 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.16em] [&_[cmdk-group-heading]]:text-gray-400"
+      className="pb-1 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-gray-500"
     >
       {entries.map((entry) => (
         <Command.Item
@@ -100,11 +100,11 @@ function PaletteGroup({
           value={`${heading}:${entry.id}`}
           keywords={[entry.label, ...entry.keywords, entry.hint]}
           onSelect={() => onSelect(entry)}
-          className="flex cursor-default items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] text-gray-700 outline-hidden data-[selected=true]:bg-gray-100 data-[selected=true]:text-gray-900"
+          className="group flex cursor-default items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] text-gray-700 outline-hidden data-[selected=true]:bg-gray-100 data-[selected=true]:text-gray-900"
         >
           <entry.icon className="h-4 w-4 shrink-0 text-gray-400" strokeWidth={1.8} />
           <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-          <span className="shrink-0 text-[11px] text-gray-400">{entry.hint}</span>
+          <span className="shrink-0 text-[11px] tracking-normal text-gray-500 group-data-[selected=true]:text-gray-600">{entry.hint}</span>
         </Command.Item>
       ))}
     </Command.Group>
@@ -274,11 +274,11 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
             onValueChange={setQuery}
             placeholder="Search or jump to…"
             data-testid="den-command-palette-input"
-            className="h-12 w-full border-b border-gray-100 bg-transparent px-4 text-[14px] text-gray-900 outline-hidden placeholder:text-gray-400"
+            className="h-12 w-full border-b border-gray-100 bg-transparent px-4 text-[14px] text-gray-900 outline-hidden placeholder:text-gray-500"
           />
           <Command.List className="max-h-[min(60vh,420px)] overflow-y-auto p-2">
-            <Command.Empty className="px-3 py-10 text-center text-[13px] text-gray-400">
-              No matches for “{query}”.
+            <Command.Empty className="px-3 py-10 text-center text-[12px] text-gray-500">
+              {`No matches for “${query}”.`}
             </Command.Empty>
             <PaletteGroup heading="Recent" entries={recentEntries} onSelect={selectEntry} />
             <PaletteGroup heading="Pages" entries={pageEntries} onSelect={selectEntry} />
@@ -294,7 +294,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
             />
             <PaletteGroup heading="Actions" entries={actionEntries} onSelect={selectEntry} />
           </Command.List>
-          <div className="border-t border-gray-100 px-4 py-2.5 text-[11px] text-gray-400">
+          <div data-testid="den-command-palette-footer" className="border-t border-gray-100 px-4 py-2.5 text-[11px] text-gray-500">
             ↑↓ navigate · ↵ open · esc close
           </div>
         </Command>

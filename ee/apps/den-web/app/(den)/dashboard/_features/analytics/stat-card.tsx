@@ -2,7 +2,7 @@
 
 import { analyticsSurfaceClass } from "./analytics-layout";
 
-export type StatTone = "violet" | "green" | "blue" | "amber";
+export type StatTone = "violet" | "green" | "blue" | "amber" | "neutral";
 
 function toneBg(tone: StatTone) {
   switch (tone) {
@@ -10,6 +10,7 @@ function toneBg(tone: StatTone) {
     case "green": return "bg-[#E3F3E3]";
     case "blue": return "bg-[#E4ECFB]";
     case "amber": return "bg-[#FBF0DC]";
+    case "neutral": return "bg-[var(--dls-hover)]";
   }
 }
 

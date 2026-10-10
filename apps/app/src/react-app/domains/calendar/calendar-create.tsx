@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 import { useNavigate } from "react-router"
 import {
   automationNameFrom,
@@ -37,9 +38,6 @@ import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picke
  * slot"). The person says what to do, how it repeats from the slot, what it can use (which decides where it
  * runs, as in the Automations editor) and the model. "More options" opens the full editor with everything filled in.
  */
-
-const CARD_WIDTH = 384
-const CARD_HEIGHT = 520
 
 /** Short names for the editor's "What it can use" choices, to fit the card. */
 const CAN_USE_SHORT: Record<AutomationCanUse, string> = {
@@ -91,16 +89,16 @@ export function CreateAutomationCard(props: {
   const chosen = options.find((option) => option.id === repeat) ?? options[0]
   const busy = busyAction === "create"
 
-  useEffect(() => { field.current?.focus() }, [])
-  useEffect(() => {
-    // The model picker handles its own Escape; the card closes only when it is the top layer.
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !pickerOpen) props.onClose() }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [pickerOpen, props])
-
-  const left = Math.max(12, Math.min(props.anchor.x, window.innerWidth - CARD_WIDTH - 12))
-  const top = Math.max(12, Math.min(props.anchor.y, window.innerHeight - CARD_HEIGHT - 12))
+  // Keep the slot placement while letting the installed positioner shift the actual card on resize.
+  // The positioner keeps the card touching its anchor, so a slot point left outside a rotated or resized window is pulled back inside the same 12px inset.
+  const positionAnchor = useMemo(() => ({
+    getBoundingClientRect: () => new DOMRect(
+      Math.max(12, Math.min(props.anchor.x, window.innerWidth - 12)),
+      Math.max(12, Math.min(props.anchor.y, window.innerHeight - 12)),
+      0,
+      0,
+    ),
+  }), [props.anchor.x, props.anchor.y])
   const ready = instructions.trim().length > 0 && Boolean(model) && !busy
 
   const submit = async () => {
@@ -133,113 +131,115 @@ export function CreateAutomationCard(props: {
   }
 
   return (
-    <>
-      <div className="fixed inset-0 z-40" aria-hidden="true" onClick={props.onClose} />
-      <form
-        role="dialog"
-        aria-label="New automation"
-        data-calendar-create
-        className="fixed z-50 flex max-h-[calc(100dvh-24px)] flex-col gap-3.5 overflow-y-auto rounded-xl bg-popover p-4 text-popover-foreground shadow-[var(--dls-card-shadow)] ring-1 ring-border"
-        style={{ left, top, width: CARD_WIDTH }}
-        onSubmit={(event) => { event.preventDefault(); void submit() }}
-      >
-        <div>
-          <p className="text-xs text-muted-foreground">{slotLabel(props.anchor.slot)}</p>
-          <h2 className="text-[15px] font-semibold tracking-[-0.2px]">New automation</h2>
-        </div>
-        <label className="flex flex-col gap-1.5 text-xs font-medium">
-          What should it do?
-          <Textarea
-            ref={field}
-            value={instructions}
-            rows={3}
-            maxLength={100_000}
-            placeholder="Pull this week's press kit comments from Notion and draft a reply list"
-            className="min-h-18 resize-none text-sm font-normal"
-            onChange={(event) => setInstructions(event.currentTarget.value)}
-            onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit() } }}
-          />
-        </label>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium">Repeats</span>
-          <ToggleGroup
-            aria-label="Repeats"
-            variant="outline"
-            spacing={1}
-            size="sm"
-            className="w-full"
-            value={[repeat]}
-            onValueChange={(values) => {
-              const next = options.find((option) => option.id === values[0])
-              if (next) setRepeat(next.id)
-            }}
-          >
-            {options.map((option) => (
-              <ToggleGroupItem key={option.id} value={option.id} className="flex-1 basis-0 whitespace-nowrap px-1 text-xs data-[pressed]:bg-primary data-[pressed]:text-primary-foreground">{option.label}</ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-          <p className="text-xs text-muted-foreground">At {formatTime(props.anchor.slot.at, props.anchor.slot.timeZone)} {timeZoneLabel(props.anchor.slot.timeZone, props.anchor.slot.at)}.</p>
-        </div>
-        {choices.length > 1 ? (
-          <div className="flex flex-col gap-1.5" data-calendar-create-runs-on={placement}>
-            <span className="text-xs font-medium">What it can use</span>
-            <ToggleGroup
-              aria-label="What it can use"
-              variant="outline"
-              spacing={1}
-              size="sm"
-              className="w-full"
-              value={[canUse]}
-              onValueChange={(values) => {
-                const next = choices.find((choice) => choice === values[0])
-                if (next) setChosenCanUse(next)
-              }}
-            >
-              {choices.map((choice) => (
-                <ToggleGroupItem key={choice} value={choice} className="flex-1 basis-0 whitespace-nowrap px-1 text-xs data-[pressed]:bg-primary data-[pressed]:text-primary-foreground">{CAN_USE_SHORT[choice]}</ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-            <p className="text-xs text-muted-foreground">{automationCanUseNote(canUse)}</p>
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">{automationCanUseNote(canUse)}</p>
-        )}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium">Model</span>
-          {usesCloudDefault && model ? (
-            <div className="flex h-8 items-center rounded-md border border-border px-2 text-sm"><AutomationModelSummary model={model} options={[cloudDefaultModelOption]} size="sm" /></div>
-          ) : model ? (
-            <AutomationModelButton model={model} options={modelOptions} size="sm" onClick={() => setPickerOpen(true)} />
-          ) : (
-            <p className="text-xs text-muted-foreground">Add a model in Settings › AI before creating an automation.</p>
-          )}
-        </div>
-        {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="link" size="xs" className="mr-auto px-0" onClick={moreOptions}>More options</Button>
-          <Button type="button" variant="outline" size="sm" onClick={props.onClose}>Cancel</Button>
-          <Button type="submit" size="sm" disabled={!ready}>{busy ? "Creating…" : "Create automation"}</Button>
-        </div>
-      </form>
-      {model && !usesCloudDefault ? (
-        <ModelPickerModal
-          open={pickerOpen}
-          options={pickerOptions}
-          query={modelQuery}
-          setQuery={setModelQuery}
-          subtitle={placement === "cloud" ? "Your cloud computer uses this model and reasoning level." : "Your desktop computer uses this model and reasoning level."}
-          target="default"
-          current={{ providerID: model.providerId, modelID: model.modelId }}
-          onSelect={(next) => {
-            setPickedModel({ providerId: next.providerID, modelId: next.modelID, variant: null })
-            setPickerOpen(false)
-          }}
-          onBehaviorChange={(next, variant) => setPickedModel({ providerId: next.providerID, modelId: next.modelID, variant })}
-          onOpenSettings={() => { setPickerOpen(false); props.onOpenProviderSettings?.() }}
-          onOpenProviderSettings={props.onOpenProviderSettings}
-          onClose={() => setPickerOpen(false)}
-        />
-      ) : null}
-    </>
+    <PopoverPrimitive.Root open modal onOpenChange={(open) => { if (!open) props.onClose() }}>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Backdrop className="fixed inset-0 z-40" />
+        {/* The shared PopoverContent does not expose a virtual slot anchor; compose its installed primitive. */}
+        <PopoverPrimitive.Positioner anchor={positionAnchor} positionMethod="fixed" side="bottom" align="start" collisionPadding={12} collisionAvoidance={{ side: "shift", align: "shift" }} className="z-50">
+          <PopoverPrimitive.Popup initialFocus={field} data-calendar-create className="flex max-h-[min(calc(100dvh-24px),var(--available-height,calc(100dvh-24px)))] w-[min(24rem,calc(100vw-24px))] flex-col rounded-xl bg-popover text-popover-foreground shadow-[var(--dls-card-shadow)] ring-1 ring-border outline-hidden">
+            <form className="flex min-h-0 flex-col" onSubmit={(event) => { event.preventDefault(); void submit() }}>
+              <div className="shrink-0 px-4 pb-3 pt-4">
+                <p className="text-xs text-muted-foreground">{slotLabel(props.anchor.slot)}</p>
+                <PopoverPrimitive.Title render={<h2 />} className="text-[15px] font-semibold tracking-[-0.2px]">New automation</PopoverPrimitive.Title>
+              </div>
+              <div className="flex min-h-0 flex-col gap-3.5 overflow-y-auto px-4 pb-1" data-calendar-form-body>
+                <label className="flex flex-col gap-1.5 text-xs font-medium">
+                  What should it do?
+                  <Textarea
+                    ref={field}
+                    value={instructions}
+                    rows={3}
+                    maxLength={100_000}
+                    placeholder="Pull this week's press kit comments from Notion and draft a reply list"
+                    className="min-h-18 resize-none text-sm font-normal"
+                    onChange={(event) => setInstructions(event.currentTarget.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit() } }}
+                  />
+                </label>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium">Repeats</span>
+                  <ToggleGroup
+                    aria-label="Repeats"
+                    variant="outline"
+                    spacing={1}
+                    size="sm"
+                    className="w-full"
+                    value={[repeat]}
+                    onValueChange={(values) => {
+                      const next = options.find((option) => option.id === values[0])
+                      if (next) setRepeat(next.id)
+                    }}
+                  >
+                    {options.map((option) => (
+                      <ToggleGroupItem key={option.id} value={option.id} className="flex-1 basis-0 whitespace-nowrap px-1 text-xs data-[pressed]:bg-primary data-[pressed]:text-primary-foreground">{option.label}</ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                  <p className="text-xs text-muted-foreground">At {formatTime(props.anchor.slot.at, props.anchor.slot.timeZone)} {timeZoneLabel(props.anchor.slot.timeZone, props.anchor.slot.at)}.</p>
+                </div>
+                {choices.length > 1 ? (
+                  <div className="flex flex-col gap-1.5" data-calendar-create-runs-on={placement}>
+                    <span className="text-xs font-medium">What it can use</span>
+                    <ToggleGroup
+                      aria-label="What it can use"
+                      variant="outline"
+                      spacing={1}
+                      size="sm"
+                      className="w-full"
+                      value={[canUse]}
+                      onValueChange={(values) => {
+                        const next = choices.find((choice) => choice === values[0])
+                        if (next) setChosenCanUse(next)
+                      }}
+                    >
+                      {choices.map((choice) => (
+                        <ToggleGroupItem key={choice} value={choice} className="flex-1 basis-0 whitespace-nowrap px-1 text-xs data-[pressed]:bg-primary data-[pressed]:text-primary-foreground">{CAN_USE_SHORT[choice]}</ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
+                    <p className="text-xs text-muted-foreground">{automationCanUseNote(canUse)}</p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{automationCanUseNote(canUse)}</p>
+                )}
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs font-medium">Model</span>
+                  {usesCloudDefault && model ? (
+                    <div className="flex h-8 items-center rounded-md border border-border px-2 text-sm"><AutomationModelSummary model={model} options={[cloudDefaultModelOption]} size="sm" /></div>
+                  ) : model ? (
+                    <AutomationModelButton model={model} options={modelOptions} size="sm" onClick={() => setPickerOpen(true)} />
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Add a model in Settings › AI before creating an automation.</p>
+                  )}
+                </div>
+                {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 p-4" data-calendar-form-actions>
+                <Button type="button" variant="link" size="xs" className="mr-auto px-0 max-sm:w-full max-sm:justify-start" onClick={moreOptions}>More options</Button>
+                <PopoverPrimitive.Close render={<Button variant="outline" size="sm" />}>Cancel</PopoverPrimitive.Close>
+                <Button type="submit" size="sm" disabled={!ready}>{busy ? "Creating…" : "Create automation"}</Button>
+              </div>
+            </form>
+            {model && !usesCloudDefault ? (
+              <ModelPickerModal
+                open={pickerOpen}
+                options={pickerOptions}
+                query={modelQuery}
+                setQuery={setModelQuery}
+                subtitle={placement === "cloud" ? "Your cloud computer uses this model and reasoning level." : "Your desktop computer uses this model and reasoning level."}
+                target="default"
+                current={{ providerID: model.providerId, modelID: model.modelId }}
+                onSelect={(next) => {
+                  setPickedModel({ providerId: next.providerID, modelId: next.modelID, variant: null })
+                  setPickerOpen(false)
+                }}
+                onBehaviorChange={(next, variant) => setPickedModel({ providerId: next.providerID, modelId: next.modelID, variant })}
+                onOpenSettings={() => { setPickerOpen(false); props.onOpenProviderSettings?.() }}
+                onOpenProviderSettings={props.onOpenProviderSettings}
+                onClose={() => setPickerOpen(false)}
+              />
+            ) : null}
+          </PopoverPrimitive.Popup>
+        </PopoverPrimitive.Positioner>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   )
 }

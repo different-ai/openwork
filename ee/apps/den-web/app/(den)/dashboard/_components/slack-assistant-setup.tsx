@@ -8,6 +8,8 @@ import { getWorkbotSettingsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
+import { DenInput } from "../../_components/ui/input";
+import { auditSummaryClass, AuditChevron } from "./audit-logs-details";
 import type { ExternalMcpConnection } from "./mcp-connections-data";
 
 const setupSchema = z.object({
@@ -117,7 +119,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
     }
   }
   return (
-    <section className="mt-10 space-y-4 rounded-2xl border border-gray-100 bg-white p-5" aria-label="OpenWork in Slack">
+    <section className="mt-10 flex flex-col gap-4 rounded-2xl border border-gray-100 bg-white p-5" aria-label="OpenWork in Slack" data-testid="slack-assistant-setup">
       <div>
         <h2 className="text-base font-semibold">OpenWork in Slack</h2>
         <p className="mt-1 text-sm text-gray-500">
@@ -163,24 +165,26 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
       ) : null}
       {data?.eligible ? (
         <>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <div className="flex min-h-12 items-center justify-between gap-3 border-b border-gray-100 text-sm">
+            <span>Enable @openwork in Slack</span>
+            <DenSwitch
               checked={data.enabled}
               disabled={busy || (!data.enabled && (!data.rolloutEnabled || !data.runnerAvailable || (!data.hasSigningSecret && !secret)))}
-              onChange={(e) => void save(e.target.checked)}
+              aria-label="Enable @openwork in Slack"
+              testId="slack-assistant-enabled"
+              onChange={(checked) => void save(checked)}
             />
-            Enable @openwork in Slack
-          </label>
-          <label className="block text-sm">
+          </div>
+          <label className="flex flex-col gap-1 text-sm">
             Slack app signing secret
-            <input
+            <DenInput
               type="password"
               autoComplete="off"
+              data-ph-no-capture
+              data-testid="slack-assistant-signing-secret"
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               placeholder={data.hasSigningSecret ? "Saved securely" : "Paste from Slack app settings"}
-              className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
             />
           </label>
           <div className="flex flex-wrap gap-2">
@@ -191,16 +195,17 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               {data.installed ? "Reinstall in Slack" : "Add to Slack"}
             </DenButton>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <div className="flex min-h-12 items-center justify-between gap-3 border-b border-gray-100 text-sm">
+            <span>Send replies privately during rollout</span>
+            <DenSwitch
               checked={data.shadowMode}
               disabled={busy || !data.hasSigningSecret}
-              onChange={(e) => void save(data.enabled, { shadowMode: e.target.checked })}
+              aria-label="Send replies privately during rollout"
+              testId="slack-assistant-shadow"
+              onChange={(checked) => void save(data.enabled, { shadowMode: checked })}
             />
-            Send replies privately during rollout
-          </label>
-          <div className="flex items-center justify-between gap-3 text-sm">
+          </div>
+          <div className="flex min-h-12 items-center justify-between gap-3 border-b border-gray-100 text-sm">
             <span>Show progress while working</span>
             <DenSwitch
               checked={data.progressUpdates}
@@ -224,7 +229,9 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
           ) : data.models.length > 0 ? (
             <label className="block text-sm">
               Model
+              {/* Name the control explicitly; the implicit label would also read out the selected model. */}
               <select
+                aria-label="Model"
                 value={data.model ?? ""}
                 disabled={busy || !data.hasSigningSecret}
                 onChange={(e) => void save(data.enabled, { model: e.target.value || null })}
@@ -241,41 +248,41 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               </select>
             </label>
           ) : null}
-          <details className="space-y-3">
-            <summary className="cursor-pointer text-sm">Rollout limits</summary>
-            <label className="block text-sm">
-              Allowed channel IDs
-              <input
-                value={channels ?? data.channelIds.join(", ")}
-                onChange={(e) => setChannels(e.target.value)}
-                placeholder="All channels"
-                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
-              />
-            </label>
-            <p className="text-xs text-gray-500">
-              Separate IDs with commas. Direct messages remain available to eligible members.
-            </p>
-            <label className="block text-sm">
-              Requests per member per day
-              <input
-                type="number"
-                min={1}
-                max={1000}
-                value={limit ?? data.dailyLimit}
-                onChange={(e) => setLimit(Number(e.target.value))}
-                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
-              />
-            </label>
-            <DenButton
-              variant="secondary"
-              disabled={busy || !data.hasSigningSecret || (channels === null && limit === null)}
-              onClick={() => void save(data.enabled)}
-            >
-              Save limits
-            </DenButton>
+          <details className="group text-sm" data-testid="slack-assistant-limits">
+            <summary className={auditSummaryClass} data-testid="slack-assistant-limits-toggle"><AuditChevron />Rollout limits</summary>
+            <div className="flex flex-col items-start gap-3 pb-3">
+              <label className="flex w-full flex-col gap-1">
+                Allowed channel IDs
+                <DenInput
+                  value={channels ?? data.channelIds.join(", ")}
+                  onChange={(e) => setChannels(e.target.value)}
+                  placeholder="All channels"
+                />
+              </label>
+              <p className="text-xs text-gray-500">
+                Separate IDs with commas. Direct messages remain available to eligible members.
+              </p>
+              <label className="flex w-full flex-col gap-1">
+                Requests per member per day
+                <DenInput
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={limit ?? data.dailyLimit}
+                  onChange={(e) => setLimit(Number(e.target.value))}
+                />
+              </label>
+              <DenButton
+                variant="secondary"
+                disabled={busy || !data.hasSigningSecret || (channels === null && limit === null)}
+                onClick={() => void save(data.enabled)}
+              >
+                Save limits
+              </DenButton>
+            </div>
           </details>
-          <details>
-            <summary className="cursor-pointer text-sm">Slack app manifest</summary>
+          <details className="group text-sm" data-testid="slack-assistant-manifest">
+            <summary className={auditSummaryClass} data-testid="slack-assistant-manifest-toggle"><AuditChevron />Slack app manifest</summary>
             <p className="my-2 text-xs text-gray-500">
               Merge these settings into the Slack app registered for this connection. Keep its existing user OAuth and
               MCP settings.

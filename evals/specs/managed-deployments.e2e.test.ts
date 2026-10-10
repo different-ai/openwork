@@ -2,16 +2,35 @@ import { expect } from "vitest";
 import { eventually, spec } from "@openwork/testkit";
 import { managedDeploymentListSchema } from "@openwork/types/den/managed-deployments";
 import { managedDeployments } from "../worlds/managed-deployments.ts";
+import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 // No paid infrastructure is launched here. This proves the real Den screens,
 // records, approval handoff and access boundaries. The AWS installer and health
 // agent are validated separately in an approved, dedicated AWS account.
 const test = spec.world(managedDeployments, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den"] } });
 
-test("an owner prepares an AWS install without OpenWork claiming it is running", async ({ world, user, probe, step, evidence }) => {
+test("an owner prepares AWS installs without claiming they are running and can cancel or confirm Remove", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.web);
   const page = probe.on(world.web);
+  // notSee proves stable absence from now on; first wait for a closing dialog or a finished DELETE to leave the page.
+  const leaves = (selector: string, label: string, matches: (text: string) => boolean = () => true) => page.eventually(async () => {
+    const left = (await page.dom(selector)).elements.filter((entry) => matches(entry.text));
+    if (left.length > 0) throw new Error(`${label} is still on screen.`);
+    return true;
+  }, { within: 60_000, intervalMs: 250, label });
+  // The alert dialog moves initial focus a frame after it paints; wait for it rather than sampling the first frame.
+  const cancelFocused = () => page.eventually(async () => {
+    const [cancel] = (await page.dom('[data-testid="confirm-dialog-cancel"]')).elements;
+    if (!cancel?.focused) throw new Error("Cancel has not received focus yet.");
+    return cancel;
+  }, { within: 5_000, intervalMs: 100, label: "the confirmation focuses Cancel" });
   const ownHeaders = { "x-openwork-org-id": world.enabledOrgId };
+  const stagingName = "Staging release rehearsal and infrastructure validation";
+  const targets = [
+    { name: stagingName, accountId: "123456789013", domain: "staging.example.test" },
+    // Sandbox uses an existing VPC and ECS cluster; these IDs are configuration.
+    { name: "Sandbox", accountId: "123456789014", domain: "sandbox.example.test", existing: true },
+  ];
   async function openEnabledWorkspace() {
     await owner.see({ testId: "workspace-switcher-trigger" }, { timeoutMs: 90_000 });
     await owner.click({ testId: "workspace-switcher-trigger" });
@@ -54,7 +73,34 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     await owner.type({ label: "Route 53 hosted zone ID for that address" }, "ZTEST123");
     await owner.type({ label: "First administrator email" }, "admin@example.test");
     await owner.see({ text: /AWS bills my account/ });
-    evidence.recordAssertionEvidence("no AWS keys or root credentials are collected", "The form asks for account ID, region, address, hosted zone and first-administrator email, and states AWS costs.", true);
+    await owner.see({ testId: "network-dedicated" });
+    const [dialog] = (await page.dom('[data-testid="create-deployment-dialog"]')).elements;
+    const options = (await page.dom('[data-testid="deployment-network-options"] > label')).elements;
+    expect(options).toHaveLength(2);
+    const outerRadius = Number.parseFloat(dialog.style.borderTopLeftRadius);
+    const innerRadii = options.map((option) => Number.parseFloat(option.style.borderTopLeftRadius));
+    expect(outerRadius).toBe(16);
+    expect(innerRadii).toEqual([8, 8]);
+    expect(innerRadii.every((radius) => radius < outerRadius)).toBe(true);
+    evidence.recordAssertionEvidence("AWS configuration stays explicit and the network choices fit their dialog", `The form keeps account ID, region, address, hosted zone, first-administrator email and AWS costs; both network choices use ${innerRadii.join(" / ")}px corners inside the ${outerRadius}px dialog.`, true);
+    await owner.screenshot();
+  });
+
+  await step("the complete AWS cost and approval consent is readable before creating the deployment", async () => {
+    await owner.see({ testId: "deployment-cost-consent" });
+    const [consentBox] = (await page.dom('[data-testid="deployment-cost-consent"]')).elements;
+    const [dialog] = (await page.dom('[data-testid="create-deployment-dialog"]')).elements;
+    const { consent } = await world.deploymentTextReadability();
+    expect(consent?.textNodeCount).toBe(1);
+    expect(consent?.inlineChildren).toBe(0);
+    expect(consent?.fits).toBe(true);
+    expect(consent?.text).toContain("and NAT gateway (about $100–150 a month at the small size)");
+    expect(consent?.text).toContain("I'll review the installer's permissions in AWS before approving.");
+    expect(consentBox.rect.top).toBeGreaterThanOrEqual(dialog.rect.top);
+    expect(consentBox.rect.bottom).toBeLessThanOrEqual(dialog.rect.bottom);
+    expect(consentBox.rect.left).toBeGreaterThanOrEqual(dialog.rect.left);
+    expect(consentBox.rect.right).toBeLessThanOrEqual(dialog.rect.right);
+    evidence.recordAssertionEvidence("the complete consent is visible as one coherent text block", `The AWS account/hosted-zone consent, $100–150 monthly estimate and permission-review obligation occupy one text node, fit the dialog horizontally, and are fully inside its bounds (${consentBox.rect.top.toFixed(1)}–${consentBox.rect.bottom.toFixed(1)}px).`, true);
     await owner.screenshot();
   });
 
@@ -88,6 +134,27 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     await owner.screenshot();
   });
 
+  await step("after: all six unfinished installation checks are readable without claiming completion", async () => {
+    await owner.see({ text: "Waiting for approval in AWS." });
+    await owner.see({ testId: "managed-deployment-steps" });
+    const { labels, neutralColor } = await world.deploymentTextReadability();
+    expect(labels).toHaveLength(6);
+    expect(neutralColor).not.toBeNull();
+    for (const label of labels) {
+      expect(label.contrast).toBeGreaterThanOrEqual(4.5);
+      expect(label.opacity).toBe(1);
+      expect(label.color).toBe(neutralColor);
+      expect(label.pendingMarker).toBe(true);
+      expect(label.otherMarker).toBe(false);
+    }
+    const [item] = await deployments();
+    expect(item.run?.state).toBe("awaiting_approval");
+    expect(item.run?.events).toHaveLength(0);
+    expect(item.installedVersion).toBeNull();
+    evidence.recordAssertionEvidence("readable pending labels do not invent installer progress", `All six labels use the same neutral ink as Waiting for approval in AWS, at ${Math.min(...labels.map((label) => label.contrast)).toFixed(2)}:1 minimum contrast. Six dashed pending markers remain; Den still reports awaiting_approval, zero events and no installed version.`, true);
+    await owner.screenshot();
+  });
+
   await step("reopening the approval after a reload reuses the same run", async () => {
     await owner.reload();
     await owner.see({ testId: "managed-deployment-status" }, { text: "Awaiting AWS approval", timeoutMs: 60_000 });
@@ -100,12 +167,7 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     await owner.screenshot();
   });
 
-  await step("three deployments are listed together with independent AWS approvals", async () => {
-    const targets = [
-      { name: "Staging", accountId: "123456789013", domain: "staging.example.test" },
-      // Sandbox runs in the customer's existing VPC and ECS cluster.
-      { name: "Sandbox", accountId: "123456789014", domain: "sandbox.example.test", existing: true },
-    ];
+  await step("the owner adds a long-named staging deployment and a sandbox in an existing AWS network", async () => {
     const existingNetwork = {
       vpcId: "vpc-0a1b2c3d4e5f60718", serviceSubnetIds: ["subnet-0aaaaaaaaaaaaaaa1", "subnet-0aaaaaaaaaaaaaaa2"],
       loadBalancerSubnetIds: ["subnet-0bbbbbbbbbbbbbbb1", "subnet-0bbbbbbbbbbbbbbb2"], ecsClusterArn: "arn:aws:ecs:us-east-1:123456789014:cluster/platform",
@@ -138,8 +200,101 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     expect(new Set(before.map((item) => item.id)).size).toBe(3);
     const added = before.filter((item) => item.id !== deploymentId);
     expect(added.every((item) => item.run === null && item.installedVersion === null)).toBe(true);
+    evidence.recordAssertionEvidence("the existing AWS network is saved without hiding its configuration", `Three deployments exist: Production awaits approval, while the long-named Staging and Sandbox are Not launched. Sandbox retains VPC ${existingNetwork.vpcId}, both pairs of subnet IDs and ECS cluster ${existingNetwork.ecsClusterArn}; its network is shown in the detail.`, true);
+    await owner.screenshot();
+  });
 
+  await step("after: mixed deployment states and a long name keep straight lanes on a wide screen", async () => {
+    await owner.click({ role: "button", label: new RegExp(`^${stagingName}\\s*AWS`) });
+    await owner.see({ role: "heading", label: stagingName });
+    await owner.see({ testId: "managed-deployment-status" }, { text: "Not launched" });
+    const statuses = (await page.dom('[data-deployment-status]')).elements;
+    const versions = (await page.dom('[data-deployment-version]')).elements;
+    const names = (await page.dom('[data-deployment-name]')).elements;
+    const [detailStatus] = (await page.dom('[data-testid="managed-deployment-status"]')).elements;
+    expect(statuses).toHaveLength(3);
+    expect(versions).toHaveLength(3);
+    expect(names).toHaveLength(3);
+    expect(new Set(statuses.map((status) => status.text))).toEqual(new Set(["Awaiting AWS approval", "Not launched"]));
+    for (const [index, status] of statuses.entries()) {
+      expect(Math.abs(status.rect.right - detailStatus.rect.right)).toBeLessThanOrEqual(1);
+      expect(Math.abs(status.rect.width - 208)).toBeLessThanOrEqual(1);
+      expect(Math.abs(versions[index].rect.width - 80)).toBeLessThanOrEqual(1);
+      expect(Math.abs(versions[index].rect.right - versions[0].rect.right)).toBeLessThanOrEqual(1);
+      expect(names[index].rect.width).toBeGreaterThan(0);
+      expect(names[index].rect.right).toBeLessThanOrEqual(versions[index].rect.left);
+      expect(versions[index].rect.right).toBeLessThanOrEqual(status.rect.left);
+    }
+    evidence.recordAssertionEvidence("mixed states share fixed lanes and the detail edge", `At 1440px, three rows include Awaiting AWS approval and Not launched; version lanes are ${versions.map((version) => version.rect.width).join(" / ")}px, status lanes are ${statuses.map((status) => status.rect.width).join(" / ")}px, and list/detail statuses end at ${detailStatus.rect.right}px within 1px. The ${stagingName.length}-character name has its own non-overlapping lane.`, true);
+    await owner.screenshot();
+  });
+
+  await step("after: at 320 pixels the long name, deployment states and AWS details stay inside the page", async () => {
+    await owner.resizeViewport({ width: 320, height: 1000, deviceScaleFactor: 1 });
+    await owner.see({ role: "heading", label: stagingName });
+    await owner.see({ testId: "managed-deployment-status" }, { text: "Not launched" });
+    const layout = await page.dom('[data-testid="managed-deployment-row"]');
+    const statuses = (await page.dom('[data-deployment-status]')).elements;
+    const versions = (await page.dom('[data-deployment-version]')).elements;
+    const names = (await page.dom('[data-deployment-name]')).elements;
+    const [heading] = (await page.dom('[data-testid="managed-deployment-detail"] h2')).elements;
+    const [detailStatus] = (await page.dom('[data-testid="managed-deployment-status"]')).elements;
+    expect(isEmulatedClientWidth(layout.viewportWidth, 320)).toBe(true);
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.elements).toHaveLength(3);
+    expect(statuses).toHaveLength(3);
+    expect(names).toHaveLength(3);
+    expect(versions).toHaveLength(3);
+    for (const [index, row] of layout.elements.entries()) {
+      expect(row.rect.left).toBeGreaterThanOrEqual(0);
+      expect(row.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
+      expect(names[index].rect.width).toBeGreaterThan(0);
+      expect(names[index].rect.right).toBeLessThanOrEqual(versions[index].rect.left);
+      expect(names[index].rect.bottom).toBeLessThanOrEqual(statuses[index].rect.top);
+      expect(Math.abs(statuses[index].rect.right - detailStatus.rect.right)).toBeLessThanOrEqual(1);
+    }
+    expect(heading.text).toBe(stagingName);
+    expect(heading.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
+    const configurationRows = (await page.dom('[data-testid="managed-deployment-configuration"] > div')).elements;
+    expect(configurationRows.map((row) => row.text).join(" ")).toContain("123456789013");
+    for (const row of configurationRows) {
+      expect(row.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
+    }
+    evidence.recordAssertionEvidence("a small screen keeps the full name and configuration without sideways scrolling", `Viewport/document widths are ${layout.viewportWidth}/${layout.documentWidth}px. All three rows fit; statuses move below their name/version lanes and align with the detail. The full ${stagingName.length}-character heading and AWS account 123456789013 remain readable.`, true);
+    await owner.screenshot();
+  });
+
+  await step("after: the complete first-sign-in directions fit a 320-pixel screen", async () => {
+    await owner.click({ testId: "deployment-technical-details-toggle" });
+    await owner.see({ testId: "deployment-setup-directions" }, { text: /OpenWork never receives it\.$/ });
+    const layout = await page.dom('[data-testid="deployment-setup-directions"]');
+    const [directions] = layout.elements;
+    const { setup } = await world.deploymentTextReadability();
+    const deployment = (await deployments()).find((item) => item.name === stagingName);
+    if (!deployment) throw new Error("The staging deployment is missing while reading setup directions.");
+    expect(isEmulatedClientWidth(layout.viewportWidth, 320)).toBe(true);
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.elements).toHaveLength(1);
+    expect(setup?.disclosed).toBe(true);
+    expect(setup?.textNodeCount).toBe(1);
+    expect(setup?.inlineChildren).toBe(0);
+    expect(setup?.fits).toBe(true);
+    expect(directions.text).toContain(`First sign-in: open ${deployment.webUrl}/setup`);
+    expect(directions.text).toContain("AWS Secrets Manager secret, field DEN_INITIAL_ADMIN_BOOTSTRAP_CODE.");
+    expect(directions.text).toContain("OpenWork never receives it.");
+    expect(directions.rect.left).toBeGreaterThanOrEqual(0);
+    expect(directions.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(directions.rect.top).toBeGreaterThanOrEqual(0);
+    expect(directions.rect.bottom).toBeLessThanOrEqual(1000);
+    evidence.recordAssertionEvidence("the setup address and secret-field directions are fully visible", `At ${layout.viewportWidth}px, the complete ${deployment.webUrl}/setup address, AWS Secrets Manager field DEN_INITIAL_ADMIN_BOOTSTRAP_CODE and OpenWork never receives it statement wrap as one text node. The paragraph is fully on screen (${directions.rect.top.toFixed(1)}–${directions.rect.bottom.toFixed(1)}px), and document width is ${layout.documentWidth}px with no sideways overflow.`, true);
+    await owner.screenshot();
+    await owner.click({ testId: "deployment-technical-details-toggle" });
+  });
+
+  await step("three deployments keep independent AWS approvals after a reload", async () => {
+    await owner.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
     // Prepare each from its own row while the other approvals stay pending.
+    const added = (await deployments()).filter((item) => item.id !== deploymentId);
     for (const item of added) {
       await owner.click({ role: "button", label: new RegExp(`^${item.name}\\s*AWS`) });
       await owner.see({ role: "heading", label: item.name });
@@ -174,6 +329,80 @@ test("an owner prepares an AWS install without OpenWork claiming it is running",
     const otherWorkspace = await probe.api(world.den.admin, "/v1/managed-deployments", { headers: { "x-openwork-org-id": world.disabledOrgId } });
     expect(otherWorkspace.response.status).toBe(404);
     evidence.recordAssertionEvidence("no cross-role or cross-workspace access", "The teammate's API answers HTTP 403; the owner's other workspace answers HTTP 404 for the same list (its page is the locked state shown first).", true);
+    await owner.screenshot();
+  });
+
+  const removal = await step("Remove names the deployment and its consequence before anything is deleted", async () => {
+    await owner.click({ role: "button", label: new RegExp(`^${stagingName}\\s*AWS`) });
+    await owner.see({ role: "heading", label: stagingName });
+    const before = await deployments();
+    const deployment = before.find((item) => item.name === stagingName);
+    if (!deployment) throw new Error("The staging deployment is missing before Remove.");
+    expect(deployment.run?.state).toBe("awaiting_approval");
+    expect(deployment.installedVersion).toBeNull();
+    await owner.click({ testId: "managed-deployment-remove" });
+    await owner.see({ testId: "confirm-dialog" }, { text: new RegExp(`Remove ${stagingName}\\?`) });
+    await owner.see({ text: "This removes the deployment record and its pending approval from this workspace. AWS resources and charges are unchanged. This cannot be undone." });
+    const dialogs = (await page.dom('[role="alertdialog"][data-testid="confirm-dialog"]')).elements;
+    const cancel = await cancelFocused();
+    const buttons = (await page.dom('[data-testid="confirm-dialog"] button')).elements;
+    expect(dialogs).toHaveLength(1);
+    expect(cancel.focused).toBe(true);
+    expect(buttons.map((button) => button.text)).toEqual(["Cancel", "Remove"]);
+    expect(await deployments()).toHaveLength(3);
+    evidence.recordAssertionEvidence("Remove opens a safe confirmation without deleting the record", `One alert dialog names ${stagingName}, says the record and pending approval are removed but AWS resources and charges are unchanged, and offers Cancel / Remove. Cancel receives focus; all three deployments still exist.`, true);
+    await owner.screenshot();
+    return { before, deployment };
+  });
+
+  await step("after: Cancel keeps the deployment and every pending AWS approval", async () => {
+    await owner.click({ testId: "confirm-dialog-cancel" });
+    await leaves('[data-testid="confirm-dialog"]', "the cancelled confirmation closes");
+    await owner.notSee({ testId: "confirm-dialog" });
+    await owner.see({ role: "heading", label: stagingName });
+    await owner.see({ testId: "managed-deployment-status" }, { text: "Awaiting AWS approval" });
+    const after = await deployments();
+    expect(after).toHaveLength(3);
+    for (const item of removal.before) {
+      const preserved = after.find((entry) => entry.id === item.id);
+      expect(preserved?.target).toEqual(item.target);
+      expect(preserved?.run?.id).toBe(item.run?.id);
+      expect(preserved?.run?.state).toBe("awaiting_approval");
+    }
+    await owner.see({ role: "button", label: new RegExp(`^${stagingName}\\s*AWS`) });
+    evidence.recordAssertionEvidence("Cancel has no destructive side effect", `All three deployment IDs, AWS targets and pending approval IDs are unchanged; ${stagingName} stays selected with Awaiting AWS approval.`, true);
+    await owner.screenshot();
+  });
+
+  await step("after: confirming Remove deletes only that record and the other deployments stay tracked", async () => {
+    await owner.click({ testId: "managed-deployment-remove" });
+    await owner.see({ testId: "confirm-dialog" }, { text: new RegExp(`Remove ${stagingName}\\?`) });
+    // The shared confirmation starts on Cancel; Tab reaches its destructive
+    // Remove rather than the page's identically named control behind the modal.
+    const cancel = await cancelFocused();
+    expect(cancel.focused).toBe(true);
+    await owner.press("Tab");
+    const focused = (await page.dom('[data-testid="confirm-dialog"] button')).elements.filter((button) => button.focused);
+    expect(focused.map((button) => button.text)).toEqual(["Remove"]);
+    await owner.press("Enter");
+    await leaves('[data-testid="managed-deployment-row"]', "the removed deployment leaves the list", (text) => text.includes(stagingName));
+    await leaves('[data-testid="confirm-dialog"]', "the confirmed dialog closes");
+    await owner.notSee({ role: "button", label: new RegExp(`^${stagingName}\\s*AWS`) });
+    await owner.notSee({ testId: "confirm-dialog" });
+    await owner.reload();
+    await owner.see({ role: "button", label: /^Production\s*AWS/ }, { timeoutMs: 60_000 });
+    await owner.see({ role: "button", label: /^Sandbox\s*AWS/ });
+    await owner.notSee({ role: "button", label: new RegExp(`^${stagingName}\\s*AWS`) });
+    const after = await deployments();
+    expect(after).toHaveLength(2);
+    expect(after.some((item) => item.id === removal.deployment.id)).toBe(false);
+    for (const item of removal.before.filter((entry) => entry.id !== removal.deployment.id)) {
+      const preserved = after.find((entry) => entry.id === item.id);
+      expect(preserved?.target).toEqual(item.target);
+      expect(preserved?.run?.id).toBe(item.run?.id);
+      expect(preserved?.run?.state).toBe("awaiting_approval");
+    }
+    evidence.recordAssertionEvidence("only the confirmed deployment is gone after reload", `${stagingName} is absent from the page and Den's list. Production and Sandbox remain, with their original AWS targets and pending approvals; the count is 2, not 0.`, true);
     await owner.screenshot();
   });
 });

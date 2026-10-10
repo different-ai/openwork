@@ -1,4 +1,5 @@
 import type { DenSession } from "@openwork/behaviors";
+import { evaluateOnSurface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import type { MockMcpTool } from "@openwork/labs";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
@@ -124,5 +125,23 @@ export async function libraryUsage(seed: Seed) {
   const viewport = { width: 1280, height: 1000 };
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/analytics", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: den.members.alice, startPath: "/dashboard", headless: true, viewport });
-  return { den, web, memberWeb, orgId, skills: capabilities, connectors, loadSkill, callConnector, baseUrl: den.ref.webUrl };
+  return {
+    den, web, memberWeb, orgId, skills: capabilities, connectors, loadSkill, callConnector, baseUrl: den.ref.webUrl,
+    // Read-only layout witness: probe.dom reports document width and rectangles,
+    // but not body scrollWidth or whether sideways scrolling stays in the table.
+    usageLayout: () => evaluateOnSurface(web, () => {
+      const table = document.querySelector('[data-testid="library-usage-table"]');
+      return {
+        viewportWidth: document.documentElement.clientWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.clientWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        table: table ? {
+          width: table.clientWidth,
+          scrollWidth: table.scrollWidth,
+          overflowX: getComputedStyle(table).overflowX,
+        } : null,
+      };
+    }),
+  };
 }

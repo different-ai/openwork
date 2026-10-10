@@ -79,7 +79,7 @@ export function WorkflowRunsScreen() {
       action={entitled ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}>
         <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh runs
       </DenButton> : null} />
-    {!entitled ? <EnterprisePlanNotice feature="Workflow Runs" /> : <>
+    {!entitled ? <EnterprisePlanNotice feature="Workflow run history" detail="Run history is unavailable on this plan." /> : <>
       {isError ? <DenNotice tone="error" message="Could not load workflow runs. Try refreshing." /> : null}
       {isPending ? <p role="status" className="text-sm text-[#637291]">Loading workflow runs…</p>
         : runs?.length === 0 ? <div className={analyticsSurfaceClass}>

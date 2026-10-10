@@ -7,12 +7,12 @@ import {
   denDropdownFieldBaseClass,
   denDropdownFieldOpenClass,
   denDropdownListClass,
-  denDropdownMenuBaseClass,
   denDropdownRowActiveClass,
   denDropdownRowBaseClass,
   denDropdownRowIdleClass,
   denDropdownRowSelectedClass,
 } from "./dropdown-styles";
+import { DenDropdownPopup, DenDropdownRoot, DenDropdownTrigger } from "./dropdown-popup";
 
 export type DenComboboxOption = {
   value: string;
@@ -71,8 +71,9 @@ export function DenCombobox({
   const [query, setQuery] = useState("");
   const [hasTypedSinceOpen, setHasTypedSinceOpen] = useState(false);
   const [activeValue, setActiveValue] = useState<string | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const restoringFocusRef = useRef(false);
   const optionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const listboxId = useId();
 
@@ -101,7 +102,11 @@ export function DenCombobox({
 
   function focusInput(selectText = false) {
     requestAnimationFrame(() => {
-      inputRef.current?.focus();
+      // A touch click can focus the portaled option before commit. Returning to
+      // the input must not treat that focus restoration as a fresh open action.
+      restoringFocusRef.current = true;
+      inputRef.current?.focus({ preventScroll: true });
+      restoringFocusRef.current = false;
       if (selectText) {
         inputRef.current?.select();
       }
@@ -169,7 +174,7 @@ export function DenCombobox({
   }
 
   function handleInputFocus(event: FocusEvent<HTMLInputElement>) {
-    if (disabled) {
+    if (disabled || restoringFocusRef.current) {
       return;
     }
 
@@ -257,6 +262,7 @@ export function DenCombobox({
     if (event.key === "Escape") {
       if (open) {
         event.preventDefault();
+        event.stopPropagation();
         closeCombobox({ focus: true });
       }
     }
@@ -272,22 +278,12 @@ export function DenCombobox({
   }, [open, selectedLabel]);
 
   useEffect(() => {
-    if (!open) {
-      return;
+    if (disabled) {
+      setOpen(false);
+      setActiveValue(null);
+      setHasTypedSinceOpen(false);
     }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (rootRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      closeCombobox();
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-    };
-  }, [open, selectedLabel]);
+  }, [disabled]);
 
   useEffect(() => {
     if (!open) {
@@ -321,69 +317,74 @@ export function DenCombobox({
   }, [activeValue, open]);
 
   return (
-    <div
-      ref={rootRef}
-      className="relative"
-      onBlurCapture={() => {
-        if (!open) {
-          return;
+    <DenDropdownRoot
+      open={open}
+      onOpenChange={(nextOpen, details) => {
+        if (nextOpen) {
+          openCombobox();
+        } else {
+          closeCombobox({ focus: details.reason === "escape-key" });
         }
-
-        requestAnimationFrame(() => {
-          const activeElement = document.activeElement;
-          if (rootRef.current && activeElement instanceof Node && !rootRef.current.contains(activeElement)) {
-            closeCombobox();
-          }
-        });
       }}
     >
+    <div className="relative">
       <div className="relative">
         {selectedOption?.icon && !open ? (
           <span className="pointer-events-none absolute inset-y-0 left-3 z-[1] flex items-center">
             {selectedOption.icon}
           </span>
         ) : null}
-        <input
-          ref={inputRef}
-          type="search"
-          value={inputValue}
-          maxLength={maxSearchLength}
+        <DenDropdownTrigger
+          nativeButton={false}
           disabled={disabled}
-          readOnly={!open}
-          name={`${listboxId}-search`}
-          autoComplete="new-password"
-          autoCorrect="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          data-form-type="other"
-          data-lpignore="true"
-          data-1p-ignore="true"
-          placeholder={open ? searchPlaceholder : placeholder}
-          aria-label={ariaLabel}
-          role="combobox"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-controls={listboxId}
-          aria-autocomplete="list"
-          aria-activedescendant={activeDescendant}
-          onFocus={handleInputFocus}
-          onChange={handleInputChange}
-          onClick={() => {
-            if (!open) {
-              openCombobox({ selectText: true });
-            }
-          }}
-          onKeyDown={handleInputKeyDown}
-          className={[
-            denDropdownFieldBaseClass,
-            "rounded-lg placeholder:text-gray-400",
-            selectedOption?.icon && !open ? "pl-11" : "",
-            open ? denDropdownFieldOpenClass : "",
-            disabled ? "cursor-not-allowed opacity-60" : "cursor-text",
-            className ?? "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
+          // The input owns its value/keyboard contract; the primitive still
+          // registers it and merges inputRef through the element render API.
+          onClick={(event) => event.preventBaseUIHandler()}
+          onKeyDown={(event) => event.preventBaseUIHandler()}
+          render={(
+            <input
+              ref={inputRef}
+              type="search"
+              value={inputValue}
+              maxLength={maxSearchLength}
+              disabled={disabled}
+              readOnly={!open}
+              name={`${listboxId}-search`}
+              autoComplete="new-password"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              data-form-type="other"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              placeholder={open ? searchPlaceholder : placeholder}
+              aria-label={ariaLabel}
+              role="combobox"
+              aria-haspopup="listbox"
+              aria-expanded={open}
+              aria-controls={listboxId}
+              aria-autocomplete="list"
+              aria-activedescendant={activeDescendant}
+              onFocus={handleInputFocus}
+              onChange={handleInputChange}
+              onClick={() => {
+                if (!open) {
+                  openCombobox({ selectText: true });
+                }
+              }}
+              onKeyDown={handleInputKeyDown}
+              className={[
+                denDropdownFieldBaseClass,
+                "rounded-lg placeholder:text-gray-400",
+                selectedOption?.icon && !open ? "pl-11" : "",
+                open ? denDropdownFieldOpenClass : "",
+                disabled ? "cursor-not-allowed opacity-60" : "cursor-text",
+                className ?? "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            />
+          )}
         />
         <span className={denDropdownChevronSlotClass}>
           <ChevronDown size={16} className={disabled ? "text-gray-300" : "text-gray-400"} aria-hidden="true" />
@@ -391,8 +392,8 @@ export function DenCombobox({
       </div>
 
       {open ? (
-        <div className={denDropdownMenuBaseClass}>
-          {searchFeedback ? <div className="px-3 py-2">{searchFeedback}</div> : null}
+        <DenDropdownPopup anchor={inputRef} popupRef={popupRef}>
+          {searchFeedback ? <div className="shrink-0 px-3 py-2">{searchFeedback}</div> : null}
           <div id={listboxId} role="listbox" className={denDropdownListClass}>
             {filteredOptions.length ? (
               filteredOptions.map((option, index) => {
@@ -411,14 +412,14 @@ export function DenCombobox({
                     tabIndex={-1}
                     aria-selected={selected}
                     disabled={optionsDisabled}
-                    onMouseEnter={() => { if (!optionsDisabled) setActiveValue(option.value); }}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      selectOption(option.value);
+                    onPointerMove={(event) => { if (event.pointerType !== "touch" && !optionsDisabled) setActiveValue(option.value); }}
+                    onPointerDown={(event) => {
+                      if (event.pointerType !== "touch") event.preventDefault();
                     }}
+                    onClick={() => selectOption(option.value)}
                     className={[
                       denDropdownRowBaseClass,
-                      "items-start",
+                      "min-h-10 items-start",
                       optionsDisabled ? "cursor-not-allowed opacity-60" : "",
                       selected ? denDropdownRowSelectedClass : active ? denDropdownRowActiveClass : denDropdownRowIdleClass,
                     ]
@@ -429,7 +430,7 @@ export function DenCombobox({
                       <span className="mt-0.5 flex shrink-0 items-center">{option.icon}</span>
                     ) : null}
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[14px] font-medium text-gray-900">{option.label}</p>
+                      <p className="line-clamp-2 break-words whitespace-normal text-[14px] font-medium text-gray-900">{option.label}</p>
                       {option.description ? (
                         <p className="mt-1 truncate text-[12px] text-gray-500">{option.description}</p>
                       ) : null}
@@ -448,8 +449,9 @@ export function DenCombobox({
               </div>
             )}
           </div>
-        </div>
+        </DenDropdownPopup>
       ) : null}
     </div>
+    </DenDropdownRoot>
   );
 }

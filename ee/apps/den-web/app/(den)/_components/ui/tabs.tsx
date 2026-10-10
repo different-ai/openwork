@@ -43,7 +43,7 @@ export function UnderlineTabs<T extends string>({
               className={`inline-flex items-center gap-2 border-b-2 pb-3 text-[14px] font-medium transition-colors ${
                 selected
                   ? "border-[#0f172a] text-[#0f172a]"
-                  : "border-transparent text-gray-400 hover:text-gray-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
               }`}
             >
               {Icon ? <Icon className="h-4 w-4" /> : null}

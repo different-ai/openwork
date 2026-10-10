@@ -52,7 +52,7 @@ function PermissionSetRow({ set, href }: { set: PermissionSetSummary; href: stri
         <span className="truncate text-[13px] font-medium text-gray-900">{set.name}</span>
         <span className="truncate text-[12px] text-gray-500">{appliesToSummary(set)}</span>
       </div>
-      <span className="shrink-0 font-mono text-[12px] text-gray-700">{set.allowedCount} of {PERMISSION_KEYS.length} allowed</span>
+      <span className="shrink-0 text-[12px] text-gray-700">{set.allowedCount} of {PERMISSION_KEYS.length} allowed</span>
       <ChevronRight className="size-4 shrink-0 text-gray-300 transition-colors group-hover:text-gray-500" aria-hidden="true" strokeWidth={1.5} />
     </Link>
   );
@@ -75,10 +75,10 @@ export function PermissionsScreen() {
   const newButton = canManage ? (
     <LinkButton href={getNewTeamPermissionsRoute(ready.orgSlug)} variant="secondary" size="sm" data-testid="new-team-permissions">
       <Plus className="size-3.5" aria-hidden="true" />
-      New
+      Create team permissions
     </LinkButton>
   ) : (
-    <DenButton variant="secondary" size="sm" icon={LockKeyhole} disabled aria-describedby="permissions-read-only">New</DenButton>
+    <DenButton variant="secondary" size="sm" icon={LockKeyhole} disabled aria-describedby="permissions-read-only">Create team permissions</DenButton>
   );
 
   return (

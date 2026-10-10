@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ChevronRight, Plus, Search } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
+import { DenButton } from "../../_components/ui/button";
 import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
+import { DenSkeleton } from "../../_components/ui/skeleton";
 import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { isMicrosoftFoundryProvider, isSupportedGatewayNpm } from "./inference-provider-request";
@@ -24,6 +26,7 @@ const TAGLINES: Record<string, string> = {
   azure: "GPT models on your Azure resource",
   "amazon-bedrock": "Claude, Llama and more on AWS",
   "microsoft-foundry": "Claude on your Microsoft Foundry resource",
+  litellm: "Your own LiteLLM proxy, with one shared key or each person's key",
   mistral: "Mistral and Codestral models",
   groq: "Fast open models: Llama, Qwen, Kimi",
   deepseek: "DeepSeek V3 and R1",
@@ -53,21 +56,29 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [catalogBusy, setCatalogBusy] = useState(true);
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
 
   useEffect(() => {
-    if (!orgId) return;
+    setCatalog([]);
+    setError(null);
+    if (!orgId) { setCatalogBusy(false); return; }
     let cancelled = false;
+    setCatalogBusy(true);
     void requestLlmProviderCatalog(orgId)
       .then((result) => { if (!cancelled) setCatalog(result); })
-      .catch(() => { if (!cancelled) setError("Could not load the provider catalog."); });
+      .catch(() => { if (!cancelled) setError("Could not load the provider catalog."); })
+      .finally(() => { if (!cancelled) setCatalogBusy(false); });
     return () => { cancelled = true; };
-  }, [orgId]);
+  }, [orgId, catalogAttempt]);
 
   const providers = useMemo(() => {
-    const supported = orderCatalog(catalog.filter((item) => isSupportedGatewayNpm(item.npm) && (foundryOffered || !isMicrosoftFoundryProvider(item.id))));
+    const supported = catalog.filter((item) => item.id !== LITELLM_PROVIDER_ID && isSupportedGatewayNpm(item.npm) && (foundryOffered || !isMicrosoftFoundryProvider(item.id)));
+    if (liteLlmOffered) supported.push({ id: LITELLM_PROVIDER_ID, name: "LiteLLM", npm: null, env: [], doc: LITELLM_DOC_URL, api: null, modelCount: 0 });
+    const ordered = orderCatalog(supported);
     const normalized = query.trim().toLowerCase();
-    return normalized ? supported.filter((item) => item.name.toLowerCase().includes(normalized) || item.id.includes(normalized) || providerTagline(item).toLowerCase().includes(normalized)) : supported;
-  }, [catalog, query, foundryOffered]);
+    return normalized ? ordered.filter((item) => item.name.toLowerCase().includes(normalized) || item.id.toLowerCase().includes(normalized) || providerTagline(item).toLowerCase().includes(normalized)) : ordered;
+  }, [catalog, query, foundryOffered, liteLlmOffered]);
   const visible = showAll || query.trim() ? providers : providers.slice(0, INITIAL_ROWS);
   const hidden = providers.length - visible.length;
   const compatible = catalog.find((item) => item.npm === "@ai-sdk/openai-compatible");
@@ -79,16 +90,22 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
         Back to AI Providers
       </Link>
       <Heading className="mt-2 text-[20px] font-medium tracking-[-0.02em] text-gray-900">Add a provider</Heading>
-      {error ? <DenNotice tone="error" message={error} className="mt-4" /> : null}
-
       <div className="mt-5 rounded-[12px] border border-gray-100 bg-white">
         <div className="p-3">
           <div className="w-[200px]">
-            <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name…" data-testid="gateway-provider-catalog-filter" className="h-8 text-[12px]" />
+            <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name" aria-label="Filter by name" data-testid="gateway-provider-catalog-filter" className="h-8 text-[12px]" />
           </div>
         </div>
-        <ul className="divide-y divide-gray-100 border-t border-gray-100">
-          {visible.map((item) => (
+        <ul className="divide-y divide-gray-100 border-t border-gray-100" aria-busy={catalogBusy} aria-label="Provider catalog" data-testid="gateway-provider-catalog">
+          {catalogBusy ? Array.from({ length: INITIAL_ROWS }, (_, index) => (
+            <li key={index} className="flex items-center gap-3 px-4 py-2.5" data-testid="gateway-provider-catalog-loading">
+              <DenSkeleton className="size-7 shrink-0 rounded-lg" />
+              <span className="flex flex-1 flex-col gap-2"><DenSkeleton className="h-4 w-32" /><DenSkeleton className="h-3 w-60 max-w-full" /></span>
+              <DenSkeleton className="size-4 shrink-0" />
+            </li>
+          )) : null}
+          {error ? <li><DenNotice tone="error" presentation="inline" message={error} action={<DenButton size="sm" variant="secondary" data-testid="gateway-provider-catalog-retry" onClick={() => setCatalogAttempt((current) => current + 1)}>Retry</DenButton>} /></li> : null}
+          {!catalogBusy ? visible.map((item) => (
             <li key={item.id}>
               <Link href={getNewAiGatewayProviderRoute(orgSlug, item.id)} data-testid={`gateway-provider-pick-${item.id}`} aria-label={`Add ${item.name}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                 <DenBrandMark name={item.name} simpleIconSlug={getProviderIconSlug(item.id)} serviceUrl={item.doc} className="h-7 w-7 shrink-0 rounded-[7px]" imageClassName="h-3.5 w-3.5" />
@@ -102,28 +119,21 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
                 <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" aria-hidden="true" />
               </Link>
             </li>
-          ))}
-          {catalog.length > 0 && providers.length === 0 ? <li className="px-4 py-4 text-[13px] text-gray-500">No providers match that filter.</li> : null}
-          {hidden > 0 ? (
+          )) : null}
+          {!catalogBusy && !error && providers.length === 0 ? (
+            <li className="px-4 py-4 text-[13px] text-gray-500" data-testid="gateway-provider-catalog-empty">
+              {query.trim() ? "No providers match that filter. Try another name." : "No providers are available. Retry the catalog."}
+              {!query.trim() ? <DenButton size="sm" variant="secondary" className="mt-3" onClick={() => setCatalogAttempt((current) => current + 1)}>Retry</DenButton> : null}
+            </li>
+          ) : null}
+          {!catalogBusy && hidden > 0 ? (
             <li>
               <button type="button" onClick={() => setShowAll(true)} data-testid="gateway-provider-catalog-more" className="w-full py-2.5 text-center text-[12px] font-medium text-gray-600 hover:bg-gray-50">
                 Show {hidden} more {hidden === 1 ? "provider" : "providers"}
               </button>
             </li>
           ) : null}
-          {liteLlmOffered && (!query.trim() || "litellm".includes(query.trim().toLowerCase())) ? (
-            <li className="border-t border-gray-100">
-              <Link href={getNewAiGatewayProviderRoute(orgSlug, LITELLM_PROVIDER_ID)} data-testid="gateway-provider-pick-litellm" aria-label="Add LiteLLM" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
-                <DenBrandMark name="LiteLLM" serviceUrl={LITELLM_DOC_URL} className="h-7 w-7 shrink-0 rounded-[7px]" imageClassName="h-3.5 w-3.5" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium text-gray-900">LiteLLM</span>
-                  <span className="block text-[12px] text-gray-500">Your own LiteLLM proxy, with one shared key or each person's key</span>
-                </span>
-                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" aria-hidden="true" />
-              </Link>
-            </li>
-          ) : null}
-          {compatible && !visible.some((item) => item.id === compatible.id) ? (
+          {!catalogBusy && !error && !query.trim() && compatible && !visible.some((item) => item.id === compatible.id) ? (
             <li className="border-t border-gray-100">
               <Link href={getNewAiGatewayProviderRoute(orgSlug, compatible.id)} data-testid="gateway-provider-pick-compatible" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-dashed border-gray-300 text-gray-400"><Plus className="h-3.5 w-3.5" aria-hidden="true" /></span>

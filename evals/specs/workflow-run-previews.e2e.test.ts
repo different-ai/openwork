@@ -3,6 +3,7 @@ import { runWorkflow, saveWorkflow } from "@openwork/behaviors";
 import { queryDenDatabase } from "@openwork/env";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { spec } from "@openwork/testkit";
+import { enterprisePlanNoticeMeasurements } from "../worlds/workflow-run-previews.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -28,8 +29,17 @@ function runs(value: unknown): Record<string, unknown>[] {
 // New journey: browse organization workflow activity and open the saved workflow
 // from the visualization of the version that produced a particular run.
 const test = spec.world(async (seed) => {
-  const den = await seed.den({ env: { DEN_PLAN_GATING_ENABLED: "true", DEN_ORG_MODE: "multi_org" }, org: { name: "Workflow activity", members: { colleague: { name: "Teammate" } } } });
-  const organizationId = field(record((await seed.api(den.admin, "/v1/org")).body).organization, "id");
+  const den = await seed.den({ env: { DEN_PLAN_GATING_ENABLED: "true", DEN_ORG_MODE: "multi_org", STRIPE_SECRET_KEY: "" }, org: { name: "Workflow activity", members: { colleague: { name: "Teammate" }, planViewer: { name: "Analytics teammate" } } } });
+  const organization = record((await seed.api(den.admin, "/v1/org")).body);
+  const organizationId = field(organization.organization, "id");
+  if (!Array.isArray(organization.members)) throw new Error("Expected organization members");
+  const planViewerMember = organization.members.map(record).find((member) => String(record(member.user).email).toLowerCase() === den.members.planViewer.email.toLowerCase()); // Den stores emails lowercased.
+  // A non-owner admin can open Analytics, while the ordinary teammate below
+  // keeps their existing billing and run-visibility boundaries.
+  const promoted = await seed.api(den.admin, `/v1/members/${encodeURIComponent(field(planViewerMember, "id"))}/role`, {
+    method: "POST", headers: { "x-openwork-org-id": organizationId }, body: JSON.stringify({ role: "admin" }),
+  });
+  if (!promoted.response.ok) throw new Error("Could not arrange the non-owner Analytics viewer");
   const setEnterprise = async (enabled: boolean) => {
     const statement = "UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.plan', JSON_OBJECT('tier', ?, 'source', 'manual')) WHERE id = ?";
     const values = [enabled ? "enterprise" : "free", organizationId];
@@ -82,8 +92,11 @@ const test = spec.world(async (seed) => {
     method: "POST", body: JSON.stringify({ pluginId, configObjectVersionId, input: {} }),
   });
   if (failed.response.ok) throw new Error("Missing workflow input must fail");
-  const web = await seed.web({ den, signedInAs: "admin", startPath: "/dashboard/workflow-runs", headless: true, viewport: { width: 1440, height: 1000 } });
-  return { den, web, setEnterprise, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
+  const viewport = { width: 1440, height: 1000 };
+  const web = await seed.web({ den, signedInAs: "admin", startPath: "/dashboard/workflow-runs", headless: true, viewport });
+  const memberWeb = await seed.web({ den, signedInAs: den.members.colleague, startPath: "/dashboard", headless: true, viewport });
+  const planViewerWeb = await seed.web({ den, signedInAs: den.members.planViewer, startPath: "/dashboard/analytics", headless: true, viewport });
+  return { den, web, memberWeb, planViewerWeb, planNotice: () => enterprisePlanNoticeMeasurements(web), planViewerNotice: () => enterprisePlanNoticeMeasurements(planViewerWeb), setEnterprise, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
 }, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den"] } });
 
 test("workflow activity shows linked version diagrams and keeps one-off and inaccessible runs readable", async ({ world, user, probe, seed, evidence, step }) => {
@@ -92,7 +105,40 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     expect(response.response.status, response.text).toBe(200);
     return runs(response.body);
   };
-  await step("restrict workflow analytics before an Enterprise upgrade", async () => {
+  const readPlanLock = async (feature: string, detail: string, actor: "owner" | "teammate" = "owner") => {
+    const person = actor === "owner" ? user : user.on(world.planViewerWeb);
+    const session = actor === "owner" ? world.den.admin : world.den.members.planViewer;
+    await person.see({ testId: "enterprise-plan-notice" }, { timeoutMs: 90_000 });
+    await person.see({ role: "link", label: "Talk to us for Enterprise pricing" });
+    const context = record((await probe.api(session, "/v1/org")).body);
+    expect(record(context.currentMember).isOwner).toBe(actor === "owner");
+    const gate = actor === "owner" ? await world.planNotice() : await world.planViewerNotice();
+    expect(gate.state.text).toBe(`${feature} is part of the Enterprise plan.`);
+    expect(gate.detail.text).toBe(detail);
+    expect(gate.guidance.text).toBe(actor === "owner" ? "You can change the plan." : "Your workspace owner can change the plan.");
+    expect(gate.guidanceCount).toBe(1);
+    expect(gate.text).not.toContain(actor === "owner" ? "Your workspace owner can change the plan." : "You can change the plan.");
+    expect(gate.text).not.toMatch(/SCIM|enforced SSO|desktop policies|managed deployment/);
+    expect(gate.lockCount).toBe(1);
+    expect(gate.lockHiddenFromAssistiveTech).toBe(true);
+    expect(gate.tone).toBe("neutral");
+    expect(gate.role).toBe("status");
+    expect(gate.state.neutral).toBe(true);
+    expect(gate.detail.neutral).toBe(true);
+    expect(gate.guidance.neutral).toBe(true);
+    expect(gate.lock.neutral).toBe(true);
+    expect(gate.state.contrast).toBeGreaterThanOrEqual(4.5);
+    expect(gate.detail.contrast).toBeGreaterThanOrEqual(4.5);
+    expect(gate.guidance.contrast).toBeGreaterThanOrEqual(4.5);
+    expect(gate.lock.contrast).toBeGreaterThanOrEqual(3);
+    expect(gate.panelPaint).toEqual([0, 0]);
+    expect(gate.paragraphCount).toBe(0);
+    expect(gate.height).toBeLessThanOrEqual(64);
+    expect(gate.action).toMatchObject({ label: "Talk to us for Enterprise pricing", target: "_blank", rel: "noreferrer" });
+    expect(gate.action.href).not.toContain("/dashboard/billing");
+    return gate;
+  };
+  await step("before: the owner sees they can change the plan while Workflow run history is locked", async () => {
     for (const path of ["/v1/workflow-runs", "/v1/codemode-runs"]) {
       const blocked = await probe.api(world.den.admin, path);
       expect(blocked.response.status).toBe(402);
@@ -100,10 +146,10 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
       expect(record(blocked.body).runs).toBeUndefined();
     }
     // The old URL redirects into Analytics and receives the same gate.
-    await user.see({ text: "Workflow Runs is part of the Enterprise plan." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Workflow run history is part of the Enterprise plan." }, { timeoutMs: 90_000 });
     expect(await probe.eval(world.web, () => location.pathname)).toBe("/dashboard/analytics/workflow-runs");
     await user.navigate(`${world.den.ref.webUrl}/dashboard/script-runs`);
-    await user.see({ text: "Workflow Runs is part of the Enterprise plan." });
+    await user.see({ text: "Workflow run history is part of the Enterprise plan." });
     expect(await probe.eval(world.web, () => location.pathname)).toBe("/dashboard/analytics/workflow-runs");
     await user.see({ role: "link", label: /^Usage & adoption$/ });
     await user.see({ role: "link", label: "Models & usage" });
@@ -111,16 +157,70 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.notSee({ role: "link", label: "Workflow Runs" });
     await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });
     await user.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
-    await user.see({ text: "Workflow Runs is part of the Enterprise plan." });
+    await user.see({ text: "Workflow run history is part of the Enterprise plan." });
     await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });
+    const gate = await readPlanLock("Workflow run history", "Run history is unavailable on this plan.");
+    evidence.recordAssertionEvidence("the owner is not sent to another owner to unlock Workflow run history", `Both API aliases return 402 without runs and legacy URLs reach the same gate. ${gate.state.text} ${gate.detail.text} ${gate.guidance.text} One actor instruction and one neutral lock, no SCIM copy or tinted panel; text contrast ${gate.state.contrast.toFixed(2)}:1 / ${gate.detail.contrast.toFixed(2)}:1 / ${gate.guidance.contrast.toFixed(2)}:1; compact row ${gate.height}px; the existing pricing action remains.`, true);
     await user.screenshot();
   });
-  evidence.recordAssertionEvidence("Workflow run analytics is Enterprise-only through navigation, saved links and both API paths", "The free workspace's already executed workflows are hidden from analytics: both API aliases return 402 without runs, both legacy page URLs resolve to /dashboard/analytics/workflow-runs, which shows the Enterprise gate, and there is no standalone sidebar destination or Workflow Runs analytics link.", true);
+
+  await step("before: the owner's Usage analytics lock points to their own plan-change action", async () => {
+    await user.click({ role: "link", label: /^Usage & adoption$/ });
+    await user.see({ role: "heading", label: "Usage & adoption" });
+    const blocked = await probe.api(world.den.admin, "/v1/telemetry/analytics");
+    expect(blocked.response.status).toBe(402);
+    expect(blocked.body).toMatchObject({ error: "enterprise_plan_required", feature: "analytics" });
+    const gate = await readPlanLock("Usage analytics", "Team usage is unavailable on this plan.");
+    await user.notSee({ role: "button", label: "Refresh analytics" });
+    await user.notSee({ text: "Sessions this week" });
+    evidence.recordAssertionEvidence("the owner gets one direct plan instruction for the blocked team usage", `${gate.state.text} ${gate.detail.text} ${gate.guidance.text} Analytics API returns ${blocked.response.status}; one actor instruction and one neutral lock, no warning tint or SCIM copy; text contrast ${gate.state.contrast.toFixed(2)}:1 / ${gate.detail.contrast.toFixed(2)}:1 / ${gate.guidance.contrast.toFixed(2)}:1; ${gate.height}px row with the unchanged pricing action.`, true);
+    await user.screenshot();
+  });
+
+  await step("a non-owner teammate is directed to the workspace owner on both Analytics locks", async () => {
+    const teammate = user.on(world.planViewerWeb);
+    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/analytics`);
+    await teammate.see({ role: "heading", label: "Usage & adoption" });
+    const usageGate = await readPlanLock("Usage analytics", "Team usage is unavailable on this plan.", "teammate");
+    await teammate.screenshot();
+    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
+    await teammate.see({ role: "heading", label: "Workflow Runs" });
+    const runsGate = await readPlanLock("Workflow run history", "Run history is unavailable on this plan.", "teammate");
+    const portal = await seed.api(world.den.members.planViewer, "/v1/billing/stripe/portal", { method: "POST" });
+    expect(portal.response.status).toBe(403);
+    evidence.recordAssertionEvidence("a non-owner admin gets owner guidance, not the owner's instruction or billing portal access", `${usageGate.state.text} ${usageGate.detail.text} ${usageGate.guidance.text} ${runsGate.state.text} ${runsGate.detail.text} ${runsGate.guidance.text} Each lock has one actor instruction and the unchanged pricing action; the non-owner's billing portal request returns ${portal.response.status}.`, true);
+    await teammate.screenshot();
+  });
+
+  await step("a member without billing access still cannot change the workspace plan", async () => {
+    const teammate = user.on(world.memberWeb);
+    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/billing`);
+    await teammate.see({ testId: "member-dashboard" }, { timeoutMs: 60_000 });
+    await teammate.notSee({ role: "heading", label: "Billing" });
+    await teammate.notSee({ role: "button", label: "Add paid seats" });
+    await teammate.notSee({ role: "button", label: "Manage subscription" });
+    await teammate.notSee({ text: "You can change the plan." });
+    const colleague = world.den.members.colleague;
+    const memberContext = record((await probe.api(colleague, "/v1/org")).body);
+    expect(record(memberContext.currentMember).isOwner).toBe(false);
+    const billing = await probe.api(colleague, "/v1/billing");
+    // Den refuses these actions before any billing provider is called. The
+    // isolated world's Stripe key is empty; this cannot make a real purchase.
+    const checkout = await seed.api(colleague, "/v1/billing/stripe/checkout", { method: "POST", body: JSON.stringify({ type: "seat" }) });
+    const portal = await seed.api(colleague, "/v1/billing/stripe/portal", { method: "POST" });
+    const statuses = [billing, checkout, portal].map((result) => result.response.status);
+    expect(statuses).toEqual([403, 403, 403]);
+    const organization = record((await probe.api(world.den.admin, "/v1/org")).body);
+    expect(record(organization.entitlements).analytics).toBe(false);
+    evidence.recordAssertionEvidence("actor-aware plan guidance does not give a member billing permissions", `Opening Billing returns the non-owner member to their home without plan-change controls or the owner's “You can change the plan.” instruction; billing read, checkout and portal return ${statuses.join(" / ")}; analytics remains locked and no billing provider is configured.`, true);
+    await teammate.screenshot();
+  });
+
   await world.setEnterprise(true);
   await user.reload();
   await user.click({ role: "link", label: /^Usage & adoption$/ });
   await user.click({ role: "link", label: "Workflow Runs" });
-  await user.notSee({ text: "Workflow Runs is part of the Enterprise plan." });
+  await user.notSee({ text: "Workflow run history is part of the Enterprise plan." });
   await user.notSee({ testId: "nav-workflow-runs" });
   const before = await readRuns();
   evidence.recordAssertionEvidence("An Enterprise upgrade unlocks Workflow Runs inside Analytics with existing history intact", "The upgraded workspace opens Workflow Runs from the shared Analytics navigation and the API returns its pre-upgrade receipts, including the original saved version.", before.some((run) => run.id === world.receiptId));
@@ -249,7 +349,7 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
   await step("keep workflow execution working after Enterprise access is removed", async () => {
     await world.setEnterprise(false);
     await user.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
-    await user.see({ text: "Workflow Runs is part of the Enterprise plan." });
+    await user.see({ text: "Workflow run history is part of the Enterprise plan." });
     await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });
     await user.notSee({ role: "link", label: "Workflow Runs" });
     expect((await probe.api(world.den.admin, "/v1/workflow-runs")).response.status).toBe(402);

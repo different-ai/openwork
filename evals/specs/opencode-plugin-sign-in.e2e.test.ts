@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { opencodePluginSignIn } from "../worlds/opencode-plugin-sign-in.ts";
+import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 const test = spec.world(opencodePluginSignIn, {
   timeout: 900_000,
@@ -10,6 +11,8 @@ const test = spec.world(opencodePluginSignIn, {
 
 test("a person signs OpenCode in from the browser despite one rate-limited token poll and lands back on OpenCode", async ({ world, user, probe, step, evidence }) => {
   const person = user.on(world.web);
+  const page = probe.on(world.web);
+  const consent = `Only approve if you started this in your own terminal and the code matches. OpenWork - OpenCode Plugin will act as ${world.den.admin.email} in ${world.organizationName} until you sign out of it.`;
 
   await step("before: with the plugin sign-in switched off, OpenCode still signs in as the OpenWork CLI", async () => {
     await world.setPluginSignIn(false);
@@ -17,6 +20,10 @@ test("a person signs OpenCode in from the browser despite one rate-limited token
     await person.navigate(login.verificationUrl);
     await person.see({ text: "Sign in OpenWork CLI?" }, { timeoutMs: 90_000 });
     await person.see({ testId: "device-user-code", text: login.userCode });
+    await person.see({ role: "button", label: "Sign in OpenWork CLI" });
+    const heading = await world.approvalHeading();
+    expect(heading.text).toBe("Sign in OpenWork CLI.");
+    expect(heading.fontSize).toBeGreaterThan(20);
     await person.screenshot();
     await person.click({ role: "button", label: "Deny" });
     await person.see({ text: /Sign-in denied/ });
@@ -24,7 +31,7 @@ test("a person signs OpenCode in from the browser despite one rate-limited token
     const refused = result.status !== 0;
     evidence.recordAssertionEvidence(
       "Den falls back to the CLI client and a denied code gives OpenCode nothing",
-      `page: "Sign in OpenWork CLI?"; opencode auth login exit ${result.status}`,
+      `page: "Sign in OpenWork CLI?"; unchanged "${heading.text}" headline at ${heading.fontSize}px; opencode auth login exit ${result.status}`,
       refused,
     );
     expect(refused).toBe(true);
@@ -40,19 +47,71 @@ test("a person signs OpenCode in from the browser despite one rate-limited token
     expect(url.pathname).toBe("/device");
     expect(url.searchParams.get("return_to")).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/openwork\/callback$/);
     await person.navigate(login.verificationUrl);
-    await person.see({ text: "Sign in OpenWork - OpenCode Plugin?" }, { timeoutMs: 90_000 });
+    await person.see({ role: "heading", label: "Sign in OpenWork - OpenCode Plugin?" }, { timeoutMs: 90_000 });
+    await person.see({ role: "heading", label: "Approve this sign-in" });
     await person.see({ testId: "device-user-code", text: login.userCode });
     await person.see({ text: "$ opencode auth login openwork" });
     await person.see({ text: world.den.admin.email });
+    await person.see({ testId: "device-consent-line", text: consent });
+    await person.see({ role: "button", label: "Sign in OpenWork - OpenCode Plugin" });
+    await person.see({ role: "button", label: "Deny" });
+    const heading = await world.approvalHeading();
+    expect(isEmulatedClientWidth(heading.viewportWidth, 1280)).toBe(true);
+    expect(heading.viewportHeight).toBe(900);
+    expect(heading.text).toBe("Approve this sign-in");
+    expect(heading.fontSize).toBeGreaterThan(0);
+    expect(heading.fontSize).toBeLessThanOrEqual(20);
+    expect(heading.lineHeight).toBeGreaterThan(0);
+    expect(heading.height).toBeGreaterThan(0);
+    expect(heading.height).toBeLessThanOrEqual(2 * heading.lineHeight + 1);
     evidence.recordAssertionEvidence(
-      "The page names the OpenCode plugin and the code matches the terminal",
-      `terminal: ${login.userCode}; page: /device on Den web as ${world.den.admin.email}; return page on a loopback port`,
+      "The compact heading leaves the full OpenCode identity, matching code and consent intact",
+      `1280×900; "${heading.text}" at ${heading.fontSize}px, height ${heading.height}px / line height ${heading.lineHeight}px; panel and action name OpenWork - OpenCode Plugin; terminal code ${login.userCode}; consent names ${world.den.admin.email}, ${world.organizationName}, own-terminal/code risk and sign-out; return page on a loopback port`,
+      true,
+    );
+    await person.screenshot();
+  });
+
+  await step("after: on a phone, the short heading still leaves the full OpenCode consent and both choices readable", async () => {
+    await person.resizeViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+    await person.see({ role: "heading", label: "Approve this sign-in" });
+    await person.see({ role: "heading", label: "Sign in OpenWork - OpenCode Plugin?" });
+    await person.see({ testId: "device-user-code", text: login.userCode });
+    await person.see({ testId: "device-consent-line", text: consent });
+    await person.see({ role: "button", label: "Sign in OpenWork - OpenCode Plugin" });
+    await person.see({ role: "button", label: "Deny" });
+    await person.hover({ role: "button", label: "Sign in OpenWork - OpenCode Plugin" });
+    await person.hover({ role: "button", label: "Deny" });
+    // Show the whole undecided consent from the top, not a cropped action-only capture.
+    await person.see({ role: "heading", label: "Approve this sign-in" });
+    const heading = await world.approvalHeading();
+    const layout = await page.dom('[data-testid="setup-frame"] h1, [data-testid="device-approval"] h2, [data-testid="device-consent-line"], [data-testid="device-approval"] button');
+    expect(isEmulatedClientWidth(heading.viewportWidth, 390)).toBe(true);
+    expect(heading.viewportHeight).toBe(844);
+    expect(heading.text).toBe("Approve this sign-in");
+    expect(heading.fontSize).toBeGreaterThan(0);
+    expect(heading.fontSize).toBeLessThanOrEqual(20);
+    expect(heading.lineHeight).toBeGreaterThan(0);
+    expect(heading.height).toBeGreaterThan(0);
+    expect(heading.height).toBeLessThanOrEqual(2 * heading.lineHeight + 1);
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    for (const element of layout.elements) {
+      expect(element.rect.width).toBeGreaterThan(0);
+      expect(element.rect.left).toBeGreaterThanOrEqual(0);
+      expect(element.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
+      expect(element.rect.top).toBeGreaterThanOrEqual(0);
+      expect(element.rect.bottom).toBeLessThanOrEqual(844);
+    }
+    evidence.recordAssertionEvidence(
+      "At phone width the heading uses at most two compact lines without hiding consent or Deny",
+      `390×844; "${heading.text}" at ${heading.fontSize}px, height ${heading.height}px / line height ${heading.lineHeight}px; document ${layout.documentWidth}px; panel, code ${login.userCode}, full action/data/risk consent and exact OpenCode sign-in action remain; both decisions pass the real pointer hit test`,
       true,
     );
     await person.screenshot();
   });
 
   await step("when one token poll is rate-limited, the same sign-in keeps waiting for browser approval", async () => {
+    await person.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     const fault = await probe.eventually(() => world.tokenPollFault(), {
       within: 60_000,
       intervalMs: 200,

@@ -10,6 +10,11 @@ const download = { testId: "den-download-openwork" };
 const popover = { testId: "workspace-install-popover" };
 const copy = { testId: "workspace-install-copy" };
 const open = { testId: "workspace-install-open" };
+// notSee proves stable absence from now on; first let a dismissed layer stop painting.
+async function closes(probe: { dom: (selector: string) => Promise<{ elements: Array<{ rect: { width: number; height: number } }> }>; eventually: <T>(read: () => Promise<T>, options: { within: number; label: string; until: (value: T) => boolean }) => Promise<T> }, selector: string, label: string) {
+  await probe.eventually(async () => (await probe.dom(selector)).elements.filter((element) => element.rect.width > 0 && element.rect.height > 0).length, { within: 10_000, label, until: (painted) => painted === 0 });
+}
+const clipboardPermissionMessage = "Your browser didn't give permission to copy. Allow clipboard access and try again, or open the install page.";
 
 admin("an admin shares and opens a workspace download from the shared header", async ({ world, user, probe, evidence, step }) => {
   let copiedUrl = "";
@@ -84,6 +89,7 @@ admin("an admin shares and opens a workspace download from the shared header", a
     evidence.recordAssertionEvidence("The shared header keeps the panel inside the narrow viewport", `route=/dashboard/members; panel=${panel.rect.left}..${panel.rect.right}; viewport=${geometry.viewportWidth}`, panel.rect.left >= 0 && panel.rect.right <= geometry.viewportWidth);
     await user.screenshot();
     await user.press("Escape");
+    await closes(probe, '[data-testid="workspace-install-popover"]', "Escape closes the install panel");
     await user.notSee(popover);
   });
 
@@ -107,6 +113,7 @@ admin("an admin shares and opens a workspace download from the shared header", a
       await user.click({ testId: "den-command-palette-trigger", nth: width >= 1024 ? 0 : 1 });
       await user.see({ testId: "den-command-palette-input" });
       await user.press("Escape");
+      await closes(probe, '[data-testid="den-command-palette"]', "Escape closes the command palette");
       await user.notSee({ testId: "den-command-palette" });
       const restored = await probe.eventually(() => probe.dom('header [data-testid="den-command-palette-trigger"]'), {
         within: 5000, label: "focus returns to the visible search control", until: (value) => value.elements.some((element) => element.focused && element.rect.width > 0),
@@ -122,34 +129,44 @@ failures("an admin can retry a failed mint and a denied clipboard without reopen
   await step("a failed install-link request leaves its error and both actions in the open panel", async () => {
     await user.see({ ...download, role: "button", label: "Download OpenWork" }, { timeoutMs: 90_000 });
     await user.click(download);
+    expect(await world.mintRequests()).toHaveLength(0);
     await user.click(open);
-    await user.see({ role: "alert" });
+    await user.see({ role: "alert" }, { text: "Install link temporarily unavailable. Please retry.", timeoutMs: 20_000 });
     await user.see(popover);
     await user.see(copy, { text: "Copy install link" });
     await user.see(open);
+    await user.notSee({ role: "button", label: "Copied" });
+    const alerts = await probe.dom('[data-testid="workspace-install-popover"] [role="alert"]');
+    const mintError = alerts.elements.map((element) => element.text).join(" ");
+    expect(mintError).toBe("Install link temporarily unavailable. Please retry.");
+    expect(mintError).not.toMatch(/clipboard|permission|copied/i);
     const requests = await world.mintRequests();
     expect(requests.map((request) => [request.status, request.faulted])).toEqual([[503, true]]);
     const extraPages = await probe.eventually(() => world.newPageCount(), {
       within: 10_000, label: "failed install tab is closed", until: (count) => count === 0,
     });
-    evidence.recordAssertionEvidence("The injected mint failure keeps the panel open and closes the unsuccessful install tab", `mint statuses=${requests.map((request) => request.status).join(",")}; inline error visible; extra tabs=${extraPages}`, extraPages === 0);
+    evidence.recordAssertionEvidence("The link failure stays distinct from clipboard permission and keeps both retry actions", `mint statuses=${requests.map((request) => request.status).join(",")}; inline error=${mintError}; extra tabs=${extraPages}; not copied`, extraPages === 0);
     await user.screenshot();
   });
 
-  await step("retrying mints a link but a real clipboard denial still shows an inline error", async () => {
+  await step("after: denied clipboard access names the permission and next action without browser errors", async () => {
     await user.click(copy);
     const requests = await probe.eventually(() => world.mintRequests(), {
       within: 20_000, label: "retry reaches real minting", until: (entries) => entries.length === 2,
     });
-    await user.see({ role: "alert" });
+    await user.see({ role: "alert" }, { text: clipboardPermissionMessage, timeoutMs: 20_000 });
     await user.see(popover);
     await user.see(copy, { text: "Copy install link" });
+    await user.see(open);
     await user.notSee({ role: "button", label: "Copied" });
     expect(requests.map((request) => [request.status, request.faulted])).toEqual([[503, true], [200, false]]);
     const alerts = await probe.dom('[data-testid="workspace-install-popover"] [role="alert"]');
     const clipboardError = alerts.elements.map((element) => element.text).join(" ");
+    expect(clipboardError).toBe(clipboardPermissionMessage);
     expect(clipboardError).toMatch(/denied|not allowed|permission/i);
-    evidence.recordAssertionEvidence("The retry reaches real minting but denied clipboard access is not reported as success", `mint statuses=503,200; inline error=${clipboardError}; panel open`, /denied|not allowed|permission/i.test(clipboardError));
+    expect(clipboardError).not.toMatch(/Failed to execute|writeText|['"]Clipboard['"]|DOMException|NotAllowedError|\bat\s+\S+\s*\(/i);
+    expect(clipboardError).not.toContain("Install link temporarily unavailable.");
+    evidence.recordAssertionEvidence("A genuine clipboard denial shows safe recovery, not browser errors or a copied status", `mint statuses=503,200; inline error=${clipboardError}; both actions visible; not copied`, clipboardError === clipboardPermissionMessage);
     await user.screenshot();
   });
 
@@ -168,13 +185,13 @@ failures("an admin can retry a failed mint and a denied clipboard without reopen
   });
 });
 
-member("a member keeps the existing download hero and uses the header to go straight to install", async ({ world, user, probe, evidence, step }) => {
-  await step("after: the member has a header download alongside the unchanged workspace hero", async () => {
+member("a member keeps both download actions and uses the header to go straight to install", async ({ world, user, probe, evidence, step }) => {
+  await step("after: the member has header and in-page download actions for the same workspace", async () => {
     await user.see({ ...download, role: "link", label: "Download OpenWork" }, { timeoutMs: 90_000 });
     await user.see({ testId: "member-dashboard" });
     await user.see({ role: "heading", label: `${world.organizationName} is set up for you` });
     await user.see({ testId: "member-download-app", role: "button", label: "Get OpenWork" });
-    await user.see({ role: "link", label: "Open OpenWork →" });
+    await user.see({ role: "link", label: "Open OpenWork" });
     await user.notSee(popover);
     const href = await probe.dom('header a[data-testid="den-download-openwork"][href="/install"]');
     expect(href.elements).toHaveLength(1);

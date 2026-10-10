@@ -76,10 +76,15 @@ function OrganizationDownloadPopover({
     setError(null);
     setCopied(false);
     try {
-      await navigator.clipboard.writeText(await mintInstallLink());
-      setCopied(true);
-    } catch (copyError) {
-      setError(copyError instanceof Error ? copyError.message : "Could not copy the workspace install link.");
+      const installLink = await mintInstallLink();
+      try {
+        await navigator.clipboard.writeText(installLink);
+        setCopied(true);
+      } catch {
+        setError("Your browser didn't give permission to copy. Allow clipboard access and try again, or open the install page.");
+      }
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "Could not create the workspace install link. Try again.");
     } finally {
       setBusyAction(null);
     }

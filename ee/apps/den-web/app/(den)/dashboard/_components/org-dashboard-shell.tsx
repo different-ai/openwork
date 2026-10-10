@@ -1,5 +1,6 @@
 "use client";
 
+import { Popover } from "@base-ui/react/popover";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -314,6 +315,17 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   return "Home";
 }
 
+// Desktop and mobile mount their own copy of the sidebar. Keep open state in
+// each mounted switcher so opening one never portals the hidden copy as well.
+function WorkspaceSwitcher({ children }: { children: (close: () => void) => React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      {children(() => setOpen(false))}
+    </Popover.Root>
+  );
+}
+
 export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const onboardingRoute = getMarketplaceOnboardingRoute();
@@ -330,11 +342,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     switchOrganization,
   } = useOrgDashboard();
   const prefetch = useDashboardPrefetch();
-  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [profilePromptDismissed, setProfilePromptDismissed] = useState(false);
-  const switcherTriggerRef = useRef<HTMLButtonElement>(null);
   const searchBarRef = useRef<DenSearchBarHandle>(null);
   const commandPaletteWasOpenRef = useRef(false);
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
@@ -378,32 +388,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     }
     commandPaletteWasOpenRef.current = commandPaletteOpen;
   }, [commandPaletteOpen]);
-
-  useEffect(() => {
-    if (!switcherOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      const clickedInsideSwitcher = event.composedPath().some(
-        (target) => target instanceof Element && target.hasAttribute("data-workspace-switcher-root"),
-      );
-      if (!clickedInsideSwitcher) {
-        setSwitcherOpen(false);
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
-      setSwitcherOpen(false);
-      switcherTriggerRef.current?.focus();
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [switcherOpen]);
 
   // Keep sidebar hooks unconditional across picker and onboarding transitions,
   // but don't fetch sidebar data while the full-page shell is showing.
@@ -495,141 +479,151 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       </button>
     </div>
   ) : (
-    <div data-workspace-switcher-root="" className="relative">
-      <button
-        ref={switcherTriggerRef}
-        type="button"
-        data-testid="workspace-switcher-trigger"
-        className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-gray-100"
-        onClick={() => setSwitcherOpen((current) => !current)}
-        aria-expanded={switcherOpen}
-        aria-haspopup="dialog"
-      >
-        <div className="flex min-w-0 items-center gap-3">
-          <OrgMark name={activeOrg?.name ?? "OpenWork"} />
-          <div className="min-w-0">
-            <p className="truncate text-[14px] font-medium text-gray-900">
-              {activeOrg?.name ?? "Loading..."}
-            </p>
-            <p className="truncate text-[12px] text-gray-500">
-              {activeOrg ? sidebarRoleLabel(activeOrg.role) : "Preparing workspace"}
-            </p>
-          </div>
-        </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 shrink-0">
-          <path d="M17 3l4 4-4 4"/>
-          <path d="M3 7h18"/>
-          <path d="M7 21l-4-4 4-4"/>
-          <path d="M21 17H3"/>
-        </svg>
-      </button>
-
-      {switcherOpen ? (
-        <div
-          data-testid="workspace-switcher-menu"
-          role="dialog"
-          aria-label="Workspace switcher"
-          className="absolute bottom-[calc(100%+0.5rem)] left-0 z-30 grid w-[240px] max-w-[calc(100vw-1.5rem)] grid-cols-[minmax(0,1fr)] gap-1 rounded-2xl border border-gray-200 bg-white py-2 shadow-[0_12px_24px_-12px_rgba(0,0,0,0.15)]"
-        >
-          <div className="min-w-0 px-3 py-1.5">
-            <p className="truncate text-[13px] font-medium text-gray-900">
-              {user?.email ?? "OpenWork user"}
-            </p>
-          </div>
-          
-          <div className="mx-2 h-px bg-gray-100 my-1" />
-
-          <div className="px-3 pb-1 pt-1">
-            <p className="text-[11px] font-medium text-gray-500">
-              Switch workspace
-            </p>
-          </div>
-
-          {showSwitcherSearch ? (
-            <div className="px-2 pb-1">
-              <input
-                type="search"
-                value={switcherQuery}
-                onChange={(event) => setSwitcherQuery(event.target.value)}
-                placeholder="Search workspaces"
-                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-hidden transition focus:border-gray-400"
-              />
+    <WorkspaceSwitcher>
+      {(close) => (
+        <div data-workspace-switcher-root="" className="relative">
+          <Popover.Trigger
+            type="button"
+            data-testid="workspace-switcher-trigger"
+            className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-gray-100"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              <OrgMark name={activeOrg?.name ?? "OpenWork"} />
+              <div className="min-w-0">
+                <p className="truncate text-[14px] font-medium text-gray-900">
+                  {activeOrg?.name ?? "Loading..."}
+                </p>
+                <p className="truncate text-[12px] text-gray-500">
+                  {activeOrg ? sidebarRoleLabel(activeOrg.role) : "Preparing workspace"}
+                </p>
+              </div>
             </div>
-          ) : null}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 shrink-0">
+              <path d="M17 3l4 4-4 4"/>
+              <path d="M3 7h18"/>
+              <path d="M7 21l-4-4 4-4"/>
+              <path d="M21 17H3"/>
+            </svg>
+          </Popover.Trigger>
 
-          <div className="grid max-h-64 gap-0.5 overflow-y-auto px-1.5">
-            {visibleOrgDirectory.map((org) => (
-              <button
-                key={org.id}
-                type="button"
-                onClick={() => {
-                  setSwitcherOpen(false);
-                  switchOrganization(org.slug);
-                }}
-                className={`flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors ${
-                  org.isActive
-                    ? "bg-gray-50 text-gray-900"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                }`}
+          <Popover.Portal>
+            <Popover.Positioner
+              positionMethod="fixed"
+              side="top"
+              align="start"
+              sideOffset={8}
+              collisionBoundary={[]}
+              collisionPadding={8}
+              collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
+              className="z-[60]"
+            >
+              <Popover.Popup
+                data-testid="workspace-switcher-menu"
+                aria-label="Workspace switcher"
+                className="flex max-h-[var(--available-height)] w-[240px] max-w-[calc(100vw-1.5rem)] flex-col gap-1 overflow-hidden rounded-2xl border border-gray-200 bg-white py-2 shadow-[0_12px_24px_-12px_rgba(0,0,0,0.15)]"
               >
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <div className="min-w-0">
-                    <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
-                    <span className="block truncate text-[12px] text-gray-500">
-                      {org.role === "owner" ? "Creator plan" : "Free plan"} • {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
-                    </span>
-                  </div>
+                <div className="min-w-0 shrink-0 px-3 py-1.5">
+                  <p className="truncate text-[13px] font-medium text-gray-900">
+                    {user?.email ?? "OpenWork user"}
+                  </p>
                 </div>
-                {org.isActive ? (
-                  <svg className="h-4 w-4 shrink-0 text-gray-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+
+                <div className="mx-2 my-1 h-px shrink-0 bg-gray-100" />
+
+                <div className="shrink-0 px-3 pb-1 pt-1">
+                  <p className="text-[11px] font-medium text-gray-500">
+                    Switch workspace
+                  </p>
+                </div>
+
+                {showSwitcherSearch ? (
+                  <div className="shrink-0 px-2 pb-1">
+                    <input
+                      type="search"
+                      value={switcherQuery}
+                      onChange={(event) => setSwitcherQuery(event.target.value)}
+                      placeholder="Search workspaces"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-hidden transition focus:border-gray-400"
+                    />
+                  </div>
                 ) : null}
-              </button>
-            ))}
-          </div>
 
-          {switcherFilteredCount === 0 && switcherQuery ? (
-            <p className="px-3 py-1 text-[12px] text-gray-500">No organizations match your search.</p>
-          ) : null}
+                <div className="grid min-h-0 max-h-64 grid-cols-1 gap-0.5 overflow-y-auto px-1.5">
+                  {visibleOrgDirectory.map((org) => (
+                    <button
+                      key={org.id}
+                      type="button"
+                      onClick={() => {
+                        close();
+                        switchOrganization(org.slug);
+                      }}
+                      className={`flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                        org.isActive
+                          ? "bg-gray-50 text-gray-900"
+                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <div className="min-w-0">
+                          <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
+                          <span className="block truncate text-[12px] text-gray-500">
+                            {org.role === "owner" ? "Creator plan" : "Free plan"} • {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
+                          </span>
+                        </div>
+                      </div>
+                      {org.isActive ? (
+                        <svg className="h-4 w-4 shrink-0 text-gray-900" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
 
-          {switcherHasMore ? (
-            <div className="px-1.5">
-              <button
-                type="button"
-                onClick={showMoreOrgDirectory}
-                className="flex w-full items-center justify-center rounded-lg px-2 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
-              >
-                Show more ({switcherHiddenCount})
-              </button>
-            </div>
-          ) : null}
+                {switcherFilteredCount === 0 && switcherQuery ? (
+                  <p className="shrink-0 px-3 py-1 text-[12px] text-gray-500">No organizations match your search.</p>
+                ) : null}
 
-          <div className="px-1.5 mt-0.5">
-            <Link
-              href="/organization"
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
-              onClick={() => setSwitcherOpen(false)}
-            >
-              <span className="text-gray-400 text-[16px] leading-none">+</span> Create or join workspace
-            </Link>
-          </div>
+                {switcherHasMore ? (
+                  <div className="shrink-0 px-1.5">
+                    <button
+                      type="button"
+                      onClick={showMoreOrgDirectory}
+                      className="flex w-full items-center justify-center rounded-lg px-2 py-1.5 text-[12px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                    >
+                      Show more ({switcherHiddenCount})
+                    </button>
+                  </div>
+                ) : null}
 
-          <div className="mx-2 h-px bg-gray-100 my-1" />
+                <div className="mt-0.5 shrink-0 px-1.5">
+                  <Link
+                    href="/organization"
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                    onClick={close}
+                  >
+                    <span className="text-gray-400 text-[16px] leading-none">+</span> Create or join workspace
+                  </Link>
+                </div>
 
-          <div className="px-1.5">
-            <button
-              type="button"
-              onClick={() => void signOut()}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
-            >
-              <LogOut className="h-4 w-4 text-gray-400" />
-              Sign out
-            </button>
-          </div>
+                <div className="mx-2 my-1 h-px shrink-0 bg-gray-100" />
+
+                <div className="shrink-0 px-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void signOut()}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                  >
+                    <LogOut className="h-4 w-4 text-gray-400" />
+                    Sign out
+                  </button>
+                </div>
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
         </div>
-      ) : null}
-    </div>
+      )}
+    </WorkspaceSwitcher>
   );
 
   const sidebarContent = (
@@ -655,7 +649,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         <div className="space-y-5">
           {navSections.map((section) => (
             <div key={section.label} data-sidebar-section={section.label.toLowerCase()}>
-              <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+              <p className="px-3 pb-2 text-[11px] font-medium text-gray-500">
                 {section.label}
               </p>
               <div className="space-y-1">
@@ -711,7 +705,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label={item.attention} title={item.attention} data-testid="nav-attention" />
                           ) : null}
                           {item.badge ? (
-                            <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
+                            <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                               {item.badge}
                             </span>
                           ) : null}
@@ -737,7 +731,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             >
                               <span className="min-w-0 truncate">{child.label}</span>
                               {child.badge ? (
-                                <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
+                                <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                                   {child.badge}
                                 </span>
                               ) : null}
@@ -836,7 +830,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-[#fafafa]">
+        <main className="flex-1 overflow-y-auto bg-[#fafafa] scroll-pb-28">
           {setupPending && setupOrganizationId === activeOrg?.id ? (
             <div className="border-b border-gray-100 px-4 py-3 text-sm md:px-6">
               <Link href={onboardingRoute} className="font-medium text-gray-900 underline underline-offset-4">Back to setup</Link>

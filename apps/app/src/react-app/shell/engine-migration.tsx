@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PropsWithChildren } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { create } from "zustand";
 import { ChevronRight, LoaderCircle, TriangleAlert } from "lucide-react";
@@ -28,14 +28,16 @@ import { Progress } from "@/components/ui/progress";
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
 import { resolveOpenworkConnection } from "./openwork-connection";
 
 /**
  * One home for switching chat engines and migrating v1 history (S6). The
  * command palette and Advanced settings only ask; this module checks what is
- * still running, asks for consent, and keeps a migration visible app-wide —
- * as a dialog the person can step out of, then a banner, until it finishes.
+ * still running, asks for consent, and keeps a migration visible app-wide.
+ * The upgrade starts in the background; manual migration and recovery keep
+ * their dialogs and let the person choose to continue using OpenWork.
  */
 
 export type EngineMigrationClient = Pick<
@@ -186,7 +188,7 @@ function presentMigration(
       client,
       migration,
       selected: selectedChatEngine(status),
-      view: state.progress?.view ?? view,
+      view: switchWhenDone ? view : (state.progress?.view ?? view),
       retrying: false,
       runningTasks: 0,
       switchWhenDone: switchWhenDone || state.progress?.switchWhenDone === true,
@@ -201,7 +203,9 @@ export async function confirmEngineMigration() {
   try {
     const status = await consent.client.migrateOpencodeHistory({ allowActiveSessions: consent.runningTasks > 0 });
     useEngineMigrationStore.setState({ consent: null });
-    presentMigration(consent.client, status, "dialog", consent.mode === "upgrade");
+    // Only the flag-gated invitation uses upgrade mode. Manual migrations and
+    // reload discovery retain their dialog and explicit engine-switch decision.
+    presentMigration(consent.client, status, consent.mode === "upgrade" ? "banner" : "dialog", consent.mode === "upgrade");
   } catch (cause) {
     const running = refusedForRunningTasks(cause);
     updateConsent(consent.client, running === null
@@ -457,6 +461,85 @@ function MigrationProgressDialog(props: { progress: ProgressState }) {
   );
 }
 
+/** Both floating notices clear the actual chrome, including native offsets and taller route headers. */
+function MigrationFloatingRegion(props: PropsWithChildren) {
+  const regionRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const region = regionRef.current;
+    if (!region) return;
+    const chromeSelector = "[data-session-header], [data-settings-titlebar], [data-sidebar-titlebar], .window-titlebar";
+    const observed = new Set<Element>();
+    let frame: number | null = null;
+    let rebindChrome = false;
+    const measure = () => {
+      const bottom = Math.max(0, ...Array.from(observed, (element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 ? rect.bottom : 0;
+      }));
+      const value = `${bottom}px`;
+      if (region.style.getPropertyValue("--engine-migration-chrome-bottom") !== value) {
+        region.style.setProperty("--engine-migration-chrome-bottom", value);
+      }
+    };
+    const scheduleMeasure = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        if (rebindChrome) {
+          rebindChrome = false;
+          refreshChrome();
+        }
+        measure();
+      });
+    };
+    const resizeObserver = new ResizeObserver(scheduleMeasure);
+    const refreshChrome = () => {
+      const chrome = new Set(document.querySelectorAll(chromeSelector));
+      for (const element of observed) {
+        if (chrome.has(element)) continue;
+        resizeObserver.unobserve(element);
+        observed.delete(element);
+      }
+      for (const element of chrome) {
+        if (observed.has(element)) continue;
+        observed.add(element);
+        resizeObserver.observe(element);
+      }
+    };
+    const scheduleRefresh = () => {
+      rebindChrome = true;
+      scheduleMeasure();
+    };
+    // Only chrome replacement needs rebinding. Streaming text and app-wide
+    // attribute changes must not trigger layout reads; header sizes use RO.
+    const containsChrome = (node: Node) => node instanceof Element
+      && (node.matches(chromeSelector) || node.querySelector(chromeSelector) !== null);
+    const mutationObserver = new MutationObserver((records) => {
+      if (records.some(record => [...record.addedNodes, ...record.removedNodes].some(containsChrome))) {
+        scheduleRefresh();
+      }
+    });
+    mutationObserver.observe(document.getElementById("root") ?? document.body, { childList: true, subtree: true });
+    window.addEventListener("resize", scheduleMeasure);
+    scheduleRefresh();
+    return () => {
+      mutationObserver.disconnect();
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  // Above page chrome (z-40) but below dialogs, menus and the command palette (z-50), which must cover this optional notice.
+  return (
+    <div
+      ref={regionRef}
+      className="pointer-events-none fixed inset-x-0 top-[calc(max(var(--window-titlebar-height),var(--engine-migration-chrome-bottom,0px))+var(--spacing)*3)] z-[45] flex justify-center px-4"
+    >
+      {props.children}
+    </div>
+  );
+}
+
 function MigrationBanner(props: { progress: ProgressState }) {
   const { migration } = props.progress;
   const done = migration.imported + migration.skipped;
@@ -464,7 +547,7 @@ function MigrationBanner(props: { progress: ProgressState }) {
     ? t("engine_migration.progress_copied", { done: formatCount(done), total: formatCount(migration.total) })
     : null;
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-3 z-[100] flex justify-center px-4">
+    <MigrationFloatingRegion>
       <div
         role="status"
         aria-live="polite"
@@ -480,7 +563,7 @@ function MigrationBanner(props: { progress: ProgressState }) {
           {t("engine_migration.show_progress")}
         </Button>
       </div>
-    </div>
+    </MigrationFloatingRegion>
   );
 }
 
@@ -654,13 +737,13 @@ function useEngineUpgradeCandidate(enabled: boolean): UpgradeCandidate | null {
 
 function EngineUpgradeNotice(props: { candidate: UpgradeCandidate; onLater: () => void }) {
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-3 z-[100] flex justify-center px-4">
+    <MigrationFloatingRegion>
       <div
         role="status"
         data-testid="engine-upgrade-notice"
         className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-2xl bg-popover px-4 py-3 text-popover-foreground shadow-[var(--dls-card-shadow)] ring-1 ring-foreground/5"
       >
-        <TriangleAlert className="size-4 shrink-0 text-amber-11" aria-hidden />
+        <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-4 shrink-0 opacity-80 dark:invert" />
         <p className="min-w-0 flex-1 text-sm">{t("engine_migration.upgrade_notice")}</p>
         <div className="flex shrink-0 items-center gap-2">
           <Button type="button" size="xs" variant="ghost" onClick={props.onLater}>
@@ -671,7 +754,7 @@ function EngineUpgradeNotice(props: { candidate: UpgradeCandidate; onLater: () =
           </Button>
         </div>
       </div>
-    </div>
+    </MigrationFloatingRegion>
   );
 }
 

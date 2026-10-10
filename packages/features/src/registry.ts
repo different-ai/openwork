@@ -88,6 +88,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  denFlatPageHeaders: {
+    label: "Den: flat page headers",
+    description: "Members see compact, readable page headings in Den instead of decorative gradient banners.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   dashboardActivity: {
     label: "Dashboard activity",
     description: "Organization admins see recent additions and skill updates on their dashboard instead of Quick add.",

@@ -1,5 +1,6 @@
 import type { Place, Seed } from "@openwork/env";
 import { aiGatewayAdmin } from "./ai-gateway-admin.ts";
+import { readDenStickyActionBar } from "./den-sticky-action-bar.ts";
 
 /**
  * The AI Gateway admin world with AWS and Microsoft sign-in still off for the
@@ -22,5 +23,10 @@ export async function aiGatewayCloudSignIn(seed: Seed, context: { place: Place }
     name: sessionCookie.slice(0, separator), value: sessionCookie.slice(separator + 1), url: world.den.ref.webUrl, path: "/", httpOnly: true,
   });
   if (!applied || typeof applied !== "object" || !("success" in applied) || applied.success !== true) throw new Error("Could not give the browser the teammate's Den session cookie.");
-  return world;
+  return {
+    ...world,
+    stickyBar() {
+      return readDenStickyActionBar(world.web, "gateway", "Everyone in the organization");
+    },
+  };
 }

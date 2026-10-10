@@ -609,14 +609,7 @@ export function ManageMembersScreen() {
 
       {activeTab === "members" ? (
         <div>
-          <div className="mb-6 flex items-center justify-between gap-4">
-            <p className="text-[15px] text-gray-400">
-              {access.canManageRoles
-                ? "Invite people, update their role, or remove them from the organization."
-                : access.canRemoveMembers
-                  ? "Invite people or remove non-owner members from the organization."
-                : "View who is in the organization and what role they currently hold."}
-            </p>
+          <div className="mb-6 flex flex-wrap items-center justify-end gap-4" data-testid="members-toolbar">
             {toolbarAction ? (
               <div className="flex flex-wrap justify-end gap-2">
                 {orgContext.capabilities.installLinks ? (
@@ -678,10 +671,10 @@ export function ManageMembersScreen() {
           ) : null}
 
           <div className="overflow-visible rounded-2xl border border-gray-100 bg-white">
-            <div className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+            <div data-testid="members-column-header" className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-gray-100 px-4 py-3 text-[12px] font-medium text-gray-500 lg:grid-cols-[minmax(0,1fr)_180px_140px_160px] lg:px-6">
               <span>Member</span>
-              <span>Role</span>
-              <span>Joined</span>
+              <span className="hidden lg:block">Role</span>
+              <span className="hidden lg:block">Joined</span>
               <span />
             </div>
 
@@ -703,23 +696,25 @@ export function ManageMembersScreen() {
               return (
                 <div key={member.id}>
                 <div
-                  className="grid grid-cols-[minmax(0,1fr)_180px_140px_160px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
+                  data-testid="member-row"
+                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-gray-100 px-4 py-3.5 transition hover:bg-gray-50/60 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_180px_140px_160px] lg:gap-4 lg:px-6"
                 >
                   <OrgMemberIdentity member={member} />
-                  <span className="text-[13px] text-gray-500">
+                  <span className="col-start-1 row-start-2 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0">
                     {splitRoleString(member.role).map(formatRoleLabel).join(", ")}
                     {member.adminTeams.length > 0 ? (
                       <span className="mt-1 block text-[12px] text-cyan-700">Admin via {member.adminTeams.map((team) => team.name).join(", ")}</span>
                     ) : null}
                   </span>
-                  <span className="text-[13px] text-gray-400">
+                  <span data-testid="member-joined" className="col-start-1 row-start-3 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0">
+                    {member.joinedAt ? <span className="lg:hidden">Joined </span> : null}
                     {member.joinedAt
                       ? new Date(member.joinedAt).toLocaleDateString()
                       : "Pending"}
                   </span>
-                  <div className="relative flex items-center justify-end gap-2">
+                  <div className="relative col-start-2 row-span-3 row-start-1 flex items-center justify-end gap-2 lg:col-auto lg:row-span-1 lg:row-auto">
                     {member.isOwner ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-[12px] text-gray-400">
+                      <span data-testid="member-owner-locked" className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-3 py-1 text-[12px] text-gray-600">
                         <Lock className="h-3 w-3" />
                         Locked
                       </span>
@@ -882,7 +877,7 @@ export function ManageMembersScreen() {
                         ) : null}
                       </>
                     ) : (
-                      <span className="text-[13px] text-gray-400">Read only</span>
+                      <span className="text-[13px] text-gray-500">Read only</span>
                     )}
                   </div>
                 </div>
@@ -996,9 +991,9 @@ export function ManageMembersScreen() {
           </div>
 
           <div className="overflow-x-auto overflow-y-visible rounded-2xl border border-gray-100 bg-white">
-            <div className="grid grid-cols-[minmax(0,1fr)_160px_200px] gap-4 border-b border-gray-100 px-6 py-3 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-gray-100 px-4 py-3 text-[12px] font-medium text-gray-500 lg:grid-cols-[minmax(0,1fr)_160px_200px] lg:px-6">
               <span>Team</span>
-              <span>Members</span>
+              <span className="hidden lg:block">Members</span>
               <span />
             </div>
 
@@ -1010,7 +1005,8 @@ export function ManageMembersScreen() {
               orgContext.teams.map((team) => (
                 <div
                   key={team.id}
-                  className="grid grid-cols-[minmax(0,1fr)_160px_200px] items-center gap-4 border-b border-gray-100 px-6 py-3.5 transition hover:bg-gray-50/60 last:border-b-0"
+                  data-testid="team-row"
+                  className="flex flex-col gap-3 border-b border-gray-100 px-4 py-3.5 transition hover:bg-gray-50/60 last:border-b-0 lg:grid lg:grid-cols-[minmax(0,1fr)_160px_200px] lg:items-center lg:gap-4 lg:px-6"
                 >
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1030,7 +1026,7 @@ export function ManageMembersScreen() {
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-0.5 text-[12px] text-gray-400">
+                    <p className="mt-0.5 text-[12px] text-gray-500">
                       {teamMemberNames.get(team.id)?.slice(0, 3).join(", ") ||
                         "No members assigned yet"}
                       {(teamMemberNames.get(team.id)?.length ?? 0) > 3
@@ -1039,7 +1035,7 @@ export function ManageMembersScreen() {
                     </p>
                     <TeamAdminCheckbox team={team} />
                   </div>
-                  <span className="text-[13px] text-gray-400">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
+                  <span className="text-[13px] text-gray-500">{`${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`}</span>
                   <div className="flex items-center justify-end gap-3">
                     {team.managedByScim ? (
                       <span className="text-[12px] font-medium text-cyan-700">Managed by identity provider</span>

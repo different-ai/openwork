@@ -18,6 +18,7 @@ import { DenSkeleton } from "../../_components/ui/skeleton";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { ConfirmDialog } from "./item-list";
 
 type Configuration = z.infer<typeof managedDeploymentConfigurationSchema>;
 type Launch = z.infer<typeof managedDeploymentLaunchSchema>;
@@ -115,9 +116,9 @@ function idList(value: string) {
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex min-h-10 items-center justify-between gap-4 border-b border-gray-100 py-2 text-[13px] last:border-b-0">
-      <span className="text-gray-500">{label}</span>
-      <span className="min-w-0 truncate text-right text-gray-900">{children}</span>
+    <div className="flex min-h-10 flex-col gap-1 border-b border-gray-100 py-2 text-[13px] last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <span className="shrink-0 text-gray-500">{label}</span>
+      <span className="min-w-0 break-words text-gray-900 [overflow-wrap:anywhere] sm:text-right">{children}</span>
     </div>
   );
 }
@@ -136,7 +137,7 @@ export function ManagedDeploymentsScreen() {
   const [launch, setLaunch] = useState<Launch | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [deploymentToRemove, setDeploymentToRemove] = useState<ManagedDeployment | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const generation = useRef(0);
   const aws = configuration?.providers.find((entry) => entry.provider === "aws") ?? null;
@@ -144,7 +145,7 @@ export function ManagedDeploymentsScreen() {
 
   useEffect(() => {
     const current = ++generation.current;
-    setDeployments([]); setSelectedId(null); setLaunch(null); setError(null); setActionError(null); setBusy(false); setDialogOpen(false);
+    setDeployments([]); setSelectedId(null); setLaunch(null); setError(null); setActionError(null); setBusy(false); setDialogOpen(false); setDeploymentToRemove(null);
     setLoading(enabled && access.canViewSettings);
     if (!enabled || !orgId || !access.canViewSettings) return;
     let stopped = false;
@@ -205,10 +206,8 @@ export function ManagedDeploymentsScreen() {
       await runReauthableAction("Remove deployment", async () => {
         const result = await requestJson(`/v1/managed-deployments/${deployment.id}`, { method: "DELETE" });
         if (!result.response.ok) throw getRequestError(result.payload, result.response, "Couldn't remove the deployment.");
-        if (generation.current === current) { setDeployments((previous) => previous.filter((entry) => entry.id !== deployment.id)); setSelectedId(null); setConfirmRemove(false); }
+        if (generation.current === current) { setDeployments((previous) => previous.filter((entry) => entry.id !== deployment.id)); setSelectedId(null); setLaunch(null); }
       });
-    } catch (failure) {
-      if (generation.current === current) setActionError(failure instanceof Error ? failure.message : "Couldn't remove the deployment.");
     } finally {
       if (generation.current === current) setBusy(false);
     }
@@ -219,8 +218,8 @@ export function ManagedDeploymentsScreen() {
   const canCreate = Boolean(!locked && aws?.available && access.canManageDeployments);
 
   return (
-    <section className="mx-auto w-full max-w-5xl space-y-6 p-6" data-testid="managed-deployments-screen">
-      <DenPageHeader title="Deployments" size="compact" action={
+    <section className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6 p-4 sm:p-6" data-testid="managed-deployments-screen">
+      <DenPageHeader title="Deployments" size="compact" className="max-sm:flex-col max-sm:gap-3" action={
         <DenButton type="button" disabled={!canCreate || loading} onClick={() => { setActionError(null); setDialogOpen(true); }}>Create deployment</DenButton>
       } />
       {locked ? (
@@ -242,16 +241,14 @@ export function ManagedDeploymentsScreen() {
                 const status = deploymentStatus(item);
                 return (
                   <li key={item.id}>
-                    <button type="button" data-testid="managed-deployment-row" aria-current={selected?.id === item.id} onClick={() => { setSelectedId(item.id); setLaunch(null); setConfirmRemove(false); setActionError(null); }}
-                      className="flex min-h-12 w-full items-center justify-between gap-4 rounded-lg px-2 py-2 text-left hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 aria-[current=true]:bg-gray-50">
+                    <button type="button" data-testid="managed-deployment-row" aria-current={selected?.id === item.id} onClick={() => { setSelectedId(item.id); setLaunch(null); setDeploymentToRemove(null); setActionError(null); }}
+                      className="grid min-h-12 w-full grid-cols-[minmax(0,1fr)_5rem] items-center gap-x-4 gap-y-1 rounded-lg px-2 py-2 text-left hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400 aria-[current=true]:bg-gray-50 sm:grid-cols-[minmax(0,1fr)_5rem_13rem]">
                       <span className="min-w-0">
-                        <span className="block truncate text-[13px] font-medium text-gray-900">{item.name}</span>
+                        <span className="block truncate text-[13px] font-medium text-gray-900" data-deployment-name>{item.name}</span>
                         <span className="block truncate text-[12px] text-gray-500">AWS · {item.target.accountId} · {item.target.region}{item.target.network.mode === "existing" ? ` · ${item.target.network.vpcId}` : ""}</span>
                       </span>
-                      <span className="flex shrink-0 items-center gap-4 text-[13px]">
-                        <span className="text-gray-500">{item.installedVersion ?? ""}</span>
-                        <span className={toneText[status.tone]}>{status.label}</span>
-                      </span>
+                      <span className="text-right text-[13px] text-gray-500" data-deployment-version>{item.installedVersion ?? ""}</span>
+                      <span className={`col-span-2 min-w-0 text-right text-[13px] sm:col-span-1 ${toneText[status.tone]}`} data-deployment-status>{status.label}</span>
                     </button>
                   </li>
                 );
@@ -260,21 +257,26 @@ export function ManagedDeploymentsScreen() {
           )}
           {selected ? (
             <DeploymentDetail deployment={selected} launch={launch?.deployment.id === selected.id ? launch : null} busy={busy} canManage={access.canManageDeployments}
-              copied={copied} confirmRemove={confirmRemove} actionError={actionError}
+              copied={copied} actionError={actionError}
               onPrepare={(kind) => { void prepare(selected, kind); }}
               onCopy={(command) => { void navigator.clipboard.writeText(command).then(() => setCopied(true)).catch(() => setActionError("Couldn't copy. Open Technical details and copy the command.")); }}
-              onRemove={() => { if (confirmRemove) void remove(selected); else setConfirmRemove(true); }} />
+              onRemove={() => { setActionError(null); setDeploymentToRemove(selected); }} />
           ) : null}
         </>
       )}
+      <ConfirmDialog destructive confirm={deploymentToRemove ? {
+        title: `Remove ${deploymentToRemove.name}?`,
+        description: "This removes the deployment record and its pending approval from this workspace. AWS resources and charges are unchanged. This cannot be undone.",
+        action: "Remove",
+      } : null} onConfirm={async () => { if (deploymentToRemove) await remove(deploymentToRemove); }} onClose={() => setDeploymentToRemove(null)} />
       <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} runReauthableAction={runReauthableAction}
         onCreated={(item) => { replace(item); setSelectedId(item.id); setLaunch(null); setDialogOpen(false); }} />
     </section>
   );
 }
 
-function DeploymentDetail({ deployment, launch, busy, canManage, copied, confirmRemove, actionError, onPrepare, onCopy, onRemove }: {
-  deployment: ManagedDeployment; launch: Launch | null; busy: boolean; canManage: boolean; copied: boolean; confirmRemove: boolean;
+function DeploymentDetail({ deployment, launch, busy, canManage, copied, actionError, onPrepare, onCopy, onRemove }: {
+  deployment: ManagedDeployment; launch: Launch | null; busy: boolean; canManage: boolean; copied: boolean;
   actionError: string | null; onPrepare: (kind: Launch["kind"]) => void; onCopy: (command: string) => void; onRemove: () => void;
 }) {
   const status = deploymentStatus(deployment);
@@ -286,13 +288,13 @@ function DeploymentDetail({ deployment, launch, busy, canManage, copied, confirm
   const neverStarted = !installed && (!run || run.state === "awaiting_approval");
   const health = deployment.health;
   return (
-    <div className="space-y-6 border-t border-gray-100 pt-6" data-testid="managed-deployment-detail">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="truncate text-[15px] font-semibold text-gray-900">{deployment.name}</h2>
-        <span className={`text-[13px] ${toneText[status.tone]}`} data-testid="managed-deployment-status">{status.label}</span>
+    <div className="flex min-w-0 flex-col gap-6 border-t border-gray-100 px-2 pt-6" data-testid="managed-deployment-detail">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-center gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_13rem]">
+        <h2 className="min-w-0 break-words text-[15px] font-semibold text-gray-900 [overflow-wrap:anywhere]">{deployment.name}</h2>
+        <span className={`text-right text-[13px] ${toneText[status.tone]}`} data-testid="managed-deployment-status">{status.label}</span>
       </div>
 
-      <div>
+      <div data-testid="managed-deployment-configuration">
         <Row label="Address">{installed ? <a className="underline-offset-2 hover:underline" href={deployment.webUrl} target="_blank" rel="noopener noreferrer">{deployment.domainName}</a> : deployment.domainName}</Row>
         <Row label="Cloud">AWS · {deployment.target.accountId} · {deployment.target.region}</Row>
         <Row label="Network">{networkLabel(deployment.target.network)}</Row>
@@ -331,7 +333,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, copied, confirm
               return (
                 <li key={step} className="flex min-h-9 items-center gap-3 text-[13px]">
                   {state === "ok" ? <CheckCircle2 aria-hidden className="size-4 text-gray-500" /> : state === "failing" ? <XCircle aria-hidden className="size-4 text-red-600" /> : <CircleDashed aria-hidden className={`size-4 ${state === "running" ? "text-gray-700 motion-safe:animate-pulse" : "text-gray-300"}`} />}
-                  <span className={state === "pending" ? "text-gray-400" : "text-gray-900"}>{STEP_LABELS[step]}</span>
+                  <span className={state === "pending" ? "text-gray-500" : "text-gray-900"}>{STEP_LABELS[step]}</span>
                   {event ? <time className="ml-auto text-gray-400" dateTime={event.receivedAt}>{new Date(event.receivedAt).toLocaleTimeString()}</time> : null}
                 </li>
               );
@@ -365,13 +367,13 @@ function DeploymentDetail({ deployment, launch, busy, canManage, copied, confirm
         {canManage && installed && deployment.updateAvailable && !runFailed && run?.state !== "provisioning" && launch?.kind !== "update" ? <DenButton type="button" loading={busy} onClick={() => onPrepare("update")}>Update to {deployment.availableVersion}</DenButton> : null}
         {installed ? <a className={buttonVariants({ variant: "secondary" })} href={deployment.webUrl} target="_blank" rel="noopener noreferrer">Open OpenWork<ExternalLink aria-hidden className="size-4" /></a> : null}
         <a className={buttonVariants({ variant: "ghost" })} href={deployment.consoleUrl} target="_blank" rel="noopener noreferrer">Open in AWS<ExternalLink aria-hidden className="size-4" /></a>
-        {canManage && neverStarted ? <DenButton type="button" variant="destructive" loading={busy} onClick={onRemove}>{confirmRemove ? "Confirm remove" : "Remove"}</DenButton> : null}
+        {canManage && neverStarted ? <DenButton type="button" variant="secondary" disabled={busy} data-testid="managed-deployment-remove" onClick={onRemove}>Remove</DenButton> : null}
       </div>
 
       <details className="text-[13px]">
-        <summary className="cursor-pointer text-gray-500">Technical details</summary>
+        <summary className="cursor-pointer text-gray-500" data-testid="deployment-technical-details-toggle">Technical details</summary>
         <div className="mt-2 space-y-2 text-gray-600">
-          <p>First sign-in: open {deployment.webUrl}/setup and enter the code from the deployment's AWS Secrets Manager secret, field DEN_INITIAL_ADMIN_BOOTSTRAP_CODE. OpenWork never receives it.</p>
+          <p className="[overflow-wrap:anywhere]" data-testid="deployment-setup-directions">{`First sign-in: open ${deployment.webUrl}/setup and enter the code from the deployment's AWS Secrets Manager secret, field DEN_INITIAL_ADMIN_BOOTSTRAP_CODE. OpenWork never receives it.`}</p>
           <p>Installer logs are in AWS CodeBuild; service logs in CloudWatch. Health reports come from a read-only AWS Lambda function in your account and contain only check results.</p>
           <p>Deleting the AWS installer stack does not delete OpenWork or its database. Terraform state stays in your account.</p>
         </div>
@@ -427,7 +429,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
     <Dialog.Root open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/30" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[min(92vw,32rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.35)]">
+        <Dialog.Popup data-testid="create-deployment-dialog" className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[min(92vw,32rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl bg-white p-6 shadow-[0_24px_60px_-24px_rgba(15,23,42,0.35)]">
           <div className="mb-5 flex items-center justify-between">
             <Dialog.Title className="text-[15px] font-semibold text-gray-900">Create deployment</Dialog.Title>
             <Dialog.Close render={<DenButton type="button" variant="ghost" aria-label="Close" disabled={busy}><X aria-hidden className="size-4" /></DenButton>} />
@@ -449,7 +451,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
                 {awsRegionSchema.options.map((value) => <option key={value} value={value}>{value}</option>)}
               </DenSelect>
             </div>
-            <fieldset className="space-y-2 text-[13px]">
+            <fieldset className="flex flex-col gap-2 text-[13px] [&>label]:rounded-lg" data-testid="deployment-network-options">
               <legend className="mb-1 text-gray-700">Network</legend>
               <DenOptionCard type="radio" name="deployment-network" testId="network-dedicated" checked={networkMode === "dedicated"} onChange={() => setNetworkMode("dedicated")}
                 title="New dedicated network" description="Creates its own VPC, NAT gateway and ECS cluster. Best for an AWS account that holds nothing else." />
@@ -469,7 +471,7 @@ function CreateDeploymentDialog({ open, onOpenChange, configuration, runReauthab
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">First administrator email</span><DenInput type="email" value={ownerEmail} onChange={(event) => setOwnerEmail(event.target.value)} required /></label>
             <label className="flex items-start gap-3 text-[13px] text-gray-700">
               <input type="checkbox" className="mt-0.5" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-              <span>I control this AWS account and hosted zone. AWS bills my account for the containers, database and load balancer{networkMode === "dedicated" ? " and NAT gateway (about $100–150 a month at the small size)" : " (about $60–100 a month at the small size, plus my network's own costs)"}. I'll review the installer's permissions in AWS before approving.</span>
+              <span className="min-w-0" data-testid="deployment-cost-consent">{`I control this AWS account and hosted zone. AWS bills my account for the containers, database and load balancer${networkMode === "dedicated" ? " and NAT gateway (about $100–150 a month at the small size)" : " (about $60–100 a month at the small size, plus my network's own costs)"}. I'll review the installer's permissions in AWS before approving.`}</span>
             </label>
             {error ? <p role="alert" className="text-[13px] text-red-700">{error}</p> : null}
             <DenButton type="submit" data-testid="create-deployment-submit" loading={busy} disabled={!consent}>Create deployment</DenButton>

@@ -28,6 +28,7 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
   world, user, probe, seed, step, evidence,
 }) => {
   const owner = user.on(world.web);
+  const ownerProbe = probe.on(world.web);
   const teammate = user.on(world.memberWeb);
   const manageable = "/v1/inference-providers?scope=manageable";
 
@@ -37,10 +38,17 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     await owner.see({ role: "heading", label: "Add a provider" }, { timeoutMs: 30_000 });
     await owner.type({ testId: "gateway-provider-catalog-filter" }, "Foundry");
     await owner.notSee({ testId: "gateway-provider-pick-microsoft-foundry" }, { timeoutMs: 10_000 });
+    await owner.screenshot();
     await owner.type({ testId: "gateway-provider-catalog-filter" }, "Bedrock", { replace: true });
     await owner.click({ testId: "gateway-provider-pick-amazon-bedrock" });
     await owner.see({ testId: "gateway-provider-title" }, { text: "Add Amazon Bedrock", timeoutMs: 30_000 });
-    await owner.see({ testId: "gateway-member-sign-in-locked" }, { text: "AWS sign-in isn't turned on for your organization yet." });
+    await owner.see({ testId: "gateway-member-sign-in-locked" }, { text: "AWS sign-in isn't turned on for your organization yet. Ask an OpenWork platform admin to turn it on." });
+    const locked = (await probe.on(world.web).dom('[data-testid="gateway-member-sign-in-locked"]')).elements;
+    expect(locked).toHaveLength(1);
+    expect(locked[0]?.text).toContain("OpenWork platform admin");
+    const disabled = (await probe.on(world.web).dom('[role="radio"]:disabled')).elements;
+    expect(disabled).toHaveLength(1);
+    evidence.recordAssertionEvidence("the locked AWS sign-in names the person who can enable it", `${locked[0]?.text}; member sign-in remains disabled and Microsoft Foundry is absent from the catalog.`, locked[0]?.text.includes("OpenWork platform admin") === true && disabled.length === 1);
     await owner.screenshot();
   });
 
@@ -53,6 +61,8 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     await owner.reload();
     await owner.see({ testId: "gateway-provider-title" }, { text: "Add Amazon Bedrock", timeoutMs: 30_000 });
     await owner.notSee({ testId: "gateway-member-sign-in-locked" });
+    expect((await probe.on(world.web).dom('[role="radio"]:disabled')).elements).toHaveLength(0);
+    await owner.screenshot();
   });
 
   await step("the owner adds Amazon Bedrock where each person signs in with IAM Identity Center, without any AWS keys", async () => {
@@ -106,6 +116,71 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     await owner.screenshot();
   });
 
+  await step("the owner keeps Foundry access content behind the save bar while reading the middle of the form", async () => {
+    await owner.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    await owner.click({ testId: "gateway-oauth-client-secret" });
+    await owner.press("Tab");
+    const before = await world.stickyBar();
+    expect(before.activeLabel).toBe("Read setup instructions");
+    // Observe and wheel before user.see/click can center the covered access
+    // switch. The target crosses the same 16px bottom gap as Permissions.
+    await owner.wheelAt({
+      x: before.main.left + 16, y: before.main.top + 120,
+      deltaY: before.control.y - (before.card.bottom + 8),
+    });
+    const middle = await ownerProbe.eventually(() => world.stickyBar(), {
+      within: 10_000, label: "Foundry access switch crosses the bottom save-bar gap",
+      until: (value) => Math.abs(value.control.y - (value.card.bottom + 8)) <= 1,
+    });
+    const witnessed = middle.scroll.top > 0 && middle.scroll.remaining > 112
+      && middle.control.y < middle.main.bottom && middle.control.bottom > middle.main.bottom
+      && middle.gap.some((point) => point.underlyingContent.length > 0);
+    const masked = middle.bar.position === "sticky" && middle.bar.bottomInset === "0px"
+      && Math.abs(middle.bar.bottom - middle.main.bottom) <= 1
+      && middle.bar.background === middle.main.background && middle.bar.opacity === "1"
+      && middle.bar.background !== "rgba(0, 0, 0, 0)"
+      && middle.bar.bottom - middle.card.bottom >= 16
+      && middle.gap.every((point) => point.coveredByBar && !point.hitsFormContent)
+      && !middle.control.hitTest && middle.save.hitTest && !middle.save.disabled;
+    evidence.recordAssertionEvidence("Foundry form content cannot peek through the bottom gap mid-scroll", JSON.stringify({ witnessed, masked, middle }), witnessed && masked);
+    expect(witnessed).toBe(true);
+    expect(masked).toBe(true);
+    await owner.screenshot();
+  });
+
+  await step("after: Tab brings Foundry's access switch fully above the save bar", async () => {
+    const before = await world.stickyBar();
+    await owner.press("Tab");
+    const focused = await ownerProbe.eventually(() => world.stickyBar(), {
+      within: 10_000, label: "Tab focuses Foundry access without a pointer auto-scroll",
+      until: (value) => value.control.focused,
+    });
+    const clear = focused.control.top >= focused.main.top && focused.control.bottom <= focused.bar.top
+      && focused.control.hitTest && focused.scroll.top > before.scroll.top
+      && focused.main.scrollPaddingBottom >= 112 && focused.save.hitTest;
+    evidence.recordAssertionEvidence("Keyboard focus remains unobscured in the Foundry editor", JSON.stringify({ before, focused, clear }), clear);
+    expect(clear).toBe(true);
+    await owner.screenshot();
+  });
+
+  await step("after: Save keeps Foundry's configured credentials without replacing the client secret", async () => {
+    // Read the actual Save hit target before click can repair its position.
+    expect((await world.stickyBar()).save.hitTest).toBe(true);
+    await owner.click({ testId: "gateway-provider-save" });
+    await owner.see({ testId: "gateway-provider-open" }, { timeoutMs: 60_000 });
+    const after = await probe.api(world.den.admin, manageable);
+    const foundry = providers(after.body).find((entry) => entry.providerId === "microsoft-foundry");
+    const set = firstSet(foundry);
+    const settings = foundry?.settings;
+    const resourceName = settings && typeof settings === "object" && "resourceName" in settings ? settings.resourceName : null;
+    const persisted = resourceName === "acme-foundry" && set?.credentialMode === "member"
+      && set?.oauthTenantId === TENANT_ID && set?.oauthClientId === CLIENT_ID
+      && set?.hasOauthClientSecret === true && !after.text.includes(CLIENT_SECRET);
+    evidence.recordAssertionEvidence("Saving from mid-scroll keeps the configured Foundry credentials", JSON.stringify({ resourceName, credentialMode: set?.credentialMode, tenant: set?.oauthTenantId, client: set?.oauthClientId, hasSecret: set?.hasOauthClientSecret, persisted }), persisted);
+    expect(persisted).toBe(true);
+    await owner.screenshot();
+  });
+
   await step("after: a teammate who has not signed in is sent to AWS with OpenWork's connect page", async () => {
     const usable = await probe.api(world.teammate, "/v1/inference-providers");
     const bedrock = providers(usable.body).find((entry) => entry.providerId === "amazon-bedrock");
@@ -122,6 +197,18 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     await teammate.navigate(authUrl);
     await teammate.see({ role: "heading", label: "Sign in to AWS" }, { timeoutMs: 60_000 });
     await teammate.see({ testId: "gateway-connect-aws-start" }, { text: "Continue to AWS" });
+    await teammate.screenshot();
+  });
+
+  await step("a teammate can sign in to use models but still cannot configure cloud sign-in", async () => {
+    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/ai-gateway/providers/new?provider=amazon-bedrock`);
+    await teammate.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
+    await teammate.notSee({ testId: "gateway-provider-save" }, { timeoutMs: 30_000 });
+    await teammate.notSee({ testId: "gateway-aws-sso-startUrl" });
+    await teammate.notSee({ testId: "gateway-aws-access-key-id" });
+    const denied = await probe.api(world.teammate, manageable);
+    expect(denied.response.status).toBe(403);
+    evidence.recordAssertionEvidence("enabling cloud sign-in preserves the administration boundary", `The teammate sees no sign-in configuration or Save; manageable providers returns HTTP ${denied.response.status}.`, denied.response.status === 403);
     await teammate.screenshot();
   });
 });

@@ -1,10 +1,13 @@
 import { createNativeConnector, denFetch, type DenSession } from "@openwork/behaviors";
+import { readDom } from "@openwork/cdp";
 import { startMockGoogle } from "@openwork/labs";
 import { localMysqlIsRunning, SkipError, type Place, type Seed } from "@openwork/env";
 import { startCalendarMock } from "../packages/labs/src/calendar-mock.mjs";
 import { publishCalendarModels } from "../../worlds/lib/calendar.ts";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
 import { isRecord } from "./library.ts";
+import { readCalendarRail } from "./calendar-layout-witness.ts";
+import { seedCalendarReconnectRecovery } from "./calendar-recovery-fixture.ts";
 
 /**
  * The Workbot world's Acme organization (seed-demo-org, as preview-workbot boots it) with the owner's
@@ -54,7 +57,7 @@ export function calendarDenEnv(identity: Awaited<ReturnType<typeof startMockGoog
   };
 }
 
-export async function automationCalendar(seed: Seed, { place }: { place: Place }) {
+export async function automationCalendar(seed: Seed, { place }: { place: Place }, googleConnected = true) {
   if (place.kind !== "local") throw new SkipError("the demo-org seed and the calendar mock run next to a local Den");
   if (!await localMysqlIsRunning()) throw new SkipError("local MySQL for a disposable openwork_eval_ database");
   await using setup = new AsyncDisposableStack();
@@ -67,12 +70,30 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
   });
   const orgId = await enableOrganizationCapabilities(seed, den.admin, { automationCalendar: true });
   await publishCalendarModels(den.admin, orgId);
-  await connectCalendarAccount(den.admin, identity, { providerKey: "google-workspace", name: "Google Workspace" });
+  const recovery = await seedCalendarReconnectRecovery(den, orgId);
+  if (googleConnected) {
+    await connectCalendarAccount(den.admin, identity, { providerKey: "google-workspace", name: "Google Workspace" });
+  } else {
+    // An offered organization connection with no member sign-in is setup, not a policy block.
+    await createNativeConnector(den.admin, { providerKey: "google-workspace", name: "Google Workspace", features: ["calendarRead"], clientId: "synthetic-google-workspace", clientSecret: "synthetic-calendar-secret" });
+  }
   await connectCalendarAccount(den.admin, identity, { providerKey: "microsoft-365", name: "Microsoft 365" });
   const desktop = await seed.desktop({ den, as: "admin", enterpriseActivated: true, name: "automation-calendar" });
+  await desktop.client.send("DOM.enable");
+  await desktop.client.send("CSS.enable");
   const resources = setup.move();
   return {
-    den, desktop,
+    den, desktop, recovery,
+    hourRail: () => readCalendarRail(desktop),
+    /** One read-only projection keeps the hour and its real clipping boundary in the same frame. */
+    async hourRailLayout() {
+      const snapshot = await readDom(desktop, "[data-calendar-scroll], [data-calendar-hour]");
+      const scroller = snapshot.elements.find((element) => element.tag === "div");
+      if (!scroller) throw new Error("Calendar scroller is not on screen");
+      const firstHour = snapshot.elements.find((element) => element.tag === "span" && element.text !== "" && element.rect.bottom > scroller.rect.top && element.rect.top < scroller.rect.bottom);
+      if (!firstHour) throw new Error("Calendar has no visible hour label");
+      return { scroller: scroller.rect, firstHour };
+    },
     /** Google starts rejecting Alex's token, as when a sign-in expires; Den answers 502 with the provider's 401. */
     async expireGoogleSignIn() {
       const response = await fetch(`${calendar.baseUrl}/scenario`, { method: "POST", body: JSON.stringify({ google: "expired_token" }) });
@@ -81,4 +102,9 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
     calendarRequests: () => calendar.state.requests.filter((request) => request.path.startsWith("/calendar/v3/") || request.path.startsWith("/v1.0/")).length,
     [Symbol.asyncDispose]: () => resources.disposeAsync(),
   };
+}
+
+/** Same real desktop/Den fixtures; Google is offered but not signed in before the first user act. */
+export function automationCalendarSetup(seed: Seed, context: { place: Place }) {
+  return automationCalendar(seed, context, false);
 }

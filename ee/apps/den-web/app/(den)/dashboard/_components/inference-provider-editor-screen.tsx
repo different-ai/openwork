@@ -13,12 +13,14 @@ import { DenCombobox } from "../../_components/ui/combobox";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
+import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { ConfirmDialog } from "./item-list";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, useInferenceProvider, useOrgInferenceProviders } from "./inference-provider-data";
 import {
   accessFromGrants, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
@@ -59,6 +61,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const { provider, busy, error, reload } = useInferenceProvider(orgId, inferenceProviderId ?? null);
   const [detail, setDetail] = useState<DenModelsDevProviderDetail | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogBusy, setCatalogBusy] = useState(true);
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [providerId, setProviderId] = useState(catalogProviderId ?? "");
   const [name, setName] = useState("");
   const [modelIds, setModelIds] = useState<string[]>([]);
@@ -81,6 +85,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [replacingKey, setReplacingKey] = useState(false);
   const [access, setAccess] = useState<ProviderAccessValue>({ allMembers: true, memberIds: [], teamIds: [] });
   const [adding, setAdding] = useState<"person" | "team" | null>(null);
+  const [removingAccess, setRemovingAccess] = useState<{ type: "team" | "member"; id: string; name: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -115,10 +120,11 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
 
   useEffect(() => {
     setDetail(null);
-    // LiteLLM models come from the organization's own proxy, not the shared catalog.
-    if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID) return;
-    let cancelled = false;
     setCatalogError(null);
+    // LiteLLM models come from the organization's own proxy, not the shared catalog.
+    if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID) { setCatalogBusy(false); return; }
+    let cancelled = false;
+    setCatalogBusy(true);
     void requestLlmProviderCatalogDetail(orgId, providerId)
       .then((result) => {
         if (cancelled) return;
@@ -131,9 +137,10 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
           }
         }
       })
-      .catch(() => { if (!cancelled) setCatalogError("Could not load this provider's models. Existing configuration has not changed."); });
+      .catch(() => { if (!cancelled) setCatalogError("Could not load this provider's models. Existing configuration has not changed."); })
+      .finally(() => { if (!cancelled) setCatalogBusy(false); });
     return () => { cancelled = true; };
-  }, [orgId, providerId, inferenceProviderId]);
+  }, [orgId, providerId, inferenceProviderId, catalogAttempt]);
 
   const npm = detail ? getProviderNpmPackage(detail.config) : null;
   const vertex = isGoogleVertexNpm(npm);
@@ -219,7 +226,9 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   async function save() {
     setSaveError(null);
     if (invalidatesCredentials && !rotationAcknowledged) return setSaveError("Confirm that members will need to reconnect before saving this change.");
+    if (catalogError) return setSaveError("Retry the provider catalog before saving.");
     if (!detail || detail.id !== providerId) return setSaveError("Wait for the provider catalog to load.");
+    if (!detail.models.length) return setSaveError("No models are available in this provider's catalog. Retry the catalog before saving.");
     if (!isSupportedGatewayNpm(npm)) return setSaveError("This provider is not supported by AI Gateway.");
     if (!allowAllModels && !modelIds.length) return setSaveError("Pick at least one model, or choose all models.");
     for (const key of getRequiredSettingKeys(npm, providerId)) if (!settings[key]?.trim()) return setSaveError(`${getSettingLabel(key, providerId)} is required.`);
@@ -280,7 +289,15 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   }
 
   if (inferenceProviderId && !provider) {
-    return <div className="p-8">{busy ? "Loading provider..." : <DenNotice tone="error" message={error ?? "Provider not found."} />}</div>;
+    return (
+      <div className={embedded ? undefined : "mx-auto max-w-[860px] px-6 py-6"}>
+        <Link href={getAiGatewayProvidersRoute(orgSlug)} className="text-[12px] text-gray-500 hover:text-gray-900">Back to AI Providers</Link>
+        {busy ? <div className="mt-3 flex flex-col gap-3" aria-busy="true" aria-label="Loading provider" data-testid="gateway-provider-loading">
+          <DenSkeleton className="mb-2 h-7 w-48" />
+          {[0, 1, 2].map((index) => <div key={index} className={CARD}><DenSkeleton className="h-4 w-24" /><DenSkeleton className="mt-3 h-8 w-full" /><DenSkeleton className="mt-3 h-8 w-full" /></div>)}
+        </div> : <DenNotice className="mt-4" tone="error" message={error ? "Could not load this provider. Retry or return to AI Providers." : "Provider not found. Return to AI Providers."} action={<DenButton size="sm" variant="secondary" onClick={() => void reload()}>Retry</DenButton>} />}
+      </div>
+    );
   }
   if (provider?.providerId === LITELLM_PROVIDER_ID) return <LiteLlmProviderScreen provider={provider} reload={reload} embedded={embedded} />;
 
@@ -301,7 +318,6 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider ? provider.name : `Add ${displayName}`}</Heading>
       </div>
       {saveError ? <DenNotice tone="error" message={saveError} className="mt-4" /> : null}
-      {catalogError ? <DenNotice tone="error" message={catalogError} className="mt-4" /> : null}
       {provider?.catalogWarning ? <DenNotice tone="warning" message={provider.catalogWarning} className="mt-4" /> : null}
 
       <section className={`${CARD} mt-5`} aria-labelledby="gateway-key-heading">
@@ -310,7 +326,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
           { value: "org", label: "Shared API key" },
           { value: "member", label: "Each member signs in", disabled: !memberSignInSupported },
         ]} onChange={changeCredentialMode} />
-        {!memberSignInSupported ? <p className="mt-3 flex items-center gap-2 text-sm text-[var(--dls-text-secondary)]" data-testid="gateway-member-sign-in-locked"><LockKeyhole aria-hidden="true" className="size-4" strokeWidth={1.5} />{offeredSignInMethod ? `${getMemberSignInBrand(offeredSignInMethod)} sign-in isn't turned on for your organization yet.` : "People can't sign in to this provider with their own account."}</p> : null}
+        {!memberSignInSupported ? <p className="mt-3 flex items-center gap-2 text-sm text-[var(--dls-text-secondary)]" data-testid="gateway-member-sign-in-locked"><LockKeyhole aria-hidden="true" className="size-4" strokeWidth={1.5} />{offeredSignInMethod ? `${getMemberSignInBrand(offeredSignInMethod)} sign-in isn't turned on for your organization yet. Ask an OpenWork platform admin to turn it on.` : "People can't sign in to this provider with their own account."}</p> : null}
         {getRequiredSettingKeys(npm, providerId).map((key) => (
           <label key={key} className={LABEL}>
             {getSettingLabel(key, providerId)}
@@ -416,7 +432,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
                     <span className="block text-[12px] text-gray-500">{team ? `${team.memberIds.length} members, future members included` : teamId}</span>
                   </span>
                   <span className="text-[11px] text-gray-400">{grantMeta({ type: "team", teamId })}</span>
-                  <DenButton size="sm" variant="destructive" type="button" onClick={() => setAccess((current) => ({ ...current, teamIds: current.teamIds.filter((id) => id !== teamId) }))}>Revoke</DenButton>
+                  <DenButton size="sm" variant="secondary" type="button" disabled={saving} aria-label={`Remove access for ${team?.name ?? "team"}`} onClick={() => setRemovingAccess({ type: "team", id: teamId, name: team?.name ?? "this team" })}>Remove</DenButton>
                 </li>
               );
             })}
@@ -430,15 +446,15 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
                     <span className="block text-[12px] text-gray-500">{member?.user.email ?? memberId}</span>
                   </span>
                   <span className="text-[11px] text-gray-400">{grantMeta({ type: "member", memberId })}</span>
-                  <DenButton size="sm" variant="destructive" type="button" onClick={() => setAccess((current) => ({ ...current, memberIds: current.memberIds.filter((id) => id !== memberId) }))}>Revoke</DenButton>
+                  <DenButton size="sm" variant="secondary" type="button" disabled={saving} aria-label={`Remove access for ${member?.user.name ?? "person"}`} onClick={() => setRemovingAccess({ type: "member", id: memberId, name: member?.user.name ?? "this person" })}>Remove</DenButton>
                 </li>
               );
             })}
           </ul>
         ) : null}
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" data-testid="gateway-access-add-person" onClick={() => setAdding(adding === "person" ? null : "person")} className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50"><Plus className="h-3 w-3" aria-hidden="true" />Add person</button>
-          <button type="button" data-testid="gateway-access-add-team" onClick={() => setAdding(adding === "team" ? null : "team")} className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50"><Plus className="h-3 w-3" aria-hidden="true" />Add team</button>
+          <DenButton size="sm" variant="secondary" icon={Plus} type="button" disabled={saving} data-testid="gateway-access-add-person" onClick={() => setAdding(adding === "person" ? null : "person")}>Add person</DenButton>
+          <DenButton size="sm" variant="secondary" icon={Plus} type="button" disabled={saving} data-testid="gateway-access-add-team" onClick={() => setAdding(adding === "team" ? null : "team")}>Add team</DenButton>
           {adding ? (
             <div className="w-[280px]">
               <DenCombobox ariaLabel={adding === "team" ? "Team" : "Person"} value="" options={adding === "team" ? teamOptions : memberOptions}
@@ -452,8 +468,25 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         </div>
       </section>
 
-      <section className={`${CARD} mt-3`} aria-labelledby="gateway-models-heading">
+      <ConfirmDialog
+        confirm={removingAccess ? {
+          title: `Remove access for ${removingAccess.name}?`,
+          description: `${removingAccess.type === "team" ? `Members of ${removingAccess.name}` : removingAccess.name} will lose this direct access to ${displayName} when you save. Access granted another way stays unchanged. You can add them back.`,
+          action: "Remove access",
+        } : null}
+        destructive
+        onClose={() => setRemovingAccess(null)}
+        onConfirm={() => {
+          if (!removingAccess) return;
+          const removal = removingAccess;
+          setAccess((current) => ({ ...current, ...(removal.type === "team" ? { teamIds: current.teamIds.filter((id) => id !== removal.id) } : { memberIds: current.memberIds.filter((id) => id !== removal.id) }) }));
+        }}
+      />
+
+      <section className={`${CARD} mt-3`} aria-labelledby="gateway-models-heading" aria-busy={catalogBusy}>
         <h2 id="gateway-models-heading" className={CARD_TITLE}>Models</h2>
+        {catalogError ? <div data-testid="gateway-models-error"><DenNotice tone="error" presentation="inline" message={catalogError} className="mt-3" action={<DenButton size="sm" variant="secondary" data-testid="gateway-models-retry" onClick={() => { setSaveError(null); setCatalogAttempt((current) => current + 1); }}>Retry</DenButton>} /></div> : null}
+        {!catalogBusy && !catalogError && detail && !models.length ? <div data-testid="gateway-models-empty"><DenNotice tone="neutral" presentation="inline" message="No models are available in this provider's catalog." className="mt-3" action={<DenButton size="sm" variant="secondary" data-testid="gateway-models-retry" onClick={() => { setSaveError(null); setCatalogAttempt((current) => current + 1); }}>Retry</DenButton>} /></div> : null}
         <div className="mt-3 flex gap-2">
           <Radio testId="gateway-models-all" checked={allowAllModels} label={`All ${displayName} models`} onSelect={() => setAllowAllModels(true)} />
           <Radio testId="gateway-models-pick" checked={!allowAllModels} label="Only the ones I pick" onSelect={() => { setAllowAllModels(false); if (!provider) setModelIds([]); }} />
@@ -462,10 +495,10 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
           <div className="mt-3 rounded-[10px] bg-gray-50 p-2">
             <div className="flex items-center gap-3">
               <div className="w-[200px]"><DenInput type="search" icon={Search} value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder="Filter models" className="h-8 bg-white text-[12px]" /></div>
-              <span className="text-[12px] text-gray-500" data-testid="gateway-models-count">{modelIds.length} of {models.length} selected</span>
+              {!catalogBusy && !catalogError ? <span className="text-[12px] text-gray-500" data-testid="gateway-models-count">{modelIds.length} of {models.length} selected</span> : null}
               <span className="ml-auto flex items-center gap-3 text-[12px]">
-                <button type="button" data-testid="gateway-models-select-all" className="font-medium text-gray-700 hover:text-gray-900" onClick={() => setModelIds(models.map((model) => model.id))}>Select all</button>
-                <button type="button" data-testid="gateway-models-clear" className="font-medium text-gray-700 hover:text-gray-900" onClick={() => setModelIds([])}>Clear</button>
+                <button type="button" data-testid="gateway-models-select-all" disabled={catalogBusy || Boolean(catalogError) || !models.length} className="font-medium text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => setModelIds(models.map((model) => model.id))}>Select all</button>
+                <button type="button" data-testid="gateway-models-clear" disabled={catalogBusy || Boolean(catalogError) || !models.length} className="font-medium text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => setModelIds([])}>Clear</button>
               </span>
             </div>
             <ul className="mt-2 max-h-[320px] overflow-y-auto">
@@ -482,7 +515,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
                   </li>
                 );
               })}
-              {!models.length ? <li className="px-2 py-3 text-[12px] text-gray-500">Loading models…</li> : null}
+              {catalogBusy ? Array.from({ length: 4 }, (_, index) => <li key={index} className="flex items-center gap-3 px-2 py-1.5" data-testid="gateway-models-loading"><DenSkeleton className="size-4" /><DenSkeleton className="size-5 rounded" /><DenSkeleton className="h-4 flex-1" /><DenSkeleton className="h-3 w-20" /></li>) : null}
+              {!catalogBusy && !catalogError && models.length > 0 && !filteredModels.length ? <li className="px-2 py-3 text-[12px] text-gray-500" data-testid="gateway-models-filter-empty">No models match that filter. Try another name.</li> : null}
             </ul>
           </div>
         ) : null}

@@ -387,7 +387,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
         </ul>
       </section>
 
-      <DenStickyActionBar summary={<span>{status ? `${liteLlmModeLabel(uiMode)} · ${status.modelCount} models · ${liteLlmSyncedLabel(status.lastSyncedAt).toLowerCase()}` : provider.name}</span>}>
+      <DenStickyActionBar sticky={false} summary={<span>{status ? `${liteLlmModeLabel(uiMode)} · ${status.modelCount} models · ${liteLlmSyncedLabel(status.lastSyncedAt).toLowerCase()}` : provider.name}</span>}>
         <AlertDialog.Root open={confirmDelete && !reauthDialogOpen} onOpenChange={(open) => { if (busy === "remove") return; setConfirmDelete(open); }}>
           <AlertDialog.Trigger disabled={busy !== null} className={buttonVariants({ variant: "secondary" })} data-testid="gateway-provider-remove">Remove</AlertDialog.Trigger>
           <AlertDialog.Portal>

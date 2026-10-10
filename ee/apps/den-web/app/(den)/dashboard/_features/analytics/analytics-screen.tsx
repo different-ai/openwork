@@ -71,9 +71,7 @@ export function AnalyticsScreen() {
         action={!locked ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
 
       {locked ? (
-        <div className="mt-5">
-          <EnterprisePlanNotice feature="Usage analytics" />
-        </div>
+        <EnterprisePlanNotice feature="Usage analytics" detail="Team usage is unavailable on this plan." />
       ) : isError && !data ? <AnalyticsErrorState title="Couldn't load analytics" onRetry={() => void refetch()} retrying={isFetching} />
       : noActivity ? (
         <div className={analyticsSurfaceClass} data-testid="analytics-no-activity">
