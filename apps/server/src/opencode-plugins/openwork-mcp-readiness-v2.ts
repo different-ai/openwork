@@ -1,5 +1,5 @@
-import { Context, Deferred, Effect, Option, Schema, type Scope } from "effect";
-import { MCP_READINESS_RPC_ID, mcpBindingsReady, mcpNamespace, mcpToolId, type McpPublishedTool } from "../opencode-v2-mcp-readiness.js";
+import { Context, Effect, Option, Schema, Scope } from "effect";
+import { MCP_READINESS_RPC_ID, waitForMcpBindings, mcpNamespace, mcpToolId, type McpPublishedTool } from "../opencode-v2-mcp-readiness.js";
 
 type Registration = { readonly dispose: Effect.Effect<void> };
 type NativeMcpCatalog = {
@@ -54,28 +54,18 @@ const nativeCatalog = Effect.gen(function* () {
   return mcp.value;
 });
 
-export const waitForMcpBindings = Effect.fn("OpenWorkMcp.waitForBindings")(function* (tool: PluginContext["tool"], server: string, desired: readonly string[], previous: readonly string[]) {
-    if (mcpBindingsReady(yield* tool.list(), server, desired, previous)) return;
-    const ready = yield* Deferred.make<void, unknown>();
-    let closed = false;
-    let queued = false;
-    const observe = () => {
-      if (closed || queued) return;
-      queued = true;
-      // The observer can precede MCP's transform. Inspect only after the full
-      // synchronous replay commits, not recursively inside the editor callback.
-      queueMicrotask(() => {
-        queued = false;
-        if (closed) return;
-        void Effect.runPromise(tool.list().pipe(Effect.flatMap(current =>
-          mcpBindingsReady(current, server, desired, previous) ? Deferred.succeed(ready, undefined) : Effect.void),
-          Effect.catchCause(cause => Deferred.failCause(ready, cause))));
-      });
-    };
-    yield* Effect.acquireUseRelease(tool.transform(observe), () => Deferred.await(ready), registration => {
-      closed = true;
-      return registration.dispose;
-    });
+const waitForNativeMcpBindings = Effect.fn("OpenWorkMcp.waitForBindings")(function* (tool: PluginContext["tool"], server: string, desired: readonly string[], previous: readonly string[]) {
+  const scope = yield* Scope.Scope;
+  yield* Effect.tryPromise({
+    try: signal => waitForMcpBindings({
+      list: () => Effect.runPromise(tool.list()),
+      transform: async observe => {
+        const registration = await Effect.runPromise(tool.transform(observe).pipe(Effect.provideService(Scope.Scope, scope)));
+        return { dispose: () => Effect.runPromise(registration.dispose) };
+      },
+    }, server, desired, previous, signal),
+    catch: cause => cause,
+  });
 }, Effect.orDie);
 
 export default {
@@ -106,7 +96,7 @@ export default {
           return yield* Effect.die(new Error(`MCP ${server} is ${target.status.status}, not executable`));
         }
         const desired = (yield* mcp.tools()).filter(tool => tool.server === server).map(tool => mcpToolId(server, tool.name));
-        yield* waitForMcpBindings(ctx.tool, server, desired, previous).pipe(Effect.scoped);
+        yield* waitForNativeMcpBindings(ctx.tool, server, desired, previous).pipe(Effect.scoped);
         return { ready: true };
       }),
     }).pipe(Effect.asVoid);

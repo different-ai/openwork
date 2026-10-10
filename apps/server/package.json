@@ -18,6 +18,7 @@
     "publish:npm": "pnpm build && pnpm build:npm-bundle && pnpm build:web-ui && node scripts/build-opencode-plugin-deps.mjs && node scripts/publish-npm.mjs",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:readiness": "bun test test/opencode-stop-fence.test.ts test/opencode-v2-mcp-readiness.test.ts",
     "prepublishOnly": "pnpm build:npm-bundle"
   },
   "files": [

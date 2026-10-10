@@ -193,6 +193,10 @@ export async function configureProvider(
   // Wait for navigation before starting the model-readiness evaluation;
   // scheduling location.reload() can run that evaluation in the old document.
   await reload(app);
+  // Provider data is visibility-gated. OAuth or another fixture window can
+  // retain foreground focus across reload, so activate the configured target
+  // before observing its model picker, just as a person opening the app does.
+  await app.client.send("Page.bringToFront");
   // The display name the app gives the configured model once its provider list
   // contains it; a fixture provider declares it in opencode.json, a live one is
   // read from the engine catalog.
@@ -250,7 +254,7 @@ export async function configureProvider(
           });
           const chipText = chip?.innerText.trim() ?? "";
           const stored = localStorage.getItem("openwork.defaultModel");
-          observed = JSON.stringify({ composerModel: chipText, storedDefault: stored, expected: { name, ref: expectedRef } });
+          observed = JSON.stringify({ composerModel: chipText, storedDefault: stored, focused: document.hasFocus(), visibility: document.visibilityState, route: location.hash, expected: { name, ref: expectedRef } });
           if (stored === expectedRef && chipText.startsWith(name)) return true;
         }
       } catch {}

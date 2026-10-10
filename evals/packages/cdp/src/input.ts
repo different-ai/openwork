@@ -418,7 +418,11 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         matches = starts.length === 1 ? starts : [];
       }
     }
-    const element = matches[target.nth];
+    // Retained conversations leave hidden controls in DOM order. A person's
+    // target is the rendered control; a hidden earlier composer must not steal
+    // clicks or draft verification from the selected conversation.
+    const visibleMatches = matches.filter(rendered);
+    const element = visibleMatches[target.nth] ?? (visibleMatches.length === 0 ? matches[target.nth] : undefined);
     if (!element) {
       // Miss diagnostics: every rendered element of the requested role (or every rendered
       // button/link for role-less targets), so a miss shows the page's real controls rather
