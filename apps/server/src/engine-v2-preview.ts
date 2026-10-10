@@ -3,6 +3,7 @@ import { ApiError } from "./errors.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
+import { MCP_READINESS_RPC_ID } from "./opencode-v2-mcp-readiness.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -118,6 +119,8 @@ export interface EngineV2Preview {
    * Background upkeep: prompts never wait on it.
    */
   syncWorkspaceMcp(workspaceId: string, directory: string, options?: { reconnect?: string[] }): Promise<void>;
+  /** Explicit mutations join the native client's executable MCP registry. */
+  settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void>;
   /** Start a folder's upkeep in the background the first time it is seen. Never waits or throws. */
   warmWorkspace(workspaceId: string, directory: string): void;
   /** After OpenWork writes workspace skills, briefly wait for the engine to reflect them. Never throws. */
@@ -229,10 +232,10 @@ export function mapRuntimeProvidersToV2Specs(
     // Only built-in adapters: do not turn organization configuration into a
     // request to install an arbitrary runtime package.
     const packages: Record<string, string> = {
-      "@ai-sdk/openai": "@opencode-ai/ai/providers/openai",
-      "@ai-sdk/anthropic": "@opencode-ai/ai/providers/anthropic",
-      "@openrouter/ai-sdk-provider": "@opencode-ai/ai/providers/openrouter",
-      "@ai-sdk/openai-compatible": "@opencode-ai/ai/providers/openai-compatible",
+      "@ai-sdk/openai": "@opencode/ai/providers/openai",
+      "@ai-sdk/anthropic": "@opencode/ai/providers/anthropic",
+      "@openrouter/ai-sdk-provider": "@opencode/ai/providers/openrouter",
+      "@ai-sdk/openai-compatible": "@opencode/ai/providers/openai-compatible",
     };
     const options = isRecord(value.options) ? value.options : {};
     // Catalog `api` metadata may use only the native adapter's trusted origin.
@@ -483,13 +486,13 @@ export function createEngineV2Preview(options: {
     };
     const failures: string[] = [];
     const remove = async (name: string) => {
-      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE", directory, timeoutMs: 15_000 });
+      const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, { method: "DELETE", directory, timeoutMs: 15_000 });
       if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
       applied.delete(name);
     };
     const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
       // The engine connects before it answers (up to the startup timeout).
-      const status = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+      const status = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, {
         method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
       }).then((result) => result.status, (error) => { warn(`MCP ${name}: ${errorMessage(error)}`); return 0; });
       if (status !== 204) {
@@ -506,7 +509,7 @@ export function createEngineV2Preview(options: {
       // closes and reopens it, which is why only unhealthy ones get here.
       attempts.set(name, { fingerprint, at: Date.now() });
       warn(`MCP ${name}: connection ${live?.get(name) ?? "missing"}; reconnecting`);
-      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
+      const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
       if (result.status !== 204) warn(`MCP ${name}: reconnect failed (${result.status})`);
     };
     const tasks: Array<Promise<void>> = [];
@@ -540,6 +543,21 @@ export function createEngineV2Preview(options: {
     // A failed run keeps its record as is: only successful registrations are
     // recorded, and the live status check catches anything unhealthy.
     if (failures.length) throw new Error(failures.join("; "));
+  }
+
+  async function settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void> {
+    if (!enabled) return;
+    await ensureWorkspaceReady(directory);
+    await syncWorkspaceMcp(workspaceId, directory);
+    if (!enabled) return;
+    const active = sidecar;
+    if (!active) throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
+    const result = await active.fetchJson(`/api/rpc/${encodeURIComponent(MCP_READINESS_RPC_ID)}/waitForTools`, {
+      method: "POST", directory, body: { input: { server } }, timeoutMs: 30_000,
+    });
+    if (result.status !== 200 || !isRecord(result.json) || !isRecord(result.json.output) || result.json.output.ready !== true) {
+      throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
+    }
   }
 
   function checkMcpHealth(): void {
@@ -880,5 +898,5 @@ export function createEngineV2Preview(options: {
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
+  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

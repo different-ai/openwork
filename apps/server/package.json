@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 bun --conditions=development src/cli.ts",
     "build:enterprise-mcp-client": "pnpm --filter @openwork/enterprise-mcp-client build",
-    "build": "pnpm --filter @openwork/types build && pnpm --filter @openwork/free-auto build && pnpm build:enterprise-mcp-client && tsc -p tsconfig.json && bun build src/opencode-v2-context-bridge.ts --outfile dist/opencode-v2-context-bridge.js --target node --format esm && bun build src/opencode-plugins/managed-policy-next.ts src/opencode-plugins/managed-policy.ts src/opencode-plugins/openwork-chrome-devtools.ts src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-spreadsheets.ts src/opencode-plugins/openwork-pdf-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts src/opencode-plugins/openwork-title-recovery.ts src/opencode-plugins/openwork-gateway-quota.ts src/opencode-plugins/openwork-gateway-quota-v2.ts src/opencode-plugins/openwork-provider-filters-v2.ts src/opencode-plugins/openwork-mcp-results-v2.ts src/opencode-plugins/openwork-context-v2.ts --root src/opencode-plugins --outdir dist/opencode-plugins --target node --format esm && node scripts/copy-pdfium-wasm.mjs dist/opencode-plugins",
+    "build": "pnpm --filter @openwork/types build && pnpm --filter @openwork/free-auto build && pnpm build:enterprise-mcp-client && tsc -p tsconfig.json && bun build src/opencode-v2-context-bridge.ts --outfile dist/opencode-v2-context-bridge.js --target node --format esm && bun build src/opencode-plugins/managed-policy-next.ts src/opencode-plugins/managed-policy.ts src/opencode-plugins/openwork-chrome-devtools.ts src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-spreadsheets.ts src/opencode-plugins/openwork-pdf-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts src/opencode-plugins/openwork-title-recovery.ts src/opencode-plugins/openwork-gateway-quota.ts src/opencode-plugins/openwork-gateway-quota-v2.ts src/opencode-plugins/openwork-provider-filters-v2.ts src/opencode-plugins/openwork-mcp-results-v2.ts src/opencode-plugins/openwork-mcp-readiness-v2.ts src/opencode-plugins/openwork-context-v2.ts --external effect --root src/opencode-plugins --outdir dist/opencode-plugins --target node --format esm && node scripts/copy-pdfium-wasm.mjs dist/opencode-plugins",
     "build:bin": "pnpm --filter @openwork/types build && pnpm --filter @openwork/free-auto build && pnpm build:enterprise-mcp-client && bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
     "build:bin:all": "pnpm --filter @openwork/types build && pnpm --filter @openwork/free-auto build && pnpm build:enterprise-mcp-client && bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
     "build:web-ui": "pnpm --filter @openwork/app build:selfhost",
@@ -18,6 +18,7 @@
     "publish:npm": "pnpm build && pnpm build:npm-bundle && pnpm build:web-ui && node scripts/build-opencode-plugin-deps.mjs && node scripts/publish-npm.mjs",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:readiness": "bun test test/opencode-stop-fence.test.ts test/opencode-v2-mcp-readiness.test.ts",
     "prepublishOnly": "pnpm build:npm-bundle"
   },
   "files": [
@@ -74,6 +75,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
     "bun-types": "^1.3.6",
+    "effect": "4.0.0-rc.112",
     "fast-png": "8.0.0",
     "jpeg-js": "0.4.4",
     "typescript": "^5.6.3"

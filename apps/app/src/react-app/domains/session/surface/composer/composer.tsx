@@ -318,7 +318,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
-    if (props.submissionPreparing || props.stopping) return;
+    if (props.submissionPreparing) return;
+    // A new Enter after Stop is fresh work, not a follow-up to the interrupted
+    // turn. The immediate send path fences admission on the shared interruption
+    // promise; dropping Enter here silently leaves the person's draft unsent.
+    if (props.stopping) {
+      void props.onSend();
+      return;
+    }
     if (props.busy && !props.editing) {
       if (options.queue) void props.onSteer();
       else void props.onQueue();

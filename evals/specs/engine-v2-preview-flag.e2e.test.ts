@@ -2,7 +2,7 @@ import { browserScript } from "@openwork/testkit";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
+import { clickText, createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
 import { desktop } from "@openwork/hosts";
 import { needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
@@ -206,15 +206,30 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     const pid0 = runningStatus.pid;
     if (pid0 === undefined) throw new Error("Running OpenCode v2 status did not contain a pid");
     expect(runningStatus.chatRouting).toBe(true);
-    await waitFor(app, () => (document.body.innerText.includes("Running v")), {
+    if (!runningStatus.version) throw new Error("Running OpenCode v2 status did not contain a version");
+    // Runtime details are collapsed by default; reveal them before asserting
+    // the running sidecar's version rather than the removed "Running v" copy.
+    await clickText(app, "Engine details", { selector: "#advanced-experimental-engine details > summary" });
+    await waitFor(app, browserScript((version) => {
+      const details = document.querySelector<HTMLDetailsElement>("#advanced-experimental-engine details");
+      if (!details?.open) return false;
+      const prefix = `OpenCode ${version} · `;
+      return Array.from(details.querySelectorAll<HTMLParagraphElement>("p")).some((line) => {
+        const text = line.innerText.trim();
+        const rect = line.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0
+          && text.startsWith(prefix)
+          && /^\d+ providers · \d+ models$/.test(text.slice(prefix.length));
+      });
+    }, [runningStatus.version]), {
       timeoutMs: 30_000,
-      label: "OpenCode v2 running status line",
+      label: "visible OpenCode v2 running version and catalog counts in Engine details",
     });
     const healthResponse = await serverFetchJson(app, "/health");
     expect(healthResponse.status).toBe(200);
     evidence.recordAssertionEvidence(
       "F2 enabling starts the parallel sidecar without replacing v1",
-      `The UI showed a running OpenCode v2 sidecar at pid ${pid0}, while the existing server health endpoint continued returning 200.`,
+      `Engine details visibly showed OpenCode ${runningStatus.version} with provider/model counts, matching the running sidecar's API version at pid ${pid0}, while the existing server health endpoint continued returning 200.`,
       true,
     );
 
@@ -264,7 +279,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     evidence.recordAssertionEvidence("untrusted catalog API endpoints are rejected before credential delivery", "The native provider with baseURL: null, an internal catalog API URL, and a synthetic credential was reported skipped, never mirrored, and absent from the live model catalog.", true);
     expect(catalogStatus.pid).toBe(pid0);
     expect(mirroredStatus.running).toBe(true);
-    for (const configPath of ["/api/config", "/api/config/", "/api/%63onfig"]) {
+    for (const configPath of ["/api/config", "/api/config/", "/api/%63onfig", "/api/experimental/config", "/api/experimental/%63onfig"]) {
       const privateConfig = await serverFetchJson(app, `/workspace/${workspaceId}/opencode2${configPath}`);
       expect(privateConfig.status).toBe(403);
       expect(JSON.stringify(privateConfig.json)).not.toContain("witness-key-e2e");

@@ -1,7 +1,7 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { pathToFileURL } from "node:url";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
@@ -109,6 +109,7 @@ export function renderOpencodeV2Config(input: {
   providerFiltersPluginDirectory?: string;
   /** Preserves OpenWork Cloud connection reports from Code Mode calls for the chat. */
   mcpResultsPluginDirectory?: string;
+  mcpReadinessPluginDirectory?: string;
   contextPluginDirectory?: string;
   contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
 }): Record<string, unknown> {
@@ -116,6 +117,7 @@ export function renderOpencodeV2Config(input: {
   const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id));
   const providerConfig: Record<string, unknown> = {};
   for (const provider of enabledProviders) {
+    const providerPackage = provider.package?.replace(/^@opencode-ai\/ai\//, "@opencode/ai/") ?? "@opencode/ai/providers/openai-compatible";
     const models: Record<string, unknown> = {};
     for (const model of provider.models) {
       if ((provider.whitelist !== undefined && !provider.whitelist.includes(model.id)) || provider.blacklist?.includes(model.id)) continue;
@@ -135,7 +137,7 @@ export function renderOpencodeV2Config(input: {
         ...(typeof config.family === "string" ? { family: config.family } : {}),
         ...(isRecord(config.options) ? { settings: config.options } : {}),
         ...(isRecord(config.variants) ? {
-          variants: nativeModelVariants(config.variants, provider.package),
+          variants: nativeModelVariants(config.variants, providerPackage),
         } : {}),
         ...(isRecord(config.headers) ? { headers: config.headers } : {}),
         ...(config.status === "deprecated" ? { disabled: true } : {}),
@@ -143,7 +145,7 @@ export function renderOpencodeV2Config(input: {
     }
     providerConfig[provider.id] = {
       name: provider.name,
-      package: provider.package ?? "@opencode-ai/ai/providers/openai-compatible",
+      package: providerPackage,
       settings: {
         ...provider.settings,
         ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
@@ -177,6 +179,7 @@ export function renderOpencodeV2Config(input: {
       options: { providers: filters },
     }] : []),
     ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
+    ...(input.mcpReadinessPluginDirectory ? [{ package: pathToFileURL(input.mcpReadinessPluginDirectory).href }] : []),
   ];
   return {
     $schema: "https://opencode.ai/config.json",
@@ -198,6 +201,7 @@ export async function createManagedOpencodeV2Server(
   const gatewayQuotaPluginDirectory = join(instanceRoot, "gateway-quota-plugin");
   const providerFiltersPluginDirectory = join(instanceRoot, "provider-filters-plugin");
   const mcpResultsPluginDirectory = join(instanceRoot, "mcp-results-plugin");
+  const mcpReadinessPluginDirectory = join(instanceRoot, "mcp-readiness-plugin");
   const contextPluginDirectory = join(instanceRoot, "context-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
@@ -240,6 +244,10 @@ export async function createManagedOpencodeV2Server(
   await writeFile(join(mcpResultsPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(mcpResultsPluginDirectory, "server.js"),
     `export { default } from ${JSON.stringify(pathToFileURL(openworkMcpResultsV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(mcpReadinessPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(mcpReadinessPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(mcpReadinessPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkMcpReadinessV2PluginPath()).href)};\n`, { mode: 0o600 });
   if (options.contextTools) {
     await mkdir(contextPluginDirectory, { recursive: true, mode: 0o700 });
     await writeFile(join(contextPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
@@ -321,16 +329,16 @@ export async function createManagedOpencodeV2Server(
   }
 
   async function health(): Promise<OpencodeV2Health> {
-    const response = await fetchJson("/api/health", { timeoutMs: 5_000 });
+    const response = await fetchJson("/api/info", { timeoutMs: 5_000 });
     if (response.status !== 200 || !isRecord(response.json)) {
       throw new Error(`OpenCode v2 health returned HTTP ${response.status}`);
     }
-    const { healthy, version, pid } = response.json;
-    if (typeof healthy !== "boolean" || typeof version !== "string" || typeof pid !== "number") {
+    const { version, pid } = response.json;
+    if (typeof version !== "string" || typeof pid !== "number") {
       throw new Error("OpenCode v2 health returned an invalid payload");
     }
     if (pid !== child.pid) throw new Error("OpenCode v2 health did not match the spawned child");
-    return { healthy, version, pid };
+    return { healthy: true, version, pid };
   }
 
   // Every rewrite (providers, permissions, skills) serializes through one
@@ -349,6 +357,7 @@ export async function createManagedOpencodeV2Server(
       gatewayQuotaPluginDirectory,
       providerFiltersPluginDirectory,
       mcpResultsPluginDirectory,
+      mcpReadinessPluginDirectory,
       contextPluginDirectory,
       contextTools: options.contextTools,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),

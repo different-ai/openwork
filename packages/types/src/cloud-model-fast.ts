@@ -68,23 +68,23 @@ export function nativeModelVariants(raw: unknown, providerPackage: string | unde
   const enabled = Object.entries(variants).flatMap(([id, value]) => {
     if (!isRecord(value) || value.disabled === true) return [];
     const { disabled, ...options } = value;
-    return [{ id, settings: { providerOptions: options } }];
+    return [{ id, settings: options }];
   });
   const metadata = fastMetadata.safeParse(variants[CATALOG_FAST_VARIANT]);
-  if (providerPackage !== "@opencode-ai/ai/providers/openai"
+  if (providerPackage !== "@opencode/ai/providers/openai"
     || !metadata.success
     || Object.keys(variants).some((id) => id.startsWith(FAST_VARIANT_PREFIX))) return enabled;
   // Catalog efforts are not OpenCode variants. Expand only here, and never
   // resurrect an explicitly disabled variant or overwrite custom settings.
   for (const effort of metadata.data.reasoningEfforts ?? []) {
-    if (!Object.hasOwn(variants, effort)) enabled.push({ id: effort, settings: { providerOptions: { reasoningEffort: effort } } });
+    if (!Object.hasOwn(variants, effort)) enabled.push({ id: effort, settings: { reasoningEffort: effort } });
   }
   return [
     ...enabled,
-    { id: FAST_DEFAULT_VARIANT, settings: { providerOptions: { serviceTier: "priority" } } },
+    { id: FAST_DEFAULT_VARIANT, settings: { serviceTier: "priority" } },
     ...enabled.map((variant) => ({
       id: fastVariantId(variant.id),
-      settings: { providerOptions: { ...variant.settings.providerOptions, serviceTier: "priority" } },
+      settings: { ...variant.settings, serviceTier: "priority" },
     })),
   ];
 }
@@ -112,8 +112,8 @@ export function materializeLegacyFastProviders(providers: Record<string, Record<
           if (!efforts.includes(effort) && !Object.hasOwn(variants, effort)) variants[effort] = { disabled: true };
         }
       }
-      for (const variant of nativeModelVariants(model.variants, "@opencode-ai/ai/providers/openai")) {
-        if (!Object.hasOwn(variants, variant.id)) variants[variant.id] = variant.settings.providerOptions;
+      for (const variant of nativeModelVariants(model.variants, "@opencode/ai/providers/openai")) {
+        if (!Object.hasOwn(variants, variant.id)) variants[variant.id] = variant.settings;
       }
       models[modelId] = { ...model, variants };
     }

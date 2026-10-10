@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eventually, mcpMock, needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
+import versions from "../../constants.json";
 
 import {
   createManagedOpencodeV2Server,
@@ -131,7 +132,7 @@ test("V2-STORED-01: cold stored reads survive pending catalog and MCP readiness"
     const config = {
       providers: {
         [model.providerID]: {
-          package: "@opencode-ai/ai/providers/openai-compatible",
+          package: "@opencode/ai/providers/openai-compatible",
           settings: { baseURL: `${witnessUrl}/provider/v1`, apiKey: "fixture-only" },
           models: { [model.id]: { name: "Stored model", limit: { context: 4096, output: 512 } } },
         },
@@ -143,7 +144,7 @@ test("V2-STORED-01: cold stored reads survive pending catalog and MCP readiness"
       env: { ...env, OPENCODE_MODELS_URL: `${witnessUrl}/seed` },
     });
     const firstHealth = await server.health();
-    expect(firstHealth.version).toBe("0.0.0-beta-19086");
+    expect(firstHealth.version).toBe(versions.opencodeV2Version);
     const time = 1_700_000_000_000;
     const transcript = (id: string, workspace: string, marker: string) => ({
       location: { directory: workspace },
@@ -165,7 +166,7 @@ test("V2-STORED-01: cold stored reads survive pending catalog and MCP readiness"
     const foreign = transcript("ses_stored_foreign", foreignDirectory, "foreign");
     const imported = [];
     for (const body of [owned, foreign]) {
-      const result = await server.fetchJson("/api/session/import", { method: "POST", body, timeoutMs: 3_000 });
+      const result = await server.fetchJson("/api/experimental/session/import", { method: "POST", body, timeoutMs: 3_000 });
       expect(result.status, JSON.stringify(result.json)).toBe(200);
       expect(result.json).toMatchObject({ data: { id: body.info.id, location: body.location, metadata: body.info.metadata } });
       imported.push(result.json);
@@ -184,7 +185,7 @@ test("V2-STORED-01: cold stored reads survive pending catalog and MCP readiness"
       env: { ...env, OPENCODE_MODELS_URL: `${witnessUrl}/cold` },
     });
     const health = await server.health();
-    expect(health.version).toBe("0.0.0-beta-19086");
+    expect(health.version).toBe(versions.opencodeV2Version);
     expect(health.pid).toBe(server.childPid);
     expect(health.pid).not.toBe(firstHealth.pid);
     expect((await stat(join(rootDir, "opencode.db"))).ino).toBe(database.ino);
@@ -341,6 +342,7 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     const initialHealth = await server.health();
     const pid0 = initialHealth.pid;
     expect(initialHealth.healthy).toBe(true);
+    expect(initialHealth.version).toBe(versions.opencodeV2Version);
     expect(pid0).toBe(server.childPid);
     expect(Number(new URL(server.url).port)).toBeGreaterThan(0);
     if (process.platform === "linux") {

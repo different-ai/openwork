@@ -37,7 +37,7 @@ export interface EngineSessionProbeResult<T> {
 }
 
 interface ProbeRequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH";
   body?: unknown;
   timeoutMs?: number;
 }
@@ -306,8 +306,8 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
     }
     const renamedResponse = await request(
       options,
-      `${mount}${sessionPath}/${encodeURIComponent(created.id)}/rename`,
-      { method: "POST", body: { title }, timeoutMs: 30_000 },
+      `${mount}${sessionPath}/${encodeURIComponent(created.id)}`,
+      { method: "PATCH", body: { title }, timeoutMs: 30_000 },
     );
     const renamed = parseSession(renamedResponse.body) ?? { id: created.id, title };
     return result(renamedResponse, renamed);

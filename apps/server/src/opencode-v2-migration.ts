@@ -211,11 +211,11 @@ export async function migrateOpencodeV1History(options: {
         let advanced = false;
         for (const session of pending.values()) {
           if (session.parentId && pending.has(session.parentId)) continue;
-          const exported = await converter.fetchJson(`/api/session/${encodeURIComponent(session.id)}/export`, { directory: session.directory });
+          const exported = await converter.fetchJson(`/api/experimental/session/${encodeURIComponent(session.id)}/export`, { directory: session.directory });
           if (exported.status !== 200 || !isRecord(exported.json) || !isRecord(exported.json.data)) {
             throw new Error("Could not export a converted chat. Retry migration; existing v2 chats will be skipped.");
           }
-          const result = await options.target.fetchJson("/api/session/import", {
+          const result = await options.target.fetchJson("/api/experimental/session/import", {
             method: "POST", directory: session.directory,
             body: { ...exported.json.data, location: { directory: session.directory } }, timeoutMs: 30_000,
           });
