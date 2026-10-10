@@ -99,7 +99,7 @@ export function registerRemoteSessionReceiptResources(input: RemoteSessionReceip
 /** Pure, gated decoration: never perform extra database work after a durable mutation. */
 export function withRemoteSessionReceiptUri<T extends { structuredContent?: Record<string, unknown> }>(result: T, enabled: boolean): T & { structuredContent?: Record<string, unknown> } {
   const content = result.structuredContent
-  if (!enabled || !content || content.target !== "desktop") return result
+  if (!enabled || !content || (content.target !== "desktop" && content.target !== "registered")) return result
   const kind = typeof content.requestId === "string" ? "requests" : "commands"
   const id = kind === "requests" ? content.requestId : content.commandId
   if (typeof id !== "string") return result

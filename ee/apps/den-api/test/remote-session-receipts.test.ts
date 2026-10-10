@@ -191,6 +191,9 @@ test("flag-gated URI decoration keeps original remote session tool result and ne
   const result = { content: [{ type: "text", text: "unchanged" }], structuredContent: { target: "desktop", commandId: data.command.id } }
   assert.equal(withRemoteSessionReceiptUri(result, false), result)
   assert.equal(withRemoteSessionReceiptUri(result, true).structuredContent.statusResourceUri, data.uri)
+  const registered = { ...result, structuredContent: { ...result.structuredContent, target: "registered" } }
+  assert.equal(withRemoteSessionReceiptUri(registered, false), registered)
+  assert.equal(withRemoteSessionReceiptUri(registered, true).structuredContent.statusResourceUri, data.uri)
   assert.equal(withRemoteSessionReceiptUri({ structuredContent: { target: "desktop", commandId: data.command.id, requestId: data.request.id } }, true).structuredContent.statusResourceUri, data.requestUri)
   assert.equal(data.reads, 0)
 })
