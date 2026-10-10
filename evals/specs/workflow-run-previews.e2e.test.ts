@@ -136,7 +136,7 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
 
   await step("read existing diagrams directly in the run list", async () => {
     await user.see({ text: "Workflow Runs" }, { timeoutMs: 90_000 });
-    await user.see({ text: "Workflows are repeatable tasks you and your team can save, share, and run again. See their recent activity here." });
+    await user.see({ role: "heading", label: "Workflow Runs" });
     for (const receiptId of [world.receiptId, failedReceiptId]) {
       // Scope rendered node text to each receipt; an empty diagram or the latest
       // version (Revised count) must fail even when another card is correct.

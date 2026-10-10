@@ -264,6 +264,13 @@ overrides:
       - "**/*.json#/paths/~1v1~1automation-runners"
     rules:
       ow-list-pagination: "off"
+  # Library usage is one aggregate row per live skill, plugin or connector,
+  # including the unused ones (that is the point: what nobody uses). A bounded
+  # snapshot of the organization's library, not a paged collection.
+  - files:
+      - "**/*.json#/paths/~1v1~1library-usage~1%7Bkind%7D"
+    rules:
+      ow-list-pagination: "off"
   # Distinct analytics dimension values (project labels) for one selector:
   # bounded by the organization's labels and read whole by the desktop and Den
   # web, so it is not a paginated collection.

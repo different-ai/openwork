@@ -95,9 +95,9 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  skillUsage: {
-    label: "Skill usage",
-    description: "Organization admins see how often each skill is used, by how many people, and which ones nobody uses, so they can decide what to keep.",
+  libraryUsage: {
+    label: "Library usage",
+    description: "Organization admins see in Analytics how often each skill, plugin and connector is used, by how many people, which calls fail, and what nobody uses, so they can decide what to keep.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

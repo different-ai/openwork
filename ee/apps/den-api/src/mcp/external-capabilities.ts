@@ -1,3 +1,4 @@
+import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -1387,6 +1388,16 @@ export async function executeExternalCapability(input: {
       member,
       lifecycleDeadline: deadline,
     })
+    // Library usage: one row per call, ok or error, never the arguments or result.
+    if (input.member) {
+      recordConnectorCall(providerCall, {
+        organizationId: connection.organizationId,
+        orgMembershipId: input.member.orgMembershipId,
+        connectionId: connection.id,
+        toolName: input.toolName,
+        via: "gateway",
+      }, toolCallFailed)
+    }
 
     const validation = validateExternalMcpToolArguments(tool.inputSchema, input.args)
     if (!validation.ok && validation.error === "invalid_arguments") {

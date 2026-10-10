@@ -32,7 +32,7 @@ config:
     driveResumableUploads: "" # default off · Members upload larger workspace files to Google Drive and prepare upload sessions for external clients.
     implicitCloudSkills: ""   # default off · Agents discover organization skills automatically without waiting for Cloud before starting a task.
     dashboardActivity: ""     # default off · Organization admins see recent additions and skill updates on their dashboard instead of Quick add.
-    skillUsage: ""            # default off · Organization admins see how often each skill is used, by how many people, and which ones nobody uses, so they can decide what to keep.
+    libraryUsage: ""          # default off · Organization admins see in Analytics how often each skill, plugin and connector is used, by how many people, which calls fail, and what nobody uses, so they can decide what to keep.
     modelsAnalytics: ""       # default off · Organization admins can opt in to task analytics for OpenWork Models.
     auditLogs: ""             # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
     orgManagedDashboards: ""  # default off · Organization admins publish dashboards to members in Den and the desktop app.

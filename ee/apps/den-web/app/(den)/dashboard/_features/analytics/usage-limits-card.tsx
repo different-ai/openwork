@@ -37,7 +37,7 @@ export function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }
   return <section aria-label="Usage limits" className="grid gap-3">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h2 className="text-sm font-semibold text-[#07192C]">Shared usage limits</h2>
-      <p className="text-xs text-[#637291]">Included in your plan · Shared across active members</p>
+      <p className="text-xs text-[#637291]">Included in your plan, shared across active members</p>
     </div>
     <div className="grid gap-3.5 sm:grid-cols-3">
       {ordered.map((bucket) => {
