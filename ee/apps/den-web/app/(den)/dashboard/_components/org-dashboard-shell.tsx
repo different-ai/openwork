@@ -548,7 +548,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   </div>
                 ) : null}
 
-                <div className="grid min-h-0 max-h-64 gap-0.5 overflow-y-auto px-1.5">
+                <div className="grid min-h-0 max-h-64 grid-cols-1 gap-0.5 overflow-y-auto px-1.5">
                   {visibleOrgDirectory.map((org) => (
                     <button
                       key={org.id}
