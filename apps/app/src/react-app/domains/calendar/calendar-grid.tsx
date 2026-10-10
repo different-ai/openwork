@@ -132,11 +132,11 @@ function MeetingBlock(props: { event: CalendarEvent; timeZone: string; selected:
       data-calendar-provider={event.provider}
       aria-pressed={props.selected}
       aria-label={`${event.title}, ${source}${event.timing.kind === "timed" ? `, ${formatTime(event.timing.start, props.timeZone)}` : ", all day"}`}
-      title={`${event.title} — ${source}`}
+      title={`${event.title}, ${source}`}
       className={cn(meetingBlockClass(props.selected), props.fill && "h-full")}
       onClick={props.onSelect}
     >
-      <span className="truncate font-medium">{event.title} <span className="font-normal text-muted-foreground">— {source}</span></span>
+      <span className="truncate font-medium">{event.title} <span className="font-normal text-muted-foreground">{source}</span></span>
       {props.compact || event.timing.kind !== "timed" ? null : (
         <span className="truncate text-muted-foreground">{formatTime(event.timing.start, props.timeZone)}</span>
       )}
@@ -185,7 +185,8 @@ export function CalendarTimeGrid(props: GridProps) {
 
   useEffect(() => {
     const node = scrollRef.current
-    if (node) node.scrollTop = SCROLL_TO_HOUR * HOUR_HEIGHT_PX
+    // Hour labels are centered on their lines. Land half an hour earlier so the first label is fully visible.
+    if (node) node.scrollTop = SCROLL_TO_HOUR * HOUR_HEIGHT_PX - HOUR_HEIGHT_PX / 2
   }, [props.range.start])
 
   const dayBlocks = useMemo(() => props.range.days.map((day) => {
@@ -227,7 +228,7 @@ export function CalendarTimeGrid(props: GridProps) {
           ))}
         </div>
       ) : null}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} data-calendar-scroll className="min-h-0 flex-1 overflow-y-auto">
         <div className="relative grid" style={{ gridTemplateColumns: columns, height: 24 * HOUR_HEIGHT_PX }}>
           <div className="relative">
             {Array.from({ length: 24 }, (_, hour) => (

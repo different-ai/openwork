@@ -28,6 +28,7 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
   world, user, probe, seed, step, evidence,
 }) => {
   const owner = user.on(world.web);
+  const ownerProbe = probe.on(world.web);
   const teammate = user.on(world.memberWeb);
   const manageable = "/v1/inference-providers?scope=manageable";
 
@@ -112,6 +113,71 @@ test("an owner lets each person sign in to Amazon Bedrock with AWS and to Micros
     );
     await owner.see({ text: callback });
     expect(leaked).toBe(false);
+    await owner.screenshot();
+  });
+
+  await step("the owner keeps Foundry access content behind the save bar while reading the middle of the form", async () => {
+    await owner.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    await owner.click({ testId: "gateway-oauth-client-secret" });
+    await owner.press("Tab");
+    const before = await world.stickyBar();
+    expect(before.activeLabel).toBe("Read setup instructions");
+    // Observe and wheel before user.see/click can center the covered access
+    // switch. The target crosses the same 16px bottom gap as Permissions.
+    await owner.wheelAt({
+      x: before.main.left + 16, y: before.main.top + 120,
+      deltaY: before.control.y - (before.card.bottom + 8),
+    });
+    const middle = await ownerProbe.eventually(() => world.stickyBar(), {
+      within: 10_000, label: "Foundry access switch crosses the bottom save-bar gap",
+      until: (value) => Math.abs(value.control.y - (value.card.bottom + 8)) <= 1,
+    });
+    const witnessed = middle.scroll.top > 0 && middle.scroll.remaining > 112
+      && middle.control.y < middle.main.bottom && middle.control.bottom > middle.main.bottom
+      && middle.gap.some((point) => point.underlyingContent.length > 0);
+    const masked = middle.bar.position === "sticky" && middle.bar.bottomInset === "0px"
+      && Math.abs(middle.bar.bottom - middle.main.bottom) <= 1
+      && middle.bar.background === middle.main.background && middle.bar.opacity === "1"
+      && middle.bar.background !== "rgba(0, 0, 0, 0)"
+      && middle.bar.bottom - middle.card.bottom >= 16
+      && middle.gap.every((point) => point.coveredByBar && !point.hitsFormContent)
+      && !middle.control.hitTest && middle.save.hitTest && !middle.save.disabled;
+    evidence.recordAssertionEvidence("Foundry form content cannot peek through the bottom gap mid-scroll", JSON.stringify({ witnessed, masked, middle }), witnessed && masked);
+    expect(witnessed).toBe(true);
+    expect(masked).toBe(true);
+    await owner.screenshot();
+  });
+
+  await step("after: Tab brings Foundry's access switch fully above the save bar", async () => {
+    const before = await world.stickyBar();
+    await owner.press("Tab");
+    const focused = await ownerProbe.eventually(() => world.stickyBar(), {
+      within: 10_000, label: "Tab focuses Foundry access without a pointer auto-scroll",
+      until: (value) => value.control.focused,
+    });
+    const clear = focused.control.top >= focused.main.top && focused.control.bottom <= focused.bar.top
+      && focused.control.hitTest && focused.scroll.top > before.scroll.top
+      && focused.main.scrollPaddingBottom >= 112 && focused.save.hitTest;
+    evidence.recordAssertionEvidence("Keyboard focus remains unobscured in the Foundry editor", JSON.stringify({ before, focused, clear }), clear);
+    expect(clear).toBe(true);
+    await owner.screenshot();
+  });
+
+  await step("after: Save keeps Foundry's configured credentials without replacing the client secret", async () => {
+    // Read the actual Save hit target before click can repair its position.
+    expect((await world.stickyBar()).save.hitTest).toBe(true);
+    await owner.click({ testId: "gateway-provider-save" });
+    await owner.see({ testId: "gateway-provider-open" }, { timeoutMs: 60_000 });
+    const after = await probe.api(world.den.admin, manageable);
+    const foundry = providers(after.body).find((entry) => entry.providerId === "microsoft-foundry");
+    const set = firstSet(foundry);
+    const settings = foundry?.settings;
+    const resourceName = settings && typeof settings === "object" && "resourceName" in settings ? settings.resourceName : null;
+    const persisted = resourceName === "acme-foundry" && set?.credentialMode === "member"
+      && set?.oauthTenantId === TENANT_ID && set?.oauthClientId === CLIENT_ID
+      && set?.hasOauthClientSecret === true && !after.text.includes(CLIENT_SECRET);
+    evidence.recordAssertionEvidence("Saving from mid-scroll keeps the configured Foundry credentials", JSON.stringify({ resourceName, credentialMode: set?.credentialMode, tenant: set?.oauthTenantId, client: set?.oauthClientId, hasSecret: set?.hasOauthClientSecret, persisted }), persisted);
+    expect(persisted).toBe(true);
     await owner.screenshot();
   });
 

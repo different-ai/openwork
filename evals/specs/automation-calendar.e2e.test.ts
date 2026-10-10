@@ -28,23 +28,32 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
   await step("Alex opens Calendar and sees this week's Automations next to Google and Outlook meetings", async () => {
     await alex.resizeViewport({ width: 1440, height: 960, deviceScaleFactor: 1 });
     await alex.click({ role: "button", label: "Calendar" });
-    await alex.see({ role: "button", label: /^Launch standup, Google Calendar/ }, { timeoutMs: 60_000 });
-    await alex.see({ role: "button", label: /^Partner pipeline review, Outlook/ });
-    await alex.see({ role: "button", label: /^Weekly launch update, / });
+    // Only read the loaded DOM here: user.see on a meeting can scroll the grid before we witness first load.
+    await look.eventually(async () => (await blocks("[data-calendar-hour]")) === 24 && (await blocks("[data-calendar-automation]")) >= 5 && (await blocks('[data-calendar-provider="google"]')) >= 5 && (await blocks('[data-calendar-provider="microsoft"]')) >= 2, { within: 60_000, label: "both Calendar layers are loaded without scrolling to an event", until: Boolean });
+    const rail = await world.hourRail();
+    const initial = await look.eventually(() => world.hourRailLayout(), { within: 5_000, label: "the initial Calendar scroll has reached the morning hours", until: (layout) => layout.firstHour.text === "7 AM" });
+    const firstHourFits = initial.firstHour.rect.top >= initial.scroller.top && initial.firstHour.rect.bottom <= initial.scroller.bottom;
+    originalTop = (await element('[data-calendar-grid="week"]')).rect.top;
+    originalToolbarHeight = (await element("[data-calendar-toolbar]")).rect.height;
+    // Capture the initial rail before any event lookup. Edge clipping after later scrolling is normal.
+    await alex.screenshot();
     const automations = await blocks("[data-calendar-automation]");
     const google = await blocks('[data-calendar-provider="google"]');
     const outlook = await blocks('[data-calendar-provider="microsoft"]');
     const upstream = world.calendarRequests();
-    originalTop = (await element('[data-calendar-grid="week"]')).rect.top;
-    originalToolbarHeight = (await element("[data-calendar-toolbar]")).rect.height;
-    const rail = await world.hourRail();
-    evidence.recordAssertionEvidence("one week, both layers and a readable hour rail", `${automations} Automation blocks, ${google} Google meetings, ${outlook} Outlook meetings; ${upstream} provider reads; hours ${rail.fontSize}px at ${rail.contrast.toFixed(2)}:1; grid starts at ${originalTop}px`, automations >= 5 && google >= 5 && outlook >= 2 && upstream >= 2 && rail.contrast >= 4.5 && rail.fontSize >= 12);
+    const meetingsUsePlainSpacing = (await look.dom("[data-calendar-meeting]")).elements.every((meeting) => !meeting.text.includes("—"));
+    evidence.recordAssertionEvidence("one week, both layers and the complete first hour on initial landing", `${automations} Automation blocks, ${google} Google meetings, ${outlook} Outlook meetings; ${upstream} provider reads; hours ${rail.fontSize}px at ${rail.contrast.toFixed(2)}:1; initial ${initial.firstHour.text} at ${initial.firstHour.rect.top.toFixed(1)}–${initial.firstHour.rect.bottom.toFixed(1)}px inside scroller ${initial.scroller.top.toFixed(1)}–${initial.scroller.bottom.toFixed(1)}px; meeting text has no em dash ${meetingsUsePlainSpacing}; grid starts at ${originalTop}px`, automations >= 5 && google >= 5 && outlook >= 2 && upstream >= 2 && rail.contrast >= 4.5 && rail.fontSize >= 12 && firstHourFits && meetingsUsePlainSpacing);
+    expect(firstHourFits).toBe(true);
+    expect(meetingsUsePlainSpacing).toBe(true);
     expect(rail.contrast).toBeGreaterThanOrEqual(4.5);
     expect(rail.fontSize).toBeGreaterThanOrEqual(12);
     expect(automations).toBeGreaterThanOrEqual(5);
     expect(google).toBeGreaterThanOrEqual(5);
     expect(outlook).toBeGreaterThanOrEqual(2);
     expect(upstream).toBeGreaterThanOrEqual(2);
+    await alex.see({ role: "button", label: /^Launch standup, Google Calendar/ }, { timeoutMs: 60_000 });
+    await alex.see({ role: "button", label: /^Partner pipeline review, Outlook/ });
+    await alex.see({ role: "button", label: /^Weekly launch update, / });
     await alex.screenshot();
   });
 
@@ -68,16 +77,29 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.click({ role: "button", label: /^Update launch deals, Blocked until fixed/ });
     await alex.see({ text: "Needs attention" });
     await alex.see({ text: /Needs HubSpot access/ });
-    await alex.see({ text: "Ask your workspace admin to help restore the connection access this automation needs." });
+    await alex.see({ text: world.recovery.hubspotMessage });
+    expect((await element("[data-calendar-blocked] [data-calendar-recovery]")).text).toBe(world.recovery.hubspotMessage);
     const blocked = await blocks('[data-calendar-status="blocked"]');
     const panel = await look.dom("[data-calendar-next-run]");
     const nextRun = panel.elements[0]?.text ?? "";
     const nextTop = (await element('[data-calendar-grid="week"]')).rect.top;
     const toolbarHeight = (await element("[data-calendar-toolbar]")).rect.height;
     const stable = Math.abs(nextTop - originalTop) <= 1 && Math.abs(toolbarHeight - originalToolbarHeight) <= 1;
-    evidence.recordAssertionEvidence("blocked slots have a recovery owner and week navigation preserves the grid", `${blocked} locked slot(s); "${nextRun}"; workspace admin next step; grid ${originalTop}px → ${nextTop}px; toolbar ${originalToolbarHeight}px → ${toolbarHeight}px`, blocked >= 1 && nextRun === "Not scheduled until fixed" && stable);
+    evidence.recordAssertionEvidence("blocked slots preserve the server's complete next step and week navigation preserves the grid", `${blocked} locked slot(s); "${nextRun}"; unchanged recovery "${world.recovery.hubspotMessage}"; grid ${originalTop}px → ${nextTop}px; toolbar ${originalToolbarHeight}px → ${toolbarHeight}px`, blocked >= 1 && nextRun === "Not scheduled until fixed" && stable);
     expect(nextRun).toBe("Not scheduled until fixed");
     expect(stable).toBe(true);
+    await alex.screenshot();
+  });
+
+  await step("the owner keeps their own reconnect instruction before retrying a blocked automation", async () => {
+    await alex.click({ role: "button", label: /^What's waiting on me, Blocked until fixed/ });
+    await alex.see({ text: world.recovery.message });
+    const recovery = await element("[data-calendar-blocked] [data-calendar-recovery]");
+    const notice = await element("[data-calendar-blocked]");
+    const runDisabled = (await look.dom('[data-calendar-detail] button[disabled]')).elements.some((button) => button.text === "Run now");
+    const ok = recovery.text === world.recovery.message && !notice.text.includes("Ask your workspace admin") && runDisabled;
+    evidence.recordAssertionEvidence("both server sentences remain unchanged without contradictory admin advice", `"${recovery.text}"; invented Ask admin line ${notice.text.includes("Ask your workspace admin")}; Run now disabled ${runDisabled}`, ok);
+    expect(ok).toBe(true);
     await alex.screenshot();
   });
 

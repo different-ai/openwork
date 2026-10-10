@@ -48,6 +48,54 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
     return (Array.isArray(items) ? items : []).filter(isRecord).map(item => String(item.id)).sort();
   };
   const fixtureIds = world.chats.map(chat => chat.id).sort();
+  const draft = "Keep this unsent budget draft while my chats are copied.";
+  const viewports = [{ width: 1280, height: 800 }, { width: 800, height: 600 }];
+  const floatingLayout = async (testId: "engine-upgrade-notice" | "engine-migration-banner", viewport: { width: number; height: number }) => {
+    await user.resizeViewport({ ...viewport, deviceScaleFactor: 1 });
+    await user.see({ testId });
+    const title = (await probe.dom("[data-session-header-title]")).elements[0];
+    expect(title).toBeDefined();
+    if (!title) throw new Error("The conversation header is missing");
+    expect(title.rect.width).toBeGreaterThan(0);
+    expect(title.rect.height).toBeGreaterThan(0);
+    await user.hover({ role: "heading", text: title.text });
+    await user.hover({ role: "button", label: viewport.width < 1024 ? "More actions" : /^(Open|Close) side panel$/ });
+    const labels = testId === "engine-upgrade-notice" ? ["Later", "Upgrade"] : ["Show progress"];
+    for (const label of labels) await user.hover({ role: "button", text: label });
+    const selector = `[data-testid="${testId}"]`;
+    const [floating, controls, chrome] = await Promise.all([
+      probe.dom(selector), probe.dom(`${selector} button`),
+      probe.dom("[data-session-header], [data-session-header] button, [data-session-header-title], [data-sidebar-titlebar], [data-sidebar-titlebar] button"),
+    ]);
+    expect(floating.viewportWidth).toBe(viewport.width);
+    expect(floating.documentWidth).toBeLessThanOrEqual(viewport.width);
+    expect(floating.elements).toHaveLength(1);
+    expect(controls.elements.map(control => control.text)).toEqual(labels);
+    const bounds = floating.elements[0]!.rect;
+    for (const element of [...floating.elements, ...controls.elements]) {
+      expect(element.rect.width).toBeGreaterThan(0);
+      expect(element.rect.height).toBeGreaterThan(0);
+      expect(element.rect.left).toBeGreaterThanOrEqual(0);
+      expect(element.rect.right).toBeLessThanOrEqual(viewport.width);
+      expect(element.rect.top).toBeGreaterThanOrEqual(0);
+      expect(element.rect.bottom).toBeLessThanOrEqual(viewport.height);
+    }
+    for (const control of controls.elements) {
+      expect(control.rect.left).toBeGreaterThanOrEqual(bounds.left);
+      expect(control.rect.right).toBeLessThanOrEqual(bounds.right);
+      expect(control.rect.top).toBeGreaterThanOrEqual(bounds.top);
+      expect(control.rect.bottom).toBeLessThanOrEqual(bounds.bottom);
+    }
+    const visibleChrome = chrome.elements.filter(element => element.rect.width > 0 && element.rect.height > 0);
+    expect(visibleChrome.length).toBeGreaterThan(0);
+    const overlaps = visibleChrome.filter(element => intersects(bounds, element.rect));
+    evidence.recordJsonArtifact(`${testId} header clearance at ${viewport.width}×${viewport.height}`, {
+      viewport, floating: bounds, controls: controls.elements, chrome: visibleChrome, overlaps,
+    });
+    expect(overlaps).toEqual([]);
+    expect(bounds.top).toBeGreaterThanOrEqual(Math.max(...visibleChrome.map(element => element.rect.bottom)));
+    return `${viewport.width}×${viewport.height}; floating y=${Math.round(bounds.top)}..${Math.round(bounds.bottom)}; header bottom=${Math.round(Math.max(...visibleChrome.map(element => element.rect.bottom)))}; zero intersections; title, header action and ${labels.join(" / ")} accepted real pointer hit tests`;
+  };
 
   await step("before: the member's existing chats have an optional upgrade, not a warning", async () => {
     await user.resizeViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
@@ -59,12 +107,8 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
     await user.see({ text: "A chat upgrade is available in OpenWork." });
     await user.see({ role: "button", text: /^Later$/ });
     await user.notSee({ text: /OpenWork needs to upgrade its chat engine/ });
-    if (world.fixture) {
-      const first = world.chats[0]!;
-      await user.see({ text: first.title }, { timeoutMs: 60_000 });
-      await user.click({ testId: `sidebar-session-${first.id}` });
-      await user.see({ text: first.reply }, { timeoutMs: 60_000 });
-    }
+    if (world.fixture) await user.see({ text: world.chats[0]!.title }, { timeoutMs: 60_000 });
+    const layout = await floatingLayout("engine-upgrade-notice", viewports[0]!);
     const mark = await probe.dom('[data-testid="engine-upgrade-notice"] img[src$="/openwork-mark.svg"]');
     const warnings = await probe.dom('[data-testid="engine-upgrade-notice"] .lucide-triangle-alert, [data-testid="engine-upgrade-notice"] [class*="amber"]');
     expect(mark.elements).toHaveLength(1);
@@ -72,55 +116,27 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
     await user.screenshot();
     evidence.recordAssertionEvidence(
       "the upgrade is offered without a warning or a mandatory instruction",
-      `neutral OpenWork mark ${mark.elements.length}, warning marks ${warnings.elements.length}; engine v1 (chatRouting ${String(before.chatRouting)}), ${world.before.sessions} v1 chats unchanged`,
+      `neutral OpenWork mark ${mark.elements.length}, warning marks ${warnings.elements.length}; engine v1 (chatRouting ${String(before.chatRouting)}), ${world.before.sessions} v1 chats unchanged; ${layout}`,
       mark.elements.length === 1 && warnings.elements.length === 0 && before.chatRouting !== true && world.before.sessions === world.expectedChats,
     );
   });
 
-  await step("before: Later and Upgrade remain reachable in a small desktop window", async () => {
-    // This is a small desktop window, not a phone or a mobile keyboard simulation.
-    await user.resizeViewport({ width: 800, height: 600, deviceScaleFactor: 1 });
-    await user.see({ testId: "engine-upgrade-notice" });
-    // The real pointer hit test proves the controls are not covered by the shell.
-    await user.hover({ role: "button", text: /^Later$/ });
-    await user.hover({ role: "button", text: /^Upgrade$/ });
-    const [notice, controls, header] = await Promise.all([
-      probe.dom('[data-testid="engine-upgrade-notice"]'),
-      probe.dom('[data-testid="engine-upgrade-notice"] button'),
-      probe.dom('[data-session-header] button, [data-session-header-title], [data-sidebar-titlebar] button'),
-    ]);
-    expect(notice.viewportWidth).toBe(800);
-    expect(notice.documentWidth).toBeLessThanOrEqual(800);
-    expect(notice.elements).toHaveLength(1);
-    expect(controls.elements.map(control => control.text)).toEqual(["Later", "Upgrade"]);
-    for (const element of [...notice.elements, ...controls.elements]) {
-      expect(element.rect.width).toBeGreaterThan(0);
-      expect(element.rect.height).toBeGreaterThan(0);
-      expect(element.rect.left).toBeGreaterThanOrEqual(0);
-      expect(element.rect.right).toBeLessThanOrEqual(800);
-      expect(element.rect.top).toBeGreaterThanOrEqual(0);
-      expect(element.rect.bottom).toBeLessThanOrEqual(600);
+  await step("before: the small-window upgrade notice leaves the conversation header usable", async () => {
+    const layout = await floatingLayout("engine-upgrade-notice", viewports[1]!);
+    evidence.recordAssertionEvidence("the notice clears the real header without hiding it", layout, true);
+    await user.screenshot();
+  });
+
+  await step("before: the member can still read an existing chat and keep an unsent draft", async () => {
+    if (world.fixture) {
+      const first = world.chats[0]!;
+      await user.click({ testId: `sidebar-session-${first.id}` });
+      await user.see({ text: first.reply }, { timeoutMs: 60_000 });
     }
-    const visibleHeader = header.elements.filter(element => element.rect.width > 0 && element.rect.height > 0);
-    const noticeBounds = notice.elements[0]!.rect;
-    for (const control of controls.elements) {
-      expect(control.rect.left).toBeGreaterThanOrEqual(noticeBounds.left);
-      expect(control.rect.right).toBeLessThanOrEqual(noticeBounds.right);
-      expect(control.rect.top).toBeGreaterThanOrEqual(noticeBounds.top);
-      expect(control.rect.bottom).toBeLessThanOrEqual(noticeBounds.bottom);
-    }
-    const overlaps = visibleHeader.filter(element => intersects(noticeBounds, element.rect));
-    // Placement is not assumed from source: preserve real rectangles for the
-    // test owner to reproduce the review's unconfirmed header-overlap note.
-    evidence.recordJsonArtifact("Small desktop upgrade notice and header bounds", {
-      viewport: { width: 800, height: 600 }, notice: noticeBounds,
-      controls: controls.elements, header: visibleHeader, overlaps,
-    });
-    evidence.recordAssertionEvidence(
-      "both upgrade choices fit and accept the real pointer in the small desktop window",
-      `800×600; notice ${JSON.stringify(noticeBounds)}; controls ${controls.elements.map(control => `${control.text} ${Math.round(control.rect.width)}×${Math.round(control.rect.height)}`).join(", ")}; both hover hit tests passed`,
-      true,
-    );
+    await user.see("composer", { editable: true, text: "" });
+    await user.type("composer", draft);
+    await user.see("composer", { editable: true, text: draft });
+    evidence.recordAssertionEvidence("the chat and its unsent draft remain available before upgrade consent", `v1 remains selected; the real composer holds "${draft}" without sending`, (await probe.composer()).draftText === draft);
     await user.screenshot();
   });
 
@@ -157,6 +173,12 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
     await user.see({ testId: "engine-migration-consent" });
   });
 
+  const beforeCopy = await probe.composer();
+  const panesBefore = (await probe.dom('[data-slot="resizable-panel"]')).elements.length;
+  expect(beforeCopy.draftText).toBe(draft);
+  expect(panesBefore).toBeGreaterThan(0);
+  let retainedDraft = draft;
+
   // Every phase change with its time and counts: the recorded process.
   const timeline: { at: string; elapsedS: number; state: unknown; phase: unknown; imported: number; skipped: number; total: number; chatRouting: unknown }[] = [];
   const startedAt = Date.now();
@@ -176,17 +198,100 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
     return value;
   };
 
-  await step("while it runs: progress stays on screen and the member can keep working", async () => {
+  await step("while it runs: a real held copy leaves the member's draft editable without a modal", async () => {
     await user.click({ role: "button", text: /^Upgrade$/ });
     await probe.eventually(async () => track(await status()), {
       within: 120_000, intervalMs: 1_000, label: "migration started",
       until: value => migrationOf(value).state !== "idle",
     });
-    await user.see({ testId: "engine-migration-progress" }, { timeoutMs: 30_000 });
+    const witness = await probe.eventually(world.readHeldCopy, {
+      within: MIGRATION_WITHIN_MS, intervalMs: 100, label: "the first real history import is held",
+      until: value => value.held && value.arrived === 1,
+    });
+    const copying = track(await status());
+    expect(migrationOf(copying).state).toBe("running");
+    expect(isRecord(copying.migration) && copying.migration.phase).toBe("copying");
+    expect(migrationOf(copying).backupPath).not.toBeNull();
+    expect(copying.chatRouting).not.toBe(true);
+    expect(witness.expired).toBe(false);
+    await user.see({ testId: "engine-migration-banner" }, { timeoutMs: 10_000 });
+    await user.notSee({ testId: "engine-migration-progress" }, { timeoutMs: 500 });
+    await user.notSee({ testId: "engine-switch-prompt" }, { timeoutMs: 500 });
+    await user.see("composer", { editable: true, text: retainedDraft });
+    await user.click("composer");
+    await user.press("End");
+    const addition = " Add the travel total.";
+    await user.type("composer", addition);
+    retainedDraft += addition;
+    await user.see("composer", { editable: true, text: retainedDraft });
+    const composer = await probe.composer();
+    expect(composer.route).toBe(beforeCopy.route);
+    expect(composer.userMessageCount).toBe(beforeCopy.userMessageCount);
+    expect((await probe.dom('[data-slot="resizable-panel"]')).elements).toHaveLength(panesBefore);
+    expect(world.readHeldCopy()).toMatchObject({ held: true, arrived: 1, released: 0, expired: false });
+    evidence.recordAssertionEvidence(
+      "the person can edit the same unsent draft while copying is genuinely unfinished",
+      `real import held ${witness.arrived}; running/copying with a v2 backup and v1 routing; composer editable with ${composer.draftText.length} draft characters; same route, ${composer.userMessageCount} sent messages and ${panesBefore} panes; no progress dialog or switch prompt`,
+      composer.composerEditable && composer.draftText === retainedDraft,
+    );
     await user.screenshot();
-    const first = timeline.at(-1);
-    evidence.recordAssertionEvidence("the migration started", `state ${String(first?.state)}, phase ${String(first?.phase)}`, first?.state !== "idle");
   });
+
+  for (const viewport of viewports) {
+    await step(`while it runs: progress clears the usable conversation header at ${viewport.width}×${viewport.height}`, async () => {
+      const layout = await floatingLayout("engine-migration-banner", viewport);
+      await user.notSee({ testId: "engine-migration-progress" }, { timeoutMs: 500 });
+      await user.see("composer", { editable: true, text: retainedDraft });
+      expect(world.readHeldCopy()).toMatchObject({ held: true, arrived: 1, released: 0, expired: false });
+      const copying = track(await status());
+      expect(migrationOf(copying).state).toBe("running");
+      expect(copying.chatRouting).not.toBe(true);
+      expect((await probe.composer()).route).toBe(beforeCopy.route);
+      expect((await probe.dom('[data-slot="resizable-panel"]')).elements).toHaveLength(panesBefore);
+      evidence.recordAssertionEvidence("background progress overlaps no header or control while the draft is retained", `${layout}; actual import still held; ${retainedDraft.length} draft characters remain editable; no extra pane`, true);
+      await user.screenshot();
+    });
+  }
+
+  if (world.fixture) {
+    await step("a failed background copy brings back a recovery decision without changing the original chats", async () => {
+      world.releaseHeldCopy("fail");
+      await user.see({ testId: "engine-migration-progress" }, { timeoutMs: 10_000 });
+      await user.see({ text: "Migration didn't finish" });
+      await user.see({ role: "button", text: /^Try again$/ });
+      await user.see({ text: /Chats already copied are kept, and trying again skips them/ });
+      await user.notSee({ testId: "engine-migration-banner" });
+      const failed = track(await status());
+      expect(migrationOf(failed).state).toBe("error");
+      expect(failed.chatRouting).not.toBe(true);
+      expect(world.readV1History()).toEqual(world.before);
+      expect((await probe.composer()).draftText).toBe(retainedDraft);
+      evidence.recordAssertionEvidence("an interrupted copy returns to Try again rather than silently switching or losing data", `real held import interrupted; migration error; v1 still selected and unchanged; ${retainedDraft.length} draft characters retained; recovery dialog visible`, true);
+      await user.screenshot();
+    });
+
+    await step("the member retries in the existing dialog and chooses to continue working", async () => {
+      await user.click({ role: "button", text: /^Try again$/ });
+      await probe.eventually(world.readHeldCopy, {
+        within: MIGRATION_WITHIN_MS, intervalMs: 100, label: "the real retry import is held",
+        until: value => value.held && value.arrived === 2,
+      });
+      const retrying = track(await status());
+      expect(migrationOf(retrying).state).toBe("running");
+      await user.see({ testId: "engine-migration-progress" });
+      await user.notSee({ testId: "engine-migration-banner" });
+      await user.click({ role: "button", text: "Continue using OpenWork" });
+      await user.see({ testId: "engine-migration-banner" });
+      await user.notSee({ testId: "engine-migration-progress" }, { timeoutMs: 500 });
+      await user.see("composer", { editable: true, text: retainedDraft });
+      expect(world.readHeldCopy()).toMatchObject({ held: true, arrived: 2, released: 1, failed: 1, expired: false });
+      evidence.recordAssertionEvidence("retry and the existing background control preserve the person's draft", `second real import held; ${retainedDraft.length} draft characters editable after Continue using OpenWork; retry remained a dialog until the person's choice`, true);
+      await user.screenshot();
+      world.releaseHeldCopy("continue");
+    });
+  } else {
+    world.releaseHeldCopy("continue");
+  }
 
   await step("after: the chats are copied with a backup and OpenWork switches to v2 by itself", async () => {
     // The toast is short-lived: watch for it while the status is polled.
@@ -273,18 +378,43 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
     expect(now).toEqual(world.before);
   });
 
-  await step("after: migrating again copies nothing twice", async () => {
+  const idsBeforeManual = world.fixture ? await v2SessionIds() : [];
+  if (!world.whole) {
+    await step("the member can return to the original version and still read the same chats", async () => {
+      await user.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+      await user.type({ role: "combobox" }, "Switch to OpenCode v1");
+      await user.click({ text: "Switch to OpenCode v1" });
+      const original = await probe.eventually(status, {
+        within: 60_000, label: "the original version is selected again",
+        until: value => value.chatRouting !== true,
+      });
+      if (world.fixture) {
+        const first = world.chats[0]!;
+        await user.click({ testId: `sidebar-session-${first.id}` });
+        await user.see({ text: first.reply }, { timeoutMs: 60_000 });
+      } else {
+        await user.see("composer", { editable: true });
+      }
+      expect(world.readV1History()).toEqual(world.before);
+      evidence.recordAssertionEvidence("returning to the original version keeps the untouched history readable", `chatRouting ${String(original.chatRouting)}; original history digest unchanged; ${world.fixture ? "the original chat still shows its reply" : "the original composer remains editable"}`, original.chatRouting !== true);
+      await user.screenshot();
+    });
+  }
+
+  await step("after: a manual migration copies nothing twice and still leaves switching to the member", async () => {
     if (world.whole) {
       // A second full pass repeats hours of snapshot and conversion; the fixture and slice runs prove reruns skip.
       evidence.recordAssertionEvidence("a rerun skips chats already on v2", "not repeated for a whole history; covered by the fixture run", true);
       await world.stopFilm();
       return;
     }
-    const idsBefore = world.fixture ? await v2SessionIds() : [];
+    const idsBefore = idsBeforeManual;
     // The command palette is one of the two homes of "Migrate chats" (Advanced settings is the other).
     await user.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
     await user.type({ role: "combobox" }, "Migrate chats");
     await user.click({ text: "Migrate chats to OpenCode v2" });
+    await user.see({ testId: "engine-migration-consent" });
+    expect((await probe.dom('[data-testid="engine-migration-consent"][data-mode="migrate"]')).elements).toHaveLength(1);
     await user.click({ role: "button", text: /^Migrate chats$/ });
     const again = await probe.eventually(status, {
       within: 300_000, label: "second migration completed",
@@ -295,11 +425,17 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
     });
     const migration = migrationOf(again);
     await user.see({ text: `Migrated 0 chats; ${world.expectedChats} already in v2.` }, { timeoutMs: 30_000 });
+    await user.see({ testId: "engine-migration-progress" });
+    await user.see({ role: "button", text: "Switch to OpenCode v2" });
+    await user.see({ role: "button", text: "Not now" });
+    await user.notSee({ testId: "engine-migration-banner" });
+    expect((await probe.dom('[data-testid="engine-migration-progress"][data-state-kind="completed"]')).elements).toHaveLength(1);
+    expect(again.chatRouting).not.toBe(true);
     await user.screenshot();
     const idsAfter = world.fixture ? await v2SessionIds() : [];
     evidence.recordAssertionEvidence(
       "a rerun skips chats already on v2",
-      `imported ${migration.imported}, skipped ${migration.skipped} of ${migration.total}; v2 chats ${idsBefore.length} → ${idsAfter.length}`,
+      `imported ${migration.imported}, skipped ${migration.skipped} of ${migration.total}; v2 chats ${idsBefore.length} → ${idsAfter.length}; manual completed dialog keeps Switch to OpenCode v2 / Not now and v1 routing`,
       migration.imported === 0 && migration.skipped === world.expectedChats && idsAfter.length === idsBefore.length,
     );
     expect(migration).toMatchObject({ imported: 0, skipped: world.expectedChats });

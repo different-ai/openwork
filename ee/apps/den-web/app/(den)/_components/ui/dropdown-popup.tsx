@@ -31,7 +31,10 @@ export function DenDropdownPopup({
         collisionBoundary={[]}
         collisionPadding={8}
         collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
-        className="z-50 w-[min(var(--anchor-width),var(--available-width))]"
+        // Options can be wider than the compact selected-value control. Bound both
+        // the readable minimum and content width so collision handling still fits
+        // the whole menu on narrow screens (including anchors wider than the viewport).
+        className="z-50 w-max min-w-[min(max(var(--anchor-width),20rem),var(--available-width))] max-w-[min(28rem,var(--available-width))]"
       >
         <Popover.Popup
           ref={popupRef}

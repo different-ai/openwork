@@ -2,6 +2,7 @@ import type { DenSession } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 import { evaluateOnSurface, type Surface } from "@openwork/cdp";
 import { setPermissionsFeature, type PermissionsCall } from "./permissions.ts";
+import { readDenStickyActionBar } from "./den-sticky-action-bar.ts";
 
 /**
  * Den Web for the Permissions screens. One organization, Permissions off:
@@ -140,6 +141,9 @@ export async function permissionsUiWorld(seed: Seed) {
     noraWeb,
     typography(person: "owner" | "maya" = "owner") {
       return permissionsTypography(person === "maya" ? mayaWeb : ownerWeb);
+    },
+    stickyBar(switchLabel: string) {
+      return readDenStickyActionBar(ownerWeb, "permissions", switchLabel);
     },
     /** Absolute Den Web URL for a dashboard path. */
     url(path: string): string {

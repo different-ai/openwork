@@ -665,7 +665,7 @@ export default {
   "engine_migration.migrated_summary_other": "Migrated {imported} chats; {skipped} already in v2.",
   "engine_migration.not_now": "Not now",
   "engine_migration.progress_copied": "{done} of {total} chats copied",
-  "engine_migration.progress_note": "You can keep working, but OpenWork may be slow or unstable until this finishes. Your v1 chats aren't changed.",
+  "engine_migration.progress_note": "OpenWork may be slow or unstable until this finishes. Your v1 chats aren't changed.",
   "engine_migration.progress_title": "Migrating chats to OpenCode v2",
   "engine_migration.progress_total_one": "1 chat to copy",
   "engine_migration.progress_total_other": "{total} chats to copy",

@@ -107,7 +107,61 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await owner.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
   });
 
+  await step("the owner keeps one pending change while a connection switch passes beneath the save bar", async () => {
+    // Establish keyboard focus through the real editor without changing another
+    // permission. The next Tab after Edit any connection reaches Disconnect.
+    await owner.click({ role: "textbox", label: "Filter permissions" });
+    for (let index = 0; index < 120; index += 1) {
+      if ((await world.stickyBar("Edit any connection")).control.focused) break;
+      await owner.press("Tab");
+    }
+    expect((await world.stickyBar("Edit any connection")).control.focused).toBe(true);
+    const before = await world.stickyBar("Disconnect any connection");
+    // Trusted wheel input positions the actual switch at the old 16px gap,
+    // without locator scrolling or a convenient empty end of the form.
+    await owner.wheelAt({
+      x: before.main.left + 16, y: before.main.top + 120,
+      deltaY: before.control.y - (before.card.bottom + 8),
+    });
+    const middle = await ownerProbe.eventually(() => world.stickyBar("Disconnect any connection"), {
+      within: 10_000, label: "connection switch crosses the bottom save-bar gap",
+      until: (value) => Math.abs(value.control.y - (value.card.bottom + 8)) <= 1,
+    });
+    const witnessed = middle.scroll.top > 0 && middle.scroll.remaining > 112
+      && middle.control.y < middle.main.bottom && middle.control.bottom > middle.main.bottom
+      && middle.gap.some((point) => point.underlyingContent.length > 0);
+    const masked = middle.bar.position === "sticky" && middle.bar.bottomInset === "0px"
+      && Math.abs(middle.bar.bottom - middle.main.bottom) <= 1
+      && middle.bar.background === middle.main.background && middle.bar.opacity === "1"
+      && middle.bar.background !== "rgba(0, 0, 0, 0)"
+      && middle.bar.bottom - middle.card.bottom >= 16
+      && middle.gap.every((point) => point.coveredByBar && !point.hitsFormContent)
+      && !middle.control.hitTest && middle.save.hitTest && !middle.save.disabled;
+    evidence.recordAssertionEvidence("Form content cannot peek through the save bar's bottom gap mid-scroll", JSON.stringify({ witnessed, masked, middle }), witnessed && masked);
+    expect(witnessed).toBe(true);
+    expect(masked).toBe(true);
+    await owner.screenshot();
+  });
+
+  await step("after: Tab brings the connection switch fully above the save bar", async () => {
+    const before = await world.stickyBar("Disconnect any connection");
+    await owner.press("Tab");
+    const focused = await ownerProbe.eventually(() => world.stickyBar("Disconnect any connection"), {
+      within: 10_000, label: "Tab focuses the connection switch without a pointer auto-scroll",
+      until: (value) => value.control.focused,
+    });
+    const clear = focused.control.top >= focused.main.top && focused.control.bottom <= focused.bar.top
+      && focused.control.hitTest && focused.scroll.top > before.scroll.top
+      && focused.main.scrollPaddingBottom >= 112 && focused.save.hitTest;
+    evidence.recordAssertionEvidence("Keyboard focus remains unobscured while the pending change stays saveable", JSON.stringify({ before, focused, clear }), clear);
+    expect(clear).toBe(true);
+    await owner.screenshot();
+  });
+
   await step("after: the owner saves and History says who allowed View billing", async () => {
+    // A click/see can auto-scroll, so prove Save is reachable in the current
+    // mid-scroll state before using it.
+    expect((await world.stickyBar("Disconnect any connection")).save.hitTest).toBe(true);
     await owner.click({ role: "button", label: "Save changes" });
     await owner.see({ testId: "den-toast" }, { text: /Saved 1 change/, timeoutMs: 30_000 });
     await owner.notSee({ testId: "permission-set-save-bar" });
@@ -115,8 +169,13 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await owner.see({ testId: "permission-set-history" }, { text: /Olivia Owner allowed View billing/, timeoutMs: 30_000 });
     const history = await probe.api(world.owner, `/v1/permissions/sets/${encodeURIComponent(supportSetId)}/history`, scoped);
     const newest = records(isRecord(history.body) ? history.body.items : null)[0];
-    const ok = newest?.key === "billing.view" && newest.status === "allow" && newest.source === "user";
-    evidence.recordAssertionEvidence("The saved change is the newest history row", `newest=${JSON.stringify({ key: newest?.key, status: newest?.status, source: newest?.source })}`, ok);
+    const detail = await probe.api(world.owner, `/v1/permissions/sets/${encodeURIComponent(supportSetId)}`, scoped);
+    const allowed = isRecord(detail.body) && isRecord(detail.body.set)
+      ? records(detail.body.set.permissions).filter((entry) => entry.status === "allow").map((entry) => String(entry.key)).sort()
+      : [];
+    const ok = newest?.key === "billing.view" && newest.status === "allow" && newest.source === "user"
+      && JSON.stringify(allowed) === JSON.stringify(["billing.view", "permissions.view"]);
+    evidence.recordAssertionEvidence("Saving from mid-scroll persists only View billing and keeps the existing permission", `newest=${JSON.stringify({ key: newest?.key, status: newest?.status, source: newest?.source })}; saved allowed keys=${JSON.stringify(allowed)}`, ok);
     expect(ok).toBe(true);
     await owner.screenshot();
   });
@@ -224,15 +283,18 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await maya.see({ role: "heading", label: "Support Permissions" }, { timeoutMs: 30_000 });
     await maya.see({ text: /^Read only\./ });
     await maya.notSee({ role: "button", label: "Save changes" });
+    await maya.notSee({ testId: "permission-set-save-bar" });
     const mayaProbe = probe.on(world.mayaWeb);
     const rows = await mayaProbe.dom('[data-testid="permission-row"]');
     const locked = await mayaProbe.dom('[data-testid="permission-row"][data-locked="true"] [role="switch"][disabled][aria-describedby]');
     const writable = await mayaProbe.dom('[data-testid="permission-row"] [role="switch"]:not([disabled])');
+    const savedBilling = await mayaProbe.dom('[data-permission-key="billing.view"][data-status="allow"] [role="switch"][disabled][aria-checked="true"]');
     const typography = await world.typography("maya");
     const ok = rows.elements.length > 0 && locked.elements.length === rows.elements.length && writable.elements.length === 0
+      && savedBilling.elements.length === 1
       && rows.documentWidth <= rows.viewportWidth && typography.bodyWidth <= typography.viewportWidth
       && typography.inactiveTabs.length === 1 && typography.inactiveTabs.every((tab) => tab.contrast >= 4.5);
-    evidence.recordAssertionEvidence("The same narrow-screen editor remains read only for a Support member", `permission rows=${rows.elements.length}; disabled, described switches=${locked.elements.length}; writable switches=${writable.elements.length}; body=${typography.bodyWidth}px; inactive tabs=${JSON.stringify(typography.inactiveTabs)}`, ok);
+    evidence.recordAssertionEvidence("The same narrow-screen editor shows the saved permission but remains read only for a Support member", `permission rows=${rows.elements.length}; disabled, described switches=${locked.elements.length}; writable switches=${writable.elements.length}; saved View billing on and locked=${savedBilling.elements.length === 1}; no save bar; body=${typography.bodyWidth}px; inactive tabs=${JSON.stringify(typography.inactiveTabs)}`, ok);
     expect(ok).toBe(true);
     await maya.screenshot();
   });

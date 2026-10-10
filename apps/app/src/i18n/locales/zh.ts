@@ -136,6 +136,7 @@ export default {
   "den.status_signed_in_as": "已登录为{email}。",
   "den.status_signed_out": "已退出登录并清除此设备上的OpenWork Cloud会话。",
   "den.sync_provider_failed": "同步{name}失败。",
+  "engine_migration.progress_note": "在完成前，OpenWork 可能会变慢或不稳定。你的 v1 聊天记录保持不变。",
   "engine_migration.upgrade": "升级",
   "engine_migration.upgrade_later": "稍后",
   "engine_migration.upgrade_notice": "OpenWork 可升级聊天记录。",

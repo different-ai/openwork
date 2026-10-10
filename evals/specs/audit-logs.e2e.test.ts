@@ -33,6 +33,7 @@ test("a flagged owner records and filters audit history by default while an unfl
   let operationId = "";
   let initializationOperationId = "";
   let originalEventIds: string[] = [];
+  let configurationLabels: string[] = [];
 
   async function openEventTypes() {
     // Navigation mounts the filter before its independently fetched catalog is
@@ -107,6 +108,97 @@ test("a flagged owner records and filters audit history by default while an unfl
     await selectEventType("Provider credential updated");
     await owner.click({ role: "button", label: "Apply filters" });
     await historySettled();
+  }
+
+  async function readableConfigurationOptions(viewport: { width: number; height: number }) {
+    await owner.type({ label: "Search event types" }, "Provider configuration", { verify: true });
+    await owner.press("Home");
+    const options = await audit.eventually(() => audit.dom('[role="listbox"] [role="option"]'), {
+      within: 10_000, label: "The similar provider options are together at the top of the list",
+      until: (value) => value.elements.length === configurationLabels.length,
+    });
+    expect(options.elements.map((option) => option.text)).toEqual(configurationLabels);
+    expect(configurationLabels.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(configurationLabels).size).toBe(configurationLabels.length);
+    let previous = "";
+    const labels = await audit.eventually(() => world.eventOptionLayout(), {
+      within: 5_000, label: "The event labels have settled at their readable widths",
+      until: (value) => {
+        const current = JSON.stringify(value);
+        const settled = current === previous;
+        previous = current;
+        return settled && value.length === configurationLabels.length;
+      },
+    });
+    const firstThree = labels.slice(0, 3);
+    for (const label of firstThree) {
+      // textContent alone cannot distinguish a readable suffix from the old
+      // three identical “Provider configuration …” stubs. The world's read-only
+      // glyph/CSS witness observes the actual rendered label, not source classes.
+      expect(label.fullTextFits).toBe(true);
+      expect(label.lineClamp).toBe("2");
+      expect(label.whiteSpace).toBe("normal");
+      expect(label.textOverflow).not.toBe("ellipsis");
+      expect(label.lines).toBeGreaterThanOrEqual(1);
+      expect(label.lines).toBeLessThanOrEqual(2);
+    }
+    const popup = (await audit.dom('div:has(> [role="listbox"])')).elements[0]?.rect;
+    const list = (await audit.dom('[role="listbox"]')).elements[0]?.rect;
+    if (!popup || !list) throw new Error("The open event-type list is missing");
+    expect(popup.left).toBeGreaterThanOrEqual(7);
+    expect(popup.right).toBeLessThanOrEqual(viewport.width - 7);
+    expect(popup.top).toBeGreaterThanOrEqual(7);
+    expect(popup.bottom).toBeLessThanOrEqual(viewport.height - 7);
+    await owner.press("End");
+    const last = await audit.eventually(async () => (await audit.dom('[role="listbox"] [role="option"]')).elements.at(-1), {
+      within: 5_000, label: "End scrolls the final variable-height option fully into view",
+      until: (option) => Boolean(option && option.rect.top >= list.top && option.rect.bottom <= list.bottom),
+    });
+    expect(last?.rect.top).toBeGreaterThanOrEqual(list.top);
+    expect(last?.rect.bottom).toBeLessThanOrEqual(list.bottom);
+    await owner.press("Home");
+    const visible = await audit.eventually(() => audit.dom('[role="listbox"] [role="option"]'), {
+      within: 5_000, label: "The first three distinguishing suffixes are in the list's scroll window",
+      until: (value) => value.elements.slice(0, 3).every((option) => option.rect.top >= list.top && option.rect.bottom <= list.bottom),
+    });
+    for (const option of visible.elements.slice(0, 3)) {
+      expect(option.rect.top).toBeGreaterThanOrEqual(list.top);
+      expect(option.rect.bottom).toBeLessThanOrEqual(list.bottom);
+      expect(option.rect.left).toBeGreaterThanOrEqual(popup.left);
+      expect(option.rect.right).toBeLessThanOrEqual(popup.right);
+    }
+    return { firstThree, popup };
+  }
+
+  async function dateControlsFit(viewport: { width: number; height: number }) {
+    const primary = await audit.dom('[data-testid="audit-primary-filters"] [aria-label]');
+    expect(primary.elements).toHaveLength(4);
+    expect(primary.documentWidth).toBeLessThanOrEqual(viewport.width);
+    for (const { rect } of primary.elements) {
+      expect(rect.left).toBeGreaterThanOrEqual(0);
+      expect(rect.right).toBeLessThanOrEqual(viewport.width);
+      expect(rect.top).toBeGreaterThanOrEqual(0);
+      expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
+    }
+    const dates = await audit.dom('[data-testid="audit-primary-filters"] input[type="datetime-local"]');
+    expect(dates.elements).toHaveLength(2);
+    // Chromium's native date/time text, AM/PM segment and calendar affordance
+    // need 240px with DenInput's real font and padding; 196px clipped the suffix.
+    // probe.dom cannot inspect the UA shadow text, so filled-value screenshots
+    // and trusted AM/PM keyboard edits accompany this rendered-width witness.
+    for (const { rect } of dates.elements) expect(rect.width).toBeGreaterThanOrEqual(240);
+    const buttons = await audit.dom('form[aria-label="Filter audit operations"] > div > button');
+    expect(buttons.elements.map((button) => button.text)).toEqual(["Apply filters", "Clear filters"]);
+    const fieldsBottom = Math.max(...primary.elements.map((control) => control.rect.bottom));
+    for (const { rect } of buttons.elements) {
+      expect(rect.top).toBeGreaterThanOrEqual(fieldsBottom + 7);
+      expect(rect.bottom).toBeLessThanOrEqual(viewport.height);
+      expect(rect.left).toBeGreaterThanOrEqual(0);
+      expect(rect.right).toBeLessThanOrEqual(viewport.width);
+    }
+    await owner.see({ label: "Search IDs" });
+    await owner.see({ placeholder: "Exact ID" });
+    return dates.elements.map((date) => date.rect.width.toFixed(1)).join(" / ");
   }
 
   await step("before: an entitled owner without the release flag has no audit navigation", async () => {
@@ -252,17 +344,30 @@ test("a flagged owner records and filters audit history by default while an unfl
     expect(catalog.eventTypes).toContain("provider.created");
     expect(catalog.eventTypes).toContain("audit.policy.enabled");
     expect(catalog.eventTypes).toContain("audit.policy.initialized");
-    await owner.click({ role: "button", label: "Event type" });
+    await openEventTypes();
     const options = await audit.eventually(() => audit.dom('[role="listbox"] [role="option"]'), { within: 30_000, label: "Full event catalog is available before provider changes", until: (value) => value.elements.length === catalog.eventTypes.length + 1 });
     const labels = options.elements.map((option) => option.text);
     expect(labels).toContain("All event types");
     expect(labels).toContain("Provider credential updated");
     expect(labels).toContain("Provider created");
     expect(labels).toContain("Audit policy enabled");
-    await owner.see({ text: "Provider credential updated" });
-    evidence.recordAssertionEvidence("The catalog is not derived from loaded operation summaries", `${catalog.eventTypes.length} server event types and ${options.elements.length - 1} dropdown event types are available with no matching provider changes; system initialization and administrator reads already exist.`, options.elements.length === catalog.eventTypes.length + 1);
+    configurationLabels = labels.filter((label) => label.startsWith("Provider configuration "));
+    expect(configurationLabels).toHaveLength(catalog.eventTypes.filter((action) => action.startsWith("provider.configuration.")).length);
+    const { firstThree, popup } = await readableConfigurationOptions(world.viewport);
+    const trigger = (await audit.dom('button[aria-label="Event type"]')).elements[0]?.rect;
+    if (!trigger) throw new Error("The Event type control is missing");
+    expect(popup.width).toBeGreaterThan(trigger.width);
+    evidence.recordAssertionEvidence("The full catalog offers distinct readable provider configuration choices", `${catalog.eventTypes.length} server and ${options.elements.length - 1} dropdown event types are available before provider changes. The ${popup.width.toFixed(1)}px menu grows beyond its ${trigger.width.toFixed(1)}px control; the first three complete labels are “${firstThree.map((label) => label.text).join("” / “")}”, each fitting ${firstThree.map((label) => label.lines).join("/")} lines, not identical ellipsis stubs.`, options.elements.length === catalog.eventTypes.length + 1 && firstThree.every((label) => label.fullTextFits));
+    // Keep the distinguishing suffixes in the open-list screenshot, then select
+    // the third choice through trusted input rather than a DOM-dispatched click.
     await owner.screenshot();
-    await owner.press("Escape");
+    const third = firstThree[2];
+    if (!third) throw new Error("The third provider configuration choice is missing");
+    await owner.click({ role: "option", label: third.text });
+    await owner.see({ role: "button", label: "Event type" }, { text: third.text });
+    await owner.click({ role: "button", label: "Apply filters" });
+    await historySettled();
+    await owner.see({ testId: "audit-empty" }, { text: /No operations match these filters/ });
   });
 
   await step("the owner opens More filters for Result, Origin and Actor", async () => {
@@ -393,7 +498,8 @@ test("a flagged owner records and filters audit history by default while an unfl
     await owner.see({ label: "To (local time)" }, { value: "2000-01-02T01:00" });
     const rows = await audit.dom('button[aria-controls^="audit-operation-"]');
     expect(rows.elements).toHaveLength(0);
-    evidence.recordAssertionEvidence("An excluding date range has no matching operations", `The applied local range 2000-01-01 01:00 to 2000-01-02 01:00 returns ${rows.elements.length} grouped rows and the filtered empty state.`, rows.elements.length === 0);
+    const dateWidths = await dateControlsFit(world.viewport);
+    evidence.recordAssertionEvidence("An excluding date range has no matching operations and keeps its complete date controls", `The applied local range 2000-01-01 01:00 to 2000-01-02 01:00 returns ${rows.elements.length} grouped rows and the filtered empty state. At ${world.viewport.width}px the native date controls are ${dateWidths}px wide, with Apply/Clear below the four fields, not sharing their width.`, rows.elements.length === 0);
     await owner.screenshot();
   });
 
@@ -412,7 +518,58 @@ test("a flagged owner records and filters audit history by default while an unfl
     await owner.screenshot();
   });
 
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }, { width: 320, height: 800 }]) {
+    await step(`after: at ${viewport.width} × ${viewport.height}, complete local dates and distinct event types still filter and clear history`, async () => {
+      await owner.resizeViewport({ ...viewport, deviceScaleFactor: 1 });
+      await seeGroupedOperation();
+      await enterPastDate(owner, "From (local time)", "1");
+      await enterPastDate(owner, "To (local time)", "2");
+      // Focus and edit the real native AM/PM segment, then restore the excluding
+      // morning range. No injected values or screenshot-only date controls.
+      await owner.click({ label: "From (local time)" });
+      for (let index = 0; index < 8; index += 1) await owner.press("ArrowLeft");
+      for (let index = 0; index < 5; index += 1) await owner.press("ArrowRight");
+      await owner.press("p");
+      await owner.see({ label: "From (local time)" }, { value: "2000-01-01T13:00" });
+      await owner.press("a");
+      await owner.see({ label: "From (local time)" }, { value: "2000-01-01T01:00" });
+      expect((await audit.dom('input[aria-label="From (local time)"]')).elements[0]?.focused).toBe(true);
+      await owner.press("Tab");
+      const dateWidths = await dateControlsFit(viewport);
+      await openEventTypes();
+      const { firstThree, popup } = await readableConfigurationOptions(viewport);
+      if (viewport.width === 320) expect(firstThree.some((label) => label.lines === 2)).toBe(true);
+      await owner.screenshot();
+      // Escape preserves the selected child action; readable menu sizing must
+      // not change the draft or apply filters just by opening the catalog.
+      await owner.press("Escape");
+      await owner.see({ role: "button", label: "Event type" }, { text: "Provider credential updated" });
+      await owner.click({ role: "button", label: "Apply filters" });
+      await historySettled();
+      await owner.see({ testId: "audit-empty" }, { text: /No operations match these filters/ });
+      await owner.notSee(groupedRow);
+      await owner.see({ label: "From (local time)" }, { value: "2000-01-01T01:00" });
+      await owner.see({ label: "To (local time)" }, { value: "2000-01-02T01:00" });
+      const excluded = await audit.dom('button[aria-controls^="audit-operation-"]');
+      expect(excluded.elements).toHaveLength(0);
+      await owner.notSee({ text: world.originalCredential });
+      await owner.notSee({ text: world.replacementCredential });
+      await dateControlsFit(viewport);
+      await owner.screenshot();
+      await owner.click({ role: "button", label: "Clear filters" });
+      await owner.see({ label: "From (local time)" }, { value: "" });
+      await owner.see({ label: "To (local time)" }, { value: "" });
+      await owner.see({ label: "Search IDs" }, { value: "" });
+      await owner.see({ role: "button", label: "Event type" }, { text: "All event types" });
+      await filterProviderHistory();
+      await seeGroupedOperation();
+      const restored = await audit.dom(`button[aria-controls="audit-operation-${operationId}"]`);
+      evidence.recordAssertionEvidence("Responsive filters preserve readable choices and actual results", `${viewport.width}×${viewport.height}: native dates ${dateWidths}px wide; trusted AM→PM→AM editing keeps date focus; Apply/Clear have their own row. The ${popup.width.toFixed(1)}px bounded menu shows three complete, distinct configuration labels in ${firstThree.map((label) => label.lines).join("/")} lines; End/Home reveal the final/first options. Applying the morning range excludes all ${excluded.elements.length} rows, Clear empties all fields, and reselecting the child action restores ${restored.elements.length} saved operation; neither synthetic key is displayed.`, excluded.elements.length === 0 && restored.elements.length === 1 && firstThree.every((label) => label.fullTextFits));
+    });
+  }
+
   await step("the owner expands the operation to read changes without revealing secret values", async () => {
+    await owner.resizeViewport({ ...world.viewport, deviceScaleFactor: 1 });
     await owner.click({ role: "button", label: "View changes for Provider configuration update committed" });
     await owner.see({ text: "Provider credential updated" }, { timeoutMs: 30_000 });
     await owner.see({ text: "Before" });

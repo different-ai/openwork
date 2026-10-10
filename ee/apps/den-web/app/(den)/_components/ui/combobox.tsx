@@ -419,7 +419,7 @@ export function DenCombobox({
                     onClick={() => selectOption(option.value)}
                     className={[
                       denDropdownRowBaseClass,
-                      "items-start",
+                      "min-h-10 items-start",
                       optionsDisabled ? "cursor-not-allowed opacity-60" : "",
                       selected ? denDropdownRowSelectedClass : active ? denDropdownRowActiveClass : denDropdownRowIdleClass,
                     ]
@@ -430,7 +430,7 @@ export function DenCombobox({
                       <span className="mt-0.5 flex shrink-0 items-center">{option.icon}</span>
                     ) : null}
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[14px] font-medium text-gray-900">{option.label}</p>
+                      <p className="line-clamp-2 break-words whitespace-normal text-[14px] font-medium text-gray-900">{option.label}</p>
                       {option.description ? (
                         <p className="mt-1 truncate text-[12px] text-gray-500">{option.description}</p>
                       ) : null}

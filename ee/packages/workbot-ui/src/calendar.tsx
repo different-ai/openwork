@@ -537,12 +537,7 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
       {blocked && automation.needsAttentionReason ? (
         <div className="flex items-start gap-2 rounded-lg bg-[var(--wb-tray)] px-3 py-2.5" data-calendar-blocked>
           <span className="mt-0.5"><LockIcon size={13} /></span>
-          <span className="flex min-w-0 flex-col gap-1 text-[13px] leading-4.5 text-[var(--wb-text)]">
-            <span>{automation.needsAttentionReason.code === "connect_access_unavailable" ? automation.needsAttentionReason.message.split(/(?<=[.!?])\s+/)[0]?.replace(/\.$/, "") : automation.needsAttentionReason.message}</span>
-            {/* The host's connectionsHref is only for Google/Microsoft sign-in, not an authorized service
-                connection route. Name the person who can help instead of fabricating a Connect action. */}
-            {automation.needsAttentionReason.code === "connect_access_unavailable" ? <span className="text-[12px] leading-4 text-[var(--wb-muted)]" data-calendar-recovery>Ask your workspace admin to help restore the connection access this automation needs.</span> : null}
-          </span>
+          <span data-calendar-recovery className="min-w-0 break-words text-[13px] leading-4.5 text-[var(--wb-text)]">{automation.needsAttentionReason.message}</span>
         </div>
       ) : null}
       <div className="flex flex-col border-t border-[#0116270F]">

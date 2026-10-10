@@ -69,16 +69,27 @@ test("a Workbot member keeps a readable Calendar and reachable automation forms 
     await user.screenshot();
   });
 
-  await step("a blocked connection names the workspace admin who can help rather than offering a nonexistent Connect link", async () => {
+  await step("the blocked HubSpot automation keeps its complete server instruction without a fabricated service link", async () => {
     await user.click({ role: "button", label: /^Update launch deals, Blocked until fixed/ });
-    await user.see({ text: "Needs HubSpot access" });
-    await user.see({ text: "Ask your workspace admin to help restore the connection access this automation needs." });
-    const notice = await element("[data-calendar-blocked]");
+    await user.see({ text: world.recovery.hubspotMessage });
+    const recovery = await element("[data-calendar-blocked] [data-calendar-recovery]");
     const links = (await probe.dom("[data-calendar-blocked] a")).elements.length;
-    const ok = notice.text.includes("workspace admin") && !notice.text.includes("Connect HubSpot so") && links === 0;
-    evidence.recordAssertionEvidence("the blocked state gives an honest owner and recovery direction", `${notice.text}; ${links} fabricated service links; Run now remains disabled`, ok && (await probe.dom('[data-calendar-detail] button[disabled]')).elements.some((button) => button.text === "Run now"));
+    const runDisabled = (await probe.dom('[data-calendar-detail] button[disabled]')).elements.some((button) => button.text === "Run now");
+    const ok = recovery.text === world.recovery.hubspotMessage && links === 0 && runDisabled;
+    evidence.recordAssertionEvidence("the original state and next step remain unchanged", `"${recovery.text}"; ${links} fabricated service links; Run now disabled ${runDisabled}`, ok);
     expect(ok).toBe(true);
-    expect((await probe.dom('[data-calendar-detail] button[disabled]')).elements.some((button) => button.text === "Run now")).toBe(true);
+    await user.screenshot();
+  });
+
+  await step("the owner sees both sentences telling them to reconnect their own account before retrying", async () => {
+    await user.click({ role: "button", label: /^What's waiting on me, Blocked until fixed/ });
+    await user.see({ text: world.recovery.message });
+    const recovery = await element("[data-calendar-blocked] [data-calendar-recovery]");
+    const notice = await element("[data-calendar-blocked]");
+    const runDisabled = (await probe.dom('[data-calendar-detail] button[disabled]')).elements.some((button) => button.text === "Run now");
+    const ok = recovery.text === world.recovery.message && !notice.text.includes("Ask your workspace admin") && runDisabled;
+    evidence.recordAssertionEvidence("Workbot does not replace the owner's reconnect step with admin advice", `"${recovery.text}"; invented Ask admin line ${notice.text.includes("Ask your workspace admin")}; Run now disabled ${runDisabled}`, ok);
+    expect(ok).toBe(true);
     await user.screenshot();
   });
 

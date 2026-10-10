@@ -77,12 +77,14 @@ function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypes
   function clear() { setDraft({}); setFrom(""); setTo(""); setError(null); onApply({}); }
   return <form onSubmit={apply} aria-label="Filter audit operations" className="flex flex-col gap-3">
     <div className="flex flex-wrap items-end gap-3" data-testid="audit-primary-filters">
-      <label className="flex min-w-48 flex-1 flex-col gap-1">From (local time)<DenInput type="datetime-local" aria-label="From (local time)" title="Operation start time" value={from} onChange={(event) => setFrom(event.target.value)} aria-invalid={Boolean(error)} /></label>
-      <label className="flex min-w-48 flex-1 flex-col gap-1">To (local time)<DenInput type="datetime-local" aria-label="To (local time)" title="Operation start time" value={to} onChange={(event) => setTo(event.target.value)} aria-invalid={Boolean(error)} /></label>
+      <label className="flex min-w-60 flex-1 flex-col gap-1">From (local time)<DenInput type="datetime-local" aria-label="From (local time)" title="Operation start time" value={from} onChange={(event) => setFrom(event.target.value)} aria-invalid={Boolean(error)} /></label>
+      <label className="flex min-w-60 flex-1 flex-col gap-1">To (local time)<DenInput type="datetime-local" aria-label="To (local time)" title="Operation start time" value={to} onChange={(event) => setTo(event.target.value)} aria-invalid={Boolean(error)} /></label>
       <label className="flex min-w-56 flex-1 flex-col gap-1" aria-busy={eventTypesPending}>Event type<DenSelect aria-label="Event type" searchLabel="Search event types" searchEmptyLabel="No event types match. Try another word." disabled={eventTypesPending} value={draft.action ?? ""} onChange={(event) => setDraft({ ...draft, action: event.target.value || undefined })}>
         <option value="">All event types</option>{actions.map((action) => <option key={action} value={action}>{auditLabel(action)}</option>)}
       </DenSelect></label>
-      <label className="flex min-w-56 flex-1 flex-col gap-1">Search IDs<DenInput aria-label="Search IDs" placeholder="Operation, event, request, or resource ID" title="Exact operation, event, request, or resource ID" maxLength={255} value={draft.searchId ?? ""} onChange={(event) => setDraft({ ...draft, searchId: event.target.value })} /></label>
+      <label className="flex min-w-56 flex-1 flex-col gap-1">Search IDs<DenInput aria-label="Search IDs" placeholder="Exact ID" title="Exact operation, event, request, or resource ID" maxLength={255} value={draft.searchId ?? ""} onChange={(event) => setDraft({ ...draft, searchId: event.target.value })} /></label>
+    </div>
+    <div className="flex flex-wrap gap-2">
       <DenButton type="submit" variant="secondary">Apply filters</DenButton><DenButton variant="ghost" onClick={clear}>Clear filters</DenButton>
     </div>
     <details className="group"><summary className={auditSummaryClass}><AuditChevron />More filters</summary>

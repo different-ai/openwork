@@ -1,5 +1,6 @@
 import { createOrg, type Seed } from "@openwork/env";
 import { evaluateOnSurface, type Surface } from "@openwork/cdp";
+import { enableOrganizationCapabilities } from "./dashboards.ts";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -16,7 +17,7 @@ function textField(value: unknown, key: string): string {
 // never inject a title, style, product component, or feature response.
 function headerMeasurements(surface: Surface) {
   return evaluateOnSurface(surface, () => {
-    const header = document.querySelector<HTMLElement>("main [data-dashboard-flat-header], main [data-dashboard-hero]");
+    const header = document.querySelector<HTMLElement>("main [data-dashboard-flat-header], main [data-dashboard-hero], main header > div > div:has(> h1)");
     const heading = header?.querySelector<HTMLElement>("h1");
     const shell = header?.parentElement;
     const main = document.querySelector<HTMLElement>("main");
@@ -51,7 +52,9 @@ function headerMeasurements(surface: Surface) {
     }
     if (!backdrop) throw new Error("The heading has no measurable opaque page background.");
     const style = getComputedStyle(heading);
-    const ink = luminance(color(style.color));
+    const inkColor = color(style.color);
+    const semanticInk = color(style.getPropertyValue("--dls-text-primary"));
+    const ink = luminance(inkColor);
     const background = luminance(backdrop);
     const images = [header, ...header.querySelectorAll("*")]
       .map((element) => getComputedStyle(element).backgroundImage)
@@ -63,6 +66,8 @@ function headerMeasurements(surface: Surface) {
       fontSize: Number.parseFloat(style.fontSize),
       fontWeight: Number.parseInt(style.fontWeight, 10),
       inkLuminance: ink,
+      semanticInkMatch: inkColor.red === semanticInk.red && inkColor.green === semanticInk.green
+        && inkColor.blue === semanticInk.blue && inkColor.alpha === semanticInk.alpha,
       contrast: (Math.max(ink, background) + 0.05) / (Math.min(ink, background) + 0.05),
       textOverflow: style.textOverflow,
       heading: { left, right, width, height, clientWidth: heading.clientWidth, scrollWidth: heading.scrollWidth },
@@ -81,7 +86,7 @@ function headerMeasurements(surface: Surface) {
   });
 }
 
-/** Real Members and provider pages, one owner, and another default-off org. */
+/** Real Members, provider, and Analytics pages, one owner, and another default-off org. */
 export async function denFlatPageHeaders(seed: Seed) {
   const stamp = Date.now().toString(36);
   const names = { workspace: `Compact headers ${stamp}`, otherWorkspace: `Legacy headers ${stamp}` };
@@ -97,6 +102,10 @@ export async function denFlatPageHeaders(seed: Seed) {
   if (!initial.response.ok || !isRecord(initial.body)) throw new Error("Could not read the header workspace.");
   const orgId = textField(initial.body.organization, "id");
   const slug = textField(initial.body.organization, "slug");
+  // The existing fixture disables plan gating, so Analytics is entitled. Enable
+  // Library usage through the canonical admin seed API before any browser acts;
+  // denFlatPageHeaders itself remains off until the owner uses /admin.
+  await enableOrganizationCapabilities(seed, den.admin, { libraryUsage: true }, orgId);
   const otherOrg = await createOrg(den, names.otherWorkspace);
 
   const web = await seed.web({ den, startPath: "/", headless: true, viewport: { width: 1280, height: 900 } });

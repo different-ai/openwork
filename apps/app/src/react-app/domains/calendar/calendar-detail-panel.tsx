@@ -96,14 +96,7 @@ export function AutomationDetailPanel(props: {
           <Alert className="my-2" data-calendar-blocked>
             <Lock aria-hidden="true" />
             <AlertTitle>Needs attention</AlertTitle>
-            <AlertDescription>
-              {automation.needsAttentionReason.code === "connect_access_unavailable" ? (
-                <div className="flex flex-col gap-1">
-                  <span>{automation.needsAttentionReason.message.split(/(?<=[.!?])\s+/)[0]?.replace(/\.$/, "")}</span>
-                  <span data-calendar-recovery>Ask your workspace admin to help restore the connection access this automation needs.</span>
-                </div>
-              ) : automation.needsAttentionReason.message}
-            </AlertDescription>
+            <AlertDescription data-calendar-recovery>{automation.needsAttentionReason.message}</AlertDescription>
           </Alert>
         ) : null}
 

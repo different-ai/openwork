@@ -6,7 +6,7 @@ import { request as httpsRequest } from "node:https";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { denFetch } from "@openwork/behaviors";
-import { allocateFreePort } from "@openwork/cdp";
+import { allocateFreePort, evaluateOnSurface, type Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -73,13 +73,33 @@ async function installOpenCode(directory: string): Promise<string> {
   return binary;
 }
 
+// probe.dom exposes geometry but not computed font size or line height. This
+// fixed, read-only witness measures the real approval headline without changing
+// the page, matching style classes, or weakening the design-review rubric.
+function deviceApprovalHeading(surface: Surface) {
+  return evaluateOnSurface(surface, () => {
+    const heading = document.querySelector('[data-testid="setup-frame"] h1');
+    if (!heading) throw new Error("The device sign-in heading is missing.");
+    const style = getComputedStyle(heading);
+    return {
+      text: heading.textContent?.trim() ?? "",
+      fontSize: Number.parseFloat(style.fontSize),
+      lineHeight: Number.parseFloat(style.lineHeight),
+      height: heading.getBoundingClientRect().height,
+      viewportWidth: document.documentElement.clientWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+}
+
 /**
  * A person with an OpenWork account signed in on Den web, and OpenCode 2 on
  * their machine with the OpenWork plugin installed and no OpenWork sign-in.
  * OpenCode runs as its own process with a private home and background service.
  */
 export async function opencodePluginSignIn(seed: Seed) {
-  const den = await seed.den({ org: { name: "OpenCode Plugin Org", members: {} } });
+  const organizationName = "OpenCode Plugin Org";
+  const den = await seed.den({ org: { name: organizationName, members: {} } });
   const web = await seed.web({ den, signedInAs: "admin", headless: true, viewport: { width: 1280, height: 900 } });
   const home = seed.tmpPath("opencode-plugin-home");
   const binary = await installOpenCode(seed.tmpPath(`opencode-${OPENCODE_VERSION}`));
@@ -227,6 +247,8 @@ export async function opencodePluginSignIn(seed: Seed) {
   return {
     den,
     web,
+    organizationName,
+    approvalHeading: () => deviceApprovalHeading(web),
     run,
     startLogin,
     setPluginSignIn,

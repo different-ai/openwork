@@ -10,6 +10,7 @@ const download = { testId: "den-download-openwork" };
 const popover = { testId: "workspace-install-popover" };
 const copy = { testId: "workspace-install-copy" };
 const open = { testId: "workspace-install-open" };
+const clipboardPermissionMessage = "Your browser didn't give permission to copy. Allow clipboard access and try again, or open the install page.";
 
 admin("an admin shares and opens a workspace download from the shared header", async ({ world, user, probe, evidence, step }) => {
   let copiedUrl = "";
@@ -122,34 +123,44 @@ failures("an admin can retry a failed mint and a denied clipboard without reopen
   await step("a failed install-link request leaves its error and both actions in the open panel", async () => {
     await user.see({ ...download, role: "button", label: "Download OpenWork" }, { timeoutMs: 90_000 });
     await user.click(download);
+    expect(await world.mintRequests()).toHaveLength(0);
     await user.click(open);
-    await user.see({ role: "alert" });
+    await user.see({ role: "alert" }, { text: "Install link temporarily unavailable. Please retry.", timeoutMs: 20_000 });
     await user.see(popover);
     await user.see(copy, { text: "Copy install link" });
     await user.see(open);
+    await user.notSee({ role: "button", label: "Copied" });
+    const alerts = await probe.dom('[data-testid="workspace-install-popover"] [role="alert"]');
+    const mintError = alerts.elements.map((element) => element.text).join(" ");
+    expect(mintError).toBe("Install link temporarily unavailable. Please retry.");
+    expect(mintError).not.toMatch(/clipboard|permission|copied/i);
     const requests = await world.mintRequests();
     expect(requests.map((request) => [request.status, request.faulted])).toEqual([[503, true]]);
     const extraPages = await probe.eventually(() => world.newPageCount(), {
       within: 10_000, label: "failed install tab is closed", until: (count) => count === 0,
     });
-    evidence.recordAssertionEvidence("The injected mint failure keeps the panel open and closes the unsuccessful install tab", `mint statuses=${requests.map((request) => request.status).join(",")}; inline error visible; extra tabs=${extraPages}`, extraPages === 0);
+    evidence.recordAssertionEvidence("The link failure stays distinct from clipboard permission and keeps both retry actions", `mint statuses=${requests.map((request) => request.status).join(",")}; inline error=${mintError}; extra tabs=${extraPages}; not copied`, extraPages === 0);
     await user.screenshot();
   });
 
-  await step("retrying mints a link but a real clipboard denial still shows an inline error", async () => {
+  await step("after: denied clipboard access names the permission and next action without browser errors", async () => {
     await user.click(copy);
     const requests = await probe.eventually(() => world.mintRequests(), {
       within: 20_000, label: "retry reaches real minting", until: (entries) => entries.length === 2,
     });
-    await user.see({ role: "alert" });
+    await user.see({ role: "alert" }, { text: clipboardPermissionMessage, timeoutMs: 20_000 });
     await user.see(popover);
     await user.see(copy, { text: "Copy install link" });
+    await user.see(open);
     await user.notSee({ role: "button", label: "Copied" });
     expect(requests.map((request) => [request.status, request.faulted])).toEqual([[503, true], [200, false]]);
     const alerts = await probe.dom('[data-testid="workspace-install-popover"] [role="alert"]');
     const clipboardError = alerts.elements.map((element) => element.text).join(" ");
+    expect(clipboardError).toBe(clipboardPermissionMessage);
     expect(clipboardError).toMatch(/denied|not allowed|permission/i);
-    evidence.recordAssertionEvidence("The retry reaches real minting but denied clipboard access is not reported as success", `mint statuses=503,200; inline error=${clipboardError}; panel open`, /denied|not allowed|permission/i.test(clipboardError));
+    expect(clipboardError).not.toMatch(/Failed to execute|writeText|['"]Clipboard['"]|DOMException|NotAllowedError|\bat\s+\S+\s*\(/i);
+    expect(clipboardError).not.toContain("Install link temporarily unavailable.");
+    evidence.recordAssertionEvidence("A genuine clipboard denial shows safe recovery, not browser errors or a copied status", `mint statuses=503,200; inline error=${clipboardError}; both actions visible; not copied`, clipboardError === clipboardPermissionMessage);
     await user.screenshot();
   });
 

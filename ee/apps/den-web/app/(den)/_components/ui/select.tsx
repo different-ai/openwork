@@ -437,7 +437,7 @@ export function DenSelect({
                   onClick={() => commitValue(option.value)}
                   className={[
                     denDropdownRowBaseClass,
-                    "items-center",
+                    "min-h-10 items-center",
                     option.disabled
                       ? "cursor-not-allowed opacity-50"
                       : selected
@@ -449,7 +449,7 @@ export function DenSelect({
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-gray-900">
+                  <span className="line-clamp-2 min-w-0 flex-1 break-words whitespace-normal text-[14px] font-medium text-gray-900">
                     {option.content}
                   </span>
                   {selected ? <Check className="h-4 w-4 shrink-0 text-gray-900" aria-hidden="true" /> : null}

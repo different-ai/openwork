@@ -36,15 +36,16 @@ async function modelHasFocus(probe: Probe) {
   return (await probe.dom('[aria-label="Model"]')).elements.some((element) => element.focused);
 }
 
-async function expectModelListClosed(user: User, probe: Probe) {
-  // notSee requires stable absence from its first inspection. Observe Base UI's
-  // actual event/render completion first, then still prove that it stays closed.
-  await probe.eventually(async () => (await probe.dom('[role="listbox"]')).elements.length, {
+async function expectModelListClosed(user: User, probe: Probe, readPaintState: Awaited<ReturnType<typeof workbotCalendar>>["modelListPaintState"]) {
+  // Select retains hidden options for typeahead; Combobox may unmount them. Wait for actual computed paint
+  // absence and a closed trigger, then independently require the same three seconds of stable user-visible absence.
+  const closed = await probe.eventually(readPaintState, {
     within: 5_000,
-    label: "the model list closes after the member's action",
-    until: (count) => count === 0,
+    label: "the model list stops painting after the member's action",
+    until: (state) => state.painted === 0 && state.triggerExists && !state.expanded,
   });
   await user.notSee({ role: "listbox" });
+  return closed;
 }
 
 const test = spec.world(workbotCalendar, {
@@ -132,7 +133,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
 
   await step("Escape closes only the model list and leaves Alex's new Automation draft intact", async () => {
     await user.press("Escape");
-    await expectModelListClosed(user, probe);
+    await expectModelListClosed(user, probe, world.modelListPaintState);
     await user.see({ role: "button", text: "Create automation" });
     await user.see({ role: "textbox", label: /^What should .* do\?$/ }, { value: "Check the launch checklist for anything still open" });
     const focused = await modelHasFocus(probe);
@@ -169,7 +170,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     expect(layout.fits && layout.noSidewaysScroll).toBe(true);
     // A trusted pointer click also witnesses that a portaled option isn't intercepted by the editor's backdrop.
     await user.click({ role: "option", label: lastModel.name });
-    await expectModelListClosed(user, probe);
+    await expectModelListClosed(user, probe, world.modelListPaintState);
     expect(await modelHasFocus(probe)).toBe(true);
     await user.see({ role: "textbox", label: "Instructions" }, { value: "Check the launch checklist and list owners of anything still open" });
   });
@@ -195,7 +196,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     const choices = await count('[role="listbox"] [role="option"]');
     await user.screenshot();
     await user.press("Enter");
-    await expectModelListClosed(user, probe);
+    await expectModelListClosed(user, probe, world.modelListPaintState);
     const focused = await modelHasFocus(probe);
     expect(focused).toBe(true);
     await user.press("Tab"); // Cancel.
@@ -234,7 +235,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
       evidence.recordAssertionEvidence("the new form and its last model fit without sideways scrolling", `form fits ${formFits}; last model fully visible ${reachable}; ${layout.description}`, formFits && reachable && layout.fits && layout.noSidewaysScroll);
       expect(formFits && reachable && layout.fits && layout.noSidewaysScroll).toBe(true);
       await user.press("Escape");
-      await expectModelListClosed(user, probe);
+      await expectModelListClosed(user, probe, world.modelListPaintState);
       await user.see({ role: "textbox", label: /^What should .* do\?$/ }, { value: "Keep this unsaved phone draft" });
       expect(await modelHasFocus(probe)).toBe(true);
       await user.press("Escape");
@@ -254,7 +255,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
       evidence.recordAssertionEvidence("the editor and its last choice stay within the viewport", `editor fits ${editorFits}; last model fully visible ${reachable}; ${layout.description}`, editorFits && reachable && layout.fits && layout.noSidewaysScroll);
       expect(editorFits && reachable && layout.fits && layout.noSidewaysScroll).toBe(true);
       await user.press("Escape");
-      await expectModelListClosed(user, probe);
+      await expectModelListClosed(user, probe, world.modelListPaintState);
       await user.see({ role: "button", text: "Save changes" });
       expect(await modelHasFocus(probe)).toBe(true);
       await user.press("Escape");
@@ -305,11 +306,11 @@ shortListTest("a Workbot member chooses from a short model list with Home, End, 
 
   await step("Escape returns to the model control and leaves the new Automation open", async () => {
     await user.press("Escape");
-    await expectModelListClosed(user, probe);
+    const closed = await expectModelListClosed(user, probe, world.modelListPaintState);
     await user.see({ role: "textbox", label: /^What should .* do\?$/ }, { value: "Write the short-list keyboard checklist" });
     const focused = await modelHasFocus(probe);
     const forms = (await probe.dom("[data-calendar-create]")).elements.length;
-    evidence.recordAssertionEvidence("the first Escape dismisses only the short list", `${forms} creation form; model control focused ${focused}; draft unchanged`, forms === 1 && focused);
+    evidence.recordAssertionEvidence("the first Escape dismisses only the short list", `${forms} creation form; model control focused ${focused}; ${closed.retained} retained list(s), ${closed.painted} painted; trigger expanded ${closed.expanded}; computed visibility ${JSON.stringify(closed.lists)}; draft unchanged`, forms === 1 && focused && closed.painted === 0 && !closed.expanded);
     expect(forms).toBe(1);
     expect(focused).toBe(true);
     await user.screenshot();
@@ -335,7 +336,7 @@ shortListTest("a Workbot member chooses from a short model list with Home, End, 
     await user.screenshot();
     evidence.recordAssertionEvidence("the short list uses one coherent keyboard selection path", `End "${atEnd}"; Up "${aboveEnd}"; Home "${atHome}"; type b "${typedLast}"`, atEnd === last.name && aboveEnd === first.name && /Cloud default/.test(atHome) && typedLast === last.name);
     await user.press("Enter");
-    await expectModelListClosed(user, probe);
+    await expectModelListClosed(user, probe, world.modelListPaintState);
     expect(await modelHasFocus(probe)).toBe(true);
   });
 

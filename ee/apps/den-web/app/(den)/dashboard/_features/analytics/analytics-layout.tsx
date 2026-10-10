@@ -4,7 +4,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowUpRight, BarChart3, Blocks, CloudOff, Sparkles, ScrollText, type LucideIcon } from "lucide-react";
 import { DenButton } from "../../../_components/ui/button";
-import { getAnalyticsRoute, getModelsAnalyticsRoute, getLibraryUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
+import { DenPageHeader } from "../../../_components/ui/page-header";
+import { getAnalyticsRoute, getModelsAnalyticsRoute, getLibraryUsageRoute, getWorkflowRunsRoute, orgFeatureEnabled } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
@@ -25,6 +26,7 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
 }) {
   const { runtimeConfig } = useDenFlow();
   const { orgContext } = useOrgDashboard();
+  const flatHeader = orgFeatureEnabled(orgContext, "denFlatPageHeaders");
   const libraryUsage = useLibraryUsageAvailable();
   const pages = [
     { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 },
@@ -36,7 +38,13 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
     <p className="text-xs font-medium text-[#637291]">Analytics</p>
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="max-w-2xl">
-        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">{title}</h1>
+        {flatHeader ? (
+          <div data-dashboard-flat-header>
+            <DenPageHeader title={title} size="compact" className="break-words" />
+          </div>
+        ) : (
+          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">{title}</h1>
+        )}
         <div className="mt-2 min-h-4 text-xs leading-4 text-[#637291]">{caption}</div>
       </div>
       {action}

@@ -31,8 +31,13 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     await owner.see({ role: "heading", label: "Plugins & connectors" }, { timeoutMs: 60_000 });
     await owner.see({ testId: "library-usage-no-usage" }, { timeoutMs: 60_000 });
     await owner.see({ text: "No usage yet" });
+    const emptyState = oneLine((await page.dom('[data-testid="library-usage-no-usage"]')).elements[0]?.text ?? "");
     const unused = (await page.dom("[data-item-unused]")).elements.length;
-    evidence.recordAssertionEvidence("a fresh workspace shows an empty state, not a page of zeros", `No usage yet is shown; ${unused} of 2 plugins are listed as Not used and no summary cards are drawn`, unused === 2);
+    const unusedRows = await Promise.all([rowText("Support kit"), rowText("Sales kit")]);
+    const plainState = emptyState === "No usage yet" && unused === 2 && unusedRows.every((text) => text.includes("Not used"));
+    evidence.recordAssertionEvidence("a fresh workspace shows an empty state, not a page of zeros", `${emptyState}; ${unused} of 2 plugins still read Not used; no Counts start explainer or summary cards are drawn`, plainState);
+    expect(emptyState).not.toContain("Counts start");
+    expect(plainState).toBe(true);
     expect(unused).toBe(2);
     expect((await page.dom('[data-testid="library-usage-summary"]')).elements).toHaveLength(0);
     await owner.screenshot();

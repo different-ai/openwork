@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { allocateFreePort } from "@openwork/cdp";
+import { allocateFreePort, evaluateOnSurface } from "@openwork/cdp";
 import { createAdmin, localMysqlIsRunning, localRedisIsRunning, queryDenDatabase, SkipError, type Den, type Place, type Seed } from "@openwork/env";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
@@ -144,5 +144,34 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
     await response.body?.cancel();
     if (!response.ok) throw new Error(`Audit usage refresh failed: ${response.status}`);
   }
-  return { den, refreshAuditUsage, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, reviewersTeamId, reviewersTeamName, viewport };
+  // Read-only rendered-label witness: probe.dom exposes option text/geometry but
+  // not line-clamp or text overflow. A DOM string alone also passes when every
+  // distinguishing suffix is ellipsized. Read real glyph ranges and computed CSS;
+  // never import product source, change styles or dispatch input from the world.
+  function eventOptionLayout() {
+    return evaluateOnSurface(web, () => Array.from(document.querySelectorAll('[role="listbox"] [role="option"]'), (option) => {
+      const label = option.querySelector("span:first-child");
+      if (!label) throw new Error("Event type option has no label");
+      const style = getComputedStyle(label);
+      const box = label.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      const fragments = Array.from(range.getClientRects());
+      const fullTextFits = fragments.length > 0
+        && label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= label.clientHeight + 1
+        && fragments.every((fragment) => fragment.left >= box.left - 1 && fragment.right <= box.right + 1
+          && fragment.top >= box.top - 1 && fragment.bottom <= box.bottom + 1);
+      return {
+        text: label.textContent?.trim() ?? "",
+        fullTextFits,
+        lineClamp: style.webkitLineClamp,
+        whiteSpace: style.whiteSpace,
+        textOverflow: style.textOverflow,
+        width: box.width,
+        height: box.height,
+        lines: new Set(fragments.map((fragment) => Math.round(fragment.top))).size,
+      };
+    }));
+  }
+  return { den, refreshAuditUsage, eventOptionLayout, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, reviewersTeamId, reviewersTeamName, viewport };
 }

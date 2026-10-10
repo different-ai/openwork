@@ -27,6 +27,7 @@ function readableFlatHeading(measured: HeaderMeasurements, title: string, width:
   expect(measured.fontSize).toBeLessThanOrEqual(20);
   expect(measured.fontWeight).toBe(600);
   expect(measured.inkLuminance).toBeLessThan(0.1);
+  expect(measured.semanticInkMatch).toBe(true);
   expect(measured.contrast).toBeGreaterThanOrEqual(4.5);
   expect(measured.headerHeight).toBeLessThanOrEqual(40);
   expect(measured.headerImages).toEqual([]);
@@ -43,11 +44,11 @@ function readableFlatHeading(measured: HeaderMeasurements, title: string, width:
 }
 
 function typographyEvidence(measured: HeaderMeasurements): string {
-  return `“${measured.title}”: ${measured.fontSize}px, ${measured.contrast.toFixed(2)}:1 contrast; heading ${measured.heading.width}×${measured.heading.height}px, ${measured.heading.scrollWidth}/${measured.heading.clientWidth}px scroll/client width; header ${measured.headerHeight}px; ${measured.canvasCount} canvases and ${measured.headerImages.length} background images; document ${measured.widths.document}/${measured.widths.viewport}px.`;
+  return `“${measured.title}”: ${measured.fontSize}px, ${measured.contrast.toFixed(2)}:1 contrast, semantic ink=${measured.semanticInkMatch}; heading ${measured.heading.width}×${measured.heading.height}px, ${measured.heading.scrollWidth}/${measured.heading.clientWidth}px scroll/client width; header ${measured.headerHeight}px; ${measured.canvasCount} canvases and ${measured.headerImages.length} background images; document ${measured.widths.document}/${measured.widths.viewport}px.`;
 }
 
-// Use the actual Members and provider routes. The same owner enables and
-// disables only their org in /admin; another org keeps the legacy banner.
+// Use the actual Members, provider, and Analytics routes. The same owner enables
+// and disables only their org in /admin; another org keeps the legacy banner.
 // All feature writes after arrangement are trusted input through the admin UI.
 test("an owner gets compact, readable page titles only in their rollout workspace and can restore the banner", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.web);
@@ -56,6 +57,8 @@ test("an owner gets compact, readable page titles only in their rollout workspac
   const adminCapabilities = `/v1/admin/organizations/${world.orgId}/capabilities`;
   let originalRoster = "";
   let originalNavigation: string[] = [];
+  let originalAnalyticsNavigation: string[] = [];
+  let originalCaptionHeight = 0;
 
   const openOrganizationControls = async () => {
     await owner.navigate(world.url("/admin"));
@@ -90,6 +93,30 @@ test("an owner gets compact, readable page titles only in their rollout workspac
     await owner.screenshot();
   });
 
+  await step("before: the same owner's Plugins & connectors page keeps its 22px Analytics title", async () => {
+    await owner.navigate(world.url("/dashboard/analytics/library"));
+    await owner.see({ testId: "library-usage" }, { timeoutMs: 60_000 });
+    await owner.see({ testId: "library-usage-toolbar" });
+    await owner.see({ role: "heading", label: "Plugins & connectors" });
+    const before = await context();
+    expect(feature(before.body, "features")).toBe(false);
+    expect(isRecord(before.body) && isRecord(before.body.features) && before.body.features.libraryUsage).toBe(true);
+    expect(isRecord(before.body) && isRecord(before.body.entitlements) && before.body.entitlements.analytics).toBe(true);
+    const report = await probe.api(world.den.admin, "/v1/library-usage/plugins?days=30", { headers: world.scope });
+    expect(report.response.status).toBe(200);
+    const measured = await world.measurements();
+    expect(measured.title).toBe("Plugins & connectors");
+    expect(measured.flat).toBe(false);
+    expect(measured.fontSize).toBe(22);
+    originalAnalyticsNavigation = (await page.dom('main nav[aria-label="Analytics views"] a')).elements.map((entry) => entry.text);
+    const caption = (await page.dom("main header > div > div > div:last-child")).elements;
+    expect(caption).toHaveLength(1);
+    originalCaptionHeight = caption[0].rect.height;
+    expect(originalCaptionHeight).toBeGreaterThanOrEqual(16);
+    evidence.recordAssertionEvidence("the real Library usage page retains its legacy title before the header rollout", `Library usage was enabled by the world before acts; Analytics is entitled and its real plugin report returns HTTP ${report.response.status}. The owner's heading is 22px, with ${originalAnalyticsNavigation.length} Analytics destinations and a ${originalCaptionHeight}px reserved state line.`, true);
+    await owner.screenshot();
+  });
+
   await step("a platform admin enables compact page titles for this workspace in the existing admin controls", async () => {
     await openOrganizationControls();
     await owner.click({ testId: "admin-capability-denFlatPageHeaders" });
@@ -114,6 +141,37 @@ test("an owner gets compact, readable page titles only in their rollout workspac
     expect(roster((await context()).body)).toBe(originalRoster);
     expect((await page.dom('[data-testid="den-org-sidebar"] a')).elements.map((entry) => entry.text)).toEqual(originalNavigation);
     evidence.recordAssertionEvidence("only the page header changes, with measurable dark ink on the plain page", `${typographyEvidence(measured)} Members and Teams, supporting context, navigation destinations, and the original roster remain.`, true);
+    await owner.screenshot();
+  });
+
+  await step("after: Usage & adoption uses the shared compact title and keeps its refresh action", async () => {
+    await owner.navigate(world.url("/dashboard/analytics"));
+    await owner.see({ role: "heading", label: "Usage & adoption" }, { timeoutMs: 60_000 });
+    await owner.see({ role: "button", label: "Refresh analytics" });
+    await owner.see({ role: "link", label: "Plugins & connectors" });
+    await owner.see({ role: "heading", label: "Usage & adoption" });
+    const measured = await world.measurements();
+    readableFlatHeading(measured, "Usage & adoption", 1280);
+    expect((await page.dom('main nav[aria-label="Analytics views"] a')).elements.map((entry) => entry.text)).toEqual(originalAnalyticsNavigation);
+    evidence.recordAssertionEvidence("the Analytics header follows the same organization rollout", `${typographyEvidence(measured)} Refresh analytics and every existing Analytics destination remain; tab and metric colors are outside this heading-only change.`, true);
+    await owner.screenshot();
+  });
+
+  await step("after: the same owner's Plugins & connectors title is 20px semantic ink with its state line intact", async () => {
+    await owner.navigate(world.url("/dashboard/analytics/library"));
+    await owner.see({ testId: "library-usage-toolbar" }, { timeoutMs: 60_000 });
+    await owner.see({ role: "heading", label: "Plugins & connectors" });
+    const measured = await world.measurements();
+    readableFlatHeading(measured, "Plugins & connectors", 1280);
+    expect(measured.fontSize).toBe(20);
+    const report = await probe.api(world.den.admin, "/v1/library-usage/plugins?days=30", { headers: world.scope });
+    expect(report.response.status).toBe(200);
+    expect((await page.dom('main nav[aria-label="Analytics views"] a')).elements.map((entry) => entry.text)).toEqual(originalAnalyticsNavigation);
+    const caption = (await page.dom("main header > div > div > div:last-child")).elements;
+    expect(caption).toHaveLength(1);
+    expect(caption[0].rect.height).toBe(originalCaptionHeight);
+    expect(roster((await context()).body)).toBe(originalRoster);
+    evidence.recordAssertionEvidence("the Library usage title becomes compact without replacing its report or reserved state line", `${typographyEvidence(measured)} The same plugin report returns HTTP ${report.response.status}; its controls, Analytics destinations, and ${originalCaptionHeight}px state line remain.`, true);
     await owner.screenshot();
   });
 
@@ -183,6 +241,22 @@ test("an owner gets compact, readable page titles only in their rollout workspac
     expect((await page.dom("[data-dashboard-flat-header]")).elements).toHaveLength(0);
     expect((await page.dom('[data-testid="den-org-sidebar"] a')).elements.map((entry) => entry.text)).toEqual(originalNavigation);
     evidence.recordAssertionEvidence("reverting the header needs no data migration or alternate route", "The existing admin checkbox saved false; the original 104px banner and 24px Members title returned. Member/team records and navigation destinations still match the feature-off starting state.", true);
+    await owner.screenshot();
+  });
+
+  await step("turning the rollout off also restores the Library usage title without changing its navigation", async () => {
+    await owner.navigate(world.url("/dashboard/analytics/library"));
+    await owner.see({ testId: "library-usage-toolbar" }, { timeoutMs: 60_000 });
+    await owner.see({ role: "heading", label: "Plugins & connectors" });
+    const measured = await world.measurements();
+    expect(measured.flat).toBe(false);
+    expect(measured.fontSize).toBe(22);
+    expect((await page.dom("[data-dashboard-flat-header]")).elements).toHaveLength(0);
+    expect((await page.dom('main nav[aria-label="Analytics views"] a')).elements.map((entry) => entry.text)).toEqual(originalAnalyticsNavigation);
+    const caption = (await page.dom("main header > div > div > div:last-child")).elements;
+    expect(caption).toHaveLength(1);
+    expect(caption[0].rect.height).toBe(originalCaptionHeight);
+    evidence.recordAssertionEvidence("Analytics uses the same safe fallback as the dashboard template", `The same owner's Library usage heading returns to 22px after the organization override is turned off; all Analytics destinations and the ${originalCaptionHeight}px state line are unchanged.`, true);
     await owner.screenshot();
   });
 });

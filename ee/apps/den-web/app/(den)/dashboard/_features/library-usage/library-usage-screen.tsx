@@ -153,9 +153,7 @@ export function LibraryUsageScreen() {
 
               {nothingRecorded ? (
                 <div className={analyticsSurfaceClass} data-testid="library-usage-no-usage">
-                  <AnalyticsEmptyState title="No usage yet" icon={Activity}>
-                    {`Counts start the first time someone's agent uses a skill or connector through OpenWork. Your ${summary.total} ${summary.total === 1 ? copy.noun : copy.plural} ${summary.total === 1 ? "is" : "are"} listed below and ready to track.`}
-                  </AnalyticsEmptyState>
+                  <AnalyticsEmptyState title="No usage yet" icon={Activity} children={null} />
                 </div>
               ) : (
                 <div className={`grid gap-3.5 sm:grid-cols-2 ${tracksFailures ? "lg:grid-cols-4" : "lg:grid-cols-3"}`} data-testid="library-usage-summary">

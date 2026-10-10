@@ -1,4 +1,5 @@
 import { createNativeConnector, denFetch, type DenSession } from "@openwork/behaviors";
+import { readDom } from "@openwork/cdp";
 import { startMockGoogle } from "@openwork/labs";
 import { localMysqlIsRunning, SkipError, type Place, type Seed } from "@openwork/env";
 import { startCalendarMock } from "../packages/labs/src/calendar-mock.mjs";
@@ -6,6 +7,7 @@ import { publishCalendarModels } from "../../worlds/lib/calendar.ts";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
 import { isRecord } from "./library.ts";
 import { readCalendarRail } from "./calendar-layout-witness.ts";
+import { seedCalendarReconnectRecovery } from "./calendar-recovery-fixture.ts";
 
 /**
  * The Workbot world's Acme organization (seed-demo-org, as preview-workbot boots it) with the owner's
@@ -68,6 +70,7 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
   });
   const orgId = await enableOrganizationCapabilities(seed, den.admin, { automationCalendar: true });
   await publishCalendarModels(den.admin, orgId);
+  const recovery = await seedCalendarReconnectRecovery(den, orgId);
   if (googleConnected) {
     await connectCalendarAccount(den.admin, identity, { providerKey: "google-workspace", name: "Google Workspace" });
   } else {
@@ -80,8 +83,17 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
   await desktop.client.send("CSS.enable");
   const resources = setup.move();
   return {
-    den, desktop,
+    den, desktop, recovery,
     hourRail: () => readCalendarRail(desktop),
+    /** One read-only projection keeps the hour and its real clipping boundary in the same frame. */
+    async hourRailLayout() {
+      const snapshot = await readDom(desktop, "[data-calendar-scroll], [data-calendar-hour]");
+      const scroller = snapshot.elements.find((element) => element.tag === "div");
+      if (!scroller) throw new Error("Calendar scroller is not on screen");
+      const firstHour = snapshot.elements.find((element) => element.tag === "span" && element.text !== "" && element.rect.bottom > scroller.rect.top && element.rect.top < scroller.rect.bottom);
+      if (!firstHour) throw new Error("Calendar has no visible hour label");
+      return { scroller: scroller.rect, firstHour };
+    },
     /** Google starts rejecting Alex's token, as when a sign-in expires; Den answers 502 with the provider's 401. */
     async expireGoogleSignIn() {
       const response = await fetch(`${calendar.baseUrl}/scenario`, { method: "POST", body: JSON.stringify({ google: "expired_token" }) });

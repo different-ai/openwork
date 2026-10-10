@@ -910,6 +910,15 @@ export class UserChannel implements User {
     });
   }
 
+  wheelAt(input: { x: number; y: number; deltaY: number; deltaX?: number }): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "wheelAt", `scroll(${input.deltaX ?? 0}, ${input.deltaY}) at (${input.x}, ${input.y})`, surface, async () => {
+      const { x, y, deltaY, deltaX = 0 } = input;
+      if (![x, y, deltaX, deltaY].every(Number.isFinite)) throw new Error("Wheel coordinates and deltas must be finite");
+      await surface.client.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX, deltaY });
+    });
+  }
+
   notSee(target: Target, options: { timeoutMs?: number } = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "notSee", `notSee(${targetDetail(target)})`, surface, async () => {
