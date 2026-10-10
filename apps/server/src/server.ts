@@ -1403,12 +1403,7 @@ export async function proxyOpencodeV2Request(input: {
     target.searchParams.set("location[directory]", input.workspace.path);
   }
 
-  const headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
-  headers.delete("host");
-  headers.delete("origin");
+  const headers = buildEngineForwardHeaders(input.request.headers);
   headers.set("authorization", `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}`);
 
   // Like the v1 proxy: an engine that is down or restarting is an expected
@@ -1864,12 +1859,7 @@ export async function proxyOpencodeRequest(input: {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  let headers = new Headers(input.request.headers);
-  headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
-  headers.delete("host");
-  headers.delete("origin");
+  let headers = buildEngineForwardHeaders(input.request.headers);
 
   const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
   let search = input.url.search;
@@ -2285,6 +2275,45 @@ async function proxyEngineEventStreams(input: {
     statusText: primary.response.statusText,
     headers,
   });
+}
+
+const ENGINE_FORWARD_STRIPPED_HEADERS = [
+  // OpenWork credentials and client identity must never reach the engine.
+  "authorization",
+  "x-openwork-host-token",
+  "x-openwork-client-id",
+  "host",
+  "origin",
+  // Hop-by-hop / transport headers. Node's fetch (undici) rejects several of
+  // these outright (e.g. `expect: 100-continue` -> "expect header not
+  // supported"), surfacing as `TypeError: fetch failed`.
+  "expect",
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "transfer-encoding",
+  "upgrade",
+  "te",
+  "trailer",
+  // The body is buffered before forwarding; let fetch compute the length.
+  "content-length",
+] as const;
+
+/**
+ * Copy incoming request headers for forwarding to a loopback engine, dropping
+ * credentials and hop-by-hop headers that must not (or cannot) be proxied.
+ */
+function buildEngineForwardHeaders(source: HeadersInit): Headers {
+  const headers = new Headers(source);
+  const connection = headers.get("connection");
+  if (connection) {
+    for (const name of connection.split(",")) {
+      const trimmed = name.trim();
+      if (trimmed) headers.delete(trimmed);
+    }
+  }
+  for (const name of ENGINE_FORWARD_STRIPPED_HEADERS) headers.delete(name);
+  return headers;
 }
 
 /**
