@@ -291,11 +291,12 @@ threadUI("a member can read why attachments are blocked without opening a file p
     // The previous in-place hint had role=tooltip; Base UI's visual-only Tooltip has the source marker instead.
     const snapshot = await probe.dom('[data-workbot-attachment-hint], [role="tooltip"]');
     const rect = snapshot.elements[0]?.rect;
+    const overflowing = snapshot.documentWidth > snapshot.viewportWidth ? await world.overflowingElements() : [];
     return {
       fits: snapshot.elements.length === 1 && Boolean(rect && rect.width > 0 && rect.height > 0
         && rect.left >= 7 && rect.top >= 7 && rect.right <= snapshot.viewportWidth - 7 && rect.bottom <= height - 7),
       noSidewaysScroll: snapshot.documentWidth <= snapshot.viewportWidth,
-      description: `${snapshot.viewportWidth}×${height}; page ${snapshot.documentWidth}px; tooltip ${rect ? `${Math.round(rect.left)},${Math.round(rect.top)}–${Math.round(rect.right)},${Math.round(rect.bottom)}` : "missing"}`,
+      description: `${snapshot.viewportWidth}×${height}; page ${snapshot.documentWidth}px${overflowing.length ? ` (past the edge: ${overflowing.join(", ")})` : ""}; tooltip ${rect ? `${Math.round(rect.left)},${Math.round(rect.top)}–${Math.round(rect.right)},${Math.round(rect.bottom)}` : "missing"}`,
     };
   };
   // notSee proves stable absence from now on; first let a dismissed hint stop painting.

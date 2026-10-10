@@ -144,18 +144,19 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
     expect(result.response.ok).toBe(true);
     return workspaceMemberships(result.body);
   };
-  const settledMeasurements = async () => {
+  const settledMeasurements = async (expectRows = true) => {
     let previousGeometry = "";
     let stableSamples = 0;
     return page.eventually(world.measurements, {
-      within: 5_000, intervalMs: 100, label: "native popup and drawer geometry to settle after their motion",
+      within: 15_000, intervalMs: 100, label: "native popup and drawer geometry to settle with its workspace rows after their motion",
       until: (measured) => {
         const geometry = JSON.stringify({ viewport: measured.viewport, menu: measured.menu, trigger: measured.trigger, list: measured.list });
         stableSamples = !measured.motionRunning && geometry === previousGeometry ? stableSamples + 1 : 0;
         previousGeometry = geometry;
         // Three matching observations, with no running drawer/popup animation,
         // cover the drawer's 200ms transition without a blind sleep or scroll.
-        return stableSamples >= 3;
+        // A freshly opened switcher lists workspaces; a stable but still-empty list has not loaded yet.
+        return stableSamples >= 3 && (!expectRows || measured.workspaceNames.length > 0);
       },
     });
   };
@@ -163,11 +164,11 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
   const menuCloses = (label: string) => page.eventually(async () => (await page.dom('[data-testid="workspace-switcher-menu"]')).elements.filter((menu) => menu.rect.width > 0 && menu.rect.height > 0).length, {
     within: 30_000, label, until: (painted) => painted === 0,
   });
-  const openSwitcher = async () => {
+  const openSwitcher = async (expectRows = true) => {
     await owner.click(mobileTrigger);
     // Read-only polling, NOT user.see on a popup child: even a visibility check
     // could mask clipping by scrolling. The following hit test stays native.
-    return settledMeasurements();
+    return settledMeasurements(expectRows);
   };
 
   await step("the owner opens 24 real workspace choices on a short landscape screen", async () => {
@@ -298,7 +299,8 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
     await menuCloses("an outside press closes the workspace menu");
     await owner.notSee({ testId: "workspace-switcher-menu" });
     await owner.click({ role: "button", label: "Open menu" });
-    await openSwitcher();
+    // The reopened menu keeps the previous step's outside-account search, which matches no workspace.
+    await openSwitcher(false);
     await owner.click({ role: "link", label: /Create or join workspace/ });
     await owner.see({ role: "heading", label: "Settings" }, { timeoutMs: 30_000 });
     await owner.see({ role: "button", label: "Organizations" });

@@ -146,6 +146,18 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
           nativeFileInputs: document.querySelectorAll('input[type="file"]').length,
         };
       }),
+      /** Read-only: elements reaching past the page's client width, so a sideways-scroll failure names its cause. */
+      overflowingElements: () => evaluateOnSurface(app, () => {
+        const limit = document.documentElement.clientWidth + 0.5;
+        const found: string[] = [];
+        for (const element of Array.from(document.body.querySelectorAll("*"))) {
+          const box = element.getBoundingClientRect();
+          if (box.width === 0 || box.right <= limit) continue;
+          if (Array.from(element.children).some((child) => child.getBoundingClientRect().right > limit)) continue;
+          found.push(`${element.tagName.toLowerCase()}.${(element.getAttribute("class") ?? "").split(/\s+/).slice(0, 4).join(".")}→${Math.round(box.right)}px`);
+        }
+        return found.slice(0, 6);
+      }),
       async clickBlockedAttachment(inputKind: "mouse" | "touch" = "mouse") {
         // user.click rejects every aria-disabled control. This one intentionally accepts a click only to show why
         // it is blocked. Keep ARIA intact and use trusted CDP input, limited to this exact, hittable reason button.
