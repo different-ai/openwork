@@ -185,7 +185,7 @@ questionTest("a parent answers and stops real child questions, then finishes fre
     expect(result.status, path).toBe(200);
     return v2 ? record(result.body).data : result.body;
   };
-  const pending = async () => records(await read(v2 ? "/form/request" : "/question"))
+  const pending = async () => records(await read(v2 ? "/form" : "/question"))
     .filter((request) => !v2 || record(request.metadata).kind === "question")
     .map((request) => {
       const tool = record(v2 ? record(request.metadata).tool : request.tool);

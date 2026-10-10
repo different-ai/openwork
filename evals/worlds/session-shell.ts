@@ -1817,9 +1817,10 @@ export async function externalSessionVisibility(seed: Seed) {
       return response.data.map((session) => session.id);
     },
     async forkSessionOutsideWindow(workspaceId: string, sessionId: string) {
-      const base = `${externalServerUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`;
+      const base = `${externalServerUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode2/api`;
+      const sessionRoute = `/session/${encodeURIComponent(sessionId)}`;
       const request = async (path: string, body?: unknown): Promise<unknown> => {
-        const response = await fetch(`${base}${path}`, {
+        const response = await fetch(`${base}${path === "/export" ? "/experimental" : ""}${sessionRoute}${path}`, {
           method: body === undefined ? "GET" : "POST",
           headers: { Authorization: `Bearer ${serverToken}`, "Content-Type": "application/json" },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),

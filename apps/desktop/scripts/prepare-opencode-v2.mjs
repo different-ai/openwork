@@ -17,6 +17,8 @@ export async function prepareOpencodeV2(sidecarDir, target) {
   const key = opencodeV2ArtifactKey(target);
   const artifact = artifacts.platforms[key];
   if (!artifact) throw new Error(`No verified OpenCode v2 artifact for ${key}`);
+  // Stable V2 archives use opencode; retain OpenWork's opencode2 sidecar name.
+  const archiveName = key.startsWith("windows-") ? "opencode.exe" : "opencode";
   const name = key.startsWith("windows-") ? "opencode2.exe" : "opencode2";
   const binary = join(sidecarDir, name);
   const receipt = join(sidecarDir, "opencode2-integrity.json");
@@ -35,8 +37,8 @@ export async function prepareOpencodeV2(sidecarDir, target) {
     if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== artifact.integrity) throw new Error("OpenCode v2 archive integrity mismatch");
     // Relative paths: Windows release jobs run from Git Bash, whose GNU tar reads
     // a drive-letter path such as C:\... as a remote host ("Cannot connect to C:").
-    execFileSync("tar", ["-xzf", "binary.tgz", `package/bin/${name}`], { cwd: staging });
-    await copyFile(join(staging, "package", "bin", name), binary);
+    execFileSync("tar", ["-xzf", "binary.tgz", `package/bin/${archiveName}`], { cwd: staging });
+    await copyFile(join(staging, "package", "bin", archiveName), binary);
     await chmod(binary, 0o755);
     if (process.platform === "darwin" && key.startsWith("darwin-")) {
       execFileSync("codesign", ["--force", "--sign", "-", binary]);

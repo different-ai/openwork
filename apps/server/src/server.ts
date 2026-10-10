@@ -1381,10 +1381,10 @@ export async function proxyOpencodeV2Request(input: {
   const forwardedPath = withoutPrefix || "/";
   // Runtime provider configuration contains server-owned credentials. The
   // renderer uses the catalog/status APIs; it must not read or mutate this file.
-  if (/^\/api\/config(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
+  if (/^\/api\/(?:experimental\/)?config(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
     throw new ApiError(403, "engine_config_private", "Engine configuration is private");
   }
-  if (method !== "GET" && method !== "HEAD" && /^\/api\/mcp(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
+  if (method !== "GET" && method !== "HEAD" && /^\/api\/(?:experimental\/)?mcp(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
     throw new ApiError(403, "engine_mcp_managed", "Manage connections through OpenWork");
   }
   const v1Connect = method === "POST" ? /^\/mcp\/([^/]+)\/connect$/.exec(forwardedPath) : null;
@@ -1435,7 +1435,7 @@ export async function proxyOpencodeV2Request(input: {
   };
   const homes = createV2SessionHomes(input.config, readNative);
   const expectedHome = await homes.canonical(input.workspace.path);
-  const sessionMatch = forwardedPath.match(/^\/api\/session\/([^/]+)(?:\/|$)/);
+  const sessionMatch = forwardedPath.match(/^\/api\/(?:experimental\/)?session\/([^/]+)(?:\/|$)/);
   const sessionId = sessionMatch?.[1] ? decodeURIComponent(sessionMatch[1]) : null;
   let executionDirectory = input.workspace.path;
   // Authorization follows the persistent home, not the agent's mutable CWD.
@@ -1469,7 +1469,7 @@ export async function proxyOpencodeV2Request(input: {
     // catalog can exceed the engine's instruction-entry request limit.
     const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
-    instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
+    instructionUrl.pathname = `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
     const synced = await engineFetch(instructionUrl.toString(), {
       method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
     });
@@ -1608,7 +1608,8 @@ export async function proxyOpencodeV2Request(input: {
     responseHeaders.delete("content-encoding");
     return sanitizeProxyResponse(new Response(scopedBody, { status: response.status, headers: responseHeaders }));
   }
-  const pendingKind = forwardedPath.match(/^\/api\/(form|permission)\/request\/?$/)?.[1];
+  const pendingKind = /^\/api\/form\/?$/.test(forwardedPath) ? "form"
+    : /^\/api\/permission\/request\/?$/.test(forwardedPath) ? "permission" : undefined;
   if (method === "GET" && pendingKind && response.ok) {
     // Native pending lists belong to an execution location. The sidebar belongs
     // to conversation homes, so include moved sessions through their native

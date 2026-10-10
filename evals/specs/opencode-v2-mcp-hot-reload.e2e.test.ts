@@ -153,7 +153,7 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   expect(used.messages).toContain(nonce);
   expect((await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: used.sinceIso, atLeast: 1 })).length).toBeGreaterThan(0);
   evidence.recordAssertionEvidence("a real OpenWork connection becomes executable on the next v2 call without restarting", "The same session executed the report through native Code Mode and the mock MCP served its independent report nonce after POST /workspace/:id/mcp. The v2 pid remained unchanged.", true);
-  expect((await request(desktop, `${v2}/api/mcp/reload-witness`, "PUT", { config: mcpConfig })).status).toBe(403);
+  expect((await request(desktop, `${v2}/api/experimental/mcp/reload-witness`, "PUT", { config: mcpConfig })).status).toBe(403);
   expect((await request(desktop, `${root}/mcp`, "POST", { name: "reload-witness",
     config: { ...mcpConfig, headers: { Authorization: "Bearer eval-mcp-second" } } })).status).toBe(200);
   const updated = await turn("updated", true);

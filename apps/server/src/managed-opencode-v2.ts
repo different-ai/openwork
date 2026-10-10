@@ -116,6 +116,7 @@ export function renderOpencodeV2Config(input: {
   const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id));
   const providerConfig: Record<string, unknown> = {};
   for (const provider of enabledProviders) {
+    const providerPackage = provider.package?.replace(/^@opencode-ai\/ai\//, "@opencode/ai/") ?? "@opencode/ai/providers/openai-compatible";
     const models: Record<string, unknown> = {};
     for (const model of provider.models) {
       if ((provider.whitelist !== undefined && !provider.whitelist.includes(model.id)) || provider.blacklist?.includes(model.id)) continue;
@@ -135,7 +136,7 @@ export function renderOpencodeV2Config(input: {
         ...(typeof config.family === "string" ? { family: config.family } : {}),
         ...(isRecord(config.options) ? { settings: config.options } : {}),
         ...(isRecord(config.variants) ? {
-          variants: nativeModelVariants(config.variants, provider.package),
+          variants: nativeModelVariants(config.variants, providerPackage),
         } : {}),
         ...(isRecord(config.headers) ? { headers: config.headers } : {}),
         ...(config.status === "deprecated" ? { disabled: true } : {}),
@@ -143,7 +144,7 @@ export function renderOpencodeV2Config(input: {
     }
     providerConfig[provider.id] = {
       name: provider.name,
-      package: provider.package ?? "@opencode-ai/ai/providers/openai-compatible",
+      package: providerPackage,
       settings: {
         ...provider.settings,
         ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
@@ -321,16 +322,16 @@ export async function createManagedOpencodeV2Server(
   }
 
   async function health(): Promise<OpencodeV2Health> {
-    const response = await fetchJson("/api/health", { timeoutMs: 5_000 });
+    const response = await fetchJson("/api/info", { timeoutMs: 5_000 });
     if (response.status !== 200 || !isRecord(response.json)) {
       throw new Error(`OpenCode v2 health returned HTTP ${response.status}`);
     }
-    const { healthy, version, pid } = response.json;
-    if (typeof healthy !== "boolean" || typeof version !== "string" || typeof pid !== "number") {
+    const { version, pid } = response.json;
+    if (typeof version !== "string" || typeof pid !== "number") {
       throw new Error("OpenCode v2 health returned an invalid payload");
     }
     if (pid !== child.pid) throw new Error("OpenCode v2 health did not match the spawned child");
-    return { healthy, version, pid };
+    return { healthy: true, version, pid };
   }
 
   // Every rewrite (providers, permissions, skills) serializes through one

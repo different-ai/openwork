@@ -61,7 +61,7 @@ async function bootSessionHome(seed: Seed, mode: "stop" | "question" | "video") 
   const mount = `/workspace/${workspace.workspaceId}/opencode2/api`;
   let fault: Awaited<ReturnType<typeof failPendingQuestionList>> | undefined;
   return { app, workspace, session, home, destination, prompt, followup, reply, question, answer, completed,
-    questions: () => read(`${mount}/form/request`),
+    questions: () => read(`${mount}/form`),
     sessionState: () => read(`${mount}/session/${session.sessionId}`),
     sessions: () => read(`${mount}/session?limit=100`),
     active: () => read(`${mount}/session/active`),
@@ -86,7 +86,7 @@ async function bootSessionHome(seed: Seed, mode: "stop" | "question" | "video") 
       const endpoint = app.client.webSocketDebuggerUrl;
       if (!endpoint) throw new Error("Question-list fault requires a browser debugging connection");
       fault = await failPendingQuestionList(endpoint);
-      return read(`${mount}/form/request`);
+      return read(`${mount}/form`);
     },
     async [Symbol.asyncDispose]() { await fault?.[Symbol.asyncDispose](); },
     requests: () => witness.agentRequests({ promptMarker: followup }),
@@ -161,7 +161,7 @@ async function failPendingQuestionList(endpoint: string) {
       socket.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
       socket.addEventListener("error", () => { clearTimeout(timer); reject(new Error("Question-list fault could not connect")); }, { once: true });
     });
-    await send("Fetch.enable", { patterns: [{ urlPattern: "*/opencode2/api/form/request*", requestStage: "Request" }] });
+    await send("Fetch.enable", { patterns: [{ urlPattern: "*/opencode2/api/form*", requestStage: "Request" }] });
   } catch (error) { socket.close(); throw error; }
   return {
     async [Symbol.asyncDispose]() {

@@ -15,7 +15,7 @@ test("V2-MODEL-FILTERS: remove, restore and block models without restarting the 
   const directory = join(rootDir, "workspace");
   await mkdir(directory);
   const server = await createManagedOpencodeV2Server({ bin, rootDir, env: { HOME: join(rootDir, "home") } });
-  const provider: OpencodeV2ProviderSpec = { id: "openai", name: "OpenAI", package: "@opencode-ai/ai/providers/openai",
+  const provider: OpencodeV2ProviderSpec = { id: "openai", name: "OpenAI", package: "@opencode/ai/providers/openai",
     apiKey: "synthetic-catalog-only-key", models: [{ id: "gpt-5.4", name: "First" }, { id: "gpt-4.1-mini", name: "Second" }] };
   const pid = (await server.health()).pid;
   try {
@@ -81,7 +81,7 @@ test("V2-DISABLED-PROVIDERS: Disconnect hides built-in OpenCode Zen in the nativ
     }, { within: 60_000, intervalMs: 500, label, until: ids => ids.length > 0 });
   };
   try {
-    const control: OpencodeV2ProviderSpec = { id: "openai", name: "OpenAI", package: "@opencode-ai/ai/providers/openai",
+    const control: OpencodeV2ProviderSpec = { id: "openai", name: "OpenAI", package: "@opencode/ai/providers/openai",
       apiKey: "synthetic-control-only-key", models: [{ id: "gpt-5.4", name: "Control" }] };
     await server.setProviders([control]);
     const before = await settledZenCatalog("the built-in OpenCode Zen catalog is listed");

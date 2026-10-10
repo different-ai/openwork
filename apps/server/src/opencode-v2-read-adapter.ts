@@ -68,7 +68,7 @@ export function createV2ReadAdapter(read: Read): Read {
       }
       return { all: [...catalog.values()], connected: [...catalog.keys()] };
     }
-    if (url.pathname === "/question") return items(await native("/api/form/request"));
+    if (url.pathname === "/question") return items(await native("/api/form"));
     const target = /^\/session\/([^/]+)(\/message|\/children)?$/.exec(url.pathname);
     if (!target) throw new Error("Unsupported native engine read");
     if (!target[2]) return session(await native(`/api/session/${target[1]}`));

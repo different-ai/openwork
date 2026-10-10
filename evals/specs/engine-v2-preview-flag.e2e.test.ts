@@ -264,7 +264,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     evidence.recordAssertionEvidence("untrusted catalog API endpoints are rejected before credential delivery", "The native provider with baseURL: null, an internal catalog API URL, and a synthetic credential was reported skipped, never mirrored, and absent from the live model catalog.", true);
     expect(catalogStatus.pid).toBe(pid0);
     expect(mirroredStatus.running).toBe(true);
-    for (const configPath of ["/api/config", "/api/config/", "/api/%63onfig"]) {
+    for (const configPath of ["/api/config", "/api/config/", "/api/%63onfig", "/api/experimental/config", "/api/experimental/%63onfig"]) {
       const privateConfig = await serverFetchJson(app, `/workspace/${workspaceId}/opencode2${configPath}`);
       expect(privateConfig.status).toBe(403);
       expect(JSON.stringify(privateConfig.json)).not.toContain("witness-key-e2e");

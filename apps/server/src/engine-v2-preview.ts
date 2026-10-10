@@ -229,10 +229,10 @@ export function mapRuntimeProvidersToV2Specs(
     // Only built-in adapters: do not turn organization configuration into a
     // request to install an arbitrary runtime package.
     const packages: Record<string, string> = {
-      "@ai-sdk/openai": "@opencode-ai/ai/providers/openai",
-      "@ai-sdk/anthropic": "@opencode-ai/ai/providers/anthropic",
-      "@openrouter/ai-sdk-provider": "@opencode-ai/ai/providers/openrouter",
-      "@ai-sdk/openai-compatible": "@opencode-ai/ai/providers/openai-compatible",
+      "@ai-sdk/openai": "@opencode/ai/providers/openai",
+      "@ai-sdk/anthropic": "@opencode/ai/providers/anthropic",
+      "@openrouter/ai-sdk-provider": "@opencode/ai/providers/openrouter",
+      "@ai-sdk/openai-compatible": "@opencode/ai/providers/openai-compatible",
     };
     const options = isRecord(value.options) ? value.options : {};
     // Catalog `api` metadata may use only the native adapter's trusted origin.
@@ -483,13 +483,13 @@ export function createEngineV2Preview(options: {
     };
     const failures: string[] = [];
     const remove = async (name: string) => {
-      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE", directory, timeoutMs: 15_000 });
+      const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, { method: "DELETE", directory, timeoutMs: 15_000 });
       if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
       applied.delete(name);
     };
     const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
       // The engine connects before it answers (up to the startup timeout).
-      const status = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+      const status = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, {
         method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
       }).then((result) => result.status, (error) => { warn(`MCP ${name}: ${errorMessage(error)}`); return 0; });
       if (status !== 204) {
@@ -506,7 +506,7 @@ export function createEngineV2Preview(options: {
       // closes and reopens it, which is why only unhealthy ones get here.
       attempts.set(name, { fingerprint, at: Date.now() });
       warn(`MCP ${name}: connection ${live?.get(name) ?? "missing"}; reconnecting`);
-      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
+      const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
       if (result.status !== 204) warn(`MCP ${name}: reconnect failed (${result.status})`);
     };
     const tasks: Array<Promise<void>> = [];

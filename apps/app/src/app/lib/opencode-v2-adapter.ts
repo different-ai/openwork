@@ -2067,7 +2067,7 @@ export function createClientV2(
     parameters: DirectoryParameters & { sessionID?: string } = {}, options?: RequestOptions,
   ): Promise<FieldsResult<QuestionRequest[]>> => {
     const path = parameters.sessionID
-      ? `/api/session/${encodeURIComponent(parameters.sessionID)}/form` : "/api/form/request";
+      ? `/api/session/${encodeURIComponent(parameters.sessionID)}/form` : "/api/form";
     const result = await request("GET", path, undefined, options?.signal);
     if (!result.response.ok) return failedResult(result);
     const questions = responseItems(result.payload).flatMap((item) => {
@@ -2103,7 +2103,7 @@ export function createClientV2(
     const question = questionFormsByID.get(parameters.requestID);
     if (!question) return {
       error: { name: "QuestionNotFound", requestID: parameters.requestID },
-      request: new Request(`${baseUrl}/api/form/request`),
+      request: new Request(`${baseUrl}/api/form`),
       response: new Response(null, { status: 404 }),
     };
     const answer = parameters.answers ? Object.fromEntries(question.fields.map((field, index) => {
@@ -2111,8 +2111,8 @@ export function createClientV2(
         field.options.find((option) => option.label === label)?.value ?? label);
       return [field.key, field.multiple ? values : values[0] ?? ""];
     })) : undefined;
-    const result = await request("POST",
-      `/api/session/${encodeURIComponent(question.request.sessionID)}/form/${encodeURIComponent(parameters.requestID)}/${answer ? "reply" : "cancel"}`,
+    const result = await request(answer ? "POST" : "DELETE",
+      `/api/session/${encodeURIComponent(question.request.sessionID)}/form/${encodeURIComponent(parameters.requestID)}${answer ? "/reply" : ""}`,
       answer ? { answer } : undefined, options?.signal);
     if (!result.response.ok) return failedResult(result);
     questionFormsByID.delete(parameters.requestID);
@@ -2325,7 +2325,7 @@ export function createClientV2(
       if (!modelResult.response.ok) return failedResult(modelResult);
       if (parameters.system !== undefined) {
         const instructions = await request("PUT",
-          `/api/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
+          `/api/experimental/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
           { value: parameters.system }, options?.signal);
         if (!instructions.response.ok) return failedResult(instructions);
       }
@@ -2367,8 +2367,8 @@ export function createClientV2(
       }
       if (!parameters.title) return getSession(parameters, options);
       const result = await request(
-        "POST",
-        `/api/session/${encodeURIComponent(parameters.sessionID)}/rename`,
+        "PATCH",
+        `/api/session/${encodeURIComponent(parameters.sessionID)}`,
         { title: parameters.title },
         options?.signal,
       );
@@ -2415,7 +2415,7 @@ export function createClientV2(
       parameters: SessionParameters,
       options?: RequestOptions,
     ): Promise<FieldsResult<Session>> => {
-      const result = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/revert/clear`, undefined, options?.signal);
+      const result = await request("DELETE", `/api/session/${encodeURIComponent(parameters.sessionID)}/revert`, undefined, options?.signal);
       return result.response.ok ? getSession(parameters, options) : failedResult(result);
     },
     summarize: async (): Promise<FieldsResult<boolean>> => unsupportedResult(baseUrl, "session.summarize"),
@@ -2473,11 +2473,11 @@ export function createClientV2(
   const adapter = {
     global: {
       health: async (options?: RequestOptions): Promise<FieldsResult<{ healthy: boolean; version: string }>> => {
-        const result = await request("GET", "/api/health", undefined, options?.signal);
+        const result = await request("GET", "/api/info", undefined, options?.signal);
         if (!result.response.ok) return failedResult(result);
         const data = responseData(result.payload);
         return successfulResult(result, {
-          healthy: isRecord(data) && data.healthy === true,
+          healthy: isRecord(data) && typeof data.version === "string" && typeof data.pid === "number",
           version: readString(data, "version") ?? "v2",
         });
       },

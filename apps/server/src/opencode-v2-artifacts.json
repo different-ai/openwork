@@ -1,37 +1,37 @@
 {
-  "version": "0.0.0-beta-19086",
+  "version": "2.0.26",
   "platforms": {
     "linux-x64-baseline": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-x64-baseline/-/cli-linux-x64-baseline-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-UZ0BQb+0LuqPj02jmX35JOSCIrwx/qt8m+aoFOEnwydCpn/zETLQcF+6Z1qkeC4Dgsj55hnc2oc/O1kkoTuzUg=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-x64-baseline/-/cli-linux-x64-baseline-2.0.26.tgz",
+      "integrity": "sha512-A+OonlFxNQh4xh/dI/YcDQlG+iiRhnIMTakSsavIyUuHvKo0hIrTUuwGSzSmspS+22QYrxqKTQ7bmF7jJvGwGQ=="
     },
     "linux-arm64": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-arm64/-/cli-linux-arm64-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-bGVr6JkW5EfQf/KvsUEupV5HQoqBMXb0B5YahHclNk+lI0cjeIWdPMFD5L8qAtwwGaIsHS/0XduwR1CK+76OQw=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-arm64/-/cli-linux-arm64-2.0.26.tgz",
+      "integrity": "sha512-IG316I8wVqndohzFAoWNeH83eMA8sKQFRtMeuk2Wfg4DU1haCSgzAJz3/gbytjwh6bXdWR7V3FCSrfjoraKDgw=="
     },
     "linux-x64-baseline-musl": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-x64-baseline-musl/-/cli-linux-x64-baseline-musl-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-m9lpDXWdhk9LDSgLHtBV8Vsvm+dwwgQozjdzvbw5exNgqdwulj/SEYA2TIGmdzxWJMbHg25/ql4E0SbPl58BQQ=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-x64-baseline-musl/-/cli-linux-x64-baseline-musl-2.0.26.tgz",
+      "integrity": "sha512-Ywps7R3LgAUtJfyb15FVPUoLy9Q3Tt8b0DT2VmUjF1yKLwUM67Qu6l6qUNu+emXeVw2NHPMnnrLC2kOsqwt61g=="
     },
     "linux-arm64-musl": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-linux-arm64-musl/-/cli-linux-arm64-musl-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-RF7yvA6L/i3JJC6cOKrUnLy313Jb5FIFTuU3+zAR1RkR+MbRj+p+eFy11y4ofi4FSTxZs8jZpi8lFXF57UNi0Q=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.0.26.tgz",
+      "integrity": "sha512-UczQ81WTEipjMgnLNy9uXCVLmwHjRlcx/vsCzhTpex+lHfvA5DQ1Hs+6DjLWH9Xto+3xamWMIR2gVstqJHGxUQ=="
     },
     "darwin-x64-baseline": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-darwin-x64-baseline/-/cli-darwin-x64-baseline-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-erllsGf+M+5wf4KoN+r4DRGRxfFXC7f4Ob8o2W2VW0uRm+N+s+Hg0Sott++ZsKmYLtEI3YoNNWhkHd64yrKH8A=="
+      "url": "https://registry.npmjs.org/@opencode/cli-darwin-x64-baseline/-/cli-darwin-x64-baseline-2.0.26.tgz",
+      "integrity": "sha512-A4t57iwRo8gh4bKX/tyn/zTmVCdPZMPLNsoJeR+TbskpC1idpjc7qZsdYRPIBBTgzK++LjWhe9vyxqWOFglCXQ=="
     },
     "darwin-arm64": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-darwin-arm64/-/cli-darwin-arm64-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-Pdhlr9KFpdTYw9YKsD2ztM6dMG5oi/cR1YiiDxikaUaqdXJnOKSRpHjRulilIYsnqaoOe0SKdORvwKRYik/SvA=="
+      "url": "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.0.26.tgz",
+      "integrity": "sha512-XklldeO6eWgG8vkPNLcdlBPEm1Y+/tyhEXGZvXbk8uytpPP7SEVV2R9oZ98NMSSPH9kBAO/+Xo4sKfvD6CHAsw=="
     },
     "windows-x64-baseline": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-windows-x64-baseline/-/cli-windows-x64-baseline-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-ywVxQeIyT+Uzg0suZjiUJGZ0xQ03s9PcR+kFtUaoFO17rPr4Fh8V3RHC+zrAos01Mi9zjLM64aFKuhhxyetftQ=="
+      "url": "https://registry.npmjs.org/@opencode/cli-windows-x64-baseline/-/cli-windows-x64-baseline-2.0.26.tgz",
+      "integrity": "sha512-+8TifOb0CAenFBU496K0mQYWb6Xhtadd0wLjHzPam4NsmaTgnkSPIhbP0++3BLn7UYt/fdZzFwwJxzdLTV5bXw=="
     },
     "windows-arm64": {
-      "url": "https://registry.npmjs.org/@opencode-ai/cli-windows-arm64/-/cli-windows-arm64-0.0.0-beta-19086.tgz",
-      "integrity": "sha512-rO+CgxDwIdSCWKkCbgkJqupr1L1TsPjfMjJi/SJ8eEe5HrXdKD7ly+hFlheS9OsBYcdfavv/XIw5H2XktXFbfQ=="
+      "url": "https://registry.npmjs.org/@opencode/cli-windows-arm64/-/cli-windows-arm64-2.0.26.tgz",
+      "integrity": "sha512-LF8ighj9IVFTrSC+Qvfh7ld3HtB6EMh1t4Jc+Bc4sBCxwKxaCg6ku59rT99G6yG+dSfmxiFdtBgZZkG5odm41w=="
     }
   }
 }

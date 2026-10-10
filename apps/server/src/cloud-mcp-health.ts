@@ -2761,7 +2761,7 @@ export async function refreshOpenworkCloudMcpEngine(input: {
     const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
     const nativeEngine = input.nativeEngineForWorkspace?.(input.workspace);
     const result = nativeEngine
-      ? await nativeEngine.request(`/api/mcp/${OPENWORK_CLOUD_MCP_NAME}/disconnect`, input.directory, "POST").then(() => ({ error: undefined, response: undefined }))
+      ? await nativeEngine.request(`/api/experimental/mcp/${OPENWORK_CLOUD_MCP_NAME}/disconnect`, input.directory, "POST").then(() => ({ error: undefined, response: undefined }))
       : await withEngineProbeTimeout(() => opencode.mcp.disconnect({
           name: OPENWORK_CLOUD_MCP_NAME, ...locationParams(input.directory),
         }));

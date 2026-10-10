@@ -29,7 +29,7 @@ for (const engine of ["v1", "v2"]) {
         join(tmpdir(), "openwork-opencode-v2-verified"), versions.opencodeV2Version,
       );
     expect((await exec(binary, ["--version"])).stdout.trim()).toBe(
-      engine === "v1" ? versions.opencodeVersion.replace(/^v/, "") : `opencode2 v${versions.opencodeV2Version}`,
+      engine === "v1" ? versions.opencodeVersion.replace(/^v/, "") : `opencode v${versions.opencodeV2Version}`,
     );
 
     const requests: { model: unknown; effort: unknown; tier: unknown; verbosity: unknown; generation: boolean }[] = [];
@@ -99,7 +99,7 @@ for (const engine of ["v1", "v2"]) {
       if ("injectProvider" in server) {
         await server.injectProvider({
           id: "witness", name: "Synthetic witness", apiKey: "synthetic-only",
-          baseUrl: `${baseURL}/v1`, package: "@opencode-ai/ai/providers/openai",
+          baseUrl: `${baseURL}/v1`, package: "@opencode/ai/providers/openai",
           models: Object.entries(models).map(([id, config]) => ({ id, name: config.name ?? id, config })),
         });
       }
