@@ -7,7 +7,7 @@ const test = spec.world(parentChildPermissionWorld);
 
 const scopeTest = spec.world(scopedPermissionRefreshWorld, { timeout: 600_000 });
 
-scopeTest("switching and creating threads hydrate permissions without waiting for unrelated roots", async ({ world, user, agent, probe, step }) => {
+scopeTest("switching and creating threads hydrate permissions without waiting for unrelated roots", async ({ world, user, agent, probe, step, evidence }) => {
   user = user.on(world.app);
   agent = agent.on(world.app);
   probe = probe.on(world.app);
@@ -25,6 +25,11 @@ scopeTest("switching and creating threads hydrate permissions without waiting fo
       .toEqual([{ sessionId: world.unrelated.sessionId, calibration: true, held: true, completed: false }]);
     expect(await probe.hash()).toContain(`/session/${sessionId}`);
     await user.see("composer", { editable: true });
+    const selectedReads = reads.filter((read) => !read.calibration);
+    const heldReads = world.permissionReads().filter((read) => read.sessionId === world.unrelated.sessionId);
+    evidence.recordAssertionEvidence("Selecting a conversation reads only its permissions", `${world.engine}: ${selectedReads.length} selected-root read; ${heldReads.length} unrelated calibration request remains held and incomplete; the selected composer is editable.`,
+      selectedReads.length === 1 && selectedReads[0]?.sessionId === sessionId
+        && heldReads.length === 1 && heldReads[0]?.held === true && heldReads[0]?.completed === false);
     console.info(`[permission-scope] ${world.engine}: 1 scoped read, 0 unrelated reads, calibration still held`);
   };
   await step("switching reads only the selected root, not the other seven roots", async () => {
@@ -40,7 +45,7 @@ scopeTest("switching and creating threads hydrate permissions without waiting fo
   });
 });
 
-test("a parent task surfaces and resolves its child session permission request", async ({ user, probe, step }) => {
+test("a parent task surfaces and resolves its child session permission request", async ({ user, probe, step, evidence }) => {
   await step("The parent exposes the child request", async () => {
     await user.see({ text: /Needs permission/ }, { timeoutMs: 30_000 });
     await user.see({ text: /Requested by Investigate the deployment failure/ });
@@ -60,6 +65,8 @@ test("a parent task surfaces and resolves its child session permission request",
     });
     expect(waiting).toMatchObject({ activity: "waiting-permission", hasPermissionIcon: true, hasShimmer: false });
     expect(waiting).toMatchObject({ childSessionId: expect.stringContaining(":eval-child") });
+    evidence.recordAssertionEvidence("The parent exposes its child's blocked permission", `The child row reports ${waiting.activity}, a permission icon ${waiting.hasPermissionIcon}, and running shimmer ${waiting.hasShimmer}; the child identity matches the arranged delegated session.`,
+      waiting.activity === "waiting-permission" && waiting.hasPermissionIcon && !waiting.hasShimmer && waiting.childSessionId.includes(":eval-child"));
     await user.screenshot();
   });
 
@@ -68,11 +75,14 @@ test("a parent task surfaces and resolves its child session permission request",
     await user.notSee({ text: /Requested by Investigate the deployment failure/ }, { timeoutMs: 15_000 });
     await user.notSee({ text: /Needs permission/ });
     // TODO(primitive): read resolved delegated-task running treatment state.
-    expect(await probe.eval(() => (({
+    const resumed = await probe.eval(() => (({
       permissionPanelVisible: Boolean(document.querySelector<HTMLElement>('[data-permission-source="child-session"]')),
       waitingIconVisible: Boolean(document.querySelector<HTMLElement>('[data-subagent-permission="pending"]')),
       runningTreatmentVisible: Boolean(document.querySelector<HTMLElement>('[data-subagent-activity="shimmer"] .ow-text-shimmer')),
-    })))).toEqual({ permissionPanelVisible: false, waitingIconVisible: false, runningTreatmentVisible: true });
+    })));
+    expect(resumed).toEqual({ permissionPanelVisible: false, waitingIconVisible: false, runningTreatmentVisible: true });
+    evidence.recordAssertionEvidence("Allow once clears the child's blocked state", JSON.stringify(resumed),
+      !resumed.permissionPanelVisible && !resumed.waitingIconVisible && resumed.runningTreatmentVisible);
   });
 });
 
@@ -97,7 +107,7 @@ function text(value: unknown): string {
 
 const stopTest = spec.world(permissionStopRecovery, { timeout: 600_000 });
 
-stopTest("retry recovery and stopping a permission leave other requests and fresh work intact", async ({ world, user, probe, step }) => {
+stopTest("retry recovery and stopping a permission leave other requests and fresh work intact", async ({ world, user, probe, step, evidence }) => {
   const v2 = world.engine === "v2";
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
   const read = async (path: string): Promise<unknown> => {
@@ -163,20 +173,26 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
   await step("fresh work completes once and the unrelated approval remains answerable", async () => {
     await send(world.followup.prompt);
     await user.see({ text: world.followup.reply }, { timeoutMs: 45_000 });
-    expect((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).filter((call) => call.kind === "final")).toHaveLength(1);
+    const freshFinals = (await world.mock.agentRequests({ promptMarker: world.followup.prompt })).filter((call) => call.kind === "final");
+    expect(freshFinals).toHaveLength(1);
     await open(world.other);
     await user.see("Allow once");
     expect(await pending(world.other.sessionId)).toEqual(unrelated);
     await user.click("Allow once");
     await user.see({ text: "Permission work finished." }, { timeoutMs: 45_000 });
     await user.notSee("Allow once");
-    expect(await pending(world.stopped.sessionId)).toEqual([]);
+    const stoppedPending = await pending(world.stopped.sessionId);
+    const stoppedFinals = (await world.mock.agentRequests({ promptMarker: world.stopped.prompt })).filter((call) => call.kind === "final");
+    expect(stoppedPending).toEqual([]);
+    expect(stoppedFinals).toHaveLength(0);
+    evidence.recordAssertionEvidence("Stop preserves the other approval and fresh work completes once", `${freshFinals.length} fresh final reply; ${stoppedPending.length} stopped approvals; ${stoppedFinals.length} final replies for the interrupted prompt. The unchanged unrelated request was answered through Allow once and its reply was visible.`,
+      freshFinals.length === 1 && stoppedPending.length === 0 && stoppedFinals.length === 0);
     await user.screenshot();
   });
 });
 
 const questionTest = spec.world(delegatedQuestionHandoff, { timeout: 600_000 });
-questionTest("a parent answers and stops real child questions, then finishes fresh work without settling an unrelated root question", { timeout: 1_200_000 }, async ({ world, user, probe, step }) => {
+questionTest("a parent answers and stops real child questions, then finishes fresh work without settling an unrelated root question", { timeout: 1_200_000 }, async ({ world, user, probe, step, evidence }) => {
   const v2 = world.engine === "v2";
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
   const sessionPath = (id: string) => `/session/${encodeURIComponent(id)}`;
@@ -422,13 +438,18 @@ questionTest("a parent answers and stops real child questions, then finishes fre
     await complete(unrelated.sessionID, world.unrelated.prompt, "question", `"${world.unrelated.question}"="${world.unrelated.answer}"`, world.child.answer);
     await user.click({ role: "button", label: "Task format Answered" });
     await user.see({ text: /User has answered your questions:.*="Unrelated outline"/ });
-    expect(await pending()).toEqual([]);
+    const remainingQuestions = await pending();
+    expect(remainingQuestions).toEqual([]);
     expect(await transcript(world.root.sessionId)).toEqual(recovered.parent);
     expect(await transcript(child.sessionID)).toEqual(finished.child);
     expect(await transcript(stopped.sessionID)).toEqual(recovered.interrupted);
     expect(await oldRequests()).toEqual(requestsBeforeStop);
-    expect((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).map((call) => call.kind)).toEqual(["final"]);
+    const freshCalls = await world.mock.agentRequests({ promptMarker: world.followup.prompt });
+    expect(freshCalls.map((call) => call.kind)).toEqual(["final"]);
     if (v2) expect(record(await read(sessionPath(stopped.sessionID))).outcome).toBe("interrupted");
+    const completedReplies = recovered.parent.filter((message) => message.completed && message.text === world.followup.reply);
+    evidence.recordAssertionEvidence("The parent stops its child and completes fresh work without changing other conversations", `${freshCalls.length} fresh model request and ${completedReplies.length} completed fresh reply; ${remainingQuestions.length} remaining questions. The original answered child, interrupted child, and parent transcripts stayed exactly unchanged while the unrelated root answered its own request; the old parent and child request vectors also stayed unchanged.`,
+      freshCalls.length === 1 && freshCalls[0]?.kind === "final" && completedReplies.length === 1 && remainingQuestions.length === 0);
     await user.screenshot();
   });
 });
