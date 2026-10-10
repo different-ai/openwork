@@ -312,9 +312,12 @@ export async function diagnoseMcpToolDenies(
   name: string,
   toolIds?: string[],
 ): Promise<McpToolDeny[]> {
-  const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>, { allowInvalid: true });
-  const { data: globalConfig } = await readJsoncFile(resolveGlobalOpenCodeConfigPath(), {} as Record<string, unknown>, { allowInvalid: true });
-  return diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name, toolIds });
+  const projectResult = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>, { allowInvalid: true });
+  const globalResult = await readJsoncFile(resolveGlobalOpenCodeConfigPath(), {} as Record<string, unknown>, { allowInvalid: true });
+  if (projectResult.unreadable || globalResult.unreadable) {
+    throw new Error("MCP tool policy config is unreadable due to OS permission denial; denying tool call to fail closed");
+  }
+  return diagnoseMcpToolDeniesFromConfigs({ projectConfig: projectResult.data, globalConfig: globalResult.data, name, toolIds });
 }
 
 function hasInvalidMcpConfig(config: Record<string, unknown>): boolean {
