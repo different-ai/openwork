@@ -121,8 +121,8 @@ test("an owner shares Anthropic models, can cancel removing a person's or team's
     await owner.click({ role: "link", label: "Manage Anthropic" });
     await owner.see({ role: "button", label: "Remove access for Gateway Teammate" }, { timeoutMs: 60_000 });
     await owner.click({ role: "button", label: "Remove access for Gateway Teammate" });
-    await owner.see({ testId: "confirm-dialog" }, { text: "Remove access for Gateway Teammate?" });
-    await owner.see({ text: "when you save. Access granted another way stays unchanged." });
+    await owner.see({ testId: "confirm-dialog" }, { text: /^Remove access for Gateway Teammate\?\s/ });
+    await owner.see({ text: "Gateway Teammate will lose this direct access to Anthropic when you save. Access granted another way stays unchanged. You can add them back." });
     await owner.see({ role: "button", label: "Remove access" });
     await owner.see({ testId: "confirm-dialog-cancel" });
     const dialog = (await page.dom('[data-testid="confirm-dialog"]')).elements;
@@ -162,8 +162,8 @@ test("an owner shares Anthropic models, can cancel removing a person's or team's
     await owner.click({ role: "link", label: "Manage Anthropic" });
     await owner.see({ role: "button", label: `Remove access for ${world.teamName}` }, { timeoutMs: 60_000 });
     await owner.click({ role: "button", label: `Remove access for ${world.teamName}` });
-    await owner.see({ testId: "confirm-dialog" }, { text: `Remove access for ${world.teamName}?` });
-    await owner.see({ text: `Members of ${world.teamName} will lose this direct access to Anthropic when you save.` });
+    await owner.see({ testId: "confirm-dialog" }, { text: new RegExp(`^Remove access for ${world.teamName}\\?\\s`) });
+    await owner.see({ text: `Members of ${world.teamName} will lose this direct access to Anthropic when you save. Access granted another way stays unchanged. You can add them back.` });
     await owner.screenshot();
     await owner.click({ testId: "confirm-dialog-cancel" });
     await confirmationClosed();
@@ -219,7 +219,7 @@ test("an owner can distinguish slow, failed and empty models, retry them, and a 
   await step("a failed model catalog stops loading and offers Retry", async () => {
     await world.catalogFaults.fail("models");
     await owner.reload();
-    await owner.see({ testId: "gateway-models-error" }, { text: "Could not load this provider's models.", timeoutMs: 30_000 });
+    await owner.see({ testId: "gateway-models-error" }, { text: /^Could not load this provider's models\. Existing configuration has not changed\.\s*Retry$/, timeoutMs: 30_000 });
     await owner.click({ testId: "gateway-models-pick" });
     await owner.see({ testId: "gateway-models-retry" });
     await owner.notSee({ testId: "gateway-models-loading" });
@@ -234,7 +234,7 @@ test("an owner can distinguish slow, failed and empty models, retry them, and a 
   await step("after: a successful empty model catalog says no models are available and protects Save", async () => {
     await world.catalogFaults.empty("models");
     await owner.click({ testId: "gateway-models-retry" });
-    await owner.see({ testId: "gateway-models-empty" }, { text: "No models are available in this provider's catalog.", timeoutMs: 30_000 });
+    await owner.see({ testId: "gateway-models-empty" }, { text: /^No models are available in this provider's catalog\.\s*Retry$/, timeoutMs: 30_000 });
     await owner.see({ testId: "gateway-models-count" }, { text: "0 of 0 selected" });
     await owner.notSee({ testId: "gateway-models-loading" });
     await owner.notSee({ testId: "gateway-models-error" });

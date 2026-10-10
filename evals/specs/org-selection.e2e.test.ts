@@ -159,6 +159,10 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
       },
     });
   };
+  // notSee proves stable absence from now on; first let a closing workspace menu stop painting.
+  const menuCloses = (label: string) => page.eventually(async () => (await page.dom('[data-testid="workspace-switcher-menu"]')).elements.filter((menu) => menu.rect.width > 0 && menu.rect.height > 0).length, {
+    within: 30_000, label, until: (painted) => painted === 0,
+  });
   const openSwitcher = async () => {
     await owner.click(mobileTrigger);
     // Read-only polling, NOT user.see on a popup child: even a visibility check
@@ -224,6 +228,7 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
 
   await step("Escape returns focus to the current workspace and the keyboard can reopen its choices", async () => {
     await owner.press("Escape");
+    await menuCloses("Escape closes the workspace menu");
     await owner.notSee({ testId: "workspace-switcher-menu" });
     let triggers = (await page.dom('[data-testid="workspace-switcher-trigger"]')).elements.filter((element) => element.rect.width > 0);
     expect(triggers).toHaveLength(1);
@@ -236,6 +241,7 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
     expect(reopened.visibleMenuCount).toBe(1);
     expect(reopened.focusInside).toBe(true);
     await owner.press("Escape");
+    await menuCloses("Escape closes the workspace menu");
     await owner.notSee({ testId: "workspace-switcher-menu" });
     triggers = (await page.dom('[data-testid="workspace-switcher-trigger"]')).elements.filter((element) => element.rect.width > 0);
     expect(triggers[0]?.focused).toBe(true);
@@ -253,6 +259,7 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
     await owner.type({ placeholder: "Search workspaces" }, world.last.name, { replace: true });
     await owner.see({ role: "button", label: new RegExp(world.last.name) });
     await owner.click({ role: "button", label: new RegExp(world.last.name) });
+    await menuCloses("the workspace menu closes after a choice");
     await owner.notSee({ testId: "workspace-switcher-menu" });
     await page.eventually(directory, {
       within: 30_000, label: "the selected workspace to become active", until: (current) => current.activeOrgId === world.last.id,
@@ -288,6 +295,7 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
 
   await step("an outside press closes workspace choices and create or join keeps its existing destination", async () => {
     await owner.click({ role: "button", label: "Close menu", nth: 1 });
+    await menuCloses("an outside press closes the workspace menu");
     await owner.notSee({ testId: "workspace-switcher-menu" });
     await owner.click({ role: "button", label: "Open menu" });
     await openSwitcher();

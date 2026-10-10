@@ -298,6 +298,10 @@ threadUI("a member can read why attachments are blocked without opening a file p
       description: `${snapshot.viewportWidth}×${height}; page ${snapshot.documentWidth}px; tooltip ${rect ? `${Math.round(rect.left)},${Math.round(rect.top)}–${Math.round(rect.right)},${Math.round(rect.bottom)}` : "missing"}`,
     };
   };
+  // notSee proves stable absence from now on; first let a dismissed hint stop painting.
+  const hintCloses = (label: string) => probe.eventually(async () => (await probe.dom('[data-workbot-attachment-hint], [role="tooltip"]')).elements.filter((hint) => hint.rect.width > 0 && hint.rect.height > 0).length, {
+    within: 10_000, label, until: (painted) => painted === 0,
+  });
   const noFileAction = () => {
     const witness = world.fileAccessWitness();
     return witness.nativePickers.ready && witness.nativePickers.opened === 0 && witness.fileWrites.length === 0 && witness.allWrites.length === 0;
@@ -332,6 +336,7 @@ threadUI("a member can read why attachments are blocked without opening a file p
       expect(state.portaled && state.reasonInAccessibleName).toBe(true);
       expect(noFileAction()).toBe(true);
       await user.press("Escape");
+      await hintCloses("Escape dismisses the hover hint");
       await user.notSee(reason);
       await user.see(composer, { editable: true });
     });
@@ -346,6 +351,7 @@ threadUI("a member can read why attachments are blocked without opening a file p
       const layout = await tooltipLayout(viewport.height);
       const state = await world.blockedAttachmentState();
       await user.press("Escape");
+      await hintCloses("Escape dismisses the attachment hint");
       await user.notSee(reason);
       const after = await world.blockedAttachmentState();
       evidence.recordAssertionEvidence("Escape dismisses the keyboard hint without moving focus or accessing files", `${layout.description}; blocked control focused before ${focused}, after Escape ${after.focused}; ${state.nativeFileInputs} native file inputs; ${world.fileAccessWitness().fileWrites.length} file writes`, layout.fits && layout.noSidewaysScroll && focused && state.reasonInAccessibleName && after.focused && noFileAction());
@@ -357,6 +363,7 @@ threadUI("a member can read why attachments are blocked without opening a file p
     await step(`clicking the blocked attachment control explains why at ${viewport.width}×${viewport.height}`, async () => {
       await user.hover(composer);
       await user.click(composer);
+      await hintCloses("moving to the composer hides the attachment hint");
       await user.notSee(reason);
       const before = world.fileAccessWitness().blockedPointerClicks;
       const inputKind = viewport.width === 320 ? "touch" : "mouse";
@@ -369,6 +376,7 @@ threadUI("a member can read why attachments are blocked without opening a file p
       const layout = await tooltipLayout(viewport.height);
       const state = await world.blockedAttachmentState();
       await user.press("Escape");
+      await hintCloses("Escape dismisses the attachment hint");
       await user.notSee(reason);
       const after = await world.blockedAttachmentState();
       const witness = world.fileAccessWitness();

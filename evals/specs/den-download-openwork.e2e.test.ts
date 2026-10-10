@@ -10,6 +10,10 @@ const download = { testId: "den-download-openwork" };
 const popover = { testId: "workspace-install-popover" };
 const copy = { testId: "workspace-install-copy" };
 const open = { testId: "workspace-install-open" };
+// notSee proves stable absence from now on; first let a dismissed layer stop painting.
+async function closes(probe: { dom: (selector: string) => Promise<{ elements: Array<{ rect: { width: number; height: number } }> }>; eventually: <T>(read: () => Promise<T>, options: { within: number; label: string; until: (value: T) => boolean }) => Promise<T> }, selector: string, label: string) {
+  await probe.eventually(async () => (await probe.dom(selector)).elements.filter((element) => element.rect.width > 0 && element.rect.height > 0).length, { within: 10_000, label, until: (painted) => painted === 0 });
+}
 const clipboardPermissionMessage = "Your browser didn't give permission to copy. Allow clipboard access and try again, or open the install page.";
 
 admin("an admin shares and opens a workspace download from the shared header", async ({ world, user, probe, evidence, step }) => {
@@ -85,6 +89,7 @@ admin("an admin shares and opens a workspace download from the shared header", a
     evidence.recordAssertionEvidence("The shared header keeps the panel inside the narrow viewport", `route=/dashboard/members; panel=${panel.rect.left}..${panel.rect.right}; viewport=${geometry.viewportWidth}`, panel.rect.left >= 0 && panel.rect.right <= geometry.viewportWidth);
     await user.screenshot();
     await user.press("Escape");
+    await closes(probe, '[data-testid="workspace-install-popover"]', "Escape closes the install panel");
     await user.notSee(popover);
   });
 
@@ -108,6 +113,7 @@ admin("an admin shares and opens a workspace download from the shared header", a
       await user.click({ testId: "den-command-palette-trigger", nth: width >= 1024 ? 0 : 1 });
       await user.see({ testId: "den-command-palette-input" });
       await user.press("Escape");
+      await closes(probe, '[data-testid="den-command-palette"]', "Escape closes the command palette");
       await user.notSee({ testId: "den-command-palette" });
       const restored = await probe.eventually(() => probe.dom('header [data-testid="den-command-palette-trigger"]'), {
         within: 5000, label: "focus returns to the visible search control", until: (value) => value.elements.some((element) => element.focused && element.rect.width > 0),

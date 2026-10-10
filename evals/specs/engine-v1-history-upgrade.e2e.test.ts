@@ -128,6 +128,8 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
   });
 
   await step("before: the member can still read an existing chat and keep an unsent draft", async () => {
+    // The previous step leaves the small window, where the sidebar collapses; return to the normal desktop size.
+    await user.resizeViewport({ ...viewports[0]!, deviceScaleFactor: 1 });
     if (world.fixture) {
       const first = world.chats[0]!;
       await user.click({ testId: `sidebar-session-${first.id}` });
@@ -252,6 +254,8 @@ test("a member chooses a chat upgrade: chats are copied with a backup and OpenWo
       await user.screenshot();
     });
   }
+  // The small window collapses the sidebar; later steps open chats from it at the normal desktop size.
+  await user.resizeViewport({ ...viewports[0]!, deviceScaleFactor: 1 });
 
   if (world.fixture) {
     await step("a failed background copy brings back a recovery decision without changing the original chats", async () => {

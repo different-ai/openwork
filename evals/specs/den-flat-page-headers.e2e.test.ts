@@ -68,6 +68,11 @@ test("an owner gets compact, readable page titles only in their rollout workspac
     await owner.see({ testId: `admin-org-row-${world.slug}` }, { timeoutMs: 30_000 });
     await owner.see({ testId: "admin-capability-denFlatPageHeaders" });
   };
+  // The switcher shows the choice at once; Den makes it the browser session's workspace a moment later.
+  const waitForActiveWorkspace = (organizationId: string) => page.eventually(async () => {
+    const listed = await probe.api(world.owner, "/v1/me/orgs");
+    return isRecord(listed.body) ? listed.body.activeOrgId : undefined;
+  }, { within: 30_000, label: "the chosen workspace to become the session's active workspace", until: (active) => active === organizationId });
   const waitForOverride = async (enabled: boolean) => {
     await page.eventually(async () => feature((await probe.api(world.den.admin, adminCapabilities)).body, "capabilities"), {
       within: 30_000, label: `compact header rollout to be ${enabled ? "on" : "off"}`, until: (value) => value === enabled,
@@ -203,7 +208,9 @@ test("an owner gets compact, readable page titles only in their rollout workspac
     await owner.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     await owner.click({ testId: "workspace-switcher-trigger" });
     await owner.click({ role: "button", label: new RegExp(`^${world.names.otherWorkspace}`) });
-    await owner.see({ testId: "workspace-switcher-trigger" }, { text: world.names.otherWorkspace, timeoutMs: 60_000 });
+    // The trigger also carries the workspace initials and role around its name.
+    await owner.see({ testId: "workspace-switcher-trigger" }, { text: new RegExp(`(^|\\n)${world.names.otherWorkspace}(\\n|$)`), timeoutMs: 60_000 });
+    await waitForActiveWorkspace(world.otherOrgId);
     await owner.navigate(world.url("/dashboard/members"));
     await owner.see({ role: "heading", label: "Members" }, { timeoutMs: 60_000 });
     await owner.notSee({ text: "Header Member" });
@@ -224,7 +231,8 @@ test("an owner gets compact, readable page titles only in their rollout workspac
   await step("turning the workspace rollout off restores the same owner's banner without changing data or navigation", async () => {
     await owner.click({ testId: "workspace-switcher-trigger" });
     await owner.click({ role: "button", label: new RegExp(`^${world.names.workspace}`) });
-    await owner.see({ testId: "workspace-switcher-trigger" }, { text: world.names.workspace, timeoutMs: 60_000 });
+    await owner.see({ testId: "workspace-switcher-trigger" }, { text: new RegExp(`(^|\\n)${world.names.workspace}(\\n|$)`), timeoutMs: 60_000 });
+    await waitForActiveWorkspace(world.orgId);
     await openOrganizationControls();
     await owner.click({ testId: "admin-capability-denFlatPageHeaders" });
     await waitForOverride(false);

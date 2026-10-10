@@ -109,6 +109,9 @@ export async function denFlatPageHeaders(seed: Seed) {
   const otherOrg = await createOrg(den, names.otherWorkspace);
 
   const web = await seed.web({ den, startPath: "/", headless: true, viewport: { width: 1280, height: 900 } });
+  // Leave the anonymous page first: if it observed the session installed below, it would queue the post-sign-in
+  // organization picker for this tab instead of letting the arranged workspace selection stand.
+  await web.client.send("Page.navigate", { url: "about:blank" });
   // Workspace switching uses Better Auth's cookie session, not the bearer token
   // seeded by signedInAs. Arrange one real server-issued owner cookie before acts.
   const signedIn = await seed.api(den.admin, "/api/auth/sign-in/email", {
@@ -118,6 +121,9 @@ export async function denFlatPageHeaders(seed: Seed) {
   const cookie = signedIn.response.headers.getSetCookie().find((value) => value.includes("session_token="))?.split(";")[0] ?? "";
   const separator = cookie.indexOf("=");
   if (!signedIn.response.ok || separator < 1) throw new Error(`Header owner sign-in failed: HTTP ${signedIn.response.status}`);
+  if (!isRecord(signedIn.body) || typeof signedIn.body.token !== "string") throw new Error("Header owner sign-in returned no session token");
+  // The browser's own session, so specs can wait for a workspace switch to persist before reloading.
+  const owner = { ...den.admin, token: signedIn.body.token };
   const applied = await web.client.send("Network.setCookie", {
     name: cookie.slice(0, separator), value: cookie.slice(separator + 1),
     url: den.ref.webUrl, path: "/", httpOnly: true, secure: new URL(den.ref.webUrl).protocol === "https:",
@@ -130,7 +136,7 @@ export async function denFlatPageHeaders(seed: Seed) {
   await web.client.send("Page.navigate", { url: new URL("/dashboard/members", den.ref.webUrl).toString() });
 
   return {
-    den, web, names, orgId, slug, otherOrgId: otherOrg.id,
+    den, web, owner, names, orgId, slug, otherOrgId: otherOrg.id,
     scope: { "x-openwork-org-id": orgId },
     measurements: () => headerMeasurements(web),
     url: (path: string) => new URL(path, den.ref.webUrl).toString(),
