@@ -257,8 +257,8 @@ export interface NativeSessionDomain {
 }
 
 export interface NativeModelDomain {
-  list(input?: { location: string }, options?: NativeRequestOptions): Promise<{ readonly location: NativeLocation; readonly data: readonly ModelInfo[] }>
-  default(input?: { location: string }, options?: NativeRequestOptions): Promise<{ readonly location: NativeLocation; readonly data?: ModelInfo }>
+  list(input?: { location?: { directory?: string } }): Promise<{ readonly location: NativeLocation; readonly data: readonly ModelInfo[] }>
+  default(input?: { location?: { directory?: string } }): Promise<{ readonly location: NativeLocation; readonly data?: ModelInfo }>
 }
 
 export interface NativePermissionDomain {

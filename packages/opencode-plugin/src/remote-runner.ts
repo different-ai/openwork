@@ -55,7 +55,17 @@ interface Active {
   inventoryAt: number
 }
 
+export interface RemoteRunnerStatus {
+  state: "waiting" | "connected" | "retrying" | "closed"
+  phase: "credentials" | "registration" | "inventory" | "recovery" | "work"
+  failures: number
+  observedAt: number
+  /** Stable local diagnosis; never contains provider errors, credentials, or prompts. */
+  error: string | null
+}
+
 export interface RemoteRunnerController {
+  inspectStatus(): RemoteRunnerStatus
   /** Starts in the background. Never wait for Den from plugin setup or a prompt hook. */
   start(): void
   /** Call immediately on credential events; cancel old in-flight work before resolving credentials again. */
@@ -95,6 +105,15 @@ export function createRemoteRunnerController(input: {
   let flight: Promise<void> | null = null
   let queued = false
   let failures = 0
+  let phase: RemoteRunnerStatus["phase"] = "credentials"
+  let status: RemoteRunnerStatus = { state: "waiting", phase, failures: 0, observedAt: now(), error: null }
+  const statusKey = `remoteSessions/status/${hash(ctx.location.directory)}`
+  const recordStatus = async (state: RemoteRunnerStatus["state"], error: string | null = null) => {
+    status = { state, phase, failures, observedAt: now(), error }
+    // Health recording is best-effort, unlike the execution journal. A broken
+    // diagnostic store must not turn an acknowledged native effect into failure.
+    await hostRead(() => ctx.storage.set(statusKey, { ...status }), AbortSignal.timeout(1000)).catch(() => {})
+  }
 
   async function account(signal: AbortSignal): Promise<Account | null> {
     const connection = await hostRead(() => ctx.integration.connection.active(INTEGRATION_ID), signal)
@@ -186,6 +205,7 @@ export function createRemoteRunnerController(input: {
   }
 
   async function cycle(signal: AbortSignal): Promise<void> {
+    phase = "credentials"
     let value: Account | null
     try { value = await account(signal) }
     catch (error) {
@@ -201,10 +221,14 @@ export function createRemoteRunnerController(input: {
     if (!state) return
     state.account = value
     signal.throwIfAborted()
-    if (!state.token || state.tokenExpiresAt <= now() + 2 * 60_000 || now() - state.registeredAt >= RENEW_MS) await register(state, signal)
+    if (!state.token || state.tokenExpiresAt <= now() + 2 * 60_000 || now() - state.registeredAt >= RENEW_MS) {
+      phase = "registration"
+      await register(state, signal)
+    }
     const transport = createRemoteSessionTransport({ baseUrl: value.session.apiBaseUrl, token: () => state.token,
       fetch: (url, init) => fetcher(String(url), init), timeoutMs: 10_000 })
     if (state.inventoryAt === 0 || now() - state.inventoryAt >= INVENTORY_MS) {
+      phase = "inventory"
       const workspace = await hostRead(() => nativeWorkspace(ctx, state.workspaceId, signal), signal)
       const published = await runnerRequest(state, "/v1/session-runners/inventory", signal, {
         computer: { label: (input.label?.trim() || hostname() || "OpenCode").slice(0, 120), platform: platform(), appVersion: ctx.app.version },
@@ -217,11 +241,13 @@ export function createRemoteRunnerController(input: {
       state.inventoryAt = now()
     }
     // Restore receipts and pending outboxes before fetching more claimed work.
+    phase = "recovery"
     await state.runner.reconcile(signal)
     const journal = await state.runner.inspect()
     if (journal.commands.length >= 200 || journal.requests.length >= 200) {
       await state.runner.prune({ retainCommands: 128, retainRequests: 128 })
     }
+    phase = "work"
     const response = await runnerRequest(state, "/v1/session-runners/work", signal)
     signal.throwIfAborted()
     if (!isRecord(response) || !Array.isArray(response.items) || response.items.length > 10) throw new Error("Invalid session-runner work response.")
@@ -252,12 +278,16 @@ export function createRemoteRunnerController(input: {
     cancelTimer = null
     const controller = new AbortController()
     operation = controller
-    flight = cycle(controller.signal).then(() => { failures = 0 }).catch(error => {
+    flight = cycle(controller.signal).then(async () => {
+      failures = 0
+      await recordStatus(active ? "connected" : "waiting")
+    }).catch(async error => {
       if (!controller.signal.aborted) {
         failures++
         // Server-side feature disable/revocation withdraws approval immediately. Keep journals for safe reconnect.
         if (error instanceof DenAuthError || error instanceof RemoteSessionHttpError && (error.status === 401 || error.status === 403)
           || error instanceof DenRequestError && (error.status === 403 || error.status === 404)) active = null
+        await recordStatus("retrying", `${phase}_failed`)
       }
     }).finally(() => {
       flight = null
@@ -271,6 +301,7 @@ export function createRemoteRunnerController(input: {
   }
 
   return {
+    inspectStatus() { return { ...status } },
     start() { if (started || disposed) return; started = true; void poll() },
     poll,
     credentialsChanged() {
@@ -289,6 +320,7 @@ export function createRemoteRunnerController(input: {
       active = null
       await ownership?.release()
       ownership = null
+      await recordStatus("closed")
     },
   }
 }

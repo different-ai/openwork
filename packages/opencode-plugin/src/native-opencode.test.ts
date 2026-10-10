@@ -174,5 +174,7 @@ test("inventory uses native location-scoped model list/default and public model 
   assert.deepEqual(workspace.defaultModel, { providerId: "local-provider", modelId: "local-model" })
   assert.deepEqual(workspace.models, [{ providerId: "local-provider", modelId: "local-model", name: "Local model" }])
   assert.deepEqual(host.calls.filter(call => call.method.startsWith("model.")).map(call => call.input),
-    [{ location: host.ctx.location.directory }, { location: host.ctx.location.directory }])
+    [undefined, undefined])
+  await assert.rejects(async () => { await Reflect.apply(host.ctx.model.list, undefined, [{ location: host.ctx.location.directory }]) }, /LocationQuery/)
+  await assert.rejects(async () => { await Reflect.apply(host.ctx.model.default, undefined, [{ location: host.ctx.location.directory }]) }, /LocationQuery/)
 })

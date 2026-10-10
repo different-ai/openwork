@@ -80,6 +80,28 @@ test("registers a standalone remote-only runner and reports just the approved na
   assert.equal(f.released, 1)
 })
 
+test("a native inventory failure is inspectable without leaking its exception or silently claiming work", async () => {
+  const f = fixture()
+  const readModels = f.host.ctx.model.list
+  f.host.ctx.model.list = async () => { throw new Error("Native decoder failed: Bearer private-test-credential") }
+  await f.controller.poll()
+  const status = f.controller.inspectStatus()
+  assert.deepEqual(status, { state: "retrying", phase: "inventory", failures: 1, observedAt: f.now, error: "inventory_failed" })
+  const recorded = [...f.host.storage.entries()].find(([key]) => key.startsWith("remoteSessions/status/"))?.[1]
+  assert.deepEqual(recorded, status)
+  assert.ok(!JSON.stringify(recorded).includes("private-test-credential"))
+  assert.equal(nativePrompts(f), 0)
+  assert.ok(!f.calls.some(call => call.path.endsWith("/claim")))
+  f.host.ctx.model.list = readModels
+  await f.controller.poll()
+  assert.equal(f.controller.inspectStatus().state, "connected")
+  assert.equal(f.controller.inspectStatus().error, null)
+  assert.equal(f.controller.inspectStatus().failures, 0)
+  assert.equal(nativePrompts(f), 1)
+  await f.controller.close()
+  assert.equal(f.controller.inspectStatus().state, "closed")
+})
+
 test("renewing the runner bearer keeps the same identity, journal and watcher without replaying the prompt", async () => {
   const f = fixture()
   await f.controller.poll()

@@ -1,4 +1,14 @@
 import type { ConnectionInfo, CredentialValue, Json, ModelInfo, NativeMessage, NativePluginContext, NativeSessionInfo } from "./opencode.ts"
+import { isRecord } from "./den.ts"
+
+/** Mirror native 2.0.26's LocationQuery decoder, not a permissive mock. */
+function modelLocationQuery(input: unknown): void {
+  if (input === undefined) return
+  if (!isRecord(input) || (input.location !== undefined && (!isRecord(input.location)
+    || (input.location.directory !== undefined && typeof input.location.directory !== "string")))) {
+    throw new Error("Invalid native LocationQuery")
+  }
+}
 
 export function testModel(): ModelInfo {
   return { id: "local-model", modelID: "upstream-model", providerID: "local-provider", name: "Local model", enabled: true,
@@ -58,8 +68,8 @@ export function createNativeHost(directory = process.cwd()) {
       interrupt: async input => { calls.push({ method: "session.interrupt", input }); return { interrupted: true } },
     },
     model: {
-      list: async input => { calls.push({ method: "model.list", input }); return { location: { directory }, data: [testModel()] } },
-      default: async input => { calls.push({ method: "model.default", input }); return { location: { directory }, data: testModel() } },
+      list: async input => { modelLocationQuery(input); calls.push({ method: "model.list", input }); return { location: { directory }, data: [testModel()] } },
+      default: async input => { modelLocationQuery(input); calls.push({ method: "model.default", input }); return { location: { directory }, data: testModel() } },
     },
     permission: { list: async input => pendingPermissions ? [{ id: "perm_example", sessionID: input.sessionID }] : [] },
   }

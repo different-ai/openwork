@@ -51,8 +51,10 @@ function admission(value: unknown): Admission | null {
 export async function nativeWorkspace(ctx: NativePluginContext, workspaceId: string, signal: AbortSignal): Promise<InventoryWorkspace> {
   signal.throwIfAborted()
   const [models, selected] = await Promise.all([
-    ctx.model.list({ location: ctx.location.directory }, { signal }),
-    ctx.model.default({ location: ctx.location.directory }, { signal }),
+    // The Promise host pins these reads to its own Location. Its LocationQuery
+    // decoder accepts an object, never a directory string; no override is needed.
+    ctx.model.list(),
+    ctx.model.default(),
   ])
   signal.throwIfAborted()
   // Location responses carry their scope. Never advertise some other loaded Location's inventory.
