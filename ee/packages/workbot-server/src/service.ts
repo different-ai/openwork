@@ -48,6 +48,17 @@ export type WorkbotDeps = {
   client: HeadlessRunnerClient | null
   /** Whether Workbot may set up recurring work (Automations on the headless runner) for this organization. */
   canSchedule: (organizationId: string) => Promise<boolean>
+  /**
+   * The organization's default model for Workbot (Den's workbotDefaultModel), or null for the runner's default.
+   * Unset: the runner's default.
+   */
+  model?: (organizationId: string) => Promise<string | null>
+}
+
+/** The model a new turn runs on, as `sendTurn` takes it: nothing means the runner's default. */
+async function modelFor(actor: WorkbotActor, deps: WorkbotDeps): Promise<{ model?: string }> {
+  const model = deps.model ? await deps.model(actor.organizationId).catch(() => null) : null
+  return model ? { model } : {}
 }
 
 const personKey = (organizationId: string, memberId: string) => createHash("sha256").update(`workbot:${organizationId}:${memberId}`).digest("hex").slice(0, 40)
@@ -240,7 +251,7 @@ export async function startWorkbotGreeting(actor: WorkbotActor, input: { timeZon
   await ensureSession(actor, timeZone, deps)
   const sent = await client.sendTurn(
     { userId: actor.userId, organizationId: actor.organizationId },
-    { sessionId, messageId: GREETING_RUNNER_ID, prompt: greetingPrompt({ firstName: actor.firstName, timeZone }), readOnly: true },
+    { sessionId, messageId: GREETING_RUNNER_ID, prompt: greetingPrompt({ firstName: actor.firstName, timeZone }), readOnly: true, ...(await modelFor(actor, deps)) },
   )
   if (!sent.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return { started: true }
@@ -319,7 +330,7 @@ export async function sendWorkbotMessage(
   // sent while Workbot answers interrupts that answer, which wraps up keeping what it said, and this one is answered next.
   const sent = await client.sendTurn(
     { userId: actor.userId, organizationId: actor.organizationId },
-    { sessionId, messageId: `${WORKBOT_MESSAGE_PREFIX}${input.id}`, prompt: input.text, attachments: input.attachments, interrupt: true },
+    { sessionId, messageId: `${WORKBOT_MESSAGE_PREFIX}${input.id}`, prompt: input.text, attachments: input.attachments, interrupt: true, ...(await modelFor(actor, deps)) },
   )
   if (!sent.ok && sent.status === 400 && sent.error === "unknown_file") return { ok: false as const, code: "unknown_file" as const }
   if (!sent.ok && sent.status === 429) return { ok: false as const, code: "too_many_queued" as const }
@@ -351,7 +362,7 @@ export async function retryWorkbotMessage(actor: WorkbotActor, input: { id: stri
   const text = read.value.messages.find((message) => message.role === "user" && message.messageId === messageId)
   const sent = await client.sendTurn(
     { userId: actor.userId, organizationId: actor.organizationId },
-    { sessionId, messageId, prompt: text?.role === "user" && text.text.trim() ? text.text : "Try again." },
+    { sessionId, messageId, prompt: text?.role === "user" && text.text.trim() ? text.text : "Try again.", ...(await modelFor(actor, deps)) },
   )
   if (!sent.ok && sent.status === 429) return { ok: false as const, code: "too_many_queued" as const }
   if (!sent.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")

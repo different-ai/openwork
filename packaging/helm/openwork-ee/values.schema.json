@@ -188,6 +188,16 @@
               ],
               "description": "Workbot: side chats: Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. Renders DEN_FEATURE_WORKBOT_SIDE_CHATS."
             },
+            "workbotDefaultModel": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: default model: Organization admins choose, in Manage › Workbot, the model Workbot, the Slack assistant and cloud Automations set to the cloud default answer with. Needs Workbot. Renders DEN_FEATURE_WORKBOT_DEFAULT_MODEL."
+            },
             "litellm": {
               "enum": [
                 "",

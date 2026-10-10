@@ -199,6 +199,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "sso.ts": bridged(["organization.sso.connection_registered", "organization.sso.connection_enabled", "organization.sso.connection_disabled", "organization.sso.connection_deleted"], ["sso_connection"]),
   "teams.ts": routes("Team and membership management."),
   "web-origins.ts": bridged(["organization.web_origin.approved", "organization.web_origin.removed"], ["web_origin"]),
+  "workbot-settings.ts": routes("Workbot default model setting (organization metadata)."),
 }
 
 function boundary(limitations: string): AuditCoverageDeclaration {

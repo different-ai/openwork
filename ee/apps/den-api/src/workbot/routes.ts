@@ -20,6 +20,8 @@ import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { createInternalMcpPrincipalHeader } from "../session.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
 import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
+import { readWorkbotModel } from "@openwork/types/den/workbot-settings"
+import { organizationDefaultModel } from "./model.js"
 
 /**
  * What Den tells the Workbot app (ee/apps/workbot) about a signed-in person. Workbot calls these server-to-server
@@ -42,6 +44,11 @@ const sessionSchema = z.object({
   calendar: z.boolean().optional(),
   /** The person can start side chats next to their main chat (the workbotSideChats feature). */
   sideChats: z.boolean(),
+  /**
+   * The model Workbot's turns run on: the organization's default model (the workbotDefaultModel feature). Null, and
+   * omitted by older Dens, means the headless runner's default.
+   */
+  model: z.string().nullable().optional(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
@@ -215,6 +222,11 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const { organization, user, memberId } = resolved
       const canSchedule = (await cloudAutomationRuntime(organization.id).catch(() => "web")) === "headless"
       const features = await getOrganizationFeatures(organization.id)
+      // A failed read must not sign anyone out of Workbot: it answers on the runner's default instead.
+      const model = await organizationDefaultModel(organization.id, {
+        features: async () => features,
+        chosenModel: async () => readWorkbotModel(organization.metadata),
+      }).catch(() => null)
       return c.json({
         user,
         organization: { id: organization.id, name: organization.name, brandAppName: readBrandAppName(organization.metadata) },
@@ -223,6 +235,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         canSchedule,
         calendar: features.workbot && features.workbotCalendar,
         sideChats: features.workbot && features.workbotSideChats,
+        model,
       })
     },
   )

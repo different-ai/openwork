@@ -111,6 +111,8 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/org/web-origins", "tenant_read", "web_origin.list", "web_origin.management", "web_origin", null),
   member("POST", "/v1/org/web-origins", "tenant_change", "web_origin.approve", "web_origin.management", "web_origin", null, { changeEvidence: DOMAIN("web-origins"), notes: "Legacy organization.web_origin.approved." }),
   member("DELETE", "/v1/org/web-origins/:webOriginId", "tenant_change", "web_origin.remove", "web_origin.management", "web_origin", "webOriginId", { changeEvidence: DOMAIN("web-origins"), notes: "Legacy organization.web_origin.removed." }),
+  member("GET", "/v1/org/workbot-settings", "tenant_read", "workbot.settings.read", "organization.settings", "organization", null),
+  member("PUT", "/v1/org/workbot-settings", "tenant_change", "workbot.settings.update", "organization.settings", "organization", null, { notes: "Sets organization metadata workbot.model (the default model for Workbot, the Slack assistant and cloud-default Automations); the headless runner model catalog read is incidental." }),
 
   // SCIM management
   member("GET", "/v1/scim", "tenant_read", "scim.connection.read", "scim.configuration", "scim_connection", null),

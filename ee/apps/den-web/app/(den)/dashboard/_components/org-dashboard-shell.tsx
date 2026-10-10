@@ -26,6 +26,7 @@ import {
   getDiagnosticsRoute,
   getDeploymentsRoute,
   getDesktopPoliciesRoute,
+  getWorkbotSettingsRoute,
   getOrgAccessFlags,
   orgFeatureEnabled,
   getIntegrationsRoute,
@@ -264,6 +265,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop policies";
   }
+  if (pathname.startsWith(getWorkbotSettingsRoute(orgSlug))) {
+    return "Workbot";
+  }
   if (
     pathname.startsWith(getMarketplacesRoute(orgSlug))
     || pathname.startsWith(getBrandAppearanceRoute(orgSlug))
@@ -465,6 +469,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     runtimeConfigLoaded,
     permissionsEnabled: orgFeatureEnabled(orgContext, "permissions"),
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
+    workbotSettings: orgContext?.capabilities.workbot === true && orgFeatureEnabled(orgContext, "workbotDefaultModel"),
   });
 
   const orgSwitcher = isSingleOrgMode ? (

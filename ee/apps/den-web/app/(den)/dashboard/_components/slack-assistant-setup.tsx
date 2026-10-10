@@ -1,8 +1,10 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
+import { getWorkbotSettingsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
@@ -18,6 +20,7 @@ const setupSchema = z.object({
   shadowMode: z.boolean(),
   dailyLimit: z.number(),
   model: z.string().nullable().default(null),
+  modelManagedByOrganization: z.boolean().default(false),
   defaultModel: z.string().nullable().default(null),
   progressUpdates: z.boolean().default(false),
   models: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
@@ -35,7 +38,7 @@ const setupSchema = z.object({
   manifest: z.unknown(),
 });
 export function SlackAssistantSetup({ connection }: { connection: ExternalMcpConnection }) {
-  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const client = useQueryClient();
   const [secret, setSecret] = useState("");
   const [channels, setChannels] = useState<string | null>(null);
@@ -211,7 +214,14 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             Access follows this connector’s workspace, team, and member grants. Turning the assistant off stops
             accepting new requests.
           </p>
-          {data.models.length > 0 ? (
+          {data.models.length > 0 && data.modelManagedByOrganization ? (
+            <p className="text-sm" data-testid="slack-assistant-model">
+              Model: {data.models.find((m) => m.id === data.model)?.name ?? data.model ?? `Default${data.defaultModel ? ` (${data.models.find((m) => m.id === data.defaultModel)?.name ?? data.defaultModel})` : ""}`}{" "}
+              <Link href={getWorkbotSettingsRoute(orgSlug)} className="text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline">
+                Change in Manage › Workbot
+              </Link>
+            </p>
+          ) : data.models.length > 0 ? (
             <label className="block text-sm">
               Model
               <select

@@ -30,6 +30,7 @@ import {
 } from "./headless.js"
 import { createLiveFeeds, type LiveFeedSource } from "./live.js"
 import { createSlackEventLoop } from "./queue.js"
+import { slackAssistantModel } from "../workbot/model.js"
 import {
   slackAssistantEnabledForInstallation,
   admitSlackRun,
@@ -365,7 +366,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     },
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
-    model: installation.model ?? undefined,
+    model: cp.phase === "send" ? await slackAssistantModel(installation) : undefined,
     settings: slackSessionSettings(cp.workbot),
     ...(cp.workbot ? { live: deps.live } : {}),
     renew: () => renewSlackLease(event),

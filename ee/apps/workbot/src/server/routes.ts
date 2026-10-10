@@ -90,6 +90,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         maxTokenTtlMs: RUN_TOKEN_TTL_MS,
       }),
       canSchedule: async () => member.den.canSchedule,
+      model: async () => member.den.model,
     })
 
   const enabled = (c: Context<AppEnv>) => c.get("member").den.enabled
