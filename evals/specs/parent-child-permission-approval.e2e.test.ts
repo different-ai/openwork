@@ -331,8 +331,20 @@ questionTest("a parent answers and stops real child questions, then finishes fre
       name: world.delegationTool, status: "completed",
       metadata: expect.objectContaining(v2 ? { sessionID: child.sessionID } : { sessionId: child.sessionID }),
     }));
+    // The completed parent task is a doorway into the child's chat, not an
+    // inline copy of its answer. Inspect the owned child's question result
+    // through the normal navigation and disclosure controls.
+    await user.click({ role: "button", label: "Choose delegated task format. Open sub-agent chat" });
+    await probe.eventually(() => probe.hash(), {
+      within: 30_000, label: "the completed task opens its original child conversation",
+      until: (hash) => hash.includes(`/session/${child.sessionID}`),
+    });
+    await user.click({ role: "button", label: "Task format Answered" });
     await user.see({ text: /User has answered your questions:.*="Child checklist"/ });
     await user.notSee({ role: "button", label: /^Child checklist/ });
+    await user.notSee({ text: world.unrelated.question });
+    await open(world.root.sessionId, "Delegated question parent");
+    await user.see("composer", { editable: true, timeoutMs: 30_000 });
     expect(await probe.hash()).toContain(`/session/${world.root.sessionId}`);
     expect(await pending()).toEqual([unrelated]);
     expect((await world.mock.agentRequests({ promptMarker: world.unrelated.prompt })).some((call) => call.kind === "final")).toBe(false);
@@ -402,6 +414,7 @@ questionTest("a parent answers and stops real child questions, then finishes fre
     await user.notSee({ text: world.child.question });
     await user.click({ role: "button", label: /^Unrelated outline/ });
     await complete(unrelated.sessionID, world.unrelated.prompt, "question", `"${world.unrelated.question}"="${world.unrelated.answer}"`, world.child.answer);
+    await user.click({ role: "button", label: "Task format Answered" });
     await user.see({ text: /User has answered your questions:.*="Unrelated outline"/ });
     expect(await pending()).toEqual([]);
     expect(await transcript(world.root.sessionId)).toEqual(recovered.parent);
