@@ -1,4 +1,5 @@
 import { openworkReadTransport, type OpenworkEngine, type OpenworkEngineReader } from "./openwork-read-transport.js";
+import { assertSessionContinuation } from "./opencode-stop-fence-client.js";
 import { createV2ReadAdapter, readV2SessionActivity } from "../opencode-v2-read-adapter.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
@@ -1346,6 +1347,10 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
   "tool.execute.before": fulfillGmailAttachments.before,
   event: fulfillGmailAttachments.event,
   dispose: fulfillGmailAttachments.dispose,
+  "chat.params": async (input: { sessionID: string }) => {
+    if (!serverUrl() || !serverToken()) return;
+    await assertSessionContinuation(postJson, { directory: engineMcpStatusDirectory, sessionID: input.sessionID });
+  },
   "chat.headers": async (input: { sessionID: string; model: { providerID: string }; message: { id: string } }, output: { headers: Record<string, string> }) => {
     // OpenWork Models and free Auto: the desktop relay checks the session against the task the user started.
     if (input.model.providerID !== "openwork" && input.model.providerID !== "openwork-free") return;

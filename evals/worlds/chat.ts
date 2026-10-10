@@ -238,7 +238,16 @@ export async function configureProvider(
           const configured = configuredName ?? catalogName ?? modelId;
           // The app never shows an opaque gateway id as a name: it reads "<Provider> model" instead.
           const name = /^(gwm|ipr)_/.test(configured) ? (providerName ? providerName + " model" : "Model") : configured;
-          const chip = document.querySelector<HTMLElement>('button[aria-label="Change model"]');
+          // Retained conversations keep their composers mounted. Read the
+          // model a person can actually see, not a hidden earlier workspace's
+          // first button (which can legitimately still say "Select model").
+          const chip = [...document.querySelectorAll<HTMLElement>('button[aria-label="Change model"]')].find((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight
+              && rect.right > 0 && rect.left < innerWidth && style.display !== "none"
+              && style.visibility !== "hidden" && !element.closest('[aria-hidden="true"]');
+          });
           const chipText = chip?.innerText.trim() ?? "";
           const stored = localStorage.getItem("openwork.defaultModel");
           observed = JSON.stringify({ composerModel: chipText, storedDefault: stored, expected: { name, ref: expectedRef } });

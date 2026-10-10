@@ -262,10 +262,25 @@ questionTest("a parent answers and stops real child questions, then finishes fre
 
   const delegate = async () => {
     await open(world.root.sessionId, "Delegated question parent");
-    // The hash changes before the selected conversation finishes rendering.
-    // Wait for the parent's composer before the strict absence observation;
-    // notSee requires absence throughout its interval, rather than waiting
-    // for the previous conversation's question to disappear.
+    // The hash and an editable composer can precede the conversation switch.
+    // Wait for the rendered surface to own the parent and clear the previous
+    // root's question before starting the strict, continuous absence check.
+    await probe.eventually(() => probe.eval(() => ({
+      sessionIds: [...document.querySelectorAll<HTMLElement>("[data-session-surface-id]")]
+        .filter((surface) => {
+          const rect = surface.getBoundingClientRect();
+          const style = getComputedStyle(surface);
+          return rect.width > 0 && rect.height > 0
+            && style.display !== "none" && style.visibility !== "hidden";
+        })
+        .map((surface) => surface.dataset.sessionSurfaceId),
+      renderedText: document.body.innerText,
+    })), {
+      within: 30_000, label: "the rendered parent scope replaces the unrelated root question",
+      until: ({ sessionIds, renderedText }) => sessionIds.length === 1
+        && sessionIds[0] === world.root.sessionId
+        && !renderedText.includes(world.unrelated.question),
+    });
     await user.see("composer", { editable: true, timeoutMs: 30_000 });
     await user.notSee({ text: world.unrelated.question });
     await send(world.root.prompt);

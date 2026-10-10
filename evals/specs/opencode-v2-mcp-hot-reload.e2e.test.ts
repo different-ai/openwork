@@ -38,7 +38,7 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
     mocks: { witness: mcpMock({ allowUnauthenticatedMcp: true, tools: [{
       name: "read_report", description: "Read the current test report", inputSchema: { type: "object", properties: {} },
       result: { content: [{ type: "text", text: nonce }] },
-    }] }) },
+    }] }), empty: mcpMock({ allowUnauthenticatedMcp: true, tools: [] }) },
   });
   await using managed = await provisionLiveOpenAi(den.admin, "V2 MCP Lifecycle");
   await using desktop = await app({ den, as: "member", place });
@@ -141,7 +141,7 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
       if (unavailable) {
         expect(state.metadata.error, diagnostic).toBe(true);
         expect(output, diagnostic).not.toContain(nonce);
-        expect(output, diagnostic).toBe('MCP server "reload-witness" is not available');
+        expect(output, diagnostic).toBe("Unknown tool 'reload-witness.read_report'. Did you mean tools.opencode.read_mcp_resource?\nUse search to find available tools.");
         // toolCalls is a progress trace, not proof of a transport invocation.
         // An empty trace may accompany rejection; any recorded inner call must
         // be exactly the failed witness call. The native error flag/body and
@@ -167,9 +167,25 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   }
   const before = await turn("before", false);
   if (live) expect(before.messages).not.toContain(nonce);
+  expect((await api(`${root}/mcp`, "POST", { name: "empty-witness", config: {
+    type: "remote", url: den.mocks.empty.mcpUrl, oauth: false,
+  } })).status, "a native connected zero-tool catalog is authoritative, not an initialization failure").toBe(200);
+  const emptyServers = (await api(`${v2}/api/mcp`)).json;
+  expect(record(emptyServers) ? emptyServers.data : emptyServers).toContainEqual(expect.objectContaining({
+    name: "empty-witness", status: expect.objectContaining({ status: "connected" }),
+  }));
+  const emptyCatalog = await api(`${v2}/api/rpc/openwork.mcp-readiness/catalog`, "POST", { input: { server: "empty-witness" } });
+  expect(emptyCatalog.status).toBe(200);
+  expect(emptyCatalog.json).toEqual({ output: { tools: [] } });
+  evidence.recordAssertionEvidence("a connected native zero-tool MCP settles without a false tool expectation", "The normal OpenWork add route succeeded; the native server was connected and its scoped native-owned catalog reported exactly zero tool bindings, without another transport or a model call.", true);
   const mcpConfig = { type: "remote", url: den.mocks.witness.mcpUrl, oauth: false,
     headers: { Authorization: "Bearer eval-mcp-first" } };
   expect((await request(desktop, `${root}/mcp`, "POST", { name: "reload-witness", config: mcpConfig })).status).toBe(200);
+  const addedCatalog = (await api(`${v2}/api/mcp`)).json;
+  expect(record(addedCatalog) && Array.isArray(addedCatalog.data) ? addedCatalog.data : addedCatalog,
+    "the newly added MCP is connected before the next call").toContainEqual(expect.objectContaining({
+      name: "reload-witness", status: expect.objectContaining({ status: "connected" }),
+    }));
   const used = await turn("added", true);
   expect(used.messages).toContain(nonce);
   expect((await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: used.sinceIso, atLeast: 1 })).length).toBeGreaterThan(0);
@@ -228,8 +244,9 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   }
   evidence.recordAssertionEvidence(live ? "real OpenAI discovers live MCP changes across repeated lifecycle cycles" : "the same conversation regains MCP access after removal and disablement",
     (live ? `${modelId} made unscripted model/tool calls from the Daytona v2 process after managed credential delivery. `
-      : "Fresh native Code Mode results contained completed inner calls and the witness nonce after reconnect and re-enable; removed and disabled attempts returned the native error flag and exact MCP-unavailable error, with no witness invocations. ")
+      : "Fresh native Code Mode results contained completed inner calls and the witness nonce after reconnect and re-enable; removed and disabled attempts returned the native error flag and exact native unknown-tool error, with no witness invocations. ")
     + "Two reconnect/disable/enable/remove cycles served actual MCP calls only while enabled, with the original session and process. The credential was absent from all observed public responses.", true);
+  expect((await api(`${root}/mcp/empty-witness`, "DELETE")).status).toBe(200);
   expect((await request(desktop, `${root}/opencode/global/health`)).status).toBe(200);
-  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", (live ? "Real OpenAI reported UNAVAILABLE after DELETE; " : "A fresh Code Mode attempt to invoke the removed tool returned the native error flag and exact MCP server unavailable error after DELETE; ") + "the native catalog no longer contained the connection and the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
+  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", (live ? "Real OpenAI reported UNAVAILABLE after DELETE; " : "A fresh Code Mode attempt to invoke the removed tool returned the native error flag and exact native unknown-tool error after DELETE; ") + "the native catalog no longer contained the connection and the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
 });

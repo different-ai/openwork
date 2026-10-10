@@ -90,6 +90,7 @@ const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
 let agentRepliesHeld = false;
 const heldAgentReplies = new Set();
 let configuredTools = [];
+let toolsConfigured = false;
 let oauthCallback = {};
 
 const gmailThreadId = "thread-q3-launch";
@@ -1090,7 +1091,7 @@ function tokenFingerprint(req) {
 }
 
 function mcpResult(message) {
-  if (configuredTools.length && message.method === "tools/list") {
+  if (toolsConfigured && message.method === "tools/list") {
     return { tools: configuredTools.map(({ result, delayMs, appHtml, validateRequiredArguments, ...tool }) => tool) };
   }
   if (message.method === "resources/read") {
@@ -1401,6 +1402,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       configuredTools = body.tools;
+      toolsConfigured = true;
       json(res, 200, { configured: configuredTools.length });
       return;
     }

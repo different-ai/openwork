@@ -3,6 +3,7 @@ import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./c
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
+import { beginOpencodeStop, opencodeSessionIsStopping } from "./opencode-stop-fence.js";
 import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -2001,7 +2002,14 @@ export async function proxyOpencodeRequest(input: {
     return sanitizeProxyResponse(response);
   };
 
-  return forward();
+  const stoppedSession = method === "POST" ? /^\/session\/([^/]+)\/abort$/.exec(normalizeOpencodeProxyPath(proxyPath))?.[1] : undefined;
+  const releaseStop = directory && stoppedSession
+    ? beginOpencodeStop(input.config, directory, decodeURIComponent(stoppedSession)) : undefined;
+  try {
+    return await forward();
+  } finally {
+    releaseStop?.();
+  }
 }
 
 function isEngineEventPath(proxyPath: string): boolean {
@@ -3279,6 +3287,15 @@ function createRoutes(
     return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId, body.credentialSetId));
   });
 
+  addRoute(routes, "POST", "/experimental/session-stop-fence/check", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.directory !== "string" || !body.directory || typeof body.sessionID !== "string" || !body.sessionID) {
+      throw new ApiError(400, "invalid_payload", "A conversation and its workspace are required");
+    }
+    if (opencodeSessionIsStopping(config, body)) throw new ApiError(409, "session_stopping", "This task was stopped.");
+    return jsonResponse({ allowed: true });
+  });
+
   addRoute(routes, "GET", "/managed-policy", "client", async () =>
     jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
   addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {
@@ -4128,6 +4145,7 @@ function createRoutes(
       summary: `Added MCP ${name}`,
       timestamp: Date.now(),
     });
+    await engineV2Preview.settleWorkspaceMcp(workspace.id, workspace.path, name);
     emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
       type: "mcp",
       name,
@@ -4173,6 +4191,7 @@ function createRoutes(
         for (const removedName of removedNames) {
           deleteEngineMcpRegistration(config, engineMcpServerState, affectedWorkspace, removedName);
           await disconnectMcpFromOpencodeEngine(config, affectedWorkspace, removedName).catch(() => undefined);
+          await engineV2Preview.settleWorkspaceMcp(affectedWorkspace.id, affectedWorkspace.path, removedName);
         }
       }));
       emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
@@ -4226,6 +4245,7 @@ function createRoutes(
       summary: `${enabled ? "Enabled" : "Disabled"} MCP ${name}`,
       timestamp: Date.now(),
     });
+    await engineV2Preview.settleWorkspaceMcp(workspace.id, workspace.path, name);
     // ReloadTrigger.action only allows added/removed/updated, so toggle => "updated".
     emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
       type: "mcp",

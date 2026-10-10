@@ -540,6 +540,10 @@ export async function clickAt(
 ): Promise<void> {
   const button = options.button ?? "left";
   const clickCount = options.clickCount ?? 1;
+  // A person activates the window they click. Electron can leave an admin or
+  // OAuth window foregrounded; synthetic input alone does not activate this
+  // target, and subsequent insertText can otherwise be silently discarded.
+  await surface.client.send("Page.bringToFront");
   await surface.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
   await surface.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button, clickCount });
   await surface.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button, clickCount });

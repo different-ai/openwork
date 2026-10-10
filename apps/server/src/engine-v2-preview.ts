@@ -3,6 +3,7 @@ import { ApiError } from "./errors.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
+import { MCP_READINESS_RPC_ID } from "./opencode-v2-mcp-readiness.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -118,6 +119,8 @@ export interface EngineV2Preview {
    * Background upkeep: prompts never wait on it.
    */
   syncWorkspaceMcp(workspaceId: string, directory: string, options?: { reconnect?: string[] }): Promise<void>;
+  /** Explicit mutations join the native client's executable MCP registry. */
+  settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void>;
   /** Start a folder's upkeep in the background the first time it is seen. Never waits or throws. */
   warmWorkspace(workspaceId: string, directory: string): void;
   /** After OpenWork writes workspace skills, briefly wait for the engine to reflect them. Never throws. */
@@ -542,6 +545,21 @@ export function createEngineV2Preview(options: {
     if (failures.length) throw new Error(failures.join("; "));
   }
 
+  async function settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void> {
+    if (!enabled) return;
+    await ensureWorkspaceReady(directory);
+    await syncWorkspaceMcp(workspaceId, directory);
+    if (!enabled) return;
+    const active = sidecar;
+    if (!active) throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
+    const result = await active.fetchJson(`/api/rpc/${encodeURIComponent(MCP_READINESS_RPC_ID)}/waitForTools`, {
+      method: "POST", directory, body: { input: { server } }, timeoutMs: 30_000,
+    });
+    if (result.status !== 200 || !isRecord(result.json) || !isRecord(result.json.output) || result.json.output.ready !== true) {
+      throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
+    }
+  }
+
   function checkMcpHealth(): void {
     for (const [directory, location] of mcpLocations) {
       void syncWorkspaceMcp(location.workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
@@ -880,5 +898,5 @@ export function createEngineV2Preview(options: {
     if (enabled) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
+  return { start: startWhenReady, migrateHistory, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }
