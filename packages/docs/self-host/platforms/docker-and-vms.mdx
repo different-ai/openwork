@@ -1,0 +1,24 @@
+---
+title: "Self-host OpenWork with Docker Compose or on a VM"
+sidebarTitle: "Docker Compose and VMs"
+description: "Evaluate self-hosted OpenWork with Docker Compose, or plan a Linux VM or VPS deployment on EC2, Azure VMs, Compute Engine, or Hetzner."
+---
+
+Docker Compose provides a starting point for evaluating self-hosted OpenWork. The published container images can also form a deployment on a Linux server, VPS, or virtual machine, including EC2, Azure VMs, Compute Engine, Hetzner, and Linux guests on Proxmox or VMware.
+
+## Deployment approach
+
+Start with the [Docker Compose evaluation guide](/self-host/evaluate-with-docker-compose). It downloads pinned images and runs the control plane on one machine. For production, adapt the services to your own container setup; the evaluation Compose file is not a production configuration.
+
+## What you need
+
+- A Linux host and container runtime compatible with the selected images, with enough CPU, memory, and disk for your workload.
+- Den web and Den API as separate services, plus a MySQL 8-compatible database with durable storage and tested backups.
+- A reverse proxy with trusted HTTPS web/API hostnames, private database networking, and secrets outside your repository.
+- A migration task before API traffic, health checks, and a restore and upgrade procedure.
+
+Keep evaluation ports on loopback; use the guide's SSH tunnel to evaluate a remote VM. If you need cloud workspaces, plan the worker provisioner and durable runtime storage separately from the control plane.
+
+## Next step
+
+Review the [common requirements](/self-host/platforms/overview#common-requirements) and [licensing](/start-here/pricing-and-licensing), then evaluate locally. For help turning that evaluation into a production setup, [ask us about Docker or VM deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20Docker%20or%20VMs&body=Platform%3A%20Docker%20or%20VMs%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Fdocker-and-vms%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).
