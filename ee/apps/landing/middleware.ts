@@ -15,6 +15,8 @@ export const config = {
     "/glm-5.2",
     "/alternatives/claude-cowork",
     "/alternatives/claude-cowork-3p",
+    "/guides",
+    "/guides/:path*",
     "/llms.txt",
     "/start.md",
     "/auth.md",

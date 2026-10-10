@@ -42,6 +42,16 @@ One URL brings the user's organization skills, plugins, and connections into any
 - Verify: the agent should list the `search_capabilities` and `execute_capability` tools.
 - Skill: [connect-openwork-mcp](https://openworklabs.com/.well-known/agent-skills/connect-openwork-mcp/SKILL.md)
 
+### Guides
+
+- [How does OpenWork work with OpenCode?](https://openworklabs.com/guides/openwork-and-opencode) — built on OpenCode; the `opencode-openwork` plugin brings org models, skills, and connections into OpenCode 2
+- [Can you use OpenWork with Claude Code, Codex, or Cursor?](https://openworklabs.com/guides/claude-code-codex-cursor) — yes, through the OpenWork MCP URL; AI Gateway models for these clients are in progress
+- [How does OpenWork work with Ollama?](https://openworklabs.com/guides/ollama) — built-in Settings › Ollama screen, fully local
+- [One AI security policy for engineers and business teams](https://openworklabs.com/guides/engineers-and-business-teams)
+- [What do policies and controls mean in OpenWork?](https://openworklabs.com/guides/ai-policies-and-controls)
+- [How do you prevent shadow AI?](https://openworklabs.com/guides/prevent-shadow-ai)
+- Every guide is also served as Markdown with `Accept: text/markdown`.
+
 ### Machine-readable resources
 
 - OpenWork in Slack is **private alpha**, available only to approved organizations. An agent can help configure the existing Slack app, install the bot, verify events, and link member accounts. Guide: https://openworklabs.com/docs/slack/overview

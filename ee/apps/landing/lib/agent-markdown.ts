@@ -1,5 +1,6 @@
 import { claudeCowork3pMarkdown } from "./claude-cowork-3p"
 import { claudeCoworkAlternativeMarkdown } from "./claude-cowork-alternative"
+import { GUIDES_PATH, guideMarkdown, guidePath, guides, guidesIndexMarkdown } from "./guides"
 
 const home = `# OpenWork
 
@@ -23,6 +24,7 @@ const home = `# OpenWork
 - **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 - **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
+- **Guides** — [OpenCode](https://openworklabs.com/guides/openwork-and-opencode), [Claude Code, Codex, Cursor](https://openworklabs.com/guides/claude-code-codex-cursor), [Ollama](https://openworklabs.com/guides/ollama), [engineers and business teams](https://openworklabs.com/guides/engineers-and-business-teams), [policies and controls](https://openworklabs.com/guides/ai-policies-and-controls), [prevent shadow AI](https://openworklabs.com/guides/prevent-shadow-ai)
 - **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork); agents follow [migrate.md](https://openworklabs.com/migrate.md)
 
 ## How it compares
@@ -267,6 +269,8 @@ export const agentMarkdown: Record<string, string> = {
   "/glm-5.2": glm52,
   "/alternatives/claude-cowork": claudeCoworkAlternativeMarkdown,
   "/alternatives/claude-cowork-3p": claudeCowork3pMarkdown,
+  [GUIDES_PATH]: guidesIndexMarkdown(),
+  ...Object.fromEntries(guides.map((guide) => [guidePath(guide), guideMarkdown(guide)])),
 }
 
 export const agentMarkdownRoutes = Object.keys(agentMarkdown)
