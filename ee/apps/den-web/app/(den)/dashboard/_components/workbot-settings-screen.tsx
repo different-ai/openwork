@@ -130,10 +130,10 @@ export function WorkbotSettingsScreen() {
             <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-section="workbot-default-model">
               <SettingsRow label="Default model" labelId={labelId}>
                 {!settings ? (
-                  <DenSkeleton className="h-10 w-64" data-testid="workbot-model-skeleton" />
+                  <DenSkeleton className="h-10 w-72" data-testid="workbot-model-skeleton" />
                 ) : (
                   <>
-                    <div className="w-64">
+                    <div className="w-72">
                       <DenSelect
                         aria-labelledby={labelId}
                         value={draft}
@@ -147,7 +147,7 @@ export function WorkbotSettingsScreen() {
                         <option value="">{defaultLabel(settings)}</option>
                         {settings.model && !settings.models.some((entry) => entry.id === settings.model) ? (
                           <option value={settings.model} disabled>
-                            {settings.runnerReachable ? `${settings.model} (unavailable)` : settings.model}
+                            {settings.model}
                           </option>
                         ) : null}
                         {settings.models.map((entry) => (
