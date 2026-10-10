@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createServer, request } from "node:http";
 import { bootAcmeWeb } from "/workspace/worlds/acme-web.ts";
 import { chrome, localHost } from "/workspace/evals/packages/hosts/src/index.ts";
-import { signInDesktopAs, waitFor, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
+import { signInDesktopAs, selectModel, assertSelectedModel, waitFor, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
 import { browserScript } from "/workspace/evals/packages/cdp/src/index.ts";
 
 const root = "/opt/openwork-preview";
@@ -50,10 +50,12 @@ try {
   await signInDesktopAs(browser, world.den.ref, world.den.admin);
   // bootAcmeWeb already owns a fresh workspace. The desktop workspace helper
   // waits on hash routes; app-web uses pathname routes and needs no second one.
-  await evalIn(browser, browserScript((value) => { localStorage.setItem("openwork.defaultModel", value); window.dispatchEvent(new Event("openwork.defaultModelChanged")); }, [`${world.model.providerId}/${world.model.modelId}`]));
-  // The saved default selects the model; confirm the composer shows it. (The
-  // shared selectModel helper still targets the pre-#5196 picker dialog.)
-  await waitFor(browser, browserScript((name) => document.body.innerText.includes(name), [world.model.modelName]), { timeoutMs: 30_000, label: `composer model ${world.model.modelName}` });
+  // Use the product picker after sign-in/catalog sync: a global saved default
+  // can be unavailable or shadowed by the current workspace's model choice.
+  // Gateway aliases are opaque; select the exact seeded provider/model, never
+  // whichever Auto/default happens to be offered by this commit.
+  await selectModel(browser, world.model.modelId, { providerId: world.model.providerId });
+  await waitFor(browser, browserScript((name) => document.body.innerText.includes(name) && !document.body.innerText.includes("Model no longer available"), [world.model.modelName]), { timeoutMs: 30_000, label: `composer model ${world.model.modelName}` });
   // The viewer keeps the saved Chromium tab. A direct app link would open a new
   // document and is deliberately not presented as an exact checkpoint restore.
   // Fast path: after a checkout, reload the saved tab and wait until the app is
@@ -61,10 +63,11 @@ try {
   // den-api runs once from source, so it is restarted when its sources changed.
   async function refresh(restart) {
     if (restart.includes("den-api")) await world.den.restartApi();
-    await evalIn(browser, browserScript(() => { setTimeout(() => location.reload(), 0); return true; }, [])).catch(() => undefined);
+    await evalIn(browser, browserScript(() => { setTimeout(() => location.reload(), 0); return true; }, []), { reattachAttempts: 0 });
     await delay(500);
     await waitUntilInteractive(browser);
-    await waitFor(browser, browserScript((name) => document.body.innerText.includes(name), [world.model.modelName]), { timeoutMs: 60_000, label: `composer model ${world.model.modelName} after refresh` });
+    await assertSelectedModel(browser, { providerId: world.model.providerId, id: world.model.modelId });
+    await waitFor(browser, browserScript((name) => document.body.innerText.includes(name) && !document.body.innerText.includes("Model no longer available"), [world.model.modelName]), { timeoutMs: 60_000, label: `composer model ${world.model.modelName} after refresh` });
   }
   const viewer = createServer((req, res) => {
     if (req.url === "/__evidence/refresh" && req.method === "POST") {
