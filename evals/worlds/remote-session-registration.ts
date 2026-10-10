@@ -11,8 +11,11 @@ const REMOTE_CAPABILITIES = ["remote_session_v1", "remote_session_control_v1", "
 async function registrationWorld(seed: Seed, options: { automations?: boolean; place?: Place } = {}) {
   const den = await seed.den({
     web: false,
-    org: { name: "Session registration proof", members: { other: { name: "Other Session Member" } } },
+    org: { name: "Session registration proof", admin: { name: "Session Proof Admin", email: "session-registration-admin@example.test" }, members: { other: { name: "Other Session Member" } } },
     env: {
+      // An organization owner is not automatically a platform administrator,
+      // especially in Daytona. Rollout controls need explicit synthetic setup.
+      DEN_BOOTSTRAP_ADMIN_EMAILS: "session-registration-admin@example.test",
       DEN_AUTOMATIONS_ENABLED: options.automations ? "true" : "false",
       DEN_AUTOMATIONS_RUNTIME_ENABLED: options.automations ? "true" : "false",
       DEN_OPENWORK_WEB_ENABLED: "false",
