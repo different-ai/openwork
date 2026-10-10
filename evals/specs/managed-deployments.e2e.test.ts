@@ -11,6 +11,18 @@ const test = spec.world(managedDeployments, { timeout: 600_000, resources: { sur
 test("an owner prepares AWS installs without claiming they are running and can cancel or confirm Remove", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.web);
   const page = probe.on(world.web);
+  // notSee proves stable absence from now on; first wait for a closing dialog or a finished DELETE to leave the page.
+  const leaves = (selector: string, label: string, matches: (text: string) => boolean = () => true) => page.eventually(async () => {
+    const left = (await page.dom(selector)).elements.filter((entry) => matches(entry.text));
+    if (left.length > 0) throw new Error(`${label} is still on screen.`);
+    return true;
+  }, { within: 60_000, intervalMs: 250, label });
+  // The alert dialog moves initial focus a frame after it paints; wait for it rather than sampling the first frame.
+  const cancelFocused = () => page.eventually(async () => {
+    const [cancel] = (await page.dom('[data-testid="confirm-dialog-cancel"]')).elements;
+    if (!cancel?.focused) throw new Error("Cancel has not received focus yet.");
+    return cancel;
+  }, { within: 5_000, intervalMs: 100, label: "the confirmation focuses Cancel" });
   const ownHeaders = { "x-openwork-org-id": world.enabledOrgId };
   const stagingName = "Staging release rehearsal and infrastructure validation";
   const targets = [
@@ -331,7 +343,7 @@ test("an owner prepares AWS installs without claiming they are running and can c
     await owner.see({ testId: "confirm-dialog" }, { text: new RegExp(`Remove ${stagingName}\\?`) });
     await owner.see({ text: "This removes the deployment record and its pending approval from this workspace. AWS resources and charges are unchanged. This cannot be undone." });
     const dialogs = (await page.dom('[role="alertdialog"][data-testid="confirm-dialog"]')).elements;
-    const [cancel] = (await page.dom('[data-testid="confirm-dialog-cancel"]')).elements;
+    const cancel = await cancelFocused();
     const buttons = (await page.dom('[data-testid="confirm-dialog"] button')).elements;
     expect(dialogs).toHaveLength(1);
     expect(cancel.focused).toBe(true);
@@ -344,6 +356,7 @@ test("an owner prepares AWS installs without claiming they are running and can c
 
   await step("after: Cancel keeps the deployment and every pending AWS approval", async () => {
     await owner.click({ testId: "confirm-dialog-cancel" });
+    await leaves('[data-testid="confirm-dialog"]', "the cancelled confirmation closes");
     await owner.notSee({ testId: "confirm-dialog" });
     await owner.see({ role: "heading", label: stagingName });
     await owner.see({ testId: "managed-deployment-status" }, { text: "Awaiting AWS approval" });
@@ -365,13 +378,15 @@ test("an owner prepares AWS installs without claiming they are running and can c
     await owner.see({ testId: "confirm-dialog" }, { text: new RegExp(`Remove ${stagingName}\\?`) });
     // The shared confirmation starts on Cancel; Tab reaches its destructive
     // Remove rather than the page's identically named control behind the modal.
-    const [cancel] = (await page.dom('[data-testid="confirm-dialog-cancel"]')).elements;
+    const cancel = await cancelFocused();
     expect(cancel.focused).toBe(true);
     await owner.press("Tab");
     const focused = (await page.dom('[data-testid="confirm-dialog"] button')).elements.filter((button) => button.focused);
     expect(focused.map((button) => button.text)).toEqual(["Remove"]);
     await owner.press("Enter");
-    await owner.notSee({ role: "button", label: new RegExp(`^${stagingName}\\s*AWS`) }, { timeoutMs: 60_000 });
+    await leaves('[data-testid="managed-deployment-row"]', "the removed deployment leaves the list", (text) => text.includes(stagingName));
+    await leaves('[data-testid="confirm-dialog"]', "the confirmed dialog closes");
+    await owner.notSee({ role: "button", label: new RegExp(`^${stagingName}\\s*AWS`) });
     await owner.notSee({ testId: "confirm-dialog" });
     await owner.reload();
     await owner.see({ role: "button", label: /^Production\s*AWS/ }, { timeoutMs: 60_000 });
