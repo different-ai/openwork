@@ -38,7 +38,7 @@ test("an owner can recover a provider catalog and find LiteLLM only after a plat
     await owner.see({ role: "heading", label: "Add a provider" }, { timeoutMs: 30_000 });
     await owner.see({ testId: "gateway-provider-pick-anthropic" });
     await owner.type({ placeholder: "Filter by name" }, "litellm");
-    await owner.see({ testId: "gateway-provider-catalog-empty" }, { text: "No providers match that filter" });
+    await owner.see({ testId: "gateway-provider-catalog-empty" }, { text: "No providers match that filter. Try another name." });
     await owner.notSee({ testId: "gateway-provider-pick-litellm" });
     expect((await page.dom(picks)).elements).toHaveLength(0);
     const context = await probe.api(world.den.admin, "/v1/org");
@@ -80,7 +80,7 @@ test("an owner can recover a provider catalog and find LiteLLM only after a plat
   await step("after: Retry can show an honestly empty catalog, then restore the providers", async () => {
     await world.catalogFaults.empty("catalog");
     await owner.click({ testId: "gateway-provider-catalog-retry" });
-    await owner.see({ testId: "gateway-provider-catalog-empty" }, { text: "No providers are available. Retry the catalog.", timeoutMs: 30_000 });
+    await owner.see({ testId: "gateway-provider-catalog-empty" }, { text: /^No providers are available\. Retry the catalog\.\s*Retry$/, timeoutMs: 30_000 });
     await owner.notSee({ testId: "gateway-provider-catalog-loading" });
     await owner.notSee({ testId: "gateway-provider-pick-litellm" });
     expect((await page.dom(picks)).elements).toHaveLength(0);
@@ -150,7 +150,7 @@ test("an owner can recover a provider catalog and find LiteLLM only after a plat
     await owner.type({ placeholder: "Filter by name" }, "litellm");
     await owner.see({ testId: "gateway-provider-pick-litellm" });
     await owner.notSee({ testId: "gateway-provider-catalog-empty" });
-    await owner.notSee({ text: "No providers match that filter" });
+    await owner.notSee({ text: "No providers match that filter. Try another name." });
     await owner.notSee({ testId: "gateway-provider-catalog-more" });
     const matching = (await page.dom(picks)).elements;
     expect(matching).toHaveLength(1);
