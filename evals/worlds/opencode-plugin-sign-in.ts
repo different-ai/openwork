@@ -101,7 +101,9 @@ export async function opencodePluginSignIn(seed: Seed, options: { remoteSessions
   }
   const label = `native-opencode-${randomBytes(6).toString("hex")}`;
   // seed.tmpPath is only a driver-side string: never use it as a remote HOME.
-  const root = sandbox ? `/workspace/.openwork-daytona/${label}` : seed.tmpPath(label);
+  // Keep the native HOME outside /workspace: ancestor discovery would inherit
+  // this repository's development config (including permission: allow).
+  const root = sandbox ? `/tmp/openwork-eval-${label}` : seed.tmpPath(label);
   const token = randomBytes(32).toString("hex");
   const source = readFileSync(fixturePath, "utf8");
   const sourceFingerprint = createHash("sha256").update(source).digest("hex");
