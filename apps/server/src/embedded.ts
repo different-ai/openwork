@@ -217,6 +217,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     const opencodeModelsUrl = await duringStartup(() => resolveOpencodeModelsUrl());
 
     const opencodeBin = options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN;
+    const engineStateDir = join(runtimeStorageDir(config), "opencode", "state");
     // Shared by the first spawn and by any later rollover standby, so a
     // replacement engine is identical apart from its port.
     const engineEnv: Record<string, string | undefined> = {
@@ -232,6 +233,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       cwd,
       runtimeConfigPath,
       env: engineEnv,
+      stateDir: engineStateDir,
       reservedPorts: () => {
         const poolPorts = enginePool?.connections()
           .map((connection) => Number(new URL(connection.baseUrl).port) || 0)
@@ -244,6 +246,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       bin: opencodeBin,
       cwd,
       excludedPorts: [config.port],
+      stateDir: engineStateDir,
       env: engineEnv,
     }));
 
