@@ -9,8 +9,10 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
-import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { auditChangeCapture } from "../../audit/request-capture.js"
+import { jsonValidator, orgPermissionRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import {
   approveOrganizationWebOrigin,
@@ -19,7 +21,7 @@ import {
   type OrganizationWebOriginRecord,
 } from "../../organization-web-origins.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdminRole, ensureOrganizationSuperAdmin, idParamSchema, orgAccessFailureStatus } from "./shared.js"
+import { idParamSchema } from "./shared.js"
 
 const INVALID_WEB_ORIGIN_MESSAGE = "Enter an exact HTTPS origin like https://workspace.example.com, with an optional port and no path."
 const WEB_ORIGIN_ALREADY_APPROVED_MESSAGE = "This origin is already approved."
@@ -98,15 +100,12 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
       responses: {
         200: jsonResponse("Approved web origins returned successfully.", organizationWebOriginListDocumentSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can view approved web origins.", forbiddenSchema),
+        403: jsonResponse("The caller needs the View approved web origins permission.", forbiddenSchema),
         404: jsonResponse("The organization was not found.", organizationNotFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("web_origins.view"),
     async (c) => {
-      const permission = ensureOrganizationAdminRole(c, "Only workspace owners and admins can view approved web origins.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const payload = c.get("organizationContext")
       const origins = await listOrganizationWebOrigins(payload.organization.id)
       return c.json({
@@ -126,40 +125,38 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
         201: jsonResponse("The web origin was approved.", organizationWebOriginDocumentSchema),
         400: jsonResponse("The origin was not an exact HTTPS origin.", approveWebOriginBadRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins with a recent sign-in can approve web origins.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage approved web origins permission and a recent sign-in.", forbiddenSchema),
         404: jsonResponse("The organization was not found.", organizationNotFoundSchema),
         409: jsonResponse("The origin is already approved or the organization reached its approved origin limit.", approveWebOriginConflictSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("web_origins.manage"),
     jsonValidator(organizationWebOriginInputDocumentSchema),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can approve web origins.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const payload = c.get("organizationContext")
       const origin = normalizeExactHttpsOrigin(c.req.valid("json").origin)
       if (!origin) {
         return c.json({ error: "invalid_web_origin" as const, message: INVALID_WEB_ORIGIN_MESSAGE }, 400)
       }
 
+      const capture = auditChangeCapture(c)
       const result = await approveOrganizationWebOrigin({
         organizationId: payload.organization.id,
         origin,
         createdByOrgMemberId: payload.currentMember.id,
-      })
+      }, capture)
       if (!result.ok) {
         return result.reason === "already_approved"
           ? c.json({ error: "web_origin_already_approved" as const, message: WEB_ORIGIN_ALREADY_APPROVED_MESSAGE }, 409)
           : c.json({ error: "web_origin_limit_reached" as const, message: WEB_ORIGIN_LIMIT_REACHED_MESSAGE }, 409)
       }
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.webOriginApproved,
         payload: { origin },
-      })
+      }, result.auditEventIds)
       return c.json(serializeWebOrigin(result.webOrigin), 201)
     },
   )
@@ -174,31 +171,29 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
         204: emptyResponse("The approved web origin was removed."),
         400: jsonResponse("The web origin id was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins with a recent sign-in can remove approved web origins.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Manage approved web origins permission and a recent sign-in.", forbiddenSchema),
         404: jsonResponse("The approved web origin or organization was not found.", removeWebOriginNotFoundSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("web_origins.manage"),
     paramValidator(webOriginParamsSchema),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can remove approved web origins.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const payload = c.get("organizationContext")
-      const removedOrigin = await removeOrganizationWebOrigin({
+      const capture = auditChangeCapture(c)
+      const removed = await removeOrganizationWebOrigin({
         organizationId: payload.organization.id,
         id: normalizeDenTypeId("organizationWebOrigin", c.req.valid("param").webOriginId),
-      })
-      if (!removedOrigin) {
+      }, capture)
+      if (!removed) {
         return c.json({ error: "web_origin_not_found" as const, message: WEB_ORIGIN_NOT_FOUND_MESSAGE }, 404)
       }
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved,
-        payload: { origin: removedOrigin },
-      })
+        payload: { origin: removed.origin },
+      }, removed.auditEventIds)
       return c.body(null, 204)
     },
   )

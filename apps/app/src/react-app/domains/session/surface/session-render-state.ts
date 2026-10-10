@@ -2,7 +2,7 @@ import type { UIMessage } from "ai";
 
 import type { OpenworkSessionHistory } from "../../../../app/lib/openwork-server";
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
-import { applyRevertCursor } from "../sync/transcript-reconcile";
+import { applyRevertCursor, dropDuplicateTurnErrors } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
 import { parseConnectSkillToken } from "./composer/connect-skill-token";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
@@ -183,7 +183,7 @@ export function deriveRenderedSessionMessages(input: {
   // updates on top. During prompt submission the live cache can briefly contain
   // only the new turn; it must not replace the older persisted transcript.
   const messages = snapshotMessages.length > 0
-    ? mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, { appendLiveOnlyMessages: true })
+    ? dropDuplicateTurnErrors(mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, { appendLiveOnlyMessages: true }), snapshotMessages)
     : liveMessages;
 
   return applyRevertCursor(messages, revertMessageId);

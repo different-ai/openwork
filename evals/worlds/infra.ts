@@ -13,8 +13,8 @@ import {
 import type { Place } from "@openwork/env";
 import { app } from "@openwork/env";
 import { daytonaSandbox, desktop } from "@openwork/hosts";
-import { bootRemoteSession } from "../../worlds/remote-session.ts";
-import { bootCloudModelInfra } from "../../worlds/cloud-model-infra.ts";
+import { bootRemoteSession } from "./infra/remote-session.ts";
+import { bootCloudModelInfra } from "./infra/cloud-model-infra.ts";
 import { signIn as signInDen } from "@openwork/behaviors";
 
 export async function emptyInfraWorld(_seed: Seed) {
@@ -133,7 +133,7 @@ export { denFetch, signIn } from "@openwork/behaviors";
 export type { DenSession } from "@openwork/behaviors";
 export { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths, stopHeadlessRuntime } from "@openwork/world";
 export { createDesktopAutomationRunner } from "../../apps/desktop/electron/automation-runner.mjs";
-export { bootDevHeadless } from "../../worlds/dev-headless.ts";
+export { bootDevHeadless } from "../../worlds/dev-app-web.ts";
 export type {
   RemoteSessionExecuteInput,
   RemoteSessionRuntime,

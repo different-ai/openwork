@@ -1,0 +1,24 @@
+{
+  "name": "@openwork/managed-deployments",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./schema": {
+      "types": "./src/schema.ts",
+      "default": "./src/schema.ts"
+    },
+    "./lifecycle": {
+      "types": "./src/lifecycle.ts",
+      "default": "./src/lifecycle.ts"
+    },
+    "./aws": {
+      "types": "./src/aws.ts",
+      "default": "./src/aws.ts"
+    }
+  },
+  "dependencies": {
+    "zod": "^4.3.6",
+    "fast-xml-parser": "5.8.0"
+  }
+}

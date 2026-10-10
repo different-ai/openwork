@@ -6,7 +6,6 @@ import { t } from "../../i18n";
 import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
-  workspaceCreateRemote,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   type WorkspaceInfo,
@@ -67,8 +66,6 @@ type WelcomeState = {
   modalOpen: boolean;
   createBusy: boolean;
   createError: string | null;
-  remoteBusy: boolean;
-  remoteError: string | null;
   providerStep: boolean;
   attributionStep: boolean;
   pendingRoute: string | null;
@@ -82,9 +79,6 @@ type WelcomeAction =
   | { type: "create:start" }
   | { type: "create:error"; error: string }
   | { type: "create:finish" }
-  | { type: "remote:start" }
-  | { type: "remote:error"; error: string }
-  | { type: "remote:finish" }
   | { type: "provider-step"; workspaceId: string; sessionId: string | null }
   | { type: "attribution-step"; route: string };
 
@@ -92,8 +86,6 @@ const initialWelcomeState: WelcomeState = {
   modalOpen: false,
   createBusy: false,
   createError: null,
-  remoteBusy: false,
-  remoteError: null,
   providerStep: false,
   attributionStep: false,
   pendingRoute: null,
@@ -106,19 +98,13 @@ function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeStat
     case "open":
       return { ...state, modalOpen: true };
     case "close":
-      return { ...state, modalOpen: false, createError: null, remoteError: null };
+      return { ...state, modalOpen: false, createError: null };
     case "create:start":
       return { ...state, createBusy: true, createError: null };
     case "create:error":
       return { ...state, createError: action.error };
     case "create:finish":
       return { ...state, createBusy: false };
-    case "remote:start":
-      return { ...state, remoteBusy: true, remoteError: null };
-    case "remote:error":
-      return { ...state, remoteError: action.error };
-    case "remote:finish":
-      return { ...state, remoteBusy: false };
     case "provider-step":
       return { ...state, providerStep: true, pendingWorkspaceId: action.workspaceId, pendingSessionId: action.sessionId };
     case "attribution-step":
@@ -267,77 +253,9 @@ export function WelcomeRoute() {
     [],
   );
 
-  const handleCreateRemote = useCallback(
-    async (input: {
-      openworkHostUrl?: string | null;
-      openworkToken?: string | null;
-      directory?: string | null;
-      displayName?: string | null;
-    }) => {
-      const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
-      if (!baseUrlValue) return false;
-      dispatch({ type: "remote:start" });
-      try {
-        const remoteType: "openwork" = "openwork";
-        const payload = {
-          baseUrl: baseUrlValue,
-          openworkHostUrl: baseUrlValue,
-          openworkToken: input.openworkToken?.trim() || null,
-          displayName: input.displayName?.trim() || null,
-          directory: input.directory?.trim() || null,
-          remoteType,
-        };
-        let list: WorkspaceList | null = null;
-        if (isDesktopRuntime()) {
-          list = await workspaceCreateRemote(payload);
-        } else {
-          try {
-            const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
-              await resolveOpenworkConnection();
-            if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
-              list = await createOpenworkServerClient({
-                baseUrl: normalizedBaseUrl,
-                token: resolvedToken || undefined,
-                hostToken: resolvedHostToken || undefined,
-              }).createRemoteWorkspace(payload);
-            }
-          } catch {
-            list = null;
-          }
-        }
-        if (!list) {
-          throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
-        }
-        const createdId =
-          resolveWorkspaceListSelectedId(list) ||
-          list.workspaces[list.workspaces.length - 1]?.id ||
-          "";
-        if (createdId) {
-          await workspaceSetSelected(createdId).catch(() => undefined);
-          await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-          writeActiveWorkspaceId(createdId);
-        }
-        markOnboardingComplete();
-        dispatch({ type: "close" });
-        navigate(createdId ? workspaceSessionRoute(createdId) : "/session", { replace: true });
-        return true;
-      } catch (error) {
-        dispatch({
-          type: "remote:error",
-          error: error instanceof Error ? error.message : "Connection failed.",
-        });
-        return false;
-      } finally {
-        dispatch({ type: "remote:finish" });
-      }
-    },
-    [markOnboardingComplete, navigate],
-  );
-
   const handleGetStarted = useCallback(async () => {
     if (!isDesktopRuntime()) {
       if (!canCreateWorkspaces()) return;
-      // Non-desktop: fall back to the modal for remote workspace creation.
       dispatch({ type: "open" });
       return;
     }
@@ -414,7 +332,6 @@ export function WelcomeRoute() {
         open={state.modalOpen}
         onClose={() => dispatch({ type: "close" })}
         onConfirm={handleCreateWorkspace}
-        onConfirmRemote={handleCreateRemote}
         onPickFolder={() =>
           pickDirectory({ title: t("onboarding.authorize_folder") }) as Promise<
             string | null
@@ -422,8 +339,6 @@ export function WelcomeRoute() {
         }
         submitting={state.createBusy}
         localError={state.createError}
-        remoteSubmitting={state.remoteBusy}
-        remoteError={state.remoteError}
         localDisabled={!isDesktopRuntime()}
         localDisabledReason={
           isDesktopRuntime()

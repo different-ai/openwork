@@ -14,7 +14,7 @@ import { timeframeLabels } from "./gateway-usage-limits-data";
 
 function extensionPreview(request: GatewayUsageResetRequest) {
   const extension = Number((BigInt(request.baseAllowanceMicroUsd) + 3n) / 4n);
-  return { extension, total: request.baseAllowanceMicroUsd + extension };
+  return { extension, total: request.allowanceMicroUsd + extension };
 }
 
 function RequestTimestamp({ value }: { value: string }) {

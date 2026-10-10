@@ -3,7 +3,7 @@ import { t } from "../../../i18n";
 
 /**
  * What a user sees on an inventory row:
- * - app: a runtime that runs on this device (Ollama, Computer Use, Browser)
+ * - app: a runtime that runs on this device (Ollama, Browser)
  * - connection: an account, shared by an organization or signed in by the member
  * - mcp: an MCP server configured in this workspace
  * - skill / command / agent: composer capabilities managed in Library
@@ -43,7 +43,7 @@ export function taxonomyForDirectoryEntry(entry: McpDirectoryInfo): ExtensionTax
 
 /**
  * The MCPs category lists third-party servers only. OpenWork's own runtimes
- * (Computer Use, the browser panel, Ollama, UI control) and auto-managed
+ * (the browser panel, Ollama, UI control) and auto-managed
  * plumbing such as Cloud Control are app functionality, not MCPs to browse;
  * their setup pages stay reachable by direct link.
  */

@@ -22,12 +22,13 @@ import { auth } from "../src/auth.js"
 import { db } from "../src/db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../src/desktop-policies.js"
 import { env } from "../src/env.js"
-import { seedDefaultOrganizationRoles } from "../src/orgs.js"
 import { updateOrganizationMetadata } from "../src/organization-metadata.js"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { calculateOrganizationSeatBillingCounts } from "../src/stripe-billing.js"
+import { resetDemoAutomations, seedDemoAutomations } from "./seed-demo-automations.js"
 
 const RESET_MODE = process.argv.includes("--reset")
+const SEED_AUTOMATIONS = process.argv.includes("--automations") || process.env.DEN_DEMO_SEED_AUTOMATIONS === "1"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
@@ -349,7 +350,6 @@ async function ensureOrganization(ownerUserId: UserId): Promise<OrganizationId> 
         updatedAt: new Date(),
       })
       .where(eq(OrganizationTable.id, existing[0].id))
-    await seedDefaultOrganizationRoles(existing[0].id)
     const ownerMemberId = await ensureMember(existing[0].id, ownerUserId, "owner")
     await ensureDefaultDesktopPolicyForOrganization({
       organizationId: existing[0].id,
@@ -367,7 +367,6 @@ async function ensureOrganization(ownerUserId: UserId): Promise<OrganizationId> 
     name: DEMO_ORG_NAME,
     slug: DEMO_ORG_SLUG,
   })
-  await seedDefaultOrganizationRoles(id)
   const ownerMemberId = await ensureMember(id, ownerUserId, "owner")
   await ensureDefaultDesktopPolicyForOrganization({
     organizationId: id,
@@ -957,6 +956,7 @@ async function resetDemoOrg() {
     await db.delete(MarketplaceAccessGrantTable).where(inArray(MarketplaceAccessGrantTable.marketplaceId, marketplaceIds))
     await db.delete(MarketplaceTable).where(inArray(MarketplaceTable.id, marketplaceIds))
   }
+  await resetDemoAutomations(orgId)
   await db.delete(OrgSubscriptionTable).where(eq(OrgSubscriptionTable.organization_id, orgId))
   await db.delete(InvitationTable).where(eq(InvitationTable.organizationId, orgId))
   await db.delete(TeamMemberTable).where(inArray(TeamMemberTable.teamId, (await db.select({ id: TeamTable.id }).from(TeamTable).where(eq(TeamTable.organizationId, orgId))).map((r) => r.id)))
@@ -1089,6 +1089,13 @@ async function main() {
   log("…", `seeding ${demoPlugins.length} plugins`)
   const { seededObjects, seededPlugins } = await seedPlugins({ createdByOrgMembershipId: ownerMembershipId, marketplaceId, organizationId, teamIdsByName })
   console.log()
+
+  if (SEED_AUTOMATIONS) {
+    log("…", "seeding the owner's Automations and two weeks of runs")
+    const seeded = await seedDemoAutomations({ organizationId, ownerMemberId: ownerMembershipId })
+    log("✓", `${seeded.automations} automations · ${seeded.runs} runs`)
+    console.log()
+  }
 
   const elapsedSeconds = ((Date.now() - startMs) / 1000).toFixed(1)
   console.log(`  ${"─".repeat(40)}`)

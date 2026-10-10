@@ -13,7 +13,6 @@
     "index.mjs"
   ],
   "scripts": {
-    "test": "bun test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

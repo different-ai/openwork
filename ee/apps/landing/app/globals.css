@@ -625,3 +625,32 @@ hr {
     scroll-behavior: auto;
   }
 }
+
+.lp-products-menu {
+  box-shadow:
+    0 1px 2px rgba(1, 22, 39, 0.06),
+    0 12px 32px -8px rgba(1, 22, 39, 0.16),
+    0 0 0 1px rgba(1, 22, 39, 0.05);
+}
+
+/* Product previews: shimmer only on the step that is running (DESIGN.md V6). */
+.lp-demo-shimmer {
+  background: linear-gradient(90deg, currentColor 0%, #c4cad3 50%, currentColor 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: lp-demo-shimmer 1.2s linear infinite;
+}
+
+@keyframes lp-demo-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-demo-shimmer {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

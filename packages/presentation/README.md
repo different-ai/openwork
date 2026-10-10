@@ -10,5 +10,3 @@ Ordinary React/Remotion components shared by scenario videos.
 See `scenarios/onboarding/video.tsx` for composition and
 `scenarios/onboarding/render.mjs` for rendering. There is no presentation registry
 or timeline DSL. Keep scenario-specific illustrations in the scenario folder.
-
-Run helper checks with `node --test packages/presentation/test/*.test.ts`.

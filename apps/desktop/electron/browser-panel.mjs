@@ -83,6 +83,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         }, (error) => {
           if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
             && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
+            && tab.loadError?.code !== "page_load_failed"
             && (error?.code === "policy_unavailable" || error?.code === "organization_policy_denied")) {
             tab.loadError = {
               code: error.code,
@@ -127,6 +128,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // Last accepted geometry in window DIPs. Reattaching must not scale an old
   // CSS rectangle with a newer zoom while the renderer is still catching up.
   let lastBrowserBounds = null;
+  let lastBrowserZoomFactor = null;
   let browserTabCounter = 0;
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
@@ -280,8 +282,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function browserTabToPanelTab(tabId, tab) {
     const webContents = tab.view.webContents;
-    const url = webContents.getURL();
-    const title = webContents.getTitle();
+    const failed = tab.loadError?.code === "page_load_failed" ? tab.loadError : null;
+    const url = failed?.url ?? webContents.getURL();
+    const title = failed ? "" : webContents.getTitle();
     const isLoading = webContents.isLoading();
 
     return {
@@ -619,7 +622,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         signal?.removeEventListener("abort", canceled);
         if (approvals.get(tabId)?.id !== id) return;
         approvals.delete(tabId); tab.browserApproval = null;
-        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(true);
+        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(tab.loadError?.code !== "page_load_failed");
         sendBrowserState(); resolve(allowed && !signal?.aborted && getBrowserTab(tabId) === tab && registry.ownerOf(tabId) === owner && browserTabVisible(tabId));
       };
       const canceled = () => finish(false);
@@ -855,6 +858,30 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       // retain its warning; old resource failures cannot affect the new document.
       tab.documentGeneration += 1;
       tab.loadError = null;
+      if (registry.onScreenTabId() === tabId) attachActiveBrowserView();
+      sendBrowserState();
+    });
+    view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Aborts (including downloads and superseded navigations) and iframe
+      // failures do not replace the page with a connection error.
+      if (!isMainFrame || errorCode === -3) return;
+      // The request policy already supplies the actionable reason for a
+      // blocked load. Keep that reason instead of calling it a network error.
+      if (errorDescription === "ERR_BLOCKED_BY_CLIENT" && tab.loadError && tab.loadError.code !== "page_load_failed") return;
+      tab.loadError = {
+        code: "page_load_failed",
+        message: errorCode === -102
+          ? "This site refused the connection. Check that it is running, then reload."
+          : errorCode === -106
+            ? "You are offline. Check your connection, then reload."
+            : "This page could not be loaded. Check the address and your connection, then reload.",
+        url: validatedURL,
+        errorCode,
+        errorDescription,
+      };
+      // Native views sit above the app renderer. Hide the failed document so
+      // the renderer's recovery controls can receive clicks and keyboard input.
+      tab.view.setVisible(false);
       sendBrowserState();
     });
     view.webContents.on("did-navigate-in-page", () => sendBrowserState());
@@ -962,18 +989,24 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (tab.domReady) emulateBackgroundTab(tab);
   }
 
+  function queueBrowserTabEmulation(tab, label, operation) {
+    const isCurrent = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
+    const execute = () => { if (isCurrent()) return operation(isCurrent); };
+    const emulation = tab.emulation.then(execute, execute);
+    tab.emulation = emulation;
+    runDetachedTask(label, () => emulation);
+  }
+
   function emulateBackgroundTab(tab) {
-    const webContents = tab.view.webContents;
-    const cdp = webContents.debugger;
-    tab.emulation = tab.emulation.then(async () => {
-      if (webContents.isDestroyed() || !tab.background) return;
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "emulate background browser tab", async (isCurrent) => {
+      if (!tab.background) return;
       if (!cdp.isAttached()) cdp.attach("1.3");
       for (const { method, params } of backgroundTabEmulationCommands()) {
-        if (webContents.isDestroyed() || !tab.background) return;
+        if (!isCurrent() || !tab.background) return;
         await cdp.sendCommand(method, params);
       }
     });
-    runDetachedTask("emulate background browser tab", () => tab.emulation);
   }
 
   function exitBackgroundMode(tab) {
@@ -983,15 +1016,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     detachBrowserView(tab.view);
     if (webContents.isDestroyed()) return;
     const cdp = webContents.debugger;
-    if (!cdp.isAttached()) return;
-    runDetachedTask("restore foreground browser tab", async () => {
+    queueBrowserTabEmulation(tab, "restore foreground browser tab", async (isCurrent) => {
+      if (tab.background || !cdp.isAttached()) return;
       try {
         for (const { method, params } of foregroundTabEmulationCommands()) {
-          if (webContents.isDestroyed()) return;
+          if (!isCurrent() || tab.background) return;
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (!webContents.isDestroyed() && cdp.isAttached()) cdp.detach();
+        if (isCurrent() && !tab.background && cdp.isAttached()) cdp.detach();
       }
     });
   }
@@ -1010,9 +1043,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const next = registry.setVisibleSession(sessionId);
     if (next === previous) return next;
     shortcutFocus = null;
-    hideContextMenu();
+    hideBrowserView();
     applySurfacing();
-    attachActiveBrowserView();
     sendBrowserState();
     return next;
   }
@@ -1026,22 +1058,46 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
   }
 
+  function invalidateBrowserBounds() {
+    lastBrowserBounds = null;
+    lastBrowserZoomFactor = null;
+    detachIdleBrowserViews();
+    return false;
+  }
+
+  function clampBrowserBounds(bounds) {
+    const mainWindow = window();
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const right = bounds.x + bounds.width;
+    const bottom = bounds.y + bounds.height;
+    if (![bounds.x, bounds.y, right, bottom].every(Number.isFinite)) return null;
+    const [width, height] = mainWindow.getContentSize();
+    const x = Math.max(0, bounds.x);
+    const y = Math.max(0, bounds.y);
+    const clippedRight = Math.min(width, right);
+    const clippedBottom = Math.min(height, bottom);
+    if (clippedRight <= x || clippedBottom <= y) return null;
+    return { x, y, width: clippedRight - x, height: clippedBottom - y };
+  }
+
   function acceptBrowserBounds(bounds) {
     if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
-      || bounds.width <= 0 || bounds.height <= 0) return false;
+      || bounds.width <= 0 || bounds.height <= 0) return invalidateBrowserBounds();
     const currentZoom = mainWindowZoomFactor();
     // Unstamped callers retain the existing CSS-pixel IPC contract.
     const zoom = bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
-    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return false;
+    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return invalidateBrowserBounds();
     // Round edges (not width/height) so the far edge has no sub-pixel seam.
     const x = Math.round(bounds.x * zoom);
     const y = Math.round(bounds.y * zoom);
-    lastBrowserBounds = {
+    lastBrowserBounds = clampBrowserBounds({
       x,
       y,
       width: Math.round((bounds.x + bounds.width) * zoom) - x,
       height: Math.round((bounds.y + bounds.height) * zoom) - y,
-    };
+    });
+    if (!lastBrowserBounds) return invalidateBrowserBounds();
+    lastBrowserZoomFactor = currentZoom;
     return true;
   }
 
@@ -1061,8 +1117,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = tabForView(view);
     if (!tab?.domReady || tab.background || tab.suspending) return;
     const cdp = webContents.debugger;
-    if (cdp.isAttached()) return;
-    runDetachedTask("reset browser viewport emulation", async () => {
+    queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent) => {
+      if (tab.background || tab.suspending || cdp.isAttached()) return;
       cdp.attach("1.3");
       try {
         await cdp.sendCommand("Emulation.setDeviceMetricsOverride", {
@@ -1071,9 +1127,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           deviceScaleFactor: 0,
           mobile: false,
         });
+        if (!isCurrent() || tab.background || tab.suspending) return;
         await cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
       } finally {
-        if (cdp.isAttached()) cdp.detach();
+        if (isCurrent() && !tab.background && cdp.isAttached()) cdp.detach();
       }
     });
   }
@@ -1088,11 +1145,27 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function attachActiveBrowserView() {
     const mainWindow = window();
     if (!mainWindow || !browserViewVisible) return;
-    if (!lastBrowserBounds || lastBrowserBounds.width <= 0 || lastBrowserBounds.height <= 0) return;
+    if (!lastBrowserBounds || lastBrowserZoomFactor !== mainWindowZoomFactor()) {
+      invalidateBrowserBounds();
+      sendToRenderer("openwork:browser:bounds-invalidated");
+      return;
+    }
+    const cachedBounds = lastBrowserBounds;
+    lastBrowserBounds = clampBrowserBounds(cachedBounds);
+    if (!lastBrowserBounds) {
+      invalidateBrowserBounds();
+      sendToRenderer("openwork:browser:bounds-invalidated");
+      return;
+    }
+    if (["x", "y", "width", "height"].some(key => cachedBounds[key] !== lastBrowserBounds[key])) {
+      // The host changed placement outside a bounds IPC. Clear both renderer
+      // caches so returning to the same CSS rectangle still sends fresh bounds.
+      sendToRenderer("openwork:browser:bounds-invalidated");
+    }
     const tab = getBrowserTab();
     if (!tab) { detachIdleBrowserViews(); return; }
     exitBackgroundMode(tab);
-    tab.view.setVisible(!approvals.has(tab.tabId));
+    tab.view.setVisible(!approvals.has(tab.tabId) && tab.loadError?.code !== "page_load_failed");
     detachIdleBrowserViews(tab.view);
     // Size before attaching so a restored view never flashes at stale bounds.
     tab.view.setBounds(lastBrowserBounds);
@@ -1259,7 +1332,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       handleBrowserShortcut(event, input);
     });
     host.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
-      if (isMainFrame) shortcutFocus = null;
+      if (host === window() && isMainFrame) shortcutFocus = null;
+    });
+    host.webContents.on("did-navigate", () => {
+      // Only a committed main-frame document replaces the container. A started
+      // navigation may be canceled and rerouted to the browser by the host.
+      if (host === window()) hideBrowserView();
+    });
+    host.webContents.on("render-process-gone", () => {
+      if (host === window()) hideBrowserView();
     });
   }
 
@@ -1408,11 +1489,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
    * Attach the browser view to the main window.
    * @param {object} bounds — { x, y, width, height }
    * @param {object} [opts]
-   * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
-   * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
    * @param {string | null} [opts.sessionId] - the conversation whose panel is showing
    */
-  function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false, sessionId } = {}) {
+  function attachBrowserView(bounds, { sessionId } = {}) {
     if (!window() || !acceptBrowserBounds(bounds)) return false;
     browserViewVisible = true;
     if (sessionId !== undefined) {
@@ -1423,16 +1502,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         applySurfacing();
       }
     }
-    if (ensureTab && !registry.onScreenTabId()) {
-      createBrowserTab("about:blank", { ownerSessionId: registry.visibleSessionId() });
-    }
     const view = getActiveBrowserView();
     attachActiveBrowserView();
     resetViewportEmulation(view);
-    const url = view?.webContents.getURL();
-    if (preloadDefault && (!url || url === "about:blank")) {
-      runDetachedTask("load browser default page", () => view?.webContents.loadURL(BROWSER_DEFAULT_URL));
-    }
     sendBrowserState();
     return true;
   }
@@ -1441,8 +1513,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!preserveShortcutFocus && shortcutFocus?.tabId) shortcutFocus = null;
     hideContextMenu();
     browserViewVisible = false;
-    if (!window()) return;
-    detachIdleBrowserViews();
+    invalidateBrowserBounds();
   }
 
   function destroyBrowserView() {
@@ -1476,11 +1547,22 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (tabId && registry.ownerOf(tabId) !== registry.visibleSessionId()) throw new Error("Select this conversation first.");
       taskHost.manualNavigation(tabId);
     }
-    ipcMain.handle("openwork:browser:show", (_event, bounds, sessionId) => (
-      attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) })
-    ));
-    ipcMain.handle("openwork:browser:hide", (_event, options) => hideBrowserView(options?.preserveShortcutFocus === true));
-    ipcMain.handle("openwork:browser:setVisibleSession", (_event, sessionId) => setVisibleSession(normalizeSessionId(sessionId)));
+    function isMainRenderer(event) {
+      const contents = window()?.webContents;
+      return !!contents && event.sender === contents && event.senderFrame === contents.mainFrame;
+    }
+    ipcMain.handle("openwork:browser:show", (event, bounds, sessionId) => {
+      if (!isMainRenderer(event)) return false;
+      return attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) });
+    });
+    ipcMain.handle("openwork:browser:hide", (event, options) => {
+      if (!isMainRenderer(event)) return false;
+      return hideBrowserView(options?.preserveShortcutFocus === true);
+    });
+    ipcMain.handle("openwork:browser:setVisibleSession", (event, sessionId) => {
+      if (!isMainRenderer(event)) return false;
+      return setVisibleSession(normalizeSessionId(sessionId));
+    });
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider, options) => (
       openBrowserUrlForAutomation(url, provider, {
         ownerSessionId: normalizeSessionId(options && typeof options === "object" ? options.sessionId : null),
@@ -1505,14 +1587,17 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     ipcMain.handle("openwork:browser:reload", (event) => {
       authorizeManualNavigation(event);
-      getActiveWebContents()?.reload();
-    });
-    ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-      if (!acceptBrowserBounds(bounds)) return false;
-      const view = getActiveBrowserView();
-      if (view && browserViewVisible) {
-        view.setBounds(lastBrowserBounds);
+      const webContents = getActiveWebContents();
+      const failure = getBrowserTab()?.loadError;
+      if (failure?.code === "page_load_failed") {
+        runDetachedTask("retry browser page", () => webContents?.loadURL(failure.url));
+      } else {
+        webContents?.reload();
       }
+    });
+    ipcMain.handle("openwork:browser:bounds", (event, bounds) => {
+      if (!isMainRenderer(event) || !acceptBrowserBounds(bounds)) return false;
+      attachActiveBrowserView();
       return true;
     });
     ipcMain.handle("openwork:browser:state", () => ({
@@ -1543,7 +1628,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
       return { tabId, released: true };
     });
-    ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
     ipcMain.handle("openwork:browser:closeSessionTabs", (_event, sessionId) => closeSessionBrowserTabs(sessionId));
     ipcMain.handle("openwork:browser:selectTab", async (_event, tabId) => {
       const id = String(tabId ?? "");
@@ -1553,9 +1637,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return tab.tabId;
     });
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-    ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
-    ipcMain.handle("openwork:browser:webmcpListTools", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tools", args }));
-    ipcMain.handle("openwork:browser:webmcpExecuteTool", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tool", args }));
     ipcMain.handle("openwork:browser:approve", (event, tabId, approvalId, allowed) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || registry.ownerOf(tabId) !== registry.visibleSessionId()) return false;
       const pending = approvals.get(tabId);
@@ -1576,7 +1657,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return ensureWebMcpFramePolicy().checkFrame(event.senderFrame);
     });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
-    ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
     ipcMain.handle("openwork:browser:setControlEnabled", (event, enabled) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
       browserControlEnabled = enabled === true;

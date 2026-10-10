@@ -1,5 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": { "rootDir": "../../..", "noEmit": true, "allowImportingTsExtensions": true, "types": ["node", "bun-types/test"] },
-  "include": ["src", "test/gateway-usage-limits.test.ts", "test/gateway-usage-auth-db.test.ts"]
-}

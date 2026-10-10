@@ -6,7 +6,7 @@ import {
   type OpenWorkBootstrapConfig,
   type OpenWorkCheckpointConfig,
 } from "../bootstrap/openwork-runtime"
-import { runtimeProviderErrorCode } from "../contract/errors"
+import { runtimeProviderErrorCode } from "@openwork/sandbox"
 import type {
   ExecHandle,
   ImageRef,
@@ -17,7 +17,7 @@ import type {
   SandboxSpec,
   StorageAttachment,
   VolumeRef,
-} from "../contract/provider"
+} from "@openwork/sandbox"
 import { CloudRuntimeError } from "./errors"
 import {
   currentInstanceName,

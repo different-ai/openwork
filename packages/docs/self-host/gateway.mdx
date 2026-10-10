@@ -105,6 +105,8 @@ These are native runtime variables, not values to inject indiscriminately throug
 | `GATEWAY_WEBHOOK_SECRET` | Optional; absent/empty disables the webhook credential in production. | `INFERENCE_WEBHOOK_SECRET`. Gateway. |
 | `GATEWAY_UPSTREAM_TIMEOUT_MS` | Provider forwarding (`upstreamTimeoutMs`): `1800000`; managed Models chat (`managedUpstreamTimeoutMs`): `120000` when neither alias is set. Explicit configuration applies to both. Integer `1000` through `86400000`. | `INFERENCE_UPSTREAM_TIMEOUT_MS`. Gateway; see route-specific behavior below. |
 | `GATEWAY_STREAM_IDLE_MS` | `120000`; integer `1000` through `900000`. | `INFERENCE_STREAM_IDLE_MS`. Managed Models chat streaming, not the provider relay. |
+| `GATEWAY_RESPONSE_START_MS` | `20000`; integer `1000` through `86400000`. | No alias. Streaming requests (managed chat and SSE provider protocols) whose provider has not answered by then get `200 text/event-stream` with SSE comment heartbeats; a later provider failure becomes one error event in the request's protocol. Keep it well below any proxy response timeout in front of Gateway (Cloudflare: 100 seconds, answered as HTTP 524). |
+| `GATEWAY_RESPONSE_HEARTBEAT_MS` | `15000`; integer `1000` through `90000`. | No alias. Interval of those heartbeats while the provider has not answered. |
 | `GATEWAY_CREDITS_PER_DOLLAR` | `1000000`; positive numeric value. | `INFERENCE_CREDITS_PER_DOLLAR`. Gateway accounting; does not enable a product. |
 | `GATEWAY_EGRESS_ALLOWED_ORIGINS` | Optional comma-separated exact origins; empty means no exceptions to public-HTTPS egress policy. | `INFERENCE_EGRESS_ALLOWED_ORIGINS`. Set the same policy on Den API and Gateway. |
 | `CORS_ORIGINS` | Optional comma-separated browser origins. Enabled Gateway requires exact origins (no wildcards); production opt-in requires non-local HTTPS. Disabled deployments retain legacy parsing, including `*`. | No new alias. Gateway CORS settings are not an egress allowlist. |
@@ -235,6 +237,26 @@ Use approved non-sensitive prompts to test both Gemini and Claude, streaming and
 The client-facing SDKs are the ordinary Google and Anthropic static-key SDKs; Gateway adapts their requests to the Google or Anthropic Vertex publisher respectively. Matching model-level Vertex SDK overrides are mapped too, while model aliases and supported metadata remain intact. Mixed-SDK partner models remain outside this support: Google sign-in does not enable unrelated adapters. Existing HTTP fixtures cover Vertex routing and relay behavior, but actual SDK-to-Vertex-adapter decoding through the materialized path still requires verification for both providers and both response modes.
 
 For `redirect_uri_mismatch`, compare the exact displayed callback with Google's registration. For `invalid_client`, ask the credential-set administrator to repair the OAuth client rather than repeatedly asking members for consent. For Vertex permission/model-access failures, review IAM, project, region, and partner access; do not assume every upstream `401`/`403` is an expired refresh token. Transient token-endpoint failures and quota errors need separate diagnosis. Do not replay an ambiguous or partly delivered inference stream automatically.
+
+## Amazon Bedrock and Microsoft Foundry: each member signs in
+
+Members can also sign in with their own account to **Amazon Bedrock** and **Amazon Bedrock (OpenAI)** through AWS IAM Identity Center, and to **Microsoft Foundry (Claude)** through Microsoft Entra ID. Follow [Amazon Bedrock](/ai-gateway/amazon-bedrock) and [Microsoft Foundry](/ai-gateway/microsoft-foundry) for the cloud-side setup.
+
+Both, and the Microsoft Foundry provider itself, are behind the **AI Gateway: AWS and Microsoft sign-in** feature (`gatewayCloudSignIn`). Turn it on for one organization in `/admin`, or lock it on for the whole install with the Helm value `config.features.gatewayCloudSignIn` (`DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN`). Turning it off stops new Foundry providers and new AWS or Microsoft sign-ins; people already signed in keep working until they sign out.
+
+Run the release's database migration first: it adds the `aws_sso` credential kind and the credential-set columns `oauth_tenant_id` and `aws_sso`.
+
+Like Google sign-in, Den completes each sign-in and stores the member's refresh token encrypted; Gateway renews it and, for AWS, exchanges it for short-lived role credentials that sign Bedrock requests. Den API and Gateway need public HTTPS egress to:
+
+| Host | Service | Used by |
+| --- | --- | --- |
+| `oidc.<sso-region>.amazonaws.com` | IAM Identity Center sign-in and renewal | Den API, Gateway |
+| `portal.sso.<sso-region>.amazonaws.com` | Role credentials; sign-out | Den API, Gateway |
+| `sts.<sso-region>.amazonaws.com` | Checking who signed in | Den API |
+| `login.microsoftonline.com` | Entra ID sign-in, renewal and signing keys | Den API, Gateway |
+| `<resource>.services.ai.azure.com` | Microsoft Foundry inference | Gateway |
+
+These are public AWS and Microsoft endpoints and pass the default egress policy; no `GATEWAY_EGRESS_ALLOWED_ORIGINS` exception is needed. Microsoft Foundry sign-in uses the same Den callback as Google, ending in `/v1/inference-providers/oauth/callback`. AWS sign-in uses the OAuth device flow and needs no callback.
 
 ## Verify and troubleshoot
 

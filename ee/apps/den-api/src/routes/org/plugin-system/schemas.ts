@@ -110,6 +110,8 @@ export const pluginListQuerySchema = pluginArchPaginationQuerySchema.extend({
   memberId: memberIdSchema.optional().describe("Plugins effectively accessible to this member, including team, organization and collection access."),
   includeAccess: queryBooleanSchema.optional().describe("When true, each plugin the caller manages includes its active access grants."),
   includeTotal: queryBooleanSchema.optional().describe("When true, returns the total matching plugins before the cursor."),
+  ownerId: memberIdSchema.optional().describe("Plugins created by this organization member."),
+  includeFacets: queryBooleanSchema.optional().describe("Include team and owner counts across all matching pages. Each facet ignores its own current selection."),
 }).refine((query) => !query.teamId || !query.memberId, { message: "Choose a team or a member, not both." })
 
 export const marketplaceListQuerySchema = pluginArchPaginationQuerySchema.extend({
@@ -159,7 +161,6 @@ export const configObjectParamsSchema = idParamSchema("configObjectId", "configO
 export const configObjectVersionParamsSchema = configObjectParamsSchema.extend(idParamSchema("versionId", "configObjectVersion").shape)
 export const configObjectAccessGrantParamsSchema = configObjectParamsSchema.extend(idParamSchema("grantId", "configObjectAccessGrant").shape)
 export const pluginParamsSchema = idParamSchema("pluginId", "plugin")
-export const pluginConfigObjectParamsSchema = pluginParamsSchema.extend(idParamSchema("configObjectId", "configObject").shape)
 export const pluginAccessGrantParamsSchema = pluginParamsSchema.extend(idParamSchema("grantId", "pluginAccessGrant").shape)
 export const marketplaceParamsSchema = idParamSchema("marketplaceId", "marketplace")
 export const marketplacePluginParamsSchema = marketplaceParamsSchema.extend(idParamSchema("pluginId", "plugin").shape)
@@ -890,12 +891,6 @@ export const connectorSourceTombstoneSchema = z.object({
   createdAt: z.string().datetime({ offset: true }),
 }).meta({ ref: "PluginArchConnectorSourceTombstone" })
 
-export const githubWebhookHeadersSchema = z.object({
-  xHubSignature256: z.string().trim().min(1),
-  xGithubEvent: githubWebhookEventSchema,
-  xGithubDelivery: z.string().trim().min(1),
-}).meta({ ref: "PluginArchGithubWebhookHeaders" })
-
 export const githubWebhookPayloadSchema = z.object({
   after: z.string().trim().min(1).optional(),
   installation: z.object({
@@ -931,8 +926,6 @@ export const githubConnectorSyncJobSchema = z.object({
   ref: z.string().trim().min(1),
   headSha: z.string().trim().min(1),
 }).meta({ ref: "PluginArchGithubConnectorSyncJob" })
-
-export const githubWebhookRawBodySchema = z.string().min(1).meta({ ref: "PluginArchGithubWebhookRawBody" })
 
 export const githubWebhookAcceptedResponseSchema = z.object({
   ok: z.literal(true),
@@ -991,6 +984,8 @@ export const pluginListItemSchema = pluginSchema.extend({
 }).meta({ ref: "PluginArchPluginListItem" })
 export const pluginListResponseSchema = pluginArchListResponseSchema("PluginArchPluginListResponse", pluginListItemSchema).extend({
   total: z.number().int().nonnegative().optional(),
+  teamCounts: z.array(z.object({ id: teamIdSchema, count: z.number().int().nonnegative() })).optional(),
+  ownerCounts: z.array(z.object({ id: memberIdSchema.nullable(), count: z.number().int().nonnegative() })).optional(),
 })
 export const pluginDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchPluginDetailResponse", pluginSchema)
 export const pluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchPluginMutationResponse", pluginSchema)
@@ -1021,14 +1016,29 @@ export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchem
   }),
 )
 
+const githubPluginMcpImportSkippedReasonSchema = z.enum(["headers_unsupported", "invalid_config", "invalid_url", "local_unsupported", "missing_url", "native_connector", "unsupported_auth"])
+
+const githubPluginMcpImportMappingSchema = z.object({
+  displayName: z.string(),
+  kind: z.enum(["native", "preset"]),
+  providerId: z.string(),
+}).nullable().describe("The provider OpenWork already knows for this declared connector: a native connector (Google Workspace, Microsoft 365) or a connection preset.")
+
+const githubPluginMcpImportReuseSchema = z.object({
+  connectionId: z.string(),
+  connectionName: z.string(),
+}).nullable().describe("The organization's existing connection this server uses instead of a new one. Only reported to organization admins.")
+
 const githubPluginMcpImportServerSchema = z.object({
   authType: z.literal("oauth").nullable(),
   connectionId: z.string().nullable(),
+  mapsTo: githubPluginMcpImportMappingSchema,
   name: z.string(),
   pluginKey: z.string(),
   pluginName: z.string(),
+  reuse: githubPluginMcpImportReuseSchema,
   serverKey: z.string(),
-  skippedReason: z.enum(["headers_unsupported", "invalid_config", "invalid_url", "local_unsupported", "missing_url", "unsupported_auth"]).nullable(),
+  skippedReason: githubPluginMcpImportSkippedReasonSchema.nullable(),
   sourceSchemaVersion: z.string().nullable(),
   sourcePath: z.string(),
   supported: z.boolean(),
@@ -1080,6 +1090,8 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
   z.object({
     imported: z.array(z.object({
       connectionId: z.string(),
+      connectionName: z.string(),
+      existingConnection: z.boolean().describe("True when the server uses a connection the organization already had."),
       name: z.string(),
       url: z.string(),
     })),
@@ -1089,14 +1101,32 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       sourcePath: z.string(),
     })),
     marketplaceId: marketplaceIdSchema.nullable(),
+    mode: z.enum(["created", "updated"]),
     plugin: pluginSchema,
-    skipped: z.array(z.object({
+    removed: z.array(z.object({
+      configObjectId: configObjectIdSchema,
       name: z.string(),
-      reason: z.enum(["headers_unsupported", "invalid_config", "invalid_url", "local_unsupported", "missing_url", "unsupported_auth"]),
+      objectType: z.enum(["mcp", "skill"]),
+      sourcePath: z.string(),
+    })).describe("Skills and MCP servers imported earlier that were deleted upstream; they are removed from the plugin and archived, not deleted."),
+    skipped: z.array(z.object({
+      mapsTo: githubPluginMcpImportMappingSchema,
+      name: z.string(),
+      reason: githubPluginMcpImportSkippedReasonSchema,
+      reuse: githubPluginMcpImportReuseSchema,
     })),
     skippedSkills: z.array(z.object({
       name: z.string(),
       reason: z.enum(["invalid_skill"]),
+      sourcePath: z.string(),
+    })),
+    unchanged: z.array(z.object({
+      name: z.string(),
+      objectType: z.enum(["mcp", "skill"]),
+    })),
+    updatedSkills: z.array(z.object({
+      configObjectId: configObjectIdSchema,
+      name: z.string(),
       sourcePath: z.string(),
     })),
   }),

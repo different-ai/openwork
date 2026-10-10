@@ -89,6 +89,9 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   });
   const firstResponse = requireRecord(first.body, "First PUT response");
   const id1 = stringField(firstResponse, "id");
+  const createdAt = stringField(firstResponse, "createdAt");
+  expect(Number.isFinite(Date.parse(createdAt))).toBe(true);
+  expect(Date.parse(createdAt)).toBeGreaterThanOrEqual(stamp);
   expect(first.response.status, first.text).toBe(201);
   expect(first.response.status).not.toBe(200);
   expect(firstResponse.externalKey).toBe(key);
@@ -117,6 +120,13 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
   const namedAfterReplace = afterReplace.filter((row) => row.name === firstName || row.name === replacedName);
   expect(keyedAfterReplace).toHaveLength(1);
   expect(namedAfterReplace).toHaveLength(1);
+  expect(secondResponse.createdAt).toBe(createdAt);
+  expect(keyedAfterReplace[0]?.createdAt).toBe(createdAt);
+  evidence.recordAssertionEvidence(
+    "The connection keeps its original creation time after an update",
+    `Created at ${createdAt}; replacing its name and reading the manageable list returned the same creation time.`,
+    secondResponse.createdAt === createdAt && keyedAfterReplace[0]?.createdAt === createdAt,
+  );
   evidence.recordAssertionEvidence(
     "2. A second PUT replaces the keyed connection without duplicating it",
     `Second PUT returned status=${second.response.status}, id=${String(secondResponse.id)}, name=${String(secondResponse.name)}, externalKey=${String(secondResponse.externalKey)}; manageable counts were key=${keyedAfterReplace.length}, either-name=${namedAfterReplace.length}, not create status 201 or the old name.`,

@@ -3,13 +3,60 @@
 Warden runs two skills: new security regressions and public-repository
 confidentiality. It does not review design, provenance, or Desktop/Den parity
 automatically. Those skill files remain available for optional local use.
+Rendered UI is reviewed from evidence screenshots instead, where the pixels
+and layout exist: see `evals/design-review/README.md`.
 
-GitHub's existing `openwork-admin-reviewers` approval rule owns merge approval,
-including changes to `.github/`, CI, and Warden itself. Warden has no separate
-path veto, approval bot, request-changes review, or unresolved review threads.
-Security findings are advisory in the run summary; incomplete analysis fails
-the job so it cannot look like a clean review. Warden must remain an optional
-check in the branch rules. No branch rules are changed by this setup.
+Findings appear in the run summary; incomplete analysis fails the job so it
+cannot look like a clean review. Warden never leaves review threads or
+request-changes reviews.
+
+## Clearance (automatic approval)
+
+`.github/workflows/warden-clearance.yml` runs after each Warden run, from the
+default branch, and approves the PR as the `diff-warden` App when all of these
+hold:
+
+- The PR is from this repository (forks are never reviewed or approved) and is
+  still open at the analyzed head commit.
+- Both skills completed, and the receipt matches the run, attempt, PR, and head.
+- No high or medium security findings. Low findings are noted, not blocking.
+- No confidentiality findings at any severity.
+- The PR does not change Warden itself: `.github/workflows/warden.yml`,
+  `.github/workflows/warden-clearance.yml`, `.github/scripts/warden-report.mjs`,
+  `.github/scripts/warden-clearance.mjs`, `warden.toml`, or `.warden/`.
+  `warden.yml` runs inside the PR's own review and could forge its result; the
+  others would let one PR rewrite the reviewer for every later PR.
+
+Other CI workflows, `AGENTS.md`, and agent skills are approvable. The security
+skill reviews workflow changes for concrete CI attack paths, and Warden's
+runtime never loads `AGENTS.md` or skills from the PR as instructions.
+
+Otherwise it dismisses any earlier `diff-warden` approval. A new push dismisses
+the approval through the branch rule, and the next Warden run decides again.
+
+Either way, `diff-warden` keeps one comment on the PR, edited after every run:
+approved or not and why, then each security finding (severity, title,
+`file:line`, description). Confidentiality findings appear only as a count;
+their text could name the outside identity the rule protects. Model-written
+text is escaped and its @mentions are broken, so a finding cannot ping anyone.
+The repository is public, so security findings are visible to anyone, as the
+run summary already was.
+
+The approval only unblocks merges if the `dev` ruleset accepts it. With a
+required `openwork-reviewers` team review, an App approval cannot count, so
+that team requirement must be removed for clearance to merge PRs. Then any
+approval from someone with write access counts too. The model can be steered by
+text in the diff it reviews, so clearance is a judgment call, not a guarantee.
+
+## Size limits
+
+`warden.toml` and `.warden/contributor.toml` review up to 400 files and
+60,000 changed lines per PR (`[defaults.scan]`); the Warden jobs allow 60
+minutes. Warden lists files beyond those limits as skipped but doesn't fail
+the review for them, so the reporter does: a PR with any file skipped over a
+limit is incomplete, never clear, and its `warden-clear` check and comment say
+to split it. Findings from the part that was reviewed are still posted,
+marked as incomplete, so authors can act on them.
 
 ## Local review
 
@@ -24,28 +71,67 @@ iteration, `pnpm warden:check --staged` reviews the index. Local security and
 confidentiality findings still return a failure at every severity. Missing
 credentials, partial analysis, and model errors are incomplete reviews.
 
-Run the reporter's contract tests without model credentials:
-
-```sh
-node --test .github/scripts/warden-report.test.mjs
-```
-
 ## Rollout
 
-The repository's Warden workflow is currently disabled in GitHub. The new
-workflow declares PR triggers, but this change does not enable the live
-workflow. After merging and reviewing the first run, a maintainer can enable
-Warden in Actions and synchronize/reopen a same-repository PR. Forks cannot
-use the model secret and are skipped. Draft PRs are included.
+Warden runs on every same-repository PR, including drafts. `warden.yml` skips
+forks: the action only analyzes `pull_request` events, which get no secrets
+from forks.
+
+Fork PRs are reviewed by `.github/workflows/contributor-warden.yml` instead,
+which runs the pinned Warden CLI from dev against the fork's commits written
+to disk as data (symlinks, LFS and filters off; this repository's `.warden/`
+and `warden.toml` replace the PR's copies). It only runs after a maintainer
+comments `/test`, so opening PRs cannot spend model budget. It first runs the
+`contributor-screen` skill (`.warden/contributor.toml`): hidden behavior,
+obfuscation and supply-chain risk. When that is clear, or the maintainer
+comments `/test` again, it runs the two standard skills. Neither result
+approves the PR; they feed the `contributor-pr-required` status.
+
+Text in a fork's diff can steer the model, and the agent's `Read` tool
+accepts any path, including `/proc/self/environ`. So for forks, Warden runs
+in a sandbox (`.github/scripts/contributor-warden-sandbox.sh`):
+
+- **No key to steal.** The Warden container gets a placeholder key. Pi's
+  `models.json` sends every OpenAI call to a proxy container, which alone
+  holds `WARDEN_CONTRIBUTOR_OPENAI_API_KEY` (a separate, spend-limited key).
+- **No way out.** The Warden container is on an internal Docker network
+  that reaches only the proxy. The proxy forwards only `POST /v1/responses`
+  for the configured models, refuses hosted tools (web search, MCP, code
+  interpreter, file search) and server-side state, and stops after a request
+  budget (`.github/scripts/warden-model-proxy.mjs`).
+- **Nothing else to read or change.** Read-only PR files and git objects,
+  read-only root filesystem, non-root, no Linux capabilities, no host
+  directories.
+- **Checked every run.** Before Warden starts, a check inside the container
+  fails the run if a real key, the internet, host files or writable PR files
+  are visible.
+
+Steering the model itself is resisted in two ways, neither of which is
+complete on its own. Every skill that runs on forks starts with an
+"Untrusted input" section in its system prompt: the diff, commit messages,
+comments and files are data, and text aimed at the reviewer is reported as a
+finding. Separately, the deterministic screen holds any PR whose added lines
+or commit messages try to address an AI reviewer, imitate prompt tags, or ask
+for no findings, without asking a model. A steered model can still lie about
+the code, so held items always need a person and Warden never approves a
+fork PR. Only OpenAI models work in the sandbox; pointing
+`WARDEN_MODEL` at another provider makes fork reviews incomplete.
 
 The workflow reads policy, skills, and the reporter from the PR's immutable
 base; proposed policy changes take effect after merging. PR code is inspected,
-never installed or executed by the workflow. The first rollout PR does not
-have the new reporter on its base yet and cannot demonstrate a hosted run of
-the new reporter. Validate on a subsequent PR after enabling.
+never installed or executed by the workflow.
 
-The `warden-clearance` environment and App credentials are still used by
-release and other automation. Removing the Warden approval workflow does not
-remove those shared credentials or change existing reviews and threads.
+To change the CI model without a PR, set the `WARDEN_MODEL` repository variable
+(`provider/model-id`, e.g. `openai/gpt-6-luna`). It replaces the `warden.toml`
+models for hosted runs; unset it to fall back to `warden.toml`.
+
+Warden's Pi runtime only knows the models in the catalog bundled with the
+pinned action. `.warden/pi/models.json` registers newer OpenAI models (such as
+`gpt-6-luna`) for CI and `pnpm warden:check`; add a model there before pointing
+`WARDEN_MODEL` or `warden.toml` at it. Otherwise every chunk fails immediately
+with a misleading authentication error.
+
+The `warden-clearance` environment and App credentials are shared with release
+and other automation.
 
 See [reporting.md](reporting.md) for timing and future tracking.

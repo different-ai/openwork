@@ -1,5 +1,5 @@
 import { OAuthClientInformationFullSchema, OAuthClientInformationSchema, OAuthTokensSchema } from "@modelcontextprotocol/core"
-import { discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
+import { checkResourceAllowed, discoverAuthorizationServerMetadata, IssuerMismatchError } from "@modelcontextprotocol/client"
 import type {
   AuthorizationServerMetadata,
   OAuthClientInformationContext,
@@ -82,6 +82,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   readonly clientMetadataUrl: string | undefined
   private loadedClient: EnterpriseMcpOAuthClientRegistration | undefined
   private loadedCredential: EnterpriseMcpOAuthCredential | undefined
+  private committedRefreshAccessToken: string | undefined
   private loadedDiscovery: OAuthDiscoveryState | undefined
   private verifiedAuthorizationServerMetadata: AuthorizationServerMetadata | undefined
   private authorizationHandle: EnterpriseMcpOAuthAuthorizationHandle | undefined
@@ -162,6 +163,18 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       application_type: this.applicationType,
       ...(scope ? { scope } : {}),
     }
+  }
+
+  // Some providers serve one MCP endpoint from several hosts and declare a
+  // single canonical resource, such as a regional API host. Tokens are always
+  // sent to the configured URL, so beyond the SDK's same-origin rule only a
+  // listed host alias, with the same scheme, port and path, is accepted.
+  async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
+    if (!resource) return undefined
+    const declared = new URL(resource)
+    if (checkResourceAllowed({ requestedResource: serverUrl, configuredResource: declared })) return declared
+    if (isTrustedResourceAlias(new URL(serverUrl), declared)) return declared
+    throw new Error(`Protected resource ${resource} does not match expected ${serverUrl} (or origin)`)
   }
 
   private assertDiscoveryBinding(state: OAuthDiscoveryState): void {
@@ -412,6 +425,12 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     const validated = this.storedTokens(tokens, context)
     const authorization = this.authorizationHandle
     const source = authorization ? "authorization-code" : "refresh"
+    // refreshExclusively already committed these tokens while it held the credential.
+    if (source === "refresh" && this.committedRefreshAccessToken === validated.access_token) {
+      this.committedRefreshAccessToken = undefined
+      this.loadedCredential = undefined
+      return
+    }
     const existing = source === "refresh"
       ? (this.loadedCredential ?? await this.persistence.credentials.load(this.context()))
       : undefined
@@ -441,6 +460,44 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       expectedCredentialRevision: existing?.revision,
     })
     this.loadedCredential = undefined
+  }
+
+  /**
+   * Sends refresh-token grants through `credentials.refreshExclusively` when the
+   * persistence adapter provides it; every other request passes through.
+   */
+  exclusiveRefreshFetch(fetch: EnterpriseMcpFetch): EnterpriseMcpFetch {
+    return async (url, init) => {
+      const credentials = this.persistence.credentials
+      const refreshToken = refreshTokenGrant(init?.body)
+      if (!credentials.refreshExclusively || !refreshToken) return fetch(url, init)
+      const issuer = this.loadedCredential?.tokens.issuer
+      let response: Response | undefined
+      let committedAccessToken: string | undefined
+      const outcome = await credentials.refreshExclusively({
+        context: this.context(),
+        refreshToken,
+        refresh: async () => {
+          response = await fetch(url, init)
+          if (!response.ok) return undefined
+          const parsed = OAuthTokensSchema.safeParse(await response.clone().json().catch(() => undefined))
+          if (!parsed.success) return undefined
+          const tokens = this.storedTokens({ ...parsed.data, ...(issuer ? { issuer } : {}) })
+          committedAccessToken = tokens.access_token
+          return { tokens, expiresAt: tokenExpiration(tokens, this.clock.now()) }
+        },
+      })
+      this.loadedCredential = undefined
+      if (outcome.status === "superseded") {
+        // Another request already rotated this refresh token: answer with the
+        // credential it saved instead of presenting the old token again.
+        this.committedRefreshAccessToken = outcome.credential?.tokens.access_token
+        return supersededRefreshResponse(outcome.credential, this.clock.now())
+      }
+      if (!response) throw new Error("The OAuth refresh completed without a provider response.")
+      if (outcome.status === "refreshed") this.committedRefreshAccessToken = committedAccessToken
+      return response
+    }
   }
 
   async commitPendingAuthorizationCodeCredential(): Promise<void> {
@@ -566,4 +623,50 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     }
     if (retainedClient) throw retainedClient
   }
+}
+
+function refreshTokenGrant(body: RequestInit["body"]): string | undefined {
+  const text = typeof body === "string" ? body : body instanceof URLSearchParams ? body.toString() : undefined
+  if (!text) return undefined
+  const form = new URLSearchParams(text)
+  return form.get("grant_type") === "refresh_token" ? form.get("refresh_token") ?? undefined : undefined
+}
+
+function supersededRefreshResponse(credential: EnterpriseMcpOAuthCredential | undefined, now: number): Response {
+  const headers = { "content-type": "application/json" }
+  if (!credential) {
+    return new Response(JSON.stringify({
+      error: "invalid_grant",
+      error_description: "The credential was cleared while another request refreshed it.",
+    }), { status: 400, headers })
+  }
+  const { access_token, token_type, refresh_token, scope } = credential.tokens
+  const expiresIn = credential.expiresAt === undefined
+    ? undefined
+    : Math.max(0, Math.floor((credential.expiresAt - now) / 1_000))
+  return new Response(JSON.stringify({
+    access_token,
+    token_type,
+    ...(refresh_token ? { refresh_token } : {}),
+    ...(scope ? { scope } : {}),
+    ...(expiresIn === undefined ? {} : { expires_in: expiresIn }),
+  }), { status: 200, headers })
+}
+
+// Configured host -> hosts it may declare as its protected resource.
+const TRUSTED_RESOURCE_HOST_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  // ElevenLabs documents the global host, which declares its US host.
+  "api.elevenlabs.io": ["api.us.elevenlabs.io"],
+}
+
+function isTrustedResourceAlias(configured: URL, declared: URL): boolean {
+  if (configured.protocol !== declared.protocol || configured.port !== declared.port) return false
+  if (configured.pathname !== declared.pathname || declared.search || declared.hash) return false
+  if (isLoopbackHost(configured.hostname) && isLoopbackHost(declared.hostname)) return true
+  return configured.protocol === "https:" &&
+    (TRUSTED_RESOURCE_HOST_ALIASES[configured.hostname] ?? []).includes(declared.hostname)
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname)
 }

@@ -17,9 +17,10 @@ export interface FaultRequest {
 
 export interface FaultProxy extends AsyncDisposable {
   ref: DenRef;
+  arrivals?(): Promise<Omit<FaultRequest, "status">[]>;
   faults: {
-    status(pathPrefix: string, statusCode: number, opts?: { times?: number; body?: unknown }): Promise<void>;
-    latency(pathPrefix: string, delayMs: number, opts?: { times?: number }): Promise<void>;
+    status(pathPrefix: string, statusCode: number, opts?: { times?: number; body?: unknown; method?: string }): Promise<void>;
+    latency(pathPrefix: string, delayMs: number, opts?: { times?: number; method?: string }): Promise<void>;
     clear(): Promise<void>;
   };
   /** Local lane: the live in-memory log (back-compat). Remote lane: the snapshot from the last requestLog() call. */
@@ -36,6 +37,7 @@ export interface FaultProxyOptions {
 interface RuleBase {
   pathPrefix: string;
   remaining: number;
+  method?: string;
 }
 
 type FaultRule =
@@ -75,9 +77,9 @@ function times(value: number | undefined): number {
   return value;
 }
 
-function takeRule(rules: FaultRule[], path: string): FaultRule | null {
+function takeRule(rules: FaultRule[], path: string, method: string): FaultRule | null {
   for (const rule of rules) {
-    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix)) continue;
+    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix) || (rule.method !== undefined && rule.method !== method)) continue;
     rule.remaining -= 1;
     return rule;
   }
@@ -165,10 +167,12 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
   const port = await allocateFreePort();
   const rules: FaultRule[] = [];
   const requests: FaultRequest[] = [];
+  const arrivals: Omit<FaultRequest, "status">[] = [];
   const server = createServer((incoming, response) => {
     void (async () => {
       const path = incoming.url ?? "/";
-      const rule = takeRule(rules, path);
+      const rule = takeRule(rules, path, incoming.method ?? "GET");
+      arrivals.push({ method: incoming.method ?? "GET", path, faulted: rule !== null, at: Date.now() });
       if (rule?.kind === "status") {
         const body = JSON.stringify(rule.body ?? { error: `Injected HTTP ${rule.statusCode}` });
         requests.push({ method: incoming.method ?? "GET", path, status: rule.statusCode, faulted: true, at: Date.now() });
@@ -180,7 +184,13 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
         response.end(body);
         return;
       }
-      if (rule?.kind === "latency") await delay(rule.delayMs);
+      if (rule?.kind === "latency") {
+        response.once("close", () => {
+          if (!response.writableEnded) requests.push({ method: incoming.method ?? "GET", path, status: 499, faulted: true, at: Date.now() });
+        });
+        await delay(rule.delayMs);
+        if (response.destroyed) return;
+      }
       forward(incoming, response, upstream, rule !== null, requests, api);
     })().catch((error: unknown) => {
       if (response.headersSent) {
@@ -199,12 +209,13 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
   let disposed = false;
   return {
     ref: { apiUrl: `${url}/api/den`, webUrl: url },
+    async arrivals() { return arrivals.map(row => ({ ...row })); },
     faults: {
       async status(pathPrefix, statusCode, opts = {}) {
-        rules.push({ kind: "status", pathPrefix, statusCode, body: opts.body, remaining: times(opts.times) });
+        rules.push({ kind: "status", pathPrefix, statusCode, body: opts.body, remaining: times(opts.times), method: opts.method?.toUpperCase() });
       },
       async latency(pathPrefix, delayMs, opts = {}) {
-        rules.push({ kind: "latency", pathPrefix, delayMs, remaining: times(opts.times) });
+        rules.push({ kind: "latency", pathPrefix, delayMs, remaining: times(opts.times), method: opts.method?.toUpperCase() });
       },
       async clear() {
         rules.length = 0;
@@ -237,7 +248,10 @@ export async function faultProxy(ref: DenRef, options: FaultProxyOptions = {}): 
     throw new Error("fault proxy on Daytona needs the Den sandbox id; pass `sandbox: den.placement.sandboxId`.");
   }
 
-  const remote = await startFaultProxyOnSandbox({ sandbox: options.sandbox });
+  // Match the local lane when a world explicitly points the web-facing ref
+  // at the API. Always routing through Den Web can redirect away the bearer.
+  const apiUpstream = ref.webUrl === ref.apiUrl;
+  const remote = await startFaultProxyOnSandbox({ sandbox: options.sandbox, upstream: apiUpstream ? "api" : "web" });
   const requests: FaultRequest[] = [];
   const control = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const response = await fetch(`${remote.url}/__openwork_faults/${path}`, {
@@ -259,13 +273,13 @@ export async function faultProxy(ref: DenRef, options: FaultProxyOptions = {}): 
   };
   let disposed = false;
   return {
-    ref: { apiUrl: `${remote.url}/api/den`, webUrl: remote.url },
+    ref: { apiUrl: apiUpstream ? remote.url : `${remote.url}/api/den`, webUrl: remote.url },
     faults: {
       status(pathPrefix, statusCode, opts = {}) {
-        return post("rules", { kind: "status", pathPrefix, statusCode, times: opts.times, body: opts.body });
+        return post("rules", { kind: "status", pathPrefix, statusCode, times: opts.times, body: opts.body, method: opts.method });
       },
       latency(pathPrefix, delayMs, opts = {}) {
-        return post("rules", { kind: "latency", pathPrefix, delayMs, times: opts.times });
+        return post("rules", { kind: "latency", pathPrefix, delayMs, times: opts.times, method: opts.method });
       },
       clear() {
         return post("clear");

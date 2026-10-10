@@ -71,7 +71,7 @@ describe("Settings staged-update discovery", () => {
       onReleaseChannelChange,
       updateAutoCheck: autoCheck,
       updateAutoDownload: autoDownload,
-      updatePolicyKnown: true,
+      allowedVersionsKnown: true,
       desktopConfig: config,
       refreshDesktopConfig,
       setError,
@@ -364,23 +364,52 @@ describe("Settings staged-update discovery", () => {
     expect(updater.updateStatus?.candidate?.totalBytes).toBeNull();
   });
 
-  test("focus, online, visibility and automatic timer never check while ready", async () => {
+  test("background check while ready replaces the staged build with a newer release", async () => {
     await stage();
     autoCheck = true;
     await act(async () => { root.render(createElement(Harness)); });
-    await advance(15 * 60 * 1000);
+    expect(checks).toEqual([{ channel: "stable", targetVersion: newerVersion, options: { preserveStaged: true } }]);
+    expect(downloads).toEqual([newerVersion]);
+    expect(downloadedStage).toBe(newerVersion);
+    expect(updater.updateStatus).toMatchObject({ state: "ready", version: newerVersion });
+    expect(statuses.some((status) => status?.checkingForNewer)).toBe(false);
     await act(async () => {
       window.dispatchEvent(new Event("focus"));
       window.dispatchEvent(new Event("online"));
       document.dispatchEvent(new Event("visibilitychange"));
-      automaticTick();
     });
-    expect(checks).toEqual([]);
+    expect(checks).toHaveLength(1);
+    await advance(15 * 60 * 1000);
+    await act(async () => { automaticTick(); });
+    expect(checks).toHaveLength(2);
+    expect(checks[1]?.options).toEqual({ preserveStaged: true });
+    expect(downloads).toEqual([newerVersion]);
+    expect(updater.updateStatus).toMatchObject({ state: "ready", version: newerVersion, newest: true });
+    await click("Install & restart");
+    expect(installedStages).toEqual([newerVersion]);
+  });
+
+  test("background check while ready only offers a newer release when automatic download is off", async () => {
+    await stage();
+    autoCheck = true;
+    autoDownload = false;
+    await act(async () => { root.render(createElement(Harness)); });
+    expect(checks).toEqual([{ channel: "stable", targetVersion: newerVersion, options: { preserveStaged: true } }]);
+    expect(downloads).toEqual([]);
+    expect(updater.updateStatus).toMatchObject({ state: "ready", version: stagedVersion, candidate: { version: newerVersion } });
+    expect(button("Download").disabled).toBe(false);
+  });
+
+  test("a failed background check while ready keeps the staged build installable", async () => {
+    await stage();
+    checkReason = "offline";
+    autoCheck = true;
+    await act(async () => { root.render(createElement(Harness)); });
+    expect(checks).toHaveLength(1);
     expect(downloads).toEqual([]);
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: stagedVersion });
-    await click("Check now");
-    expect(checks).toHaveLength(1);
-    expect(checks[0]?.options).toEqual({ preserveStaged: true });
+    expect(updater.updateStatus?.checkError).toBeUndefined();
+    expect(button("Install & restart").disabled).toBe(false);
   });
 
   test("native menu request shares the staged-preserving manual check", async () => {
@@ -479,8 +508,13 @@ describe("Settings staged-update discovery", () => {
   for (const reason of [undefined, "offline"]) {
     test.each(["null", "mismatch", "missing"])(`%s staged confirmation clears ready before handling ${reason ?? "success"}`, async (confirmation) => {
       await stage();
+      // Arm automatic checks while the feed has nothing newer than the stage.
+      latestVersion = stagedVersion;
       autoCheck = true;
       await act(async () => { root.render(createElement(Harness)); });
+      expect(downloads).toEqual([]);
+      latestVersion = newerVersion;
+      checks = [];
       await click("Check now");
       await advance(15_000);
       checkResult = async () => ({
@@ -512,8 +546,12 @@ describe("Settings staged-update discovery", () => {
 
   test("losing staged confirmation invalidates an install awaiting A's policy", async () => {
     await stage();
+    latestVersion = stagedVersion;
     const deferred = Promise.withResolvers<DenDesktopConfig>();
-    refreshResult = () => deferred.promise;
+    let refreshCalls = 0;
+    // The install's newest-release lookup reads the policy first; hold the
+    // second read, which authorizes installing A.
+    refreshResult = async () => ++refreshCalls === 1 ? config : deferred.promise;
     let installing: Promise<void> | undefined;
     await act(async () => { installing = updater.installUpdateAndRestart(); });
     refreshResult = undefined;
@@ -578,10 +616,14 @@ describe("Settings staged-update discovery", () => {
     await stage();
     await click("Check now");
     const deferred = Promise.withResolvers<DenDesktopConfig>();
-    refreshResult = () => deferred.promise;
+    let refreshCalls = 0;
+    // Only A is allowed when the install looks for a newer release, so it keeps
+    // A and then waits on the policy read that authorizes installing it.
+    refreshResult = async () => ++refreshCalls === 1 ? { allowedDesktopVersions: [stagedVersion] } : deferred.promise;
     let installing: Promise<void> | undefined;
     await act(async () => { installing = updater.installUpdateAndRestart(); });
     expect(installs).toBe(0);
+    expect(downloads).toEqual([]);
     if (replace) {
       await click("Download");
       expect(downloadedStage).toBe(newerVersion);
@@ -600,13 +642,40 @@ describe("Settings staged-update discovery", () => {
     }
   });
 
-  test("B approval cannot authorize a revoked staged A at install", async () => {
+  test("install replaces a revoked staged A with the approved newer B", async () => {
     await stage();
     await click("Check now");
     config = { allowedDesktopVersions: [newerVersion] };
     await click("Install & restart");
+    expect(downloads).toEqual([newerVersion]);
+    expect(installedStages).toEqual([newerVersion]);
+    expect(updater.updateStatus).toMatchObject({ state: "ready", version: newerVersion });
+  });
+
+  test("install fetches a release that shipped after the staged download and restarts once onto it", async () => {
+    await stage();
+    await click("Install & restart");
+    expect(checks).toEqual([{ channel: "stable", targetVersion: newerVersion, options: { preserveStaged: true } }]);
+    expect(downloads).toEqual([newerVersion]);
+    expect(installs).toBe(1);
+    expect(installedStages).toEqual([newerVersion]);
+  });
+
+  test("install keeps the staged build when the newest-release lookup fails", async () => {
+    await stage();
+    checkReason = "offline";
+    await click("Install & restart");
+    expect(downloads).toEqual([]);
+    expect(installedStages).toEqual([stagedVersion]);
+  });
+
+  test("install does not restart onto a stale build when the newer download fails", async () => {
+    await stage();
+    downloadReason = "download failed";
+    await click("Install & restart");
+    expect(downloads).toEqual([newerVersion]);
     expect(installs).toBe(0);
-    expect(updater.updateStatus).toMatchObject({ state: "blocked", version: stagedVersion });
+    expect(updater.updateStatus).toMatchObject({ state: "error", failedAction: "download" });
   });
 
   test("late metadata cannot restore ready A after an install failure", async () => {
@@ -635,7 +704,8 @@ describe("Settings staged-update discovery", () => {
     const confirm = Array.from(dialog?.querySelectorAll("button") ?? []).find((node) => node.textContent === "Install & restart");
     expect(confirm).toBeDefined();
     await act(async () => { confirm?.click(); });
-    expect(installedStages).toEqual([stagedVersion]);
+    // Confirming still restarts once, onto the newer release that shipped since.
+    expect(installedStages).toEqual([newerVersion]);
   });
 
   test("channel override still uses the ordinary manual path", async () => {
@@ -670,9 +740,13 @@ describe("Settings staged-update discovery", () => {
     await stage();
     await click("Check now");
     checks = [];
+    downloadedStage = null;
     installReason = "update-not-downloaded";
     await click("Install & restart");
-    expect(checks).toEqual([{ channel: "stable", targetVersion: newerVersion, options: undefined }]);
+    expect(checks).toEqual([
+      { channel: "stable", targetVersion: newerVersion, options: { preserveStaged: true } },
+      { channel: "stable", targetVersion: newerVersion, options: undefined },
+    ]);
     expect(downloads).toEqual([newerVersion]);
     expect(updater.updateStatus).toMatchObject({ state: "ready", version: newerVersion });
   });

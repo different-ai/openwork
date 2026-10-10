@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { app as startApp, server as startServer, resolveEvalEngine } from "@openwork/env";
 import { SkipError } from "@openwork/env";
-import type { Place, Seed } from "@openwork/env";
+import type { EvalEngine, Place, Seed } from "@openwork/env";
 import { createAndSelectWorkspace, evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
 import {
@@ -189,12 +189,12 @@ export async function sessionWorld(seed: Seed) {
  * sessionless New task route and the first Run task must create the session
  * and deliver the prompt through whichever engine (v1 or v2) is selected.
  */
-export async function sessionlessFirstSendWorld(seed: Seed) {
-  return sessionlessFirstSend(seed, { mobileLayout: false });
+export async function sessionlessFirstSendWorld(seed: Seed, options: { engine?: EvalEngine } = {}) {
+  return sessionlessFirstSend(seed, { ...options, mobileLayout: false });
 }
 
-async function sessionlessFirstSend(seed: Seed, options: { mobileLayout: boolean }) {
-  const engine = resolveEvalEngine();
+async function sessionlessFirstSend(seed: Seed, options: { engine?: EvalEngine; mobileLayout: boolean }) {
+  const engine = options.engine ?? resolveEvalEngine();
   const providerId = "first-send-mock";
   const modelId = "first-send-model";
   const nonce = `${Date.now().toString(36)}-${process.pid}`;
@@ -212,7 +212,7 @@ async function sessionlessFirstSend(seed: Seed, options: { mobileLayout: boolean
     ],
   });
   const workspacePath = seed.tmpPath("sessionless-first-send");
-  const app = await seed.appWeb({ name: "sessionless-first-send", workspacePath, headless: true, mocks: { agent: mockBoot } });
+  const app = await seed.appWeb({ name: "sessionless-first-send", workspacePath, engine, headless: true, mocks: { agent: mockBoot } });
   const mock = app.mocks.agent;
   if (!mock) throw new Error("Missing first-send model witness");
   const workspace = await seed.workspace(app, workspacePath);
@@ -272,8 +272,8 @@ async function sessionlessFirstSend(seed: Seed, options: { mobileLayout: boolean
   };
 }
 
-export async function mobileChatInteractionWorld(seed: Seed) {
-  return sessionlessFirstSend(seed, { mobileLayout: true });
+export async function mobileChatInteractionWorld(seed: Seed, options: { engine?: EvalEngine } = {}) {
+  return sessionlessFirstSend(seed, { ...options, mobileLayout: true });
 }
 
 export async function parentChildPermissionWorld(seed: Seed) {
@@ -530,6 +530,22 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
     ...base,
     tableMarkdown,
     fileLinkPath,
+    // Native Electron menus are OS widgets without DOM/CDP targets. Use the
+    // existing development bridge to observe and dismiss the real popup.
+    nativeMenu: () => seed.evalIn(base.app, () => window.__OPENWORK_ELECTRON__.contextMenu.inspect(), { awaitPromise: true }),
+    dismissMenu: () => seed.evalIn(base.app, () => window.__OPENWORK_ELECTRON__.contextMenu.dismiss(), { awaitPromise: true }),
+    // Pierre's token styles and render errors live inside its shadow root.
+    async artifactCodePresentation() {
+      return seed.evalIn(base.app, () => {
+        const shadow = document.querySelector("[data-artifact-code-view] diffs-container")?.shadowRoot;
+        const tokens = [...(shadow?.querySelectorAll("[data-line] span") ?? [])]
+          .filter((node) => node.textContent?.trim() && node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+        return {
+          colors: [...new Set(tokens.map((node) => getComputedStyle(node).color))],
+          error: shadow?.querySelector("[data-error-message]")?.textContent ?? null,
+        };
+      });
+    },
     async visibleArtifactCode() {
       return seed.evalIn(base.app, () => {
         const root = document.querySelector<HTMLElement>("[data-artifact-code-view]");
@@ -1303,7 +1319,7 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
         timeoutMs: 15_000,
       }).catch(() => null);
       if (isRecord(info)) {
-        const baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").replace(/\/+$/, "");
+        const baseUrl = String(info.baseUrl ?? "").replace(/\/+$/, "");
         const token = String(info.ownerToken ?? info.clientToken ?? "");
         if (baseUrl && token) return { baseUrl, token };
       }
@@ -1434,22 +1450,31 @@ export async function backgroundUpdateWorld(seed: Seed) {
     });
     window.__openworkApplyDesktopConfig?.({});
     window.__openworkSetDesktopConfigRefreshResult?.({});
+    // Like the main process, report which build is staged to checks that must preserve it.
+    let stagedVersion: string | null = null;
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: "stable", currentVersion }),
       setChannel: async (channel) => ({ channel, currentVersion }),
-      check: async () => {
+      check: async (_channel?: string, _targetVersion?: string, options?: { preserveStaged?: boolean }) => {
         state.checks++;
-        return { available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion };
+        return {
+          available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion,
+          ...(options?.preserveStaged ? { stagedVersion } : {}),
+        };
       },
       download: async () => {
         state.downloads++;
         const attempt = state.downloads;
+        stagedVersion = null;
         return new Promise((resolve, reject) => {
           state.finishDownload = () => {
             state.finishDownload = null;
             if (attempt === 1) resolve({ ok: false, reason: "Update native preparation failed." });
             else if (attempt === 2) reject(new Error("Update download connection failed."));
-            else resolve({ ok: true });
+            else {
+              stagedVersion = "9.9.9";
+              resolve({ ok: true });
+            }
           };
         });
       },
@@ -1507,8 +1532,8 @@ export async function backgroundUpdateWorld(seed: Seed) {
   };
 }
 
-/** A desktop signed in to a real Den with a saved version policy. Desktop
- * enforcement is suspended; the fake feed must not change the saved policy. */
+/** A desktop signed in to a real Den whose organization pins allowed desktop
+ * versions. The fake feed offers 9.9.9; the pin decides whether it installs. */
 export async function savedUpdatePolicyWorld(seed: Seed) {
   const den = await seed.den({
     org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },

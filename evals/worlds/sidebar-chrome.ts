@@ -8,14 +8,7 @@ export async function sidebarChrome(seed: Seed) {
   });
   const app = await seed.desktop({ name: "sidebar-chrome", den, as: "admin" });
   const session = await seed.session(app, { title: "Planning notes" });
-  // Arrange a background event through the same ingress as provider sync. No
-  // credentials or live provider requests are needed to exercise the bell.
-  const mac = await seed.evalIn(app, () => {
-    window.dispatchEvent(new CustomEvent("openwork-new-providers-available", {
-      detail: { providers: [{ id: "sidebar-provider", name: "Example provider", providerId: "sidebar-provider" }], newProviderCount: 1, newModelCount: 0, source: "cloud_sync" },
-    }));
-    return /Mac/i.test(navigator.platform);
-  });
+  const mac = await seed.evalIn(app, () => /Mac/i.test(navigator.platform));
   const film = process.env.OPENWORK_EVAL_FILM_DIR
     ? await captureBrowserFilm(app, process.env.OPENWORK_EVAL_FILM_DIR)
     : null;

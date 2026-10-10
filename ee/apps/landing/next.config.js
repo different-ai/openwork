@@ -3,6 +3,19 @@ const { withBotId } = require("botid/next/config");
 /** @type {import('next').NextConfig} */
 const mintlifyOrigin = "https://differentai.mintlify.dev";
 
+const ALIAS_HOSTS = [
+  "www.openworklabs.com",
+  "openwork.software",
+  "www.openwork.software",
+  "openworkapp.com",
+  "www.openworkapp.com",
+  "openwork.studio",
+  "www.openwork.studio",
+  "openworkco.com",
+  "www.openworkco.com",
+  "www.openworklabs.com",
+];
+
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@openwork/ui"],
@@ -13,6 +26,16 @@ const nextConfig = {
   // and local `next start` mirrors what was built.
   env: {
     VERCEL_ENV: process.env.VERCEL_ENV || "",
+  },
+  // Alias domains serve the same build; send them to the canonical host so
+  // search and answer engines don't split citations across duplicate URLs.
+  async redirects() {
+    return ALIAS_HOSTS.map((host) => ({
+      source: "/:path*",
+      has: [{ type: "host", value: host }],
+      destination: "https://openworklabs.com/:path*",
+      permanent: true,
+    }));
   },
   async rewrites() {
     return [
@@ -34,12 +57,26 @@ const nextConfig = {
           {
             key: "Link",
             value:
-              '</docs>; rel="service-doc", </.well-known/agent-skills/index.json>; rel="https://agentskills.io/rel/index", </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"',
+              '</docs>; rel="service-doc", </llms.txt>; rel="llms-txt", </.well-known/agent-skills/index.json>; rel="https://agentskills.io/rel/index", </.well-known/agent-skills/index.json>; rel="agent-skills", </.well-known/mcp/server-card.json>; rel="mcp-server-card", </.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"',
           },
         ],
       },
       {
         source: "/.well-known/agent-skills/index.json",
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+      {
+        source: "/.well-known/mcp.json",
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
+      {
+        source: "/.well-known/mcp/server-card.json",
         headers: [
           { key: "Content-Type", value: "application/json" },
           { key: "Access-Control-Allow-Origin", value: "*" },

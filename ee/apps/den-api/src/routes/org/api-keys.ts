@@ -8,12 +8,17 @@ import {
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
   listOrganizationApiKeys,
 } from "../../api-keys.js"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
-import { jsonValidator, orgMemberRoute, paramValidator } from "../../middleware/index.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { apiKeyAuditColumns, apiKeyCreatedEvent } from "../../audit/domain/api-keys.js"
+import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { auditChangeCapture } from "../../audit/request-capture.js"
+import { jsonValidator, orgPermissionRoute, paramValidator } from "../../middleware/index.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import { auth } from "../../auth.js"
+import { AuthApiKeyTable } from "@openwork-ee/den-db/schema"
+import { eq } from "@openwork-ee/den-db/drizzle"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureApiKeyManager, ensureApiKeyReader, idParamSchema, orgAccessFailureStatus } from "./shared.js"
+import { idParamSchema } from "./shared.js"
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
@@ -132,7 +137,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and admins can list API keys.",
+          description: "The caller needs the View API keys permission.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -149,13 +154,8 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("api_keys.view"),
     async (c) => {
-      const access = ensureApiKeyReader(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const apiKeys = await listOrganizationApiKeys(payload.organization.id)
       return c.json({ apiKeys })
@@ -196,7 +196,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and super-admins can create API keys.",
+          description: "The caller needs the Manage API keys permission and a recent sign-in.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -213,14 +213,9 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("api_keys.manage"),
     jsonValidator(createOrganizationApiKeySchema),
     async (c) => {
-      const access = ensureApiKeyManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
       const created = await auth.api.createApiKey({
@@ -239,7 +234,14 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       })
 
-      await recordOrganizationAuditEvent({
+      // better-auth wrote the key on its own adapter: append the after-snapshot
+      // (read back from the row, never the plaintext) in a fresh transaction.
+      const capture = auditChangeCapture(c)
+      const auditEventIds = await appendDomainChangesAfterCommit(capture, "api_key.created", async (tx) => {
+        const [row] = await tx.select(apiKeyAuditColumns).from(AuthApiKeyTable).where(eq(AuthApiKeyTable.id, created.id)).limit(1)
+        return row ? [apiKeyCreatedEvent(payload.organization.id, row, { userId: payload.currentMember.userId, memberId: payload.currentMember.id })] : []
+      })
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.apiKeyCreated,
@@ -249,7 +251,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           name: created.name,
           prefix: created.prefix,
         },
-      })
+      }, auditEventIds)
 
       return c.json({
         apiKey: {
@@ -299,7 +301,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           },
         },
         403: {
-          description: "Only workspace owners and super-admins can delete API keys.",
+          description: "The caller needs the Manage API keys permission and a recent sign-in.",
           content: {
             "application/json": {
               schema: resolver(forbiddenApiKeyManagerSchema),
@@ -316,26 +318,22 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
         },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("api_keys.manage"),
     paramValidator(apiKeyIdParamSchema),
     async (c) => {
-      const access = ensureApiKeyManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const params = c.req.valid("param")
+      const capture = auditChangeCapture(c)
       const deleted = await deleteOrganizationApiKey({
         organizationId: payload.organization.id,
         apiKeyId: params.apiKeyId,
-      })
+      }, capture)
 
       if (!deleted) {
         return c.json({ error: "api_key_not_found" }, 404)
       }
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.apiKeyDeleted,
@@ -346,7 +344,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           name: deleted.name,
           prefix: deleted.prefix,
         },
-      })
+      }, deleted.auditEventIds)
 
       return c.body(null, 204)
     },

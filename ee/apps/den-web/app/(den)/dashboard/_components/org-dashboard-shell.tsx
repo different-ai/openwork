@@ -18,15 +18,17 @@ import {
   getAiGatewayRoute,
   getAnalyticsRoute,
   getAutomationsRoute,
-  getBackgroundAgentsRoute,
   getApiKeysRoute,
+  getAuditLogsRoute,
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
+  getDeploymentsRoute,
   getDesktopPoliciesRoute,
-  getManagedDashboardsRoute,
+  getWorkbotSettingsRoute,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   getIntegrationsRoute,
   getLibraryRoute,
   getMcpConnectionsRoute,
@@ -43,6 +45,7 @@ import {
   getScimRoute,
   getWorkflowRunsRoute,
   getWebRoute,
+  getPermissionsRoute,
 } from "../../_lib/den-org";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -58,7 +61,10 @@ import {
   type DenSearchBarHandle,
 } from "./command-palette/den-search-bar";
 import { useDashboardPrefetch } from "./use-dashboard-prefetch";
+import { useLibraryNeedsSignInCount } from "./library-data";
+import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
+import { DownloadOpenWorkButton } from "./download-openwork-button";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
@@ -226,11 +232,17 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname === dashboardRoot) {
     return "Home";
   }
+  if (pathname.startsWith(getAuditLogsRoute(orgSlug))) {
+    return "Audit logs";
+  }
   if (pathname.startsWith(getAnalyticsRoute(orgSlug))) {
     return "Analytics";
   }
   if (pathname.startsWith(getMembersRoute(orgSlug))) {
     return "Members";
+  }
+  if (pathname.startsWith(getPermissionsRoute(orgSlug))) {
+    return "Permissions";
   }
   if (pathname.startsWith(getApiKeysRoute(orgSlug))) {
     return "API Keys";
@@ -240,9 +252,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getSsoRoute(orgSlug))) {
     return "SSO";
-  }
-  if (pathname.startsWith(getBackgroundAgentsRoute(orgSlug))) {
-    return "Background Tasks";
   }
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";
@@ -256,11 +265,17 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop policies";
   }
+  if (pathname.startsWith(getWorkbotSettingsRoute(orgSlug))) {
+    return "Workbot";
+  }
   if (
     pathname.startsWith(getMarketplacesRoute(orgSlug))
     || pathname.startsWith(getBrandAppearanceRoute(orgSlug))
   ) {
     return "Advanced";
+  }
+  if (pathname.startsWith(getDeploymentsRoute(orgSlug))) {
+    return "Deployments";
   }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";
@@ -279,9 +294,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
     return "Connectors";
-  }
-  if (pathname.startsWith(getManagedDashboardsRoute(orgSlug))) {
-    return "Dashboards";
   }
   if (pathname.startsWith(getYourConnectionsRoute(orgSlug))) {
     return "Your Connections";
@@ -393,6 +405,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     };
   }, [switcherOpen]);
 
+  // Keep sidebar hooks unconditional across picker and onboarding transitions,
+  // but don't fetch sidebar data while the full-page shell is showing.
+  const sidebarQueriesEnabled = !orgSelectionOpen && !isOnboarding && Boolean(activeOrg);
+  const libraryModels = useLibraryModels(sidebarQueriesEnabled);
+  const libraryNeedsSignIn = useLibraryNeedsSignInCount(sidebarQueriesEnabled)
+    + (libraryModels.data ?? []).filter((provider) => provider.state === "needs_signin").length;
+
   // The picker replaces the whole shell until a workspace is chosen.
   if (orgSelectionOpen) {
     return (
@@ -419,7 +438,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
 
   const pageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
@@ -434,9 +453,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgSlug: activeOrg?.slug,
   });
   const navSections = buildDashboardNavSections({
+    libraryNeedsSignIn,
     orgSlug: activeOrg?.slug ?? null,
     access,
     capabilities: orgContext?.capabilities ?? {
+      auditLogs: false,
       cloud: false,
       installLinks: false,
       mcpConnections: false,
@@ -446,6 +467,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     },
     orgMode: runtimeConfig.orgMode,
     runtimeConfigLoaded,
+    permissionsEnabled: orgFeatureEnabled(orgContext, "permissions"),
+    managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
+    workbotSettings: orgContext?.capabilities.workbot === true && orgFeatureEnabled(orgContext, "workbotDefaultModel"),
   });
 
   const orgSwitcher = isSingleOrgMode ? (
@@ -683,6 +707,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                           <span className="min-w-0 truncate">{item.label}</span>
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5">
+                          {item.attention ? (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label={item.attention} title={item.attention} data-testid="nav-attention" />
+                          ) : null}
                           {item.badge ? (
                             <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                               {item.badge}
@@ -769,11 +796,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
+            <span className="truncate text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
           </div>
 
           <>
-              <div className="flex flex-1 justify-center px-4">
+              <div className="flex shrink-0 justify-center px-2 lg:min-w-0 lg:flex-1 lg:px-4">
                 <DenSearchBar
                   ref={searchBarRef}
                   onOpen={() => handleCommandPaletteOpenChange(true)}
@@ -801,6 +828,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   <FileText className="h-4 w-4" />
                   <span className="hidden sm:inline">Docs</span>
                 </a>
+                <DownloadOpenWorkButton
+                  key={`${activeOrg?.id}:${pathname}`}
+                  organization={access.isAdmin && orgContext?.capabilities.installLinks && activeOrg ? activeOrg : undefined}
+                />
               </div>
           </>
         </header>

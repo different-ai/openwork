@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto"
-import { catalogFastVariants, materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
+import { catalogModelVariants, materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast"
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway"
 import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   GatewayProviderTable,
+  LlmProviderMemberCredentialTable,
   LlmProviderModelTable,
   LlmProviderTable,
   MemberTable,
+  TeamMemberTable,
+  TeamTable,
   WorkerTable,
   WorkerTokenTable,
 } from "@openwork-ee/den-db/schema"
@@ -15,6 +18,7 @@ import { env } from "../env.js"
 import { ensureMemberGatewayKey } from "../gateway-keys.js"
 import { organizationAllowsManagedModels } from "../inference.js"
 import { appLogger } from "../observability/logger.js"
+import { listAccessibleLlmProviderAccess } from "../routes/org/llm-provider-access.js"
 import { fetchPreviewNoRedirect, fetchWithConnectRetry, previewFetch } from "../workers/preview-fetch.js"
 import { gatewaySummary } from "./gateway-matrix.js"
 import {
@@ -29,6 +33,9 @@ import {
 
 type JsonRecord = Record<string, unknown>
 type OrganizationId = typeof LlmProviderTable.$inferSelect.organizationId
+type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
+type LlmProviderCredentialMode = typeof LlmProviderTable.$inferSelect.credentialMode
+type MemberId = typeof MemberTable.$inferSelect.id
 type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerTokenScope = typeof WorkerTokenTable.$inferSelect.scope
 type LlmProviderSource = typeof LlmProviderTable.$inferSelect.source | "openwork_gateway"
@@ -52,6 +59,12 @@ export type CloudProviderMaterializationProvider = {
   name: string
   providerConfig: JsonRecord
   apiKey: string | null
+  /**
+   * Per-member providers carry no organization credential; `apiKey` is the
+   * worker owner's own active binding, or null when the owner has none or is
+   * not granted the provider.
+   */
+  credentialMode?: LlmProviderCredentialMode
   models: Array<{
     modelId: string
     name: string
@@ -81,6 +94,8 @@ type PreparedMaterialization = {
    * still holds exactly the value now written under the scoped name.
    */
   supersededEntries: EnvEntry[]
+  /** Providers left out because no usable credential reached Den for this worker. */
+  skipped: CloudProviderMaterializationProvider[]
 }
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>
@@ -90,12 +105,19 @@ type MaterializationLogger = {
   error: (message: string, metadata?: JsonRecord) => void
 }
 
+/** A per-member provider left off the worker because its owner has no active key for it. */
+export type MissingMemberCredentialProvider = {
+  id: string
+  name: string
+}
+
 export type CloudProviderMaterializationResult =
   | {
       ok: true
       status: "applied" | "noop" | "cached"
       fingerprint: string
       providers: number
+      missingMemberCredentials: MissingMemberCredentialProvider[]
     }
   | {
       ok: false
@@ -160,7 +182,70 @@ const modelConfigPassthroughKeys = [
   "variants",
 ]
 
-async function listLegacyProviders(organizationId: OrganizationId): Promise<CloudProviderMaterializationProvider[]> {
+/**
+ * The member a Cloud worker belongs to: the user who created it, while they are
+ * still an active member of the organization.
+ */
+async function resolveWorkerOwnerMemberId(organizationId: OrganizationId, workerId: WorkerId): Promise<MemberId | null> {
+  const [owner] = await db
+    .select({ memberId: MemberTable.id })
+    .from(WorkerTable)
+    .innerJoin(MemberTable, and(
+      eq(MemberTable.organizationId, organizationId),
+      eq(MemberTable.userId, WorkerTable.created_by_user_id),
+      isNull(MemberTable.removedAt),
+    ))
+    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, organizationId)))
+    .limit(1)
+  return owner?.memberId ?? null
+}
+
+/**
+ * The worker owner's own active credential for each per-member provider they
+ * are granted: what GET /v1/llm-providers/:id/connect returns to the same
+ * member's desktop. A teammate's binding is never used.
+ */
+async function listOwnerMemberCredentials(input: {
+  organizationId: OrganizationId
+  ownerMemberId: MemberId
+  llmProviderIds: LlmProviderId[]
+}): Promise<Map<LlmProviderId, string>> {
+  const credentials = await db
+    .select({
+      llmProviderId: LlmProviderMemberCredentialTable.llmProviderId,
+      secret: LlmProviderMemberCredentialTable.secret,
+    })
+    .from(LlmProviderMemberCredentialTable)
+    .where(and(
+      eq(LlmProviderMemberCredentialTable.organizationId, input.organizationId),
+      eq(LlmProviderMemberCredentialTable.orgMembershipId, input.ownerMemberId),
+      eq(LlmProviderMemberCredentialTable.state, "active"),
+      inArray(LlmProviderMemberCredentialTable.llmProviderId, input.llmProviderIds),
+    ))
+  if (credentials.length === 0) return new Map()
+
+  const teams = await db
+    .select({ id: TeamMemberTable.teamId })
+    .from(TeamMemberTable)
+    .innerJoin(TeamTable, eq(TeamMemberTable.teamId, TeamTable.id))
+    .where(and(
+      eq(TeamTable.organizationId, input.organizationId),
+      eq(TeamMemberTable.orgMembershipId, input.ownerMemberId),
+    ))
+  const access = await listAccessibleLlmProviderAccess({
+    organizationId: input.organizationId,
+    currentMemberId: input.ownerMemberId,
+    teamIds: teams.map((team) => team.id),
+  })
+  const granted = new Set(access.map((entry) => entry.llmProviderId))
+  return new Map(
+    credentials
+      .filter((credential) => granted.has(credential.llmProviderId))
+      .map((credential) => [credential.llmProviderId, credential.secret]),
+  )
+}
+
+async function listLegacyProviders(organizationId: OrganizationId, ownerMemberId: MemberId | null): Promise<CloudProviderMaterializationProvider[]> {
   const managedModelsAllowed = await organizationAllowsManagedModels(organizationId)
   const providers = await db
     .select()
@@ -191,13 +276,23 @@ async function listLegacyProviders(organizationId: OrganizationId): Promise<Clou
     modelsByProvider.set(model.llmProviderId, existing)
   }
 
+  const perMemberProviderIds = providers
+    .filter((provider) => provider.credentialMode === "per_member")
+    .map((provider) => provider.id)
+  const ownerCredentials = ownerMemberId && perMemberProviderIds.length > 0
+    ? await listOwnerMemberCredentials({ organizationId, ownerMemberId, llmProviderIds: perMemberProviderIds })
+    : new Map<LlmProviderId, string>()
+
   return providers.map((provider) => ({
     id: provider.id,
     source: provider.source,
     providerId: provider.providerId,
     name: provider.name,
     providerConfig: provider.providerConfig,
-    apiKey: provider.apiKey ?? null,
+    credentialMode: provider.credentialMode,
+    apiKey: provider.credentialMode === "per_member"
+      ? ownerCredentials.get(provider.id) ?? null
+      : provider.apiKey ?? null,
     models: modelsByProvider.get(provider.id) ?? [],
   }))
 }
@@ -223,18 +318,8 @@ export function gatewayMaterializationProvider(summary: GatewayProviderSummary, 
   }
 }
 
-async function listGatewayProviders(organizationId: OrganizationId, workerId: WorkerId): Promise<CloudProviderMaterializationProvider[]> {
-  const [owner] = await db
-    .select({ memberId: MemberTable.id })
-    .from(WorkerTable)
-    .innerJoin(MemberTable, and(
-      eq(MemberTable.organizationId, organizationId),
-      eq(MemberTable.userId, WorkerTable.created_by_user_id),
-      isNull(MemberTable.removedAt),
-    ))
-    .where(and(eq(WorkerTable.id, workerId), eq(WorkerTable.org_id, organizationId)))
-    .limit(1)
-  if (!owner) return []
+async function listGatewayProviders(organizationId: OrganizationId, ownerMemberId: MemberId | null): Promise<CloudProviderMaterializationProvider[]> {
+  if (!ownerMemberId) return []
 
   const providers = await db
     .select()
@@ -247,9 +332,9 @@ async function listGatewayProviders(organizationId: OrganizationId, workerId: Wo
   const materialized: CloudProviderMaterializationProvider[] = []
   let memberKey: string | null = null
   for (const provider of providers) {
-    const summary = await gatewaySummary(provider, owner.memberId, env.gatewayPublicBaseUrl, false)
+    const summary = await gatewaySummary(provider, ownerMemberId, env.gatewayPublicBaseUrl, false)
     if (summary.models.length === 0) continue
-    memberKey ??= await ensureMemberGatewayKey({ organizationId, memberId: owner.memberId })
+    memberKey ??= await ensureMemberGatewayKey({ organizationId, memberId: ownerMemberId })
     materialized.push(gatewayMaterializationProvider(summary, memberKey))
   }
   return materialized
@@ -257,9 +342,10 @@ async function listGatewayProviders(organizationId: OrganizationId, workerId: Wo
 
 const databaseMaterializationStore: CloudProviderMaterializationStore = {
   async listProviders(organizationId, workerId) {
+    const ownerMemberId = await resolveWorkerOwnerMemberId(organizationId, workerId)
     const [legacy, gateway] = await Promise.all([
-      listLegacyProviders(organizationId),
-      listGatewayProviders(organizationId, workerId),
+      listLegacyProviders(organizationId, ownerMemberId),
+      listGatewayProviders(organizationId, ownerMemberId),
     ])
     return [...legacy, ...gateway]
   },
@@ -408,7 +494,7 @@ function buildModelConfig(model: CloudProviderMaterializationProvider["models"][
     }
   }
 
-  const variants = catalogFastVariants(model.modelConfig, providerNpm)
+  const variants = catalogModelVariants(model.modelConfig, providerNpm)
   if (variants) next.variants = variants
   return next
 }
@@ -420,6 +506,13 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
     models[model.modelId] = buildModelConfig(model, provider.providerConfig.npm)
   }
 
+  // Same runtime names and SDK option bindings the desktop receives.
+  const runtime = toRuntimeProviderEnv({
+    id: provider.id,
+    source: provider.source,
+    providerConfig: provider.providerConfig,
+    apiKeys: decodeProviderCredential(provider.apiKey).apiKeys,
+  })
   const config: JsonRecord = {
     id: provider.providerId,
     name: provider.name,
@@ -440,13 +533,13 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
     config.api = api
   }
 
-  const options = provider.providerConfig.options
+  const options = runtime.providerConfig.options
   if (isRecord(options)) {
     config.options = options
   }
 
   const whitelist = readStringList(provider.providerConfig.whitelist)
-  if (whitelist.length > 0) {
+  if (Array.isArray(provider.providerConfig.whitelist)) {
     config.whitelist = whitelist
   }
 
@@ -468,10 +561,12 @@ function providerHasRequiredCredential(provider: CloudProviderMaterializationPro
 }
 
 function prepareMaterialization(providers: CloudProviderMaterializationProvider[]): PreparedMaterialization {
+  const skipped: CloudProviderMaterializationProvider[] = []
   const materialized = providers
     .map((provider) => {
       const envEntries = providerEnvEntries(provider)
       if (!providerHasRequiredCredential(provider, envEntries)) {
+        skipped.push(provider)
         return null
       }
 
@@ -520,7 +615,14 @@ function prepareMaterialization(providers: CloudProviderMaterializationProvider[
     providers: materialized,
     envEntries,
     supersededEntries,
+    skipped,
   }
+}
+
+function missingMemberCredentials(prepared: PreparedMaterialization): MissingMemberCredentialProvider[] {
+  return prepared.skipped
+    .filter((provider) => provider.credentialMode === "per_member")
+    .map((provider) => ({ id: provider.id, name: provider.name }))
 }
 
 function staleSupersededKeys(supersededEntries: EnvEntry[], snapshot: EnvSnapshot) {
@@ -1010,6 +1112,28 @@ function logFailure(input: {
   input.logger.warn("cloud provider materialization failed", metadata)
 }
 
+/**
+ * A provider without a usable credential is left out of the worker without
+ * failing the pass, so say which one and why. Called only when the desired
+ * state changed, not on every cached resolve.
+ */
+function logSkippedProviders(input: {
+  logger: MaterializationLogger
+  workerId: WorkerId
+  organizationId: OrganizationId
+  skipped: CloudProviderMaterializationProvider[]
+}) {
+  for (const provider of input.skipped) {
+    input.logger.warn("cloud provider skipped without a usable credential", {
+      worker_id: input.workerId,
+      organization_id: input.organizationId,
+      provider_id: provider.id,
+      source: provider.source,
+      credential_mode: provider.credentialMode ?? "shared",
+    })
+  }
+}
+
 async function logUnsupportedOnce(input: {
   logger: MaterializationLogger
   workerId: WorkerId
@@ -1087,8 +1211,15 @@ export async function materializeCloudWorkerProviders(input: {
 
     if (!input.force && materializedFingerprintByWorkerInstance.get(cacheKey) === fingerprint) {
       materializationFailureByWorkerInstance.delete(cacheKey)
-      return { ok: true, status: "cached", fingerprint, providers: providerCount }
+      return { ok: true, status: "cached", fingerprint, providers: providerCount, missingMemberCredentials: missingMemberCredentials(prepared) }
     }
+
+    logSkippedProviders({
+      logger: materializationLogger,
+      workerId: input.workerId,
+      organizationId: input.organizationId,
+      skipped: prepared.skipped,
+    })
 
     const tokens = await resolveTokens({
       workerId: input.workerId,
@@ -1125,7 +1256,7 @@ export async function materializeCloudWorkerProviders(input: {
     ) {
       materializedFingerprintByWorkerInstance.set(cacheKey, fingerprint)
       materializationFailureByWorkerInstance.delete(cacheKey)
-      return { ok: true, status: "noop", fingerprint, providers: providerCount }
+      return { ok: true, status: "noop", fingerprint, providers: providerCount, missingMemberCredentials: missingMemberCredentials(prepared) }
     }
 
     let envWritten = false
@@ -1228,7 +1359,7 @@ export async function materializeCloudWorkerProviders(input: {
 
     materializedFingerprintByWorkerInstance.set(cacheKey, fingerprint)
     materializationFailureByWorkerInstance.delete(cacheKey)
-    return { ok: true, status: "applied", fingerprint, providers: providerCount }
+    return { ok: true, status: "applied", fingerprint, providers: providerCount, missingMemberCredentials: missingMemberCredentials(prepared) }
   } catch (error) {
     const result = failureResult({
       reason: error instanceof Error ? error.message : "provider_materialization_failed",

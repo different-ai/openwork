@@ -26,7 +26,9 @@ advanced options discoverable but quiet.
 - **P3 · Progressive disclosure.** Default surface = the decision the user is
   here to make. Advanced, rare, or diagnostic detail goes behind a labeled
   collapsed row ("Technical details", "Blocked patterns") — label only, no
-  preview of the contents.
+  preview of the contents. Tool-call rows instead use one quiet code icon in
+  a fixed trailing slot, shown on hover or focus (always on touch and on
+  failures), labelled for assistive tech and opening the raw details inline.
 - **P4 · Presence with a lock beats absence.** When policy or permissions
   remove a capability, keep the control visible, mark it blocked, and say
   *why* and *who can change it*. Never let features silently disappear.
@@ -142,7 +144,8 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
   Finished turns collapse to one line ("Worked for 1m 19s · 12 steps").
 - **T2** Failures stay inline with the fix: "Slack needs a fresh sign-in ·
   Reconnect", not a stack trace. Raw input/output lives under "Technical
-  details".
+  details". Never show engine ids, routing names, or raw provider text in
+  the row; a step that did no visible work (catalog lookups) is not shown.
 - **T3** MCP Apps and generated views get a 40px header (source logo, title,
   explicit state such as "Ready" / "Draft" / "Not posted") and one icon
   action ("Open in panel"). Body is the app; footer holds ≤ 2 actions.

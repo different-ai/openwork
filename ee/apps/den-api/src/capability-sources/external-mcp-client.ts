@@ -478,7 +478,7 @@ function buildTransport(
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
     fetch: toolCallInspector ? toolCallInspector.observeFetch(diagnosticFetch) : diagnosticFetch,
     requestInit: connection.authType === "apikey" && connection.apiKey
-      ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
+      ? { headers: { authorization: `${connection.apiKeyAuthScheme === "token" ? "Token" : "Bearer"} ${connection.apiKey}` } }
       : undefined,
   })
   return { transport, provider, diagnostic }

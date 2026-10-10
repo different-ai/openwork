@@ -4,6 +4,7 @@ import { dirname, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { addOpenApiSocialDescriptions } from "./openapi-social-descriptions.js"
+import { formatOpenApiSnapshot } from "./openapi-snapshot-format.js"
 
 type NormalizationCounts = {
   descriptionsFilled: number
@@ -21,9 +22,9 @@ function setEnvDefault(name: string, value: string) {
 }
 
 function seedSnapshotEnv(snapshotVersion: string) {
-  // The snapshot never talks to a database or serves traffic; these values only
-  // satisfy env validation so the Hono app can be imported and asked for its
-  // OpenAPI document.
+  // Schema export serves no traffic, but importing Better Auth registers OAuth
+  // resources in MySQL. `pnpm den:contract` supplies a prepared disposable DB;
+  // these defaults also support direct `pnpm api:snapshot` with a local schema.
   setEnvDefault("OPENWORK_DEV_MODE", "1")
   setEnvDefault("DB_MODE", "mysql")
   setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
@@ -224,7 +225,7 @@ async function main() {
     ? resolve(values.output)
     : resolve(repoRoot, "packages/docs/openapi.json")
   await mkdir(dirname(outputPath), { recursive: true })
-  await writeFile(outputPath, JSON.stringify(social.document))
+  await writeFile(outputPath, formatOpenApiSnapshot(social.document))
 
   console.log([
     `Wrote ${relative(repoRoot, outputPath)}`,

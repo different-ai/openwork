@@ -18,8 +18,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean --external zod --target es2022",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test src"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.18.15",

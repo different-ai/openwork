@@ -2,15 +2,16 @@ import { and, asc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-
 import { AuthUserTable, GatewayProviderModelTable, GatewayProviderTable, GatewayRequestLogTable, GatewayUsageRollupTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import type { GatewayUsageDay, GatewayUsageOption, GatewayUsageResponse } from "@openwork/types/den/gateway-usage"
+import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { getModelsDevProviders } from "../../llm/models-dev.js"
-import { orgMemberRoute, queryValidator } from "../../middleware/index.js"
+import { orgPermissionRoute, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
-import { ensureOrganizationAdminRole, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
+import type { OrgRouteVariables } from "./shared.js"
 
 const DAY_MS = 86_400_000
 const MAX_SERIES = 10_000
@@ -30,7 +31,7 @@ const querySchema = z.object({
     ctx.addIssue({ code: "custom", path: ["memberId"], message: "memberId cannot be combined with team grouping." })
   }
   for (const id of query.filterIds) {
-    const valid = query.groupBy === "model" ? isDenTypeId("inferenceProvider", id)
+    const valid = query.groupBy === "model" ? id === OPENWORK_MODELS_OPTION_ID || isDenTypeId("inferenceProvider", id)
       : query.groupBy === "person" ? isDenTypeId("member", id)
       : isDenTypeId("team", id)
     if (!valid) ctx.addIssue({ code: "custom", path: ["filterIds"], message: "Filter IDs must match the selected grouping." })
@@ -76,6 +77,11 @@ function addNullableCount(total: number | null, value: string | null): number | 
 function checkCardinality(size: number, limit: number) {
   if (size > limit) throw new UsageReadError("gateway_usage_too_large", "Usage has too many categories. Narrow the date range or filters; no categories have been truncated or combined.")
 }
+
+/** Hosted OpenWork Models usage reports alongside the organization's own Gateway providers (Paper: Gateway grid). */
+const OPENWORK_MODELS_OPTION_ID = "openwork"
+const OPENWORK_MODELS_LABEL = "OpenWork Models"
+const USAGE_ROUTES = ["org_provider", "openwork_openrouter", "openwork_free"] as const
 
 const labelOrder = (left: GatewayUsageOption, right: GatewayUsageOption) => left.label.localeCompare(right.label, "en") || left.id.localeCompare(right.id, "en")
 
@@ -160,12 +166,14 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   function dimensions(table: typeof raw | typeof rollup, timestamp: typeof raw.started_at | typeof rollup.bucket_start) {
     // Epoch arithmetic gives UTC calendar dates even if a DB session is not UTC.
     const date = sql<string>`date_format(timestampadd(day, floor(unix_timestamp(${timestamp}) / 86400), '1970-01-01'), '%Y-%m-%d')`.as("usage_date")
-    const filterId = (query.groupBy === "model" ? sql<string | null>`${table.gateway_provider_id}`
+    const filterId = (query.groupBy === "model" ? sql<string | null>`coalesce(${table.gateway_provider_id}, case when ${table.route} in ('openwork_openrouter', 'openwork_free') then ${OPENWORK_MODELS_OPTION_ID} end)`
       : sql<string | null>`${table.org_membership_id}`).as("filter_id")
     // Hex encodes the exact family/model tuple, independent of DB collation,
     // configured instances, request aliases, model groups and credential sets.
+    // OpenWork Models is its own family so it never merges with an organization's own providers.
+    const family = sql<string>`case when ${table.route} in ('openwork_openrouter', 'openwork_free') then ${OPENWORK_MODELS_OPTION_ID} else ${table.upstream_provider_id} end`
     const seriesId = (query.groupBy === "model"
-      ? sql<string>`concat('model:', hex(${table.upstream_provider_id}), ':', coalesce(hex(${table.upstream_model}), '~'))`
+      ? sql<string>`concat('model:', hex(${family}), ':', coalesce(hex(${table.upstream_model}), '~'))`
       : sql<string>`${table.org_membership_id}`).as("series_id")
     return { date, seriesId, filterId }
   }
@@ -187,7 +195,10 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
   const rejectedUnreportedRequestsRollup = sql<number | null>`coalesce(${rollup.uncountable_rejected_count}, ${legacyErrorMissing})`
   const rawDimensions = dimensions(raw, raw.started_at)
   const rollupDimensions = dimensions(rollup, rollup.bucket_start)
-  const sources = db.select({
+  // A CTE, not a derived table: series and options both read these sources.
+  // Its UNION/GROUP BY prevents merging, so MySQL materializes it once instead
+  // of scanning raw logs and rollups again for each reference.
+  const sources = db.$with("usage_sources").as(db.select({
     ...rawDimensions,
     requestCount: sql<string>`count(*)`.as("request_count"),
     successfulUnreportedRequests: sql<string | null>`sum(case when ${raw.outcome} = 'ok' and ${raw.total_tokens} is null then 1 else 0 end)`.as("uncountable_ok"),
@@ -200,7 +211,7 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     totalCostMicroUsd: sql<string>`coalesce(sum(${raw.cost_micro_usd}), 0)`.as("total_cost_micro_usd"),
     unpricedRequests: sql<string | null>`count(*) - count(${raw.cost_micro_usd})`.as("unpriced_requests"),
   }).from(raw).where(and(
-    eq(raw.organization_id, organizationId), eq(raw.route, "org_provider"), isNotNull(raw.completed_at),
+    eq(raw.organization_id, organizationId), sql`${raw.route} in (${sql.join(USAGE_ROUTES.map((route) => sql`${route}`), sql`, `)})`, isNotNull(raw.completed_at),
     sql`${raw.started_at} >= from_unixtime(${fromSeconds}) and ${raw.started_at} < from_unixtime(${endSeconds})`,
     query.memberId === undefined ? undefined : sql`${raw.org_membership_id} = ${query.memberId}`,
   )).groupBy(rawDimensions.date, rawDimensions.seriesId, rawDimensions.filterId).unionAll(db.select({
@@ -216,10 +227,10 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     totalCostMicroUsd: sql<string>`coalesce(sum(${rollup.cost_micro_usd}), 0)`.as("total_cost_micro_usd"),
     unpricedRequests: sql<string | null>`case when count(${rollup.cost_count}) = count(*) then sum(${rollup.request_count}) - sum(${rollup.cost_count}) else null end`.as("unpriced_requests"),
   }).from(rollup).where(and(
-    eq(rollup.organization_id, organizationId), eq(rollup.route, "org_provider"), inArray(rollup.granularity, ["hour", "day"]),
+    eq(rollup.organization_id, organizationId), sql`${rollup.route} in (${sql.join(USAGE_ROUTES.map((route) => sql`${route}`), sql`, `)})`, inArray(rollup.granularity, ["hour", "day"]),
     sql`${rollup.bucket_start} >= from_unixtime(${fromSeconds}) and ${rollup.bucket_start} < from_unixtime(${endSeconds})`,
     query.memberId === undefined ? undefined : sql`${rollup.org_membership_id} = ${query.memberId}`,
-  )).groupBy(rollupDimensions.date, rollupDimensions.seriesId, rollupDimensions.filterId)).as("usage_sources")
+  )).groupBy(rollupDimensions.date, rollupDimensions.seriesId, rollupDimensions.filterId)))
 
   const groupedUsage = db.select({
     date: sources.date, seriesId: sources.seriesId,
@@ -287,8 +298,11 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
     buckets: sql<z.infer<typeof bucketsSchema>>`json_array()`.as("buckets"),
     label: sql<string | null>`null`.as("option_label"),
   }).from(sources).where(isNotNull(sources.filterId)).groupBy(sources.filterId).limit(MAX_OPTIONS + 1)).as("usage_options")
-  const rows = await db.select({ kind: seriesRows.kind, id: seriesRows.id, buckets: seriesRows.buckets, label: seriesRows.label }).from(seriesRows)
+  const rowsQuery = db.select({ kind: seriesRows.kind, id: seriesRows.id, buckets: seriesRows.buckets, label: seriesRows.label }).from(seriesRows)
     .unionAll(db.select({ kind: optionRows.kind, id: optionRows.id, buckets: optionRows.buckets, label: optionRows.label }).from(optionRows))
+    .as("usage_rows")
+  // WITH must scope the whole union, so wrap it rather than prefixing one side.
+  const rows = await db.with(sources).select({ kind: rowsQuery.kind, id: rowsQuery.id, buckets: rowsQuery.buckets, label: rowsQuery.label }).from(rowsQuery)
   const series = rows.filter((row) => row.kind === "series")
   const optionIdentities = rows.filter((row) => row.kind === "option")
   checkCardinality(series.length, MAX_SERIES)
@@ -301,6 +315,13 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
       .where(eq(GatewayProviderTable.organization_id, organizationId)).limit(MAX_OPTIONS + 1)
     checkCardinality(providers.length, MAX_OPTIONS)
     for (const provider of providers) options.set(provider.id, provider.label)
+    options.set(OPENWORK_MODELS_OPTION_ID, OPENWORK_MODELS_LABEL)
+    for (const row of series) {
+      const { family, model } = modelIdentityParts(row.id)
+      if (family !== OPENWORK_MODELS_OPTION_ID || model === null) continue
+      const alias = Object.entries(INFERENCE_MODEL_ALIASES).find(([id]) => id === model)?.[1]
+      modelLabels.set(row.id, alias?.displayName ?? model)
+    }
     // These are saved catalog names, not the decorated usable-model aliases.
     const modelSeriesId = sql<string>`concat('model:', hex(${GatewayProviderTable.provider_id}), ':', hex(${GatewayProviderModelTable.model_id}))`.as("model_series_id")
     const models = await db.select({ id: modelSeriesId,
@@ -403,17 +424,15 @@ export async function readGatewayUsage(organizationId: typeof GatewayProviderTab
 export function registerOrgGatewayUsageRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get("/v1/inference-providers/usage", describeRoute({
     tags: ["Inference Providers"], summary: "Read organization Gateway usage by UTC day",
-    description: "Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts only org_provider traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.",
+    description: "Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts org_provider, openwork_openrouter and openwork_free traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.",
     responses: {
       200: jsonResponse("Gateway usage", responseSchema),
       400: jsonResponse("Invalid query", invalidRequestSchema),
       401: jsonResponse("Sign-in required", unauthorizedSchema),
-      403: jsonResponse("Owner/admin permission required or Gateway management disabled", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])),
+      403: jsonResponse("View Gateway usage permission required or Gateway management disabled", z.union([forbiddenSchema, gatewayManagementUnavailableSchema])),
       422: jsonResponse("Usage cannot be represented safely", z.object({ error: z.string(), message: z.string() })),
     },
-  }), orgMemberRoute(), queryValidator(querySchema), async (c) => {
-    const permission = ensureOrganizationAdminRole(c, "Only workspace owners and admins can read organization Gateway usage.")
-    if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  }), orgPermissionRoute("gateway_usage.view"), queryValidator(querySchema), async (c) => {
     const unavailable = gatewayManagementUnavailable()
     if (unavailable) return c.json(unavailable, 403)
     c.header("cache-control", "no-store")

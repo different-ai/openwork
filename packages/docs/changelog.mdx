@@ -1,7 +1,57 @@
 ---
 title: "Changelog"
+description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="October 7th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.57](https://github.com/different-ai/openwork/compare/v0.18.56...v0.18.57): Move your Claude Cowork setup to OpenWork with one prompt
+
+  - **Move your Cowork setup with one prompt.** Ask the agent you already use to follow `openworklabs.com/migrate.md` to bring your Claude Cowork and Claude Code plugins and skills into OpenWork. Re-running picks up changes without duplicates, reuses connections your organization already has, and explains when a connection still needs setup.
+  - **Give each teammate their own connector key.** For admins: external connections can use individual keys instead of one shared key. Members can add or replace their key from the Library or Den, using a masked entry form; desktop chat can guide them to add one when needed. For admins who use LiteLLM, connecting your own proxy is also available as a preview on request.
+  - **Auto and Apps are available to more organizations.** Free Auto no longer needs an organization-by-organization rollout, and every organization can build Apps without a platform admin enabling them. Auto can also read images you attach or that tools return, and signed-out Linux desktops no longer need a system keyring to use it.
+  - **Self-hosting gains a Google Cloud Run starting point.** For self-hosters: starter deployment files and instructions cover the Den API, Den web app, and migration job on Cloud Run. Old self-hosted Den settings that had no effect are no longer read.
+  - **Everyday work is clearer and more dependable.** Your first organization message now gets an answer before you have a workspace; videos made in a conversation's work folder play in chat; and stopping a run no longer leaves a bold “Step interrupted” row. Agent-led installs open on Setup complete without requiring Node first, and teammate invites survive workspace claiming. Model names and provider details are clearer. Workbot uses one quiet activity line and can react with emoji, while Slack runs wait for slow desktop work instead of reporting that they are stuck.
+  - **Some desktop options have changed or are gone.** Workspace sharing and remote-workspace connections have been removed. Organization Analytics is gone, while usage reporting remains in AI Gateway. Plugins now come from your organization's Library instead of being installed into workspaces, and the “From GitHub” plugin import is gone. The Library no longer has a card view. Automation choices now say Desktop or Cloud, and computer use has been removed from that editor.
+
+</Update>
+
+<Update label="October 3rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.56](https://github.com/different-ai/openwork/compare/v0.18.55...v0.18.56): Find shared connectors that still need your sign-in
+
+  - **Shared connectors are easier to find.** The Library now has a “Needs sign-in” filter for connectors shared with you that still need your sign-in. In Den, a sidebar dot also points out when something is waiting on you.
+  - **Self-hosted first runs are faster.** For self-hosters: `openwork-server web` opens your first folder in about a second on a fresh install, instead of taking 10+ seconds on Windows. It also no longer fails with “resource busy or locked” while installing the engine.
+  - **Side chats no longer crowd the sidebar.** Their chips have been removed from session rows, leaving more room for session names. Open a session to see its side chat.
+
+</Update>
+
+<Update label="October 3rd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.55](https://github.com/different-ai/openwork/compare/v0.18.54...v0.18.55): Workflows and artifacts can use your connected tools
+
+  - **Connected tools work in Workflows and artifacts.** Live artifacts, on-demand Workflows, and scheduled Automations can now use connection tools and perform write actions. Large tool inputs, such as Notion database queries, also work.
+  - **Work sent to your desktop reports back.** If you use OpenWork from Slack or another connected app, you can now follow a desktop task's progress, read its conversation, send a follow-up, or stop it. Slack reports the result in the original thread, and tasks appear as normal chats using your chosen model.
+  - **Auto works in more situations.** Eligible organization members can use Auto alongside other models, and signed-out Auto is available to OpenWork builds and compatible clients. Deployments can disable Auto while keeping other models available.
+  - **Chat and the built-in browser are clearer and more dependable.** Model choices explain why a model is unavailable; OpenCode v2 now shows a Connect card when a service needs sign-in. The browser explains when a page cannot connect and offers Reload, and HTML file previews are isolated from the rest of OpenWork.
+  - **For admins and self-hosters:** Admins can choose “Only models you provide,” enable Slack progress updates, and review free Auto usage. Self-hosters can deploy with draft Terraform modules for AWS ECS Fargate or Kubernetes, including an existing ECS cluster.
+  - **Other changes:** OpenWork-built items are now called artifacts. Browser login sync and its setup controls are gone; sign in directly in the built-in browser. Organization-managed Dashboards are disabled by default and must be enabled per organization.
+
+</Update>
+
+<Update label="September 25th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.54](https://github.com/different-ai/openwork/compare/v0.18.52...v0.18.54): Enterprise sign-in and version pinning are back, plus Amazon Bedrock and model shortcuts
+
+  - **Organization sign-in and allowed versions work again.** OpenWork Enterprise and OpenWork Cloud desktops once again ask people to sign in to their organization before they start working, and desktop updates skip any version an admin removed from **Allowed desktop versions**. Other desktop policies stay saved but are not enforced on the desktop while they are redesigned.
+  - **Amazon Bedrock in AI Gateway.** For admins: add Amazon Bedrock and Amazon Bedrock (OpenAI) with an AWS region and access keys, and reuse the saved keys for the second one. Anthropic effort choices are kept through the gateway.
+  - **Switch models with a key.** In Settings › Keyboard shortcuts you can bind a key to a saved model with its reasoning level and Fast. ⌃⇧F (Ctrl+Alt+F on Windows and Linux) turns Fast on or off, and the model name shows "· Fast" while it's on.
+  - **Chat keeps its place.** Editing a message while a reply is running replaces it instead of queueing the edit. Conversations stay in their folder when an agent changes directory, and questions and approvals no longer disappear. You can switch between OpenCode engines from the command palette and choose whether to copy older chats across. Agent tool work is summarized by what it did instead of raw tool names.
+  - **Simpler connector setup.** For admins in OpenWork Cloud: API-key, custom sign-in, Google Workspace and Microsoft 365 connectors use the new setup flow and can be edited in place, and Plugins has clearer filters. Apps like Claude Code, Codex and Cursor can connect to OpenWork Connect without registering first, failed sign-ins explain what to do next, and the MCP docs have one-click Cursor and VS Code install links.
+  - **Also in this release.** Windows installers are published again. Updating no longer fails with a checksum error after a release is re-run. Update controls in Settings are more compact, a second OpenWork profile no longer stops the first one's engine, and the website shows OpenWork's completed SOC 2 Type II audit.
+
+</Update>
+
 <Update label="September 24th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
   ## [v0.18.52](https://github.com/different-ai/openwork/compare/v0.18.50...v0.18.52): Manage your Library from the desktop, find anything from one + menu, and a rebuilt AI Gateway
@@ -80,7 +130,7 @@ title: "Changelog"
   - The Working indicator now tells the truth: it stops when a run errors or the engine is unreachable, and shows minutes once a run passes the first hour.
   - Sessions reconcile more cleanly — completions are detected while you're working elsewhere, queued messages send even when the session is out of view, and archiving works from any workspace.
   - Cloud providers now connect using the credentials saved on your desktop, and Google Workspace retrieval is more resilient.
-  - OpenWork is SOC 2 Type I — the landing page now shows the badge and live status.
+  - Published the SOC 2 badge and compliance status on the landing page.
   - Hardened security by fixing static-analysis findings and isolating provider sync contexts, alongside internal test and release tooling improvements.
 
 </Update>

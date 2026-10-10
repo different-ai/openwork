@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MIN_NODE_VERSION } from "../bin/platform.mjs";
@@ -14,6 +14,9 @@ export const BUNDLE_EXTERNAL_DEPENDENCIES = ["jsonc-parser"];
 //   dist/openwork-server.mjs  the server, bundled for Node (every OS and CPU)
 //   dist/pdfium.wasm          loaded next to the bundle by PDF attachments
 //   dist/opencode-plugins/    plugins handed to the OpenCode engine
+//   dist/opencode-plugin-deps-<version>.tgz
+//                             OpenCode's first-run plugin dependency install,
+//                             pre-resolved (see build-opencode-plugin-deps.mjs)
 //   web/                      the web UI served by `openwork-server web`
 export async function stageNpmPackage(packageRoot, outputRoot = resolve(packageRoot, "dist/npm")) {
   const sourcePackage = JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"));
@@ -36,6 +39,14 @@ export async function stageNpmPackage(packageRoot, outputRoot = resolve(packageR
     throw new Error(`pdfium.wasm missing at ${pdfiumWasm}. Run: pnpm --filter openwork-server build`);
   }
 
+  const pluginDepsArchives = (await readdir(resolve(packageRoot, "dist")))
+    .filter((name) => /^opencode-plugin-deps-.+\.tgz$/.test(name));
+  if (pluginDepsArchives.length !== 1) {
+    throw new Error(
+      `Expected one dist/opencode-plugin-deps-<version>.tgz, found ${pluginDepsArchives.length}. Run: node scripts/build-opencode-plugin-deps.mjs`,
+    );
+  }
+
   const dependencies = {};
   for (const name of BUNDLE_EXTERNAL_DEPENDENCIES) {
     const range = sourcePackage.dependencies?.[name];
@@ -50,6 +61,7 @@ export async function stageNpmPackage(packageRoot, outputRoot = resolve(packageR
   await cp(resolve(packageRoot, "bin/platform.mjs"), resolve(outputRoot, "bin/platform.mjs"));
   await cp(bundle, resolve(outputRoot, "dist/openwork-server.mjs"));
   await cp(pdfiumWasm, resolve(outputRoot, "dist/pdfium.wasm"));
+  await cp(resolve(packageRoot, "dist", pluginDepsArchives[0]), resolve(outputRoot, "dist", pluginDepsArchives[0]));
   await cp(pluginDist, resolve(outputRoot, "dist/opencode-plugins"), {
     recursive: true,
     filter: (source) => !/\.test\.[cm]?js$/.test(source),

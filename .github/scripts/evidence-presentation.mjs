@@ -2,12 +2,13 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { updatePreviewCard } from "./evidence-preview-card.mjs";
+import { renderDesignNotes, validateDesignDigest } from "./design-notes.mjs";
 
 const checkName = "Evidence preview";
 const validId = value => Number.isSafeInteger(value) && value > 0;
 export function githubApi(path, method = "GET", body) {
   const result = spawnSync("gh", ["api", path, "--method", method, ...(body ? ["--input", "-"] : [])], {
-    encoding: "utf8", input: body ? JSON.stringify(body) : undefined, timeout: 30_000,
+    encoding: "utf8", input: body ? JSON.stringify(body) : undefined, timeout: 30_000, maxBuffer: 64 * 1024 * 1024,
   });
   if (result.status !== 0) throw new Error("GitHub evidence presentation failed");
   return JSON.parse(result.stdout);
@@ -49,6 +50,9 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     if (deployment.creator?.login !== "github-actions[bot]" || previous?.kind !== "openwork-evidence-v1"
       || previous.pr !== stub.number || !validId(previous.runId) || !validId(previous.runAttempt)
       || !(previous.runId < source.id || (previous.runId === source.id && previous.runAttempt < source.run_attempt))) continue;
+    // GitHub caps a deployment at 100 statuses, so one that is already retired gets no new one.
+    const [latest] = await api(`${root}/deployments/${deployment.id}/statuses?per_page=1`);
+    if (latest?.state === "inactive") continue;
     if (!await current()) return { skipped: true };
     await api(`${root}/deployments/${deployment.id}/statuses`, "POST", { state: "inactive", auto_inactive: false,
       description: "Superseded; evidence is being prepared for a newer run" });
@@ -62,6 +66,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
   let detailsUrl = logUrl;
   let summary = `Commit [\`${sha}\`](https://github.com/${repo}/commit/${sha}) · [Run ${source.id}, attempt ${source.run_attempt}](${logUrl})\n\nEvidence is being prepared for this commit. Earlier reports do not verify this revision.`;
   let reportUrl;
+  let designNotes;
   if (phase === "complete") {
     if (source.status !== "completed") throw new Error("Producer is not complete");
     status = "completed";
@@ -80,6 +85,13 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
       conclusion = evidence.verdict === "Passed" && source.conclusion === "success" ? "success" : "failure";
       title = `Published · ${sha.slice(0, 7)} · ${source.conclusion === "success" ? evidence.verdict : "Source run failed"}`;
       summary = `Commit [\`${sha}\`](https://github.com/${repo}/commit/${sha}) · Published ${new Date().toISOString()}\n\n${evidence.passedTests}/${evidence.tests} selected tests · ${evidence.passedAssertions}/${evidence.assertions} assertions passed.\n\n[Open evidence and launch your own sandbox](${reportUrl}) · [Source run](${logUrl})\n\nSelected evidence only; this is not human approval or a claim that all required verification passed.`;
+      // Advisory design notes ride along in this same check: a summary line, and
+      // the notes as the check's text. They never change the conclusion above.
+      const digest = validateDesignDigest(receipt.design);
+      if (digest) {
+        designNotes = renderDesignNotes(digest);
+        summary += `\n\n${designNotes.line}`;
+      }
     } else if (receipt?.state === "skipped" && receipt.noEvidence === true && source.conclusion === "success") {
       conclusion = "neutral";
       title = "No change-specific evidence selected";
@@ -95,7 +107,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     status = "queued";
     title = "Evidence queued";
   }
-  const output = { title, summary };
+  const output = { title, summary, ...(designNotes?.text ? { text: designNotes.text } : {}) };
   if (!await current()) return { skipped: true };
   if (!check) check = await api(`${root}/check-runs`, "POST", { name: checkName, head_sha: sha, external_id: externalId, status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });
   else await api(`${root}/check-runs/${check.id}`, "PATCH", { status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });

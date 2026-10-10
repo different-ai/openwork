@@ -1,6 +1,6 @@
 import { denFetch, freshSession, signIn } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import type { Seed } from "@openwork/env";
+import { SkipError, type Place, type Seed } from "@openwork/env";
 import { isRecord } from "./openwork-server-cli.ts";
 
 export const WORKSPACE_ORIGIN = "https://workspace.example.test:8787";
@@ -25,7 +25,8 @@ async function activate(seed: Seed, session: DenSession, organizationId: string)
   if (!result.response.ok) throw new Error(`Selecting the active organization failed: HTTP ${result.response.status}`);
 }
 
-export async function orgWebOrigins(seed: Seed) {
+export async function orgWebOrigins(seed: Seed, { place }: { place: Place }) {
+  if (place.kind !== "local") throw new SkipError("local placement (--local): the Daytona preview proxy answers CORS for den-api itself (DEN_CORS_HANDLED_BY_EDGE), so Den's approved-origin CORS decisions cannot be observed there");
   const runId = Date.now().toString(36);
   const den = await seed.den({
     org: {
@@ -117,6 +118,24 @@ export async function orgWebOrigins(seed: Seed) {
         returnUrl: typeof body.returnUrl === "string" ? body.returnUrl : null,
         grant: typeof body.grant === "string" ? body.grant : null,
         error: typeof body.error === "string" ? body.error : null,
+      };
+    },
+    /**
+     * A person asks Den to approve `origin` for the organization. A write, so
+     * it lives here rather than in probe.api (GET-only); specs use it to prove
+     * who is refused.
+     */
+    async approveOrigin(session: DenSession, origin: string) {
+      const result = await denFetch(session, "/v1/org/web-origins", {
+        method: "POST",
+        headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": orgId },
+        body: JSON.stringify({ origin }),
+      });
+      const body = isRecord(result.body) ? result.body : {};
+      return {
+        status: result.response.status,
+        error: typeof body.error === "string" ? body.error : null,
+        requiredPermission: typeof body.requiredPermission === "string" ? body.requiredPermission : null,
       };
     },
     /** The CORS preflight a page on `origin` sends before a credentialed call to Den. */

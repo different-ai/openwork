@@ -54,7 +54,7 @@ function ServiceMark({ name, iconUrl }: { name: string; iconUrl: string | null |
  * labels (C1/T4); blocked states are neutral with a lock (C5); the raw failure
  * lives behind an icon-only disclosure (T2/P3).
  */
-export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false }: {
+export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false, subject }: {
   callbacks?: ChatToolReconnectCallbacks
   part: DynamicToolUIPart
   reconnectCallbacks?: ChatToolReconnectCallbacks
@@ -62,11 +62,13 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   connectorIdentities?: ConnectorToolIdentity[]
   /** Read the connection from ordinary discovery too; only for a bound native question. */
   allowDiscovery?: boolean
+  /** What the sign-in unlocks, such as an App's title: the card then asks to "Sign in to X to use it". */
+  subject?: string
 }) {
   const messageList = useOptionalMessageList()
   const found = connectionFromChatToolPart(part, { allowDiscovery })
   const connection = found?.connection ?? null
-  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect")
+  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect" || connection.action?.type === "update_credentials")
     ? found?.action ?? null
     : null
   const {
@@ -81,24 +83,34 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   if (!connection) return null
 
   const name = connection.connectionName
-  const iconUrl = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)?.iconUrl
+  const identity = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)
+  const iconUrl = identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
   const skipped = reconnectState === "skipped"
-  const connected = connection.state === "connected" || reconnectState === "connected"
+  // The tool result is a snapshot from when the step ran; the live org
+  // connection list says whether this member is connected now, so a card
+  // signed in earlier stays connected after leaving and reopening the session.
+  const connected = connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
   const settled = connected || skipped
   const opening = !settled && reconnectState === "opening"
   const waiting = !settled && reconnectState === "authorization_opened"
   const failed = !settled && reconnectState === "failed"
   const blocked = !settled && !action
   const verb = action?.label ?? "Connect"
+  const again = connection.state === "reauth_required"
+  const idleTitle = subject && action ? `Sign in to ${name}${again ? " again" : ""} to use ${subject}`
+    : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
   const title = skipped ? `Skipped ${name}`
-    : connected ? `${name} connected`
+    : connected ? action?.credentialKind === "personal_key" ? `${name}: key saved` : `${name} connected`
     : blocked ? blockedTitle(connection)
-    : opening ? `Signing in to ${name}…`
+    : opening ? action?.credentialKind === "personal_key" ? `${verb === "Replace key" ? "Replacing" : "Adding"} your key for ${name}…` : `Signing in to ${name}…`
     : waiting ? `Finish signing in to ${name} in your browser`
     : failed ? `${name} sign-in didn't finish`
-    : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
-  const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate" : verb
+    : action?.credentialKind === "personal_key" ? `${verb} for ${name}${decisionAvailable ? " to continue" : ""}`
+    : idleTitle
+  const signIn = subject && action?.credentialKind !== "personal_key"
+  const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate"
+    : signIn ? again ? "Sign in again" : "Sign in" : verb
   const actionable = !readOnly && (!settled || decisionAvailable)
   const showDetails = actionable && Boolean(reconnectError)
 

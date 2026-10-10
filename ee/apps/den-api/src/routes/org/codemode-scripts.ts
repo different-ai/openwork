@@ -29,6 +29,7 @@ import { orgMemberRoute, jsonValidator, queryValidator } from "../../middleware/
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { env } from "../../env.js"
+import { getOrganizationFeatures } from "../../features.js"
 import { getCatalog } from "../../mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "../../mcp/capability-registry.js"
 import {
@@ -161,6 +162,7 @@ function routeFailure(error: unknown) {
   }
   const message = error instanceof Error ? error.message : "Workflow request failed."
   if (message === "app_changed_since_preview") return { status: 409, body: { error: message, message: "This app was saved elsewhere. Reopen it before saving your changes." } } as const
+  if (message === "legacy_view_read_only") return { status: 409, body: { error: message, message: "This is an older app that can no longer be edited or saved. It still opens and refreshes. To change it, ask OpenWork to build a new App." } } as const
   if (message.includes("not_found")) return { status: 404, body: { error: "workflow_not_found", message } } as const
   if (message === "workflow_matching_test_receipt_required") {
     return {
@@ -255,8 +257,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       member,
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
-      organizationMetadata: context.organization.metadata,
-      mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
+      organizationFeatures: await getOrganizationFeatures(context.organization.id),
     })
     const buildTools = () => buildCapabilityToolTree(capabilityContext)
     const actorContext = { organizationContext: context, memberTeams: teams, session: c.get("session") }

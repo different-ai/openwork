@@ -323,6 +323,8 @@ export async function connectorBranding(seed: Seed) {
   const proof = `Channel list ${crypto.randomUUID()}`;
   const prompt = "List three of my Slack channels.";
   const failurePrompt = "Read the three latest items in my Slack history.";
+  const mutationPrompt = "Create a Slack note for the channel list.";
+  const mutationProof = `Saved note ${crypto.randomUUID()}`;
   const toolArguments = { limit: 3 };
   const inputSchema = { type: "object", properties: { limit: { type: "integer" } }, required: ["limit"] };
   const search = (name: string) => ({ query: `Slack ${name}`, type: "mcp", limit: 1 });
@@ -347,6 +349,8 @@ export async function connectorBranding(seed: Seed) {
           delayMs: 4_000, result: { content: [{ type: "text", text: proof }] } },
         { name: "read_history", description: "Read Slack history", inputSchema,
           delayMs: 4_000, result: { isError: true, content: [{ type: "text", text: "History lookup failed." }] } },
+        { name: "create_note", description: "Create a Slack note", inputSchema,
+          delayMs: 4_000, result: { content: [{ type: "text", text: mutationProof }] } },
       ],
     }) },
   });
@@ -358,6 +362,7 @@ export async function connectorBranding(seed: Seed) {
     body: JSON.stringify({ workloads: [
       { promptMarker: prompt, latestUserTurn: true, finalReply: "Listed the channels.", finalReplyFrom: "last-tool-text", steps: steps("list_channels") },
       { promptMarker: failurePrompt, latestUserTurn: true, finalReply: "The history lookup failed.", steps: steps("read_history") },
+      { promptMarker: mutationPrompt, latestUserTurn: true, finalReply: "The note was created.", finalReplyFrom: "last-tool-text", steps: steps("create_note") },
     ] }),
   });
   if (!workloads.ok) throw new Error("Could not arrange connector model turns.");
@@ -373,7 +378,7 @@ export async function connectorBranding(seed: Seed) {
     } },
   });
   await seed.session(app);
-  return { app, den, prompt, failurePrompt, proof };
+  return { app, den, engine, prompt, failurePrompt, mutationPrompt, mutationProof, proof };
 }
 
 export async function connectorCatalogManagement(seed: Seed) {

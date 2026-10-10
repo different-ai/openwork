@@ -1,0 +1,30 @@
+{
+  "name": "@openwork-ee/workbot-server",
+  "private": true,
+  "type": "module",
+  "description": "Workbot's server side: one durable headless thread per member, shaped into the conversation the page shows. The host signs members in and mounts the routes.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openwork-ee/headless-protocol": "workspace:*",
+    "@openwork/types": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4"
+  }
+}

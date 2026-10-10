@@ -14,7 +14,7 @@ synchronize members and groups.
 
 You need:
 
-- An OpenWork owner or super-admin.
+- The OpenWork organization owner.
 - An Okta administrator who can create and assign application integrations.
 - Control of DNS for the email domain you will associate with the connection.
 - The final HTTPS OpenWork web origin, for example
@@ -185,7 +185,7 @@ SSO, OpenWork can link the matching account and provision the organization
 membership through SSO.
 
 OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
-into elevated organization roles. Owners and super-admins assign roles in
+into elevated organization roles. The owner assigns roles in
 OpenWork; ownership changes require ownership transfer. For group-based Admin,
 first configure [Okta SCIM provisioning](/cloud/scim-okta), then explicitly
 approve the synchronized team using

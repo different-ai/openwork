@@ -5,9 +5,13 @@ import { readOrganizationMetadata } from "@openwork/types/den/managed-models-pol
 import { z } from "zod"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
+import { env } from "../env.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
+import { readFeatureRollouts, setFeatureRollout, setOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
+import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 
 /**
  * den-admin MCP toolset: read-only Den analytics for allowlisted platform
@@ -23,7 +27,7 @@ import { updateOrganizationMetadata } from "../organization-metadata.js"
  * timeout so one expensive SELECT cannot pin an API worker indefinitely.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.6.0"
+export const DEN_ADMIN_MCP_VERSION = "0.7.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 const DEFAULT_ROW_LIMIT = 200
@@ -373,7 +377,17 @@ export async function buildAdminMcpVersionInfo() {
 
 // --- tool registration ---
 
-export function registerAdminMcpTools(server: McpServer) {
+/**
+ * `admin` is the verified platform admin calling the tools; org-mutating tools
+ * are audited for it (src/audit/service-actions.ts) and refuse without it.
+ * Pass null only for catalog listing.
+ */
+export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAuditActor | null) {
+  const requireAdmin = () => {
+    if (!admin) throw new Error("Admin write tools require an authenticated platform admin.")
+    return admin
+  }
+
   server.registerTool(
     "den_admin_version",
     {
@@ -456,7 +470,7 @@ export function registerAdminMcpTools(server: McpServer) {
           throw new Error(`No organization found for ${organizationId}`)
         }
 
-        const metadata = await updateOrganizationMetadata(organizationId, (current) => {
+        const metadata = await runPlatformAdminServiceAction("organization.plan.set", requireAdmin(), organization, () => updateOrganizationMetadata(organizationId, (current) => {
           const normalized = normalizeOrganizationMetadata(current).metadata
           const plan = { ...readOrganizationMetadata(current.plan), ...manualPlan(tier) }
           if (tier !== "enterprise") delete plan.grantedAt
@@ -468,7 +482,7 @@ export function registerAdminMcpTools(server: McpServer) {
               members: seatLimit,
             },
           }
-        })
+        }))
 
         return {
           ok: true,
@@ -480,6 +494,101 @@ export function registerAdminMcpTools(server: McpServer) {
             seatLimit,
           },
         }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_org_capability",
+    {
+      description:
+        "Admin write tool: turn one feature on or off for one organization (an organization override, the same switch as the admin panel), e.g. capability='workbot'. enabled=null removes the override so the feature follows the deployment-wide on/off state again. The kill switch (den_set_feature_rollout) still outranks it.",
+      inputSchema: z.object({
+        organizationId: z.string().min(1).describe("Organization id, e.g. org_..."),
+        capability: featureKeySchema.describe("Feature to set (see packages/features/src/registry.ts)"),
+        enabled: z.boolean().nullable().describe("true or false, or null to restore the default"),
+      }),
+    },
+    async ({ organizationId, capability, enabled }) =>
+      run(async () => {
+        if (!isOrganizationId(organizationId)) {
+          throw new Error("Invalid organization id")
+        }
+        const existing = await db
+          .select({ id: OrganizationTable.id, name: OrganizationTable.name, slug: OrganizationTable.slug })
+          .from(OrganizationTable)
+          .where(eq(OrganizationTable.id, organizationId))
+          .limit(1)
+        const organization = existing[0]
+        if (!organization) {
+          throw new Error(`No organization found for ${organizationId}`)
+        }
+        if (!featureAvailableOn(capability, env.features.deployment)) {
+          throw new Error(`${capability} is not part of this deployment.`)
+        }
+        const overrides = await runPlatformAdminServiceAction("organization.capability.set", requireAdmin(), organization, () => setOrganizationFeatureOverrides(db, {
+          organizationId,
+          changes: { [capability]: enabled },
+          source: "platform",
+        }))
+        return {
+          ok: true,
+          organization: { id: organization.id, name: organization.name, slug: organization.slug },
+          capability,
+          enabled: resolveFeature(capability, {
+            ...env.features,
+            rollouts: await readFeatureRollouts(db),
+            overrides,
+          }).enabled,
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_list_features",
+    {
+      description:
+        "Admin read tool: every feature in the registry with the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
+      inputSchema: z.object({}),
+    },
+    async () =>
+      run(async () => {
+        const rollouts = await readFeatureRollouts(db)
+        return {
+          deployment: env.features.deployment,
+          features: FEATURE_KEYS.map((key) => {
+            const definition = featureDefinition(key)
+            return {
+              key,
+              label: definition.label,
+              deployments: definition.deployments,
+              available: featureAvailableOn(key, env.features.deployment),
+              ...featureRollout(key, rollouts),
+              lock: env.features.locks[key] ?? null,
+            }
+          }),
+        }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_feature_rollout",
+    {
+      description:
+        "Admin write tool: change a feature for this whole deployment. enabled turns it on or off for everyone (organization overrides still apply); killed=true turns it off everywhere at once (the revert), outranking operator locks and organization overrides.",
+      inputSchema: z.object({
+        feature: featureKeySchema.describe("Feature key (see den_list_features)"),
+        enabled: z.boolean().optional().describe("true for on for everyone, false for off"),
+        killed: z.boolean().optional().describe("true to turn it off everywhere, false to clear the kill switch"),
+      }),
+    },
+    async ({ feature, enabled, killed }) =>
+      run(async () => {
+        if (enabled === undefined && killed === undefined) throw new Error("Set enabled, killed, or both.")
+        if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
+        // Deployment-wide: no organization's data changes, so platform evidence only.
+        const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
+          setFeatureRollout(db, { key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default }))
+        return { ok: true, feature, ...featureRollout(feature, rollouts) }
       }),
   )
 

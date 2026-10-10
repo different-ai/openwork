@@ -30,9 +30,6 @@ export {
 /** Row padding that puts the glyph slot on the glyph lane. */
 export const SIDEBAR_ROW_LANE = "ps-3";
 
-/** One 12px nesting step right of `SIDEBAR_ROW_LANE`. */
-export const SIDEBAR_ROW_LANE_NESTED = "ps-6";
-
 /** Matches nav row icon column: `mx-2` gutter + `ps-2.5` like `SidebarMenuButton`. */
 export const SIDEBAR_SECTION_LANE = "mx-2 ps-2.5 pe-2";
 

@@ -36,7 +36,7 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
         name: preset.displayName,
         url: preset.url,
         description: shortDescription(preset.description),
-        preset: { authType: preset.authType, requiresOAuthClient: preset.requiresOAuthClient },
+        preset: { authType: preset.authType, requiresOAuthClient: preset.requiresOAuthClient, defaultOAuthClientId: preset.defaultOAuthClientId },
       },
       loading: false,
       missing: false,

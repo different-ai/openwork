@@ -3,13 +3,14 @@ import type { Target } from "@openwork/cdp";
 import { spec } from "@openwork/testkit";
 import { notificationCenter } from "../worlds/notification-center.ts";
 
-const test = spec.world(notificationCenter);
+// Keep the existing Electron archive/undo regression; member-activity-sync uses
+// appWeb for the new member inventory story without a native dependency.
+const test = spec.world(notificationCenter, {
+  resources: { surfaces: ["desktop"], services: [], nativeReason: "Preserves the existing desktop archive confirmation and background-event integration regression." },
+});
 
-const bell: Target = { role: "button", label: /^Notifications/ };
-const emptyTitle: Target = { text: "No notifications yet" };
-const emptyHint: Target = { text: /^Background updates show up here: .*Confirmations of your own actions, like archiving a session, appear briefly instead\.$/ };
-const staleHint: Target = { text: /Updates from OpenWork Cloud and your workspaces/ };
-const archivedToast: Target = { text: "Session archived" };
+const bell: Target = { role: "button", label: /^Activity/ };
+const emptyTitle: Target = { text: "Nothing new" };
 const undoButton: Target = { role: "button", label: "Undo" };
 
 type ListedNotification = { kind: string; title: string; readAt: number | null; count: number; actionType: string | null };
@@ -31,113 +32,84 @@ function listed(value: unknown): ListedNotification[] {
   });
 }
 
-test("notification center keeps background events and leaves action confirmations to toasts", async ({ world, user, agent, probe, step }) => {
+test("Activity holds only member changes; device notices and action confirmations stay out of it", async ({ world, user, agent, probe, step, evidence }) => {
   const candidateId = world.candidate.sessionId;
   const center = async () => listed(await agent.run("notifications.list"));
-  /** Escape closes the panel; the exit animation must finish before absence can be observed. */
-  const closeCenter = async (panelText: string) => {
+  const closeCenter = async () => {
     await user.press("Escape");
-    await probe.eventually(() => probe.has(panelText), { within: 10_000, label: "notification panel closes", until: (open) => !open });
-    await user.notSee({ text: panelText });
+    await probe.eventually(() => probe.dom("[data-notification-panel]"), {
+      within: 10_000, label: "Activity popover closes", until: (value) => value.elements.length === 0,
+    });
   };
-
-  await step("a fresh desktop has an empty center whose copy states what belongs there", async () => {
+  const quietBell = async () => {
+    const state = await world.bell();
+    expect(state).toEqual({ label: "Activity", unread: false });
+    await user.notSee({ role: "button", label: /Mark all.*read/i });
+    return state;
+  };
+  await step("before: Activity shows the quiet bell empty state without an unread count", async () => {
     expect(await center()).toEqual([]);
-    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
     await user.click(bell);
     await user.see(emptyTitle);
-    await user.see(emptyHint);
-    await user.notSee(staleHint);
+    await user.see({ text: "When something is shared with you or changes, it shows here." });
+    await user.notSee({ role: "button", label: "View all" });
+    const state = await quietBell();
+    evidence.recordAssertionEvidence("An empty Activity stays quiet", `0 entries; bell “${state.label}”; unread indicator ${state.unread}; Nothing new is visible and there is no View all (Paper A4)`, true);
     await user.screenshot();
-    await closeCenter("No notifications yet");
+    await closeCenter();
   });
 
   if (world.engine !== "v2") {
-    await step("archiving a session confirms with an undoable toast and adds nothing to the center", async () => {
+    await step("archiving a conversation confirms with Undo without adding Activity", async () => {
       const archiveButton: Target = { role: "button", label: "Archive session", testId: `session-archive-${candidateId}` };
       await user.hover({ testId: `sidebar-session-${candidateId}` });
-      await user.see(archiveButton);
       await user.click(archiveButton);
       await user.see({ text: `Session archived: ${world.candidate.title}` }, { timeoutMs: 30_000 });
       await user.see(undoButton);
       const stamps = await probe.eventually(() => world.archivedAt(), {
-        within: 30_000, label: "candidate archived on the server", until: (value) => value[candidateId] > 0,
+        within: 30_000, label: "conversation archived on the server", until: (value) => value[candidateId] > 0,
       });
-      expect(stamps[candidateId]).toBeGreaterThan(0);
       expect(await center()).toEqual([]);
-      expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
+      await quietBell();
+      evidence.recordAssertionEvidence("Archive stays toast-only", `Archived timestamp ${stamps[candidateId]}; 0 Activity entries; Undo is visible`, stamps[candidateId] > 0);
+      await user.screenshot();
       await user.click(undoButton);
-      await user.notSee(archivedToast);
       await probe.eventually(() => world.archivedAt(), {
-        within: 30_000, label: "Undo restores the candidate", until: (value) => value[candidateId] === 0,
+        within: 30_000, label: "Undo restores the conversation", until: (value) => value[candidateId] === 0,
       });
       expect(await center()).toEqual([]);
-      expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
     });
   }
 
-  await step("a provider sync lands in the center as one unread entry and repeats coalesce", async () => {
-    expect(await world.providerSync([{ id: "sync-alpha", name: "Alpha", providerId: "alpha" }])).toBe(1);
-    const first = await probe.eventually(center, {
-      within: 10_000, label: "provider sync reaches the center", until: (value) => value.length > 0,
-    });
-    expect(first).toEqual([{ kind: "providers", title: "1 new provider available", readAt: null, count: 1, actionType: "open-model-picker" }]);
-    expect(await world.bell()).toEqual({ label: "Notifications (1)", unread: true });
-    await user.notSee({ text: "1 new provider available" });
-
-    expect(await world.providerSync([{ id: "sync-beta", name: "Beta", providerId: "beta" }])).toBe(1);
+  await step("after: device notices such as model or reload updates do not enter Activity", async () => {
+    expect(await world.providerSync([{ id: "eng-278-sync-a", name: "Activity provider A", providerId: "eng-278-a" }])).toBe(1);
+    expect(await world.providerSync([{ id: "eng-278-sync-b", name: "Activity provider B", providerId: "eng-278-b" }])).toBe(1);
     const merged = await probe.eventually(center, {
-      within: 10_000, label: "second sync merges into the unread entry", until: (value) => value[0]?.title === "2 new providers available",
+      within: 10_000, label: "background provider notices are still recorded", until: (value) => value[0]?.title === "2 new providers available",
     });
     expect(merged).toHaveLength(1);
-    expect(merged[0]).toMatchObject({ kind: "providers", readAt: null, actionType: "open-model-picker" });
-    expect(await world.bell()).toEqual({ label: "Notifications (1)", unread: true });
-
-    expect(await world.providerSync([{ id: "sync-alpha", name: "Alpha", providerId: "alpha" }])).toBe(1);
-    await user.notSee({ text: "3 new providers available" });
-    expect(await center()).toEqual(merged);
-  });
-
-  await step("the entry survives a reload unread, then opening it clears the dot and persists", async () => {
-    await user.reload();
-    const persisted = await probe.eventually(center, {
-      within: 30_000, label: "notification center restores from storage", until: (value) => value.length === 1,
-    });
-    expect(persisted[0]).toMatchObject({ title: "2 new providers available", readAt: null });
-    expect(await world.bell()).toEqual({ label: "Notifications (1)", unread: true });
-
+    await user.notSee({ text: "2 new providers available" });
+    await quietBell();
     await user.click(bell);
-    await user.see({ text: "2 new providers available" });
-    await user.see({ role: "button", label: "Select a model" });
-    await user.notSee(emptyTitle);
-    const read = await probe.eventually(center, {
-      within: 10_000, label: "opening the panel marks the entry read", until: (value) => value[0]?.readAt !== null,
-    });
-    expect(read).toHaveLength(1);
-    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
+    await user.see(emptyTitle);
+    await user.notSee({ text: "2 new providers available" });
+    expect((await probe.dom('[data-notification-panel] [data-activity-row]')).elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("Activity holds only member changes", `${merged.length} device notice recorded for 2 providers; nothing pops up; Activity still shows Nothing new and the bell has no dot`, true);
     await user.screenshot();
-    await closeCenter("2 new providers available");
-
-    await user.reload();
-    const stillRead = await probe.eventually(center, {
-      within: 30_000, label: "read state restores from storage", until: (value) => value.length === 1,
-    });
-    expect(stillRead[0]).toMatchObject({ title: "2 new providers available" });
-    expect(typeof stillRead[0]?.readAt).toBe("number");
-    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
+    await closeCenter();
   });
 
-  await step("the same notifications remain reachable with the sidebar hidden", async () => {
+  await step("Activity stays reachable with the sidebar hidden", async () => {
     await user.click({ testId: "sidebar-sidebar-toggle" });
-    await probe.eventually(() => probe.dom('[data-session-header] [data-notification-bell]'), {
-      within: 5_000, label: "bell moves to the main titlebar", until: (value) => value.elements.length === 1,
+    await probe.eventually(() => probe.dom("[data-session-header] [data-notification-bell]"), {
+      within: 5_000, label: "Activity bell moves to the main titlebar", until: (value) => value.elements.length === 1,
     });
     await user.click(bell);
-    await user.see({ text: "2 new providers available" });
-    expect(await world.bell()).toEqual({ label: "Notifications", unread: false });
+    await user.see(emptyTitle);
+    await quietBell();
+    evidence.recordAssertionEvidence("Hiding the sidebar keeps Activity reachable", `1 titlebar bell; the same quiet Activity; no unread dot`, true);
     await user.screenshot();
-    await closeCenter("2 new providers available");
+    await closeCenter();
     await user.click({ testId: "main-sidebar-toggle" });
-    await user.see({ role: "button", label: "New session" });
   });
 });

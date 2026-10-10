@@ -1,7 +1,7 @@
 ---
 title: "Make your MCP server work with OpenWork"
 sidebarTitle: "MCP server compatibility"
-description: "What an MCP server's OAuth setup must allow so OpenWork can connect members to it: the redirect URL and client metadata to approve, the registration methods OpenWork supports, and what members see when a step is missing."
+description: "What an MCP server's OAuth setup must allow so OpenWork can connect your members: redirect URL, client metadata, and registration."
 ---
 
 This page is for people who run an MCP server that OpenWork members want to
@@ -170,8 +170,11 @@ by hand, bound to the redirect URL above:
   server requires a secret, issue one; OpenWork keeps it server-side.
 - Grant `authorization_code` and `refresh_token`.
 - Send the `client_id` (and secret) to the OpenWork organization admin. In
-  OpenWork Cloud they open the connection, choose **OAuth app**, and paste the
-  values. The dialog shows the exact redirect URL to register. See
+  OpenWork Cloud they open **Manage › Connectors › Add connector**, paste your
+  MCP server URL, enter the values under **Client ID** and **Client secret**,
+  and click **Save app**. For a connector that already exists, they open its
+  **Settings**, click **Add OAuth app**, and click **Save changes**. The
+  redirect URL to register is listed in
   [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url).
 
 <Warning>
@@ -190,10 +193,10 @@ provider-side causes:
 | Your server's behaviour | Diagnostic members see | What to change |
 | --- | --- | --- |
 | Dynamic registration answers `400 invalid_redirect_uri`, or `invalid_request` naming the redirect URI | `MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED`: "*Provider* hasn't approved OpenWork yet" with the redirect URL to allowlist and the reference ID. Members are told retrying will not help. | Allow `api.openworklabs.com` for registration, accept OpenWork's client metadata URL, or issue a pre-registered client. |
-| Authorization-server metadata has no `registration_endpoint` and no `client_id_metadata_document_supported` | "This provider needs a pre-registered OAuth app." The connection is saved but cannot connect until an admin adds a client ID. | Issue OpenWork a client, or add client metadata document or dynamic registration support. |
+| Authorization-server metadata has no `registration_endpoint` and no `client_id_metadata_document_supported` | The **Knows how you sign in** check shows "*Provider* needs your OAuth app." The connector cannot connect until an admin adds a **Client ID**. | Issue OpenWork a client, or add client metadata document or dynamic registration support. |
 | `401` without `WWW-Authenticate` resource metadata and no discoverable protected-resource document | OpenWork treats the server as API-key or bearer-token authenticated and asks the admin for a key. | Publish RFC 9728 metadata and the `resource_metadata` challenge parameter. |
 | Registration rejected for another reason (`invalid_client_metadata`, unsupported grant or auth method) | `MCP_OAUTH_CLIENT_REJECTED`, with the provider's error code in the details. | Accept the metadata shown above: public client, `authorization_code` + `refresh_token`, `response_types: ["code"]`. |
-| Protected-resource metadata lists several `authorization_servers` | "Choose an authorization server" for the admin before members can connect. | Nothing required; fewer issuers means one-click setup. |
+| Protected-resource metadata lists several `authorization_servers` | The admin picks one sign-in server (**Review sign-in server** in the connector's **Settings**) before members can connect. | Nothing required; fewer issuers means one-click setup. |
 | Authorization server metadata issuer does not match the advertised issuer | `MCP_OAUTH_ISSUER_MISMATCH` | Make `issuer` in the metadata document match the URL listed in `authorization_servers`. |
 | `tools/list` or `initialize` answers HTML, or a non-MCP `Content-Type` | `MCP_HTTP_HTML_RESPONSE` or `MCP_HTTP_CONTENT_TYPE` | Serve MCP JSON or `text/event-stream`; keep sign-in pages and proxy error pages off the MCP path. |
 | `429` on any step | `MCP_HTTP_429`, retried with bounded backoff | Standard rate-limit headers help; nothing else required. |

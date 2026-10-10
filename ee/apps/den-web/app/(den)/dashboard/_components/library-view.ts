@@ -15,6 +15,18 @@ export function parseLibraryFilter(value: string | null): LibraryFilter {
   return LIBRARY_FILTERS.find((entry) => entry.value === value)?.value ?? "all";
 }
 
+/** `?status=needs-sign-in` narrows the Library to what waits on the viewer. */
+export const NEEDS_SIGN_IN_STATUS = "needs-sign-in";
+
+/** A connector the viewer still has to sign in to before they can use it. */
+export function needsViewerSignIn(item: LibraryItem): boolean {
+  return item.type === "connection" && item.state === "needs_signin";
+}
+
+export function parseNeedsSignIn(value: string | null): boolean {
+  return value === NEEDS_SIGN_IN_STATUS;
+}
+
 /** A plugin made of one skill is a skill to the person using it. */
 export function isSingleSkill(item: LibraryItem): boolean {
   return item.type === "plugin"
@@ -62,6 +74,7 @@ export function groupLibrary(input: {
   filter: LibraryFilter;
   query: string;
   isMine: (item: LibraryItem) => boolean;
+  needsSignIn?: boolean;
 }): LibraryGroups {
   const needle = input.query.trim().toLowerCase();
   const seen = new Set<string>();
@@ -70,6 +83,7 @@ export function groupLibrary(input: {
     if (seen.has(key)) return false;
     seen.add(key);
     if (input.filter !== "all" && libraryFilterOf(item) !== input.filter) return false;
+    if (input.needsSignIn && !needsViewerSignIn(item)) return false;
     if (!needle) return true;
     return `${item.name} ${item.description ?? ""}`.toLowerCase().includes(needle);
   });
@@ -87,4 +101,18 @@ export function libraryItemDescription(item: LibraryItem): string {
   if (item.type === "connection") return "Connector";
   if (item.type === "workflow") return "Workflow";
   return isSingleSkill(item) ? "Skill" : "Plugin";
+}
+
+/** What a row reads as in its Kind column. */
+export function libraryKindLabel(item: LibraryItem): string {
+  if (item.type === "connection") return "Connector";
+  if (item.type === "workflow") return "Workflow";
+  return isSingleSkill(item) ? "Skill" : "Plugin";
+}
+
+/** Ready to use right now: a connector you are signed in to, any plugin, a runnable workflow. */
+export function libraryItemReady(item: LibraryItem): boolean {
+  if (item.type === "connection") return item.state === "connected";
+  if (item.type === "workflow") return item.state === "ready";
+  return true;
 }

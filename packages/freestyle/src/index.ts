@@ -11,19 +11,21 @@ export const ACCESS_FILE = "/opt/openwork-preview/access.json";
 
 export function client(): Freestyle {
   const apiKey = process.env.FREESTYLE_API_KEY?.trim();
-  if (!apiKey) throw new Error("FREESTYLE_API_KEY is required on the review server.");
+  if (!apiKey) {
+    throw new Error("FREESTYLE_API_KEY is not set. The process that creates or deletes Freestyle VMs needs it: the review server, or `pnpm world` on this computer (see `pnpm world help preview-desktop` for how to load it).");
+  }
   return new Freestyle({ apiKey, fetch });
 }
 
-export type PreviewWorld = "app-web" | "acme-web" | "desktop";
+export type PreviewWorld = "app-web" | "acme-web" | "desktop" | "workbot";
 export function previewWorld(value: unknown): PreviewWorld {
-  if (value === "app-web" || value === "acme-web" || value === "desktop") return value;
+  if (value === "app-web" || value === "acme-web" || value === "desktop" || value === "workbot") return value;
   throw new Error("Unsupported preview world.");
 }
 
 export function snapshotSlug(sha: string, world: PreviewWorld = "app-web"): string {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed commit SHA is required.");
-  return `openwork-${previewWorld(world)}-v6-${sha}`;
+  return `openwork-${previewWorld(world)}-${world === "app-web" ? "v6" : world === "workbot" ? "v1" : "v7"}-${sha}`;
 }
 
 export function isMissing(error: unknown): boolean {
@@ -40,7 +42,7 @@ export function guestCommandOutcome(statusCode: number | null | undefined, timeo
   return typeof statusCode === "number" ? `exit ${statusCode}` : `killed at ${Math.round(timeoutMs / 1000)}s timeout`;
 }
 
-export async function execChecked(vm: Vm, command: string, timeoutMs = 120_000): Promise<string> {
+export async function execChecked(vm: Pick<Vm, "exec">, command: string, timeoutMs = 120_000): Promise<string> {
   const result = await vm.exec({ command, timeoutMs, linuxUser: "root" });
   // Keep this prefix: the review app logs only messages that start with it.
   if (result.statusCode !== 0) throw new Error(`Freestyle guest command failed (${guestCommandOutcome(result.statusCode, timeoutMs)}).`);
@@ -126,6 +128,48 @@ export async function waitForServiceRoutes(
   }));
 }
 
+/** Transitional job facade: existing preview bootstrap stays intact while Workbot's host uses shared blocks. */
+type PreviewGuest = Pick<Vm, "exec" | "delete"> & { fs: Pick<Vm["fs"], "readTextFile" | "writeTextFile"> };
+
+async function createWorkbotPreviewGuest(input: {
+  api: Freestyle; snapshotId: string; slug: string; minutes: number; gitSha: string; reportId?: string; domains: string[];
+}): Promise<{ vm: PreviewGuest; vmId: string; data: { createdAt: string } }> {
+  const { withBlocks } = await import("@openwork/sandbox");
+  const { createFreestyleProvider } = await import("@openwork/sandbox-freestyle");
+  const provider = createFreestyleProvider({
+    snapshot: input.snapshotId, linuxUser: "root",
+    firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
+    createOptions: {
+      displayName: `OpenWork preview ${input.gitSha.slice(0, 7)}`, ttlSeconds: input.minutes * 60,
+      tls: { rules: input.domains.map(domain => ({ action: "allow", domain, source: { public: true }, destination: { port: 8080 } })) },
+    },
+  }, { client: input.api });
+  const createdAt = new Date().toISOString(); // conservative: access expires no later than the host TTL
+  const box = await provider.create({
+    idempotencyKey: input.slug, image: provider.currentImage(),
+    labels: { kind: PREVIEW_KIND, world: "workbot", gitSha: input.gitSha, ...(input.reportId ? { reportId: input.reportId } : {}) },
+    env: {}, storage: [], exposePorts: [], lifecycle: { autoStopMinutes: 10 },
+  }, { timeoutMs: 120_000 });
+  const { run, files } = withBlocks(provider, ["run", "files"], "Workbot preview");
+  const vm: PreviewGuest = {
+    exec: async request => {
+      const spec = typeof request === "string" ? { command: request } : request;
+      if (spec.stdin) throw new Error("Preview bootstrap does not support stdin");
+      const result = await run(box, { command: spec.command, env: spec.env, timeoutMs: spec.timeoutMs ?? 120_000 });
+      return { statusCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+    },
+    delete: () => provider.destroy(box, { timeoutMs: 30_000 }),
+    fs: {
+      writeTextFile: async (path, text, opts = {}) => {
+        if (opts.mode !== undefined && opts.mode !== 0o600) throw new Error("Preview secrets must use mode 0600");
+        await files.write(box, path, new TextEncoder().encode(text), { timeoutMs: 30_000, mode: opts.mode ?? 0o600 });
+      },
+      readTextFile: async path => new TextDecoder().decode(await files.read(box, path, { timeoutMs: 30_000 })),
+    },
+  };
+  return { vm, vmId: box.ref.ref.vmId, data: { createdAt } };
+}
+
 /** Every call creates a VM. Neither reports nor visitors ever key a reusable VM. */
 export async function launchPreview(
   input: { gitSha: string; reportId?: string; lifetimeMinutes?: number; world?: PreviewWorld },
@@ -138,15 +182,19 @@ export async function launchPreview(
   const minutes = input.lifetimeMinutes ?? 120;
   if (!Number.isInteger(minutes) || minutes < 10 || minutes > 1430) throw new Error("Preview lifetime must be 10–1430 minutes.");
   const launchId = randomUUID().replaceAll("-", "");
-  const domain = `${world === "desktop" ? "desktop" : "ow"}-${launchId}.preview.openwork.software`;
-  const origins = world === "acme-web" ? {
+  const domain = `${world === "desktop" ? "desktop" : world === "workbot" ? "den" : "ow"}-${launchId}.preview.openwork.software`;
+  // Workbot is one app on its own host that signs people in through Den's; Den's API answers on Den's host.
+  const workbotOrigin = `https://workbot-${launchId}.preview.openwork.software`;
+  const origins = world === "workbot" ? { den: `https://${domain}`, workbot: workbotOrigin } : world === "acme-web" ? {
     app: `https://${domain}`, den: `https://den-${launchId}.preview.openwork.software`, api: `https://api-${launchId}.preview.openwork.software`,
     engine: `https://engine-${launchId}.preview.openwork.software`, gateway: `https://gateway-${launchId}.preview.openwork.software`,
     desktop: `https://desktop-${launchId}.preview.openwork.software`,
   } : world === "desktop" ? { desktop: `https://${domain}` } : undefined;
   const domains = origins ? Object.values(origins).map((value) => new URL(value).hostname) : [domain];
   const token = randomBytes(32).toString("base64url");
-  const { vm, vmId, data } = await api.vms.create({
+  const { vm, vmId, data } = world === "workbot"
+    ? await createWorkbotPreviewGuest({ api, snapshotId: snapshot.id, slug: `ow-preview-${launchId}`, minutes, gitSha: input.gitSha, reportId: input.reportId, domains })
+    : await api.vms.create({
     snapshotId: snapshot.id, slug: `ow-preview-${launchId}`,
     displayName: `OpenWork preview ${input.gitSha.slice(0, 7)}`,
     ttlSeconds: minutes * 60, idleTimeoutSeconds: 600,
@@ -158,7 +206,7 @@ export async function launchPreview(
   let stage = "assign-access";
   try {
     const expiresAt = new Date(Date.parse(data.createdAt) + minutes * 60_000).toISOString();
-    await vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token, expiresAt, origins, ...(world === "acme-web" ? { templateOrigins } : {}) }), { mode: 0o600 });
+    await vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token, expiresAt, origins, ...(world === "acme-web" || world === "workbot" ? { templateOrigins } : {}) }), { mode: 0o600 });
     let outputs: PreviewOutputs = {};
     if (world === "acme-web") {
       // Den's demo session lasts 7 days; snapshots last at most 7 days and
@@ -185,7 +233,15 @@ export async function launchPreview(
       }
       outputs.previewCookie = { value: `__Host-openwork-preview=${token}`, secret: true, group: "Developer access", note: "Cookie header for requests to this VM's private service URLs" };
     }
-    const url = `https://${domain}/__openwork_launch?token=${token}`;
+    if (world === "workbot") {
+      stage = "read-outputs";
+      outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
+      if (!origins) throw new Error("Missing private service origins");
+      outputs.denWeb = { value: `${origins.den}/__openwork_launch?token=${token}`, secret: true, group: "Services", note: "Ready · Den only" };
+      outputs.previewCookie = { value: `__Host-openwork-preview=${token}`, secret: true, group: "Developer access", note: "Cookie header for requests to this VM's private service URLs" };
+    }
+    // Workbot's one link authorizes Den first, then lands on Workbot, so signing in crosses both hosts.
+    const url = `https://${domain}/__openwork_launch?token=${token}${world === "workbot" ? "&then=workbot" : ""}`;
     if (world === "desktop") {
       stage = "desktop-ready";
       if ((await vm.fs.readTextFile("/opt/openwork-preview/source-sha")).trim() !== input.gitSha
@@ -204,6 +260,10 @@ export async function launchPreview(
     }
     stage = "public-access";
     await waitForPublicAccess(url, probe, delay, world);
+    if (world === "workbot") {
+      stage = "service-routes";
+      await waitForServiceRoutes({ workbot: workbotOrigin }, token, probe);
+    }
     if (world === "acme-web" && origins) {
       stage = "service-routes";
       // The app hostname was checked above; every other linked service must route too.
@@ -222,5 +282,10 @@ export async function deletePreview(id: string, api = client()): Promise<void> {
   try { vm = await api.vms.get(id); }
   catch (error) { if (isMissing(error)) return; throw error; }
   if (vm.metadata.kind !== PREVIEW_KIND) throw new Error("Refusing to delete a VM not owned by OpenWork previews.");
-  await api.vms.delete(vm.id);
+  if (vm.metadata.world === "workbot") {
+    const { createFreestyleProvider } = await import("@openwork/sandbox-freestyle");
+    const provider = createFreestyleProvider({ snapshot: vm.snapshotId ?? "freestyle/ubuntu" , firewall: { rules: [] } }, { client: api });
+    const box = await provider.get({ providerId: "freestyle", ref: { vmId: vm.id } });
+    if (box) await provider.destroy(box, { timeoutMs: 30_000 });
+  } else await api.vms.delete(vm.id);
 }

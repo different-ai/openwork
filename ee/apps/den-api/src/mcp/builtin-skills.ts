@@ -1,3 +1,4 @@
+import { SLACK_ASSISTANT_INSTRUCTIONS } from "../slack-assistant/protocol.js"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
 
@@ -199,6 +200,11 @@ The recipient is the named person or team. NEVER invent ids. Resolve a person or
 `
 
 export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
+  {
+    descriptor: { name: "slack-assistant", title: "Slack assistant", description: "Respond to Slack requests as the invoking member, with audience and thread isolation.", capability: "skill:slack-assistant", location: "skill://slack-assistant/SKILL.md" },
+    source: `---\nname: slack-assistant\ndescription: Respond safely to Slack-originated requests.\n---\n\n${SLACK_ASSISTANT_INSTRUCTIONS}`,
+    searchExtraTokens: "slack assistant mention thread audience identity",
+  },
   {
     descriptor: {
       name: "create-skill",

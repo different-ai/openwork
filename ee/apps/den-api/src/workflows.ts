@@ -30,7 +30,8 @@ import { db } from "./db.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
-import type { BuiltCodemodeTools } from "./mcp/codemode-tools.js"
+import { codemodeCallName } from "./mcp/codemode-namespaces.js"
+import type { BuiltCodemodeTools, CodemodeManifestEntry } from "./mcp/codemode-tools.js"
 import { executeWorkflow } from "./mcp/workflow-service.js"
 import {
   artifactDigest,
@@ -47,7 +48,7 @@ import {
   resolvePluginArchResourceRole,
   type PluginArchActorContext,
 } from "./routes/org/plugin-system/access.js"
-import { memberHasRole } from "./routes/org/shared.js"
+import { resolvePermissionsForMember } from "./permissions/resolve.js"
 import { assertWorkflowSourceSafe, getWorkflowAuthoringSource } from "./workflow-authoring-receipts.js"
 
 const DEFAULT_WORKFLOWS_PLUGIN_NAME = "My Workflows"
@@ -114,7 +115,6 @@ async function workflowResource(
   if (!rows[0]) throw new Error("workflow_not_found")
   await requirePluginArchResourceRole({
     context,
-    requireFreshSession: false,
     resourceId: configObjectId,
     resourceKind: "config_object",
     role,
@@ -487,6 +487,11 @@ export async function testWorkflowDraft(input: {
   }
 }
 
+/** Manifest entries keyed by the dotted name Code Mode records for each call. */
+function manifestByCallName(entries: readonly CodemodeManifestEntry[]): Map<string, CodemodeManifestEntry> {
+  return new Map(entries.map((entry) => [codemodeCallName(entry.scriptPath), entry]))
+}
+
 export async function createWorkflowVersion(input: {
   context: PluginArchActorContext
   configObjectId: string
@@ -538,23 +543,20 @@ export async function createWorkflowVersion(input: {
   )).limit(1)
   if (consumed[0]) throw new Error("workflow_test_receipt_already_used")
 
-  // Saving does not authorize unattended execution; executeWorkflow checks that at run time.
+  // executeWorkflow checks again at run time that each capability is still available.
   const built = await input.buildTools()
-  const manifestByPath = new Map(built.manifest.flatMap((entry) => [
-    [entry.scriptPath, entry] as const,
-    [entry.scriptPath.replace(/^tools\./, ""), entry] as const,
-  ]))
+  const manifest = manifestByCallName(built.manifest)
   for (const required of payload.parsed.requiredCapabilities) {
-    const current = manifestByPath.get(required.scriptPath)
+    const current = manifest.get(codemodeCallName(required.scriptPath))
     if (!current || current.capabilityName !== required.capabilityName) {
       throw new Error(`workflow_capability_unavailable:${required.scriptPath}`)
     }
   }
   for (const call of parseCodemodeToolCalls(receipt.tool_calls)) {
-    if (!payload.parsed.requiredCapabilities.some((required) => {
-      const normalized = call.name.replace(/^tools\./, "")
-      return required.scriptPath === call.name || required.scriptPath.replace(/^tools\./, "") === normalized
-    })) throw new Error(`workflow_test_capability_mismatch:${call.name}`)
+    const callName = codemodeCallName(call.name)
+    if (!payload.parsed.requiredCapabilities.some((required) => codemodeCallName(required.scriptPath) === callName)) {
+      throw new Error(`workflow_test_capability_mismatch:${call.name}`)
+    }
   }
 
   const now = new Date()
@@ -646,7 +648,9 @@ export async function validateWorkflowAutomationAction(input: {
   const configObjectVersionId = normalizeDenTypeId("configObjectVersion", input.action.script.configObjectVersionId)
   const member = await resolveOrganizationMemberAuthority({ organizationId, memberId: ownerMemberId })
   if (!member) throw new Error("automation_owner_inactive")
-  if (!memberHasRole(member.role, "admin")) {
+  // The owner's effective permissions (direct role, Admin teams, permission sets).
+  const ownerPermissions = await resolvePermissionsForMember({ organizationId, memberId: member.id })
+  if (!ownerPermissions.has("sharing.manage_all")) {
     const [teams, configObjectGrants, pluginGrants] = await Promise.all([
       db.select({ id: TeamMemberTable.teamId }).from(TeamMemberTable)
         .where(eq(TeamMemberTable.orgMembershipId, ownerMemberId)),
@@ -805,15 +809,12 @@ export async function saveWorkflow(input: {
   }
   if (!receipt) throw new Error("workflow_recent_receipt_required")
 
-  // Saving does not authorize unattended execution; executeWorkflow checks that at run time.
+  // executeWorkflow checks again at run time that each capability is still available.
   const built = await input.buildTools()
-  const manifestByPath = new Map(built.manifest.flatMap((entry) => [
-    [entry.scriptPath, entry] as const,
-    [entry.scriptPath.replace(/^tools\./, ""), entry] as const,
-  ]))
+  const manifest = manifestByCallName(built.manifest)
   const requiredCapabilities: Array<{ capabilityName: string; scriptPath: string }> = []
   for (const call of parseCodemodeToolCalls(receipt.tool_calls)) {
-    const resolved = manifestByPath.get(call.name)
+    const resolved = manifest.get(codemodeCallName(call.name))
     if (!resolved) throw new Error(`workflow_capability_unavailable:${call.name}`)
     if (!requiredCapabilities.some((entry) => entry.scriptPath === resolved.scriptPath)) {
       requiredCapabilities.push({

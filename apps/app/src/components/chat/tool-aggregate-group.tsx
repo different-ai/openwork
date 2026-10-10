@@ -236,6 +236,7 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
   // latest thought is still streaming. Show that instead of dead air.
   const lastThought = thoughts.at(-1)
   const thinkingNow = !nowLabel && Boolean(lastThought?.isStreaming)
+  const liveText = nowCommandShown ? null : nowLabel ?? (thinkingNow ? "Thinking…" : null)
 
   // Track durations for every part so each is frozen the moment it completes.
   const durations = parts.map((part) => trackToolCallDuration(part))
@@ -306,7 +307,16 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
         aria-expanded={expanded}
         className="group flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span className="min-w-0 truncate">{summary}</span>
+        <span className="min-w-0 shrink-0 truncate">{summary}</span>
+        {/* What is happening now lives on the same line, so starting or
+            finishing a step never adds or removes a line below it. */}
+        {liveText ? (
+          <span data-tool-aggregate-now className="ow-text-shimmer min-w-0 truncate motion-reduce:animate-none"
+            title={nowCommand ? "Double-click to show the full command" : undefined}
+            onDoubleClick={nowPart && nowCommand ? (event) => { event.stopPropagation(); setFullNowCommand(true) } : undefined}>
+            {liveText}
+          </span>
+        ) : null}
         {thoughts.length > 0 ? (
           <span data-tool-aggregate-thought-count className="shrink-0 text-xs text-muted-foreground/70">
             · {thoughts.length === 1 ? "1 thought" : `${thoughts.length} thoughts`}
@@ -339,29 +349,8 @@ export function ToolAggregateGroup({ parts, messageId, thoughts = [], className 
       ) : null}
 
       {nowPart && nowCommandShown ? (
-        <div data-tool-aggregate-now className="mt-1.5 min-w-0">
+        <div className="mt-1.5 min-w-0">
           <DetailBox kind="command" text={nowCommand} expanded={fullNowCommand} onToggle={() => setFullNowCommand(false)} />
-        </div>
-      ) : nowLabel ? (
-        <div
-          data-tool-aggregate-now
-          className="mt-1 min-w-0 text-sm text-muted-foreground"
-          title={nowCommand ? "Double-click to show the full command" : undefined}
-          onDoubleClick={
-            nowPart && nowCommand
-              ? () => setFullNowCommand(true)
-              : undefined
-          }
-        >
-          <span className="ow-text-shimmer block min-w-0 truncate">
-            {nowLabel}
-          </span>
-        </div>
-      ) : null}
-
-      {thinkingNow ? (
-        <div data-tool-aggregate-thinking className="mt-1 min-w-0 text-sm text-muted-foreground">
-          <span className="ow-text-shimmer">Thinking…</span>
         </div>
       ) : null}
 

@@ -78,18 +78,8 @@ export function IntegrationConnectDialog({
     }
   }, [open, provider]);
 
-  if (!open || !provider) {
-    return null;
-  }
-
-  const meta = getProviderMeta(provider);
-  const stepIndex = STEP_ORDER.indexOf(step);
-  const progressLabel =
-    step === "connected"
-      ? "Done"
-      : `Step ${Math.min(stepIndex + 1, 4)} of 4 · ${STEP_LABELS[step]}`;
-
-  // Filtered repos for the select step.
+  // Filtered repos for the select step. Must stay above the early return so the
+  // hook count is stable when the dialog opens/closes (React #300/#310).
   const filteredRepos = useMemo(() => {
     const repos = reposQuery.data ?? [];
     const normalized = repoQuery.trim().toLowerCase();
@@ -100,6 +90,17 @@ export function IntegrationConnectDialog({
         repo.description.toLowerCase().includes(normalized),
     );
   }, [reposQuery.data, repoQuery]);
+
+  if (!open || !provider) {
+    return null;
+  }
+
+  const meta = getProviderMeta(provider);
+  const stepIndex = STEP_ORDER.indexOf(step);
+  const progressLabel =
+    step === "connected"
+      ? "Done"
+      : `Step ${Math.min(stepIndex + 1, 4)} of 4 · ${STEP_LABELS[step]}`;
 
   function handleToggleRepo(repo: IntegrationRepo) {
     setSelectedRepoIds((prev) => {

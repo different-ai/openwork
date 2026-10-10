@@ -1,0 +1,30 @@
+version = 1
+
+# Contributor screen: runs on every push to a fork PR, before its tests.
+# Used only by .github/workflows/contributor-warden.yml; see .warden/README.md.
+[defaults]
+defaultBranch = "dev"
+reportOn = "low"
+ignorePaths = ["**/node_modules/**", "**/dist/**"]
+
+[defaults.scan]
+maxFileLines = 5000
+# Warden's defaults (150 files, 10,000 changed lines) left big PRs half
+# reviewed, and a partial review never clears. PRs beyond these still come
+# back incomplete: split them.
+maxFiles = 400
+maxChangedLines = 60000
+
+[defaults.agent]
+model = "openai/gpt-6-luna"
+
+[defaults.auxiliary]
+model = "openai/gpt-6-luna"
+
+[[skills]]
+name = "contributor-screen"
+
+[[skills.triggers]]
+type = "local"
+failOn = "off"
+minConfidence = "low"

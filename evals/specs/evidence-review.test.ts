@@ -60,7 +60,7 @@ test("A reviewer can inspect two runs and a DocShot with honest results and priv
   expect(incomplete).toContain(
     "Desktop restart remains outside this selected evidence.",
   );
-  expect(incomplete).toContain("visual judgment(s) pending");
+  expect(incomplete).toContain("1 visual judgment pending.");
   expect(incomplete).toContain("Execution ");
   expect(incomplete).toContain("skipped");
   expect(incomplete).not.toContain("badge passed");

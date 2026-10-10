@@ -2,6 +2,8 @@ import type { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { delegatedRoute } from "../../middleware/index.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
+import { registerManagedDeploymentRoutes } from "./managed-deployments.js"
+import { registerOrgAuditRoutes } from "./audit.js"
 import { registerOrgBillingRoutes } from "./billing.js"
 import { registerOrgBrandAssetRoutes } from "./brand-assets.js"
 import { registerOrgWorkflowRunRoutes } from "./codemode-runs.js"
@@ -10,6 +12,7 @@ import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgDashboardRoutes } from "./dashboards.js"
+import { registerOrgMcpAppCatalogRoutes } from "./mcp-app-catalog.js"
 import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
@@ -19,19 +22,21 @@ import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceProviderRoutes } from "./inference-providers.js"
 import { registerOrgInferenceRoutes } from "./inference.js"
 import { registerModelsAnalyticsRoutes } from "./models-analytics.js"
+import { registerLibraryUsageRoutes } from "./library-usage.js"
 import { registerModelsAnalyticsExportRoutes } from "../../models-analytics-export.js"
 import { registerOrgLlmProviderRoutes } from "./llm-providers.js"
 import { registerOrgMemberRoutes } from "./members.js"
+import { registerOrgPermissionRoutes } from "./permissions.js"
 import { registerMcpConnectionRoutes } from "./mcp-connections.js"
 import { registerMicrosoft365Routes } from "./microsoft-365.js"
 import { registerOAuthProviderRoutes } from "./oauth-providers.js"
 import { registerPluginArchRoutes } from "./plugin-system/routes.js"
-import { registerOrgRoleRoutes } from "./roles.js"
 import { registerOrgScimRoutes } from "./scim.js"
 import { registerOrgSsoRoutes } from "./sso.js"
 import { registerOrgResourceRoutes } from "./resources.js"
 import { registerOrgTeamRoutes } from "./teams.js"
 import { registerOrgWebOriginRoutes } from "./web-origins.js"
+import { registerOrgWorkbotSettingsRoutes } from "./workbot-settings.js"
 
 const LEGACY_ORG_PATH_PREFIX = "/v1/orgs/"
 
@@ -61,17 +66,21 @@ function extractLegacyOrgProxyTarget(pathname: string) {
 
 export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
+  registerManagedDeploymentRoutes(app)
   registerDeleteOrganizationRoutes(app)
   registerOrgApiKeyRoutes(app)
+  registerOrgAuditRoutes(app)
   registerOrgBillingRoutes(app)
   registerOrgBrandAssetRoutes(app)
   registerOrgWorkflowRunRoutes(app)
   registerOrgWorkflowRoutes(app)
   registerOrgDashboardRoutes(app)
+  registerOrgMcpAppCatalogRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
   registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)
   registerModelsAnalyticsRoutes(app)
+  registerLibraryUsageRoutes(app)
   registerModelsAnalyticsExportRoutes(app)
   registerOrgScimRoutes(app)
   registerOrgSsoRoutes(app)
@@ -80,15 +89,16 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgLlmProviderRoutes(app)
   registerOrgInferenceProviderRoutes(app)
   registerOrgMemberRoutes(app)
+  registerOrgPermissionRoutes(app)
   registerOAuthProviderRoutes(app)
   registerGoogleWorkspaceRoutes(app)
   registerMicrosoft365Routes(app)
   registerMcpConnectionRoutes(app)
   registerPluginArchRoutes(app)
-  registerOrgRoleRoutes(app)
   registerOrgResourceRoutes(app)
   registerOrgTeamRoutes(app)
   registerOrgWebOriginRoutes(app)
+  registerOrgWorkbotSettingsRoutes(app)
 
   app.all("/v1/orgs/:orgId/*", delegatedRoute, async (c) => {
     const url = new URL(c.req.raw.url)

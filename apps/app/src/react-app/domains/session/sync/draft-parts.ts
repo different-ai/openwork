@@ -15,10 +15,18 @@ import {
   joinWorkspaceRelativePath,
   toFileUrl,
 } from "./prompt-file-parts";
-import { mentionPromptParts } from "./mention-parts";
-import { parseConnectSkillToken } from "../surface/composer/connect-skill-token";
-import { connectorPrompt, parseConnectorToken } from "../surface/composer/connector-token";
+import {
+  COMPOSER_DRAFT_TOKEN_RE,
+  composerPillFromPart,
+  composerPillPromptParts,
+  parseComposerPillToken,
+} from "../surface/composer/composer-pills";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
+
+/** Pasted text reaches the model as the user's words and stays collapsed in the transcript. */
+function pastedTextPart(text: string): TextPartInput {
+  return { type: "text", text, metadata: { openworkPastedText: true } };
+}
 
 // All workspace-scoped server URLs/clients/tokens come from
 // `resolveWorkspaceEndpoint` in apps/app/src/app/lib/workspace-endpoint.ts.
@@ -76,12 +84,12 @@ export async function draftToParts(
         .filter((part): part is Extract<ComposerPart, { type: "paste" }> => part.type === "paste")
         .map((part) => [part.label, part.text] as const),
     );
-    const segments = draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/);
+    const segments = draft.text.split(COMPOSER_DRAFT_TOKEN_RE);
     for (const [index, segment] of segments.entries()) {
       if (!segment) continue;
-      const connectorName = parseConnectorToken(segment);
-      if (connectorName) {
-        parts.push({ type: "text", text: connectorPrompt(connectorName) });
+      const pill = parseComposerPillToken(segment);
+      if (pill) {
+        parts.push(...composerPillPromptParts(pill));
         continue;
       }
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
@@ -96,24 +104,13 @@ export async function draftToParts(
       const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
       if (pasteMatch?.[1]) {
         const pasted = pasteByLabel.get(pasteMatch[1]);
-        if (pasted) parts.push({ type: "text", text: pasted });
-        continue;
-      }
-      const connectSkill = parseConnectSkillToken(segment);
-      if (connectSkill) {
-        parts.push(...mentionPromptParts({ type: "connect-skill", ...connectSkill }));
-        continue;
-      }
-      const skillMatch = segment.match(/^\[skill (.+)\]$/);
-      if (skillMatch?.[1]) {
-        parts.push(...mentionPromptParts({ type: "skill", name: skillMatch[1] }));
+        if (pasted) parts.push(pastedTextPart(pasted));
         continue;
       }
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
         const mentionPart = draft.parts.find((part) =>
           (part.type === "agent" && part.name === value)
-          || (part.type === "app" && part.name === value)
           || (part.type === "computer" && part.target === value
             && (index <= 1 && !segments[0] || /\s$/.test(segments[index - 1] ?? "")))
           || (part.type === "file" && part.path === value),
@@ -122,8 +119,8 @@ export async function draftToParts(
           parts.push({ type: "agent", name: mentionPart.name });
           continue;
         }
-        if (mentionPart?.type === "computer" || mentionPart?.type === "app") {
-          parts.push(...mentionPromptParts(mentionPart));
+        if (mentionPart?.type === "computer") {
+          parts.push(...composerPillPromptParts(composerPillFromPart(mentionPart)));
           continue;
         }
         if (mentionPart?.type === "file") {
@@ -154,15 +151,15 @@ export async function draftToParts(
         continue;
       }
       if (part.type === "paste") {
-        parts.push({ type: "text", text: part.text });
+        parts.push(pastedTextPart(part.text));
         continue;
       }
       if (part.type === "agent") {
         parts.push({ type: "agent", name: part.name });
         continue;
       }
-      if (part.type === "skill" || part.type === "connect-skill" || part.type === "computer" || part.type === "app") {
-        parts.push(...mentionPromptParts(part));
+      if (part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer") {
+        parts.push(...composerPillPromptParts(composerPillFromPart(part)));
         continue;
       }
       if (part.type === "file") {

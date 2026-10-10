@@ -1,3 +1,6 @@
+export const summary = "The seeded Acme demo stack: Den, AI Gateway, and the web app.";
+export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
+
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,9 +15,16 @@ import type { Den } from "../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";
 import { receiptName, resolveStage } from "../packages/world/src/stage.ts";
 import { ACME_REPLY, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "./lib/acme-gateway.ts";
+import type { AcmeStreamCheckpoint } from "./lib/acme-gateway.ts";
 import { probeAcmeGateway } from "./lib/acme-gateway-probe.ts";
+import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES } from "./lib/demo-workspace.ts";
+import type { DemoWorkspace } from "./lib/demo-workspace.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+// A preview's Den sends its template origins to OAuth providers directly (client
+// registration, token exchange); this translates them on the way out, as the
+// preview gateway does for browsers.
+const PREVIEW_EGRESS = new URL("../packages/freestyle/src/egress.mjs", import.meta.url).href;
 const ACME_WEB_NAME = "acme-web";
 
 export interface AcmeWebWorld {
@@ -23,21 +33,26 @@ export interface AcmeWebWorld {
   gatewayUrl: string;
   model: Awaited<ReturnType<typeof seedAcmeGateway>>;
   upstream: Awaited<ReturnType<typeof startAcmeUpstream>>;
+  /** In-memory demo Slack, Notion, Linear, Google Calendar and Gmail, added to the Acme org. */
+  demo: DemoWorkspace;
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
-export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }): Promise<AcmeWebWorld> {
+export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint): Promise<AcmeWebWorld> {
   const place = resolvePlace();
   if (place.kind !== "local") {
     throw new Error("Run acme-web co-located with MySQL (--place local), including inside a prepared Daytona sandbox.");
   }
-  const upstream = await startAcmeUpstream(stack);
+  const upstream = await startAcmeUpstream(stack, checkpoint);
   const gateway = await gatewayEnvironment(upstream.baseUrl);
   const webPort = await allocateFreePort();
   const den = stack.use(await server({
     place,
     env: { ...gateway.env, DEN_DASHBOARDS_ENABLED: "true", RESEND_API_KEY: "", SMTP_HOST: "",
-      ...(preview ? { DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname } : {}) },
+      ...(preview ? {
+        DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${PREVIEW_EGRESS}`].filter(Boolean).join(" "),
+      } : {}) },
     seedProfile: "demo-org",
     trustedOrigins: [`http://127.0.0.1:${webPort}`, ...(preview ? Object.values(preview) : [])],
     publicOrigins: preview ? { web: preview.den, api: preview.den } : undefined,
@@ -46,6 +61,9 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
   if (!den.database) throw new Error("Acme Gateway requires the world's isolated Den database.");
   await startAcmeGateway(stack, den.database.url, gateway);
   const model = await seedAcmeGateway(den.admin, upstream);
+  // Same demo apps as preview-full; Alex Chen is both the seeded owner and the demo apps' signed-in person.
+  const demo = await bootDemoWorkspace(stack, den);
+  await connectDemoWorkspace(den, demo);
   const name = `${receiptName(ACME_WEB_NAME, resolveStage(process.env))}-${randomUUID().slice(0, 8)}`;
   const workspace = join(REPO_ROOT, "tmp", "worlds", name, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -72,7 +90,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     signal: AbortSignal.timeout(30_000),
   });
   if (!synced.ok) throw new Error(`Acme runtime sign-in failed: HTTP ${synced.status}`);
-  return { den, web, model, upstream, gatewayUrl: gateway.baseUrl };
+  return { den, web, model, upstream, demo, gatewayUrl: gateway.baseUrl };
 }
 
 export function acmeWebOutputs(world: AcmeWebWorld) {
@@ -97,6 +115,8 @@ export function acmeWebOutputs(world: AcmeWebWorld) {
       upstreamKey: secret(world.upstream.key, { group: "AI Gateway", note: "Synthetic upstream; no paid credentials" }),
       alexPassword: secret(den.admin.password, { group: "Accounts" }),
       dashboards: output("enabled", { group: "Org", note: "DEN_DASHBOARDS_ENABLED=true" }),
+      demoApps: output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps",
+        note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
     };
 }
 

@@ -30,7 +30,9 @@ type PreviewItem = {
 };
 
 function serverStatus(preview: PluginImportPreview["servers"][number]): string {
+  if (preview.reuseConnectionName) return `Uses your existing ${preview.reuseConnectionName} connection`;
   if (preview.supported) return "Ready";
+  if (preview.skippedReason === "native_connector") return `Connect ${preview.mapsToName ?? "this provider"} in OpenWork instead`;
   if (preview.skippedReason === "local_unsupported") return "Desktop-only servers cannot be imported";
   if (preview.skippedReason === "missing_url") return "No remote URL found";
   if (preview.skippedReason === "headers_unsupported") return "Static headers are not supported yet";

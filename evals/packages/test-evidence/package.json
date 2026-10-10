@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "test-evidence-judge": "./bin/test-evidence-judge.mjs"
+    "test-evidence-judge": "./bin/test-evidence-judge.mjs",
+    "test-evidence-design-review": "./bin/test-evidence-design-review.mjs"
   },
   "exports": {
     ".": {
@@ -20,6 +21,8 @@
   },
   "dependencies": {
     "@openwork/cdp": "workspace:*",
+    "@openwork/design-review": "workspace:*",
+    "@openwork/freestyle": "link:../../../packages/freestyle",
     "@openwork/env": "workspace:*",
     "@openwork/timeline": "workspace:*"
   }

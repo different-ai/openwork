@@ -10,6 +10,39 @@ head and is published as that PR's proof (private report + one PR comment).
 Write the spec for the person who will read that report in thirty seconds,
 not for the machine that runs it.
 
+## Map: from change to reviewed proof
+
+| Moment | Skill | Output |
+| --- | --- | --- |
+| Decide whether a journey is needed and design it | `write-a-spec` (this) | a spec whose titles, steps, and evidence read as the report |
+| Run it and read your own record | `run-tests` | `evals/results/test-runs/<latest>/` with the captions in order |
+| Let a reviewer click through the change | `preview-my-work` | a sandbox link in the report's **Show sandbox** panel |
+| Describe it on the PR | `open-a-pr` | an `## Evidence` line naming the spec and its before → after |
+| A proof or check is red | `diagnose-a-red-run` | classification before any code change |
+| Extra screenshots or a video outside the spec | `record-a-demo`, `upload-photo` | PR attachments (these are not proof) |
+
+### Which lane runs your spec (and when to tag)
+
+CI picks the lane from the file name and tags alone. Pick the lane first:
+it decides the world you can build.
+
+| If the spec… | Name / tag | CI lane |
+| --- | --- | --- |
+| runs in a browser or local world with no secrets (default) | `evals/specs/<journey>.e2e.test.ts` | PR change proof, unprotected |
+| must boot the packaged desktop binary | `evals/specs/packaged-<journey>.e2e.test.ts` | packaged smoke runner |
+| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle |
+| needs Windows and a published installer | the existing `windows-published-preview` spec only | Daytona Windows, protected |
+
+Tag `checkpoints` only when a still image cannot show what the reviewer has to
+check: an open stream, a populated workspace to explore, a state that costs
+minutes to reach. The tag moves the spec to a protected lane that uses a
+secret, where fork PRs cannot run. It saves each tagged test's world as
+launched for the commit (before the body acts) and its end state, plus every `user.checkpoint("caption")` and every `step(..., { checkpoint: true })`.
+Plain `user.screenshot()` never saves one. Say why in a comment beside the
+tag. Checkpoints cost VM snapshots, so capture the one or two moments a
+reviewer would open, not every step. Run it locally with
+`pnpm evals:e2e <slug> --local --checkpoints` (needs `FREESTYLE_API_KEY`).
+
 ## Do not write one when…
 
 - An existing journey covers the behaviour: extend it. One spec per user
@@ -45,6 +78,11 @@ each comes from one place in your code; write those strings for the reviewer:
 | Caption under a screenshot | the `step("…")` the `user.screenshot()` ran inside | the old state starts `before:`, the new state `after:`; otherwise a plain claim |
 | Caption + judgment on a `looks()` image | the first expectation in `user.looks([...])` | judged later; pending until then, so CI proof stays `Incomplete` |
 | Assertion line | `recordAssertionEvidence(claim, evidence, ok)` | `claim` is the caption, `evidence` the text under it |
+
+Each test is one section, marked with a status icon. Its checks collapse to
+"N of M checks passed" and open only when one fails. Its screenshots form a
+numbered gallery in capture order, so the captions have to tell the story on
+their own. A section with no `recordAssertionEvidence` shows as Incomplete.
 
 A screenshot taken outside any `step()` is captioned "<title> artifact N",
 which tells the reviewer nothing. No verbs like "assert", no selectors, no
@@ -194,6 +232,14 @@ placeholder, or test id. Bound every wait; declare external requirements in
   If the screenshots would not convince you, they will not convince the reviewer.
   Read the captions in `index.html` top to bottom: they should tell the
   before → after story on their own.
+- Your own eye passes what you designed. Run the design review on the same
+  record before pushing and fix its `medium` notes, or say in the PR why the
+  screen is right (`evals/design-review/README.md`; on a PR, the
+  `fix-design-notes` skill reads the notes from the Evidence preview check):
+
+  ```sh
+  pnpm --dir evals design:review -- --test-run latest
+  ```
 - In CI the spec runs on `PR change proof`, one job per spec; the trusted
   publisher aggregates every changed spec's records into one report. Failed,
   skipped, and cancelled runs stay visible as such; nothing substitutes for them.

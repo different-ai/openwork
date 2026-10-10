@@ -111,6 +111,16 @@ export async function orgInvite(seed: Seed, { place }: { place: { kind: "local" 
   return {
     den, web, owner, other, organization, otherOrg, identity, witnesses,
     fresh: (startPath = "/", signedInAs?: DenSession) => seed.web({ den, startPath, signedInAs, headless: true }),
+    // A sign-up that stopped at the emailed code: the account and password
+    // exist, the email is unverified, and Den created no session.
+    async unverifiedAccount(person: { email: string; name: string; password: string }) {
+      const result = await denFetch(den.ref, "/api/auth/sign-up/email", {
+        method: "POST", body: JSON.stringify({ name: person.name, email: person.email, password: person.password }),
+      });
+      if (!result.response.ok || record(result.body).token !== null) {
+        throw new Error(`Unverified sign-up: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
+      }
+    },
     async sessionsFor(email: string) {
       if (!den.database) throw new Error("Session witness requires the isolated Den database");
       return queryDenDatabase(den.database.url, "SELECT session.id FROM session INNER JOIN user ON user.id = session.user_id WHERE user.email = ? AND session.expires_at > NOW()", [email]);

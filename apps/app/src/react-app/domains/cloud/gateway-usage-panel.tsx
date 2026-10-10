@@ -149,7 +149,7 @@ export function GatewayUsageApprovalNotice() {
   const dismiss = useGatewayApprovalDismissals((state) => state.dismiss);
   const scopeKey = usage.approvalScopeKey;
   const approved = scopeKey ? approvedUsageIncreases(usage.data).filter((bucket) =>
-    !dismissedKeys.includes(gatewayApprovalKey(scopeKey, bucket))) : [];
+    !dismissedKeys.includes(gatewayApprovalKey(JSON.stringify([scopeKey, bucket.extensionMicroUsd]), bucket))) : [];
   if (!usage.active || usage.query.isError || !scopeKey || !approved.length) return null;
   const [first] = approved;
   return (
@@ -157,7 +157,7 @@ export function GatewayUsageApprovalNotice() {
       <UsageCard testId="gateway-usage-approved-notice" icon={<CheckCircle2 className="text-green-11" />}
         title={`You got ${formatGatewayMoney(first.extensionMicroUsd)} more ${gatewayPeriodLabels[first.timeframe].toLowerCase()}`}
         detail={<>{formatGatewayMoney(first.allowanceMicroUsd)} for {gatewayPeriodLabels[first.timeframe].toLowerCase()}, <GatewayResetTime value={first.resetAt} midSentence /></>}
-        actions={<Button size="sm" variant="ghost" className="text-muted-foreground" aria-label="Dismiss usage increase approval" onClick={() => dismiss(approved.map((bucket) => gatewayApprovalKey(scopeKey, bucket)))}>Dismiss</Button>} />
+        actions={<Button size="sm" variant="ghost" className="text-muted-foreground" aria-label="Dismiss usage increase approval" onClick={() => dismiss(approved.map((bucket) => gatewayApprovalKey(JSON.stringify([scopeKey, bucket.extensionMicroUsd]), bucket)))}>Dismiss</Button>} />
     </div>
   );
 }
@@ -222,9 +222,9 @@ function RequestRow({ bucket, asking, onAsk, onCancel, onSubmit, pending, error,
 }) {
   const amount = formatGatewayMoney(gatewayIncreaseMicroUsd(bucket));
   const state = bucket.resetRequestStatus === "pending" ? <span className="flex items-center gap-1.5 text-foreground"><Clock className="size-3.5" />Asked for {amount} more, waiting for an admin</span>
-    : bucket.resetRequestStatus === "approved" && bucket.extensionMicroUsd > 0 ? <span className="text-foreground">Added {formatGatewayMoney(bucket.extensionMicroUsd)}</span>
-      : bucket.resetRequestStatus === "denied" ? <span className="text-muted-foreground">Request declined</span>
-        : canAsk(bucket) ? null
+    : canAsk(bucket) ? null
+      : bucket.resetRequestStatus === "approved" && bucket.extensionMicroUsd > 0 ? <span className="text-foreground">Added {formatGatewayMoney(bucket.extensionMicroUsd)}</span>
+        : bucket.resetRequestStatus === "denied" ? <span className="text-muted-foreground">Request declined</span>
           : <span className="text-muted-foreground">You can ask once it runs out</span>;
   return (
     <div aria-label={`${gatewayPeriodLabels[bucket.timeframe]} increase`} className="flex flex-col gap-3 px-3.5 py-2.5">
@@ -297,7 +297,7 @@ export function GatewayUsageSettingsView({ onOpenAccount }: { onOpenAccount: () 
           : status.buckets.map((bucket) => <LimitRow key={bucket.id} bucket={bucket} />)}
       </SettingsSection>
       {status.buckets.some((bucket) => bucket.allowRequestReset) ? (
-        <SettingsSection title="More usage" detail="An admin can add 25% once per period">
+        <SettingsSection title="More usage" detail="Each approval adds 25% of your base allowance">
           {status.buckets.filter((bucket) => bucket.allowRequestReset).map((bucket) => (
             <RequestRow key={bucket.id} bucket={bucket} asking={askingId === bucket.id}
               pending={usage.reset.isPending} error={usage.reset.isError} disabled={usage.query.isError || usage.reset.isPending}

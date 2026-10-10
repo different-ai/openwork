@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Vm } from "freestyle";
 import { client, execChecked, findSnapshot, snapshotSlug, type PreviewWorld } from "./index.ts";
 import { compiledFingerprint, runningFingerprint, dependencyFingerprint, dependencyInput, digest, ensureLayer, sourceTree, startBuildUnit, type ObserveBuild } from "./cache.ts";
 import { checkoutRecipe, compiledRecipe, dependencyRecipe, toolsRecipe } from "./build-recipes.ts";
 import { templateOrigins } from "./origins.mjs";
+import { readAsset, type ControllerAsset } from "./assets.ts";
 
 /**
  * Template origins are placeholders that only the authenticated edge rewrites,
@@ -25,7 +25,12 @@ export interface BuildOptions {
   diagnostic?: (stage: string, log: string) => Promise<void>;
 }
 
-async function runScript(vm: Vm, stage: string, script: string, options: BuildOptions) {
+/** Metadata on every builder VM of one commit/world build; see `isBuilding`. */
+export function buildLabel(sha: string, world: PreviewWorld): Record<string, string> {
+  return { openworkBuild: `${world}-${sha}` };
+}
+
+export async function runScript(vm: Vm, stage: string, script: string, options: BuildOptions, deadlineMs = 11 * 60_000) {
   const root = `/opt/openwork-preview/${stage}`;
   await execChecked(vm, "mkdir -p /opt/openwork-preview");
   await vm.fs.writeTextFile(`${root}.sh`, `#!/bin/bash
@@ -38,7 +43,7 @@ ${script}
 touch ${root}.ready
 `);
   await startBuildUnit(vm, stage, options.diagnostic);
-  const deadline = Date.now() + 11 * 60_000;
+  const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     // Poll files directly: spawning a shell for every check can be interrupted
     // while a restored guest settles, even when the build itself is healthy.
@@ -47,7 +52,8 @@ touch ${root}.ready
     if (state === "ready") return;
     if (state === "failed") {
       if (options.diagnostic) {
-        const runtime = stage === "world" ? await execChecked(vm, "journalctl -u openwork-preview-runtime --no-pager -n 100") : "";
+        const runtime = stage === "world" ? await execChecked(vm, "journalctl -u openwork-preview-runtime --no-pager -n 100")
+          : stage.startsWith("evidence-world") ? await execChecked(vm, "journalctl -u openwork-evidence --no-pager -n 100") : "";
         await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`) + runtime);
       }
       throw new Error(`Snapshot ${stage} failed. Private builder log: ${root}.log`);
@@ -55,7 +61,7 @@ touch ${root}.ready
     await delay(1_000);
   }
   if (options.diagnostic) await options.diagnostic(stage, await vm.fs.readTextFile(`${root}.log`));
-  throw new Error(`Snapshot ${stage} exceeded 11 minutes`);
+  throw new Error(`Snapshot ${stage} exceeded ${Math.round(deadlineMs / 60_000)} minutes`);
 }
 
 /** Immutable tools/dependencies are shared; the running world always belongs to one exact commit. */
@@ -69,8 +75,8 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
   const dependencies = dependencyRecipe(world);
   const toolsSlug = `ow-tools-v1-${world}-${digest(tools)}`;
   const depsSlug = `ow-deps-v1-${world}-${digest(toolsSlug + dependencies + dependencyFingerprint(entries))}`;
-  const deps = await ensureLayer({ slug: depsSlug, stage: "dependencies", observe,
-    parent: async () => (await ensureLayer({ slug: toolsSlug, stage: "tools", observe,
+  const deps = await ensureLayer({ slug: depsSlug, stage: "dependencies", observe, metadata: buildLabel(sha, world),
+    parent: async () => (await ensureLayer({ slug: toolsSlug, stage: "tools", observe, metadata: buildLabel(sha, world),
       parent: async () => "freestyle/ubuntu",
       prepare: async (vm) => runScript(vm, "tools", tools, options),
     }, api)).id,
@@ -93,23 +99,25 @@ ${dependencies}`, options);
   }, api);
   const compile = compiledRecipe(world);
   const compiledSlug = `ow-build-v1-${world}-${digest(depsSlug + compile + compiledFingerprint(entries, world))}`;
-  const compiled = await ensureLayer({ slug: compiledSlug, stage: "compiled", observe,
+  const compiled = await ensureLayer({ slug: compiledSlug, stage: "compiled", observe, metadata: buildLabel(sha, world),
     parent: async () => deps.id,
     prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
   }, api);
-  const controllerFiles = ["builder.ts", "cache.ts", "build-recipes.ts", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs", "desktop-runtime.mjs", "desktop-state.mjs", "desktop-health.mjs", "desktop-refresh.mjs"];
-  const controller = (await Promise.all(controllerFiles.map((name) => readFile(new URL(`./${name}`, import.meta.url), "utf8")))).join("\n");
+  const controllerFiles: ControllerAsset[] = ["builder.ts", "cache.ts", "build-recipes.ts", "browser-recipe.ts", "browser-health.mjs", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs", "desktop-runtime.mjs", "desktop-state.mjs", "desktop-health.mjs", "desktop-refresh.mjs", "workbot-runtime.mjs", "workbot-health.mjs", "workbot-refresh.mjs"];
+  const controller = (await Promise.all(controllerFiles.map(readAsset))).join("\n");
   const runningSlug = `ow-warm-v1-${world}-${digest(compiledSlug + controller + runningFingerprint(entries, world))}`;
-  const running = await ensureLayer({ slug: runningSlug, stage: "running-template", observe, ttlSeconds: 86400,
+  const running = await ensureLayer({ slug: runningSlug, stage: "running-template", observe, metadata: buildLabel(sha, world), ttlSeconds: 86400,
     parent: async () => compiled.id,
     prepare: async (vm) => {
       log(`Preparing ${world} at ${sha} from cached dependencies`);
-      for (const [target, source] of [
-        ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "desktop" ? "desktop-runtime.mjs" : world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
-        ["health.mjs", world === "desktop" ? "desktop-health.mjs" : "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
-        ["refresh.mjs", world === "desktop" ? "desktop-refresh.mjs" : "refresh.mjs"], ["desktop-state.mjs", "desktop-state.mjs"],
-      ]) {
-        await vm.fs.writeTextFile(`/opt/openwork-preview/${target}`, await readFile(new URL(`./${source}`, import.meta.url), "utf8"));
+      const files: [string, ControllerAsset][] = [
+        ["browser-health.mjs", "browser-health.mjs"], ["gateway.mjs", "gateway.mjs"],
+        ["runtime.mjs", world === "desktop" ? "desktop-runtime.mjs" : world === "acme-web" ? "acme-runtime.mjs" : world === "workbot" ? "workbot-runtime.mjs" : "runtime.mjs"],
+        ["health.mjs", world === "desktop" ? "desktop-health.mjs" : world === "workbot" ? "workbot-health.mjs" : "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
+        ["refresh.mjs", world === "desktop" ? "desktop-refresh.mjs" : world === "workbot" ? "workbot-refresh.mjs" : "refresh.mjs"], ["desktop-state.mjs", "desktop-state.mjs"],
+      ];
+      for (const [target, source] of files) {
+        await vm.fs.writeTextFile(`/opt/openwork-preview/${target}`, await readAsset(source));
       }
       await vm.fs.writeTextFile("/etc/systemd/system/openwork-preview-runtime.service", `[Unit]
 Description=OpenWork isolated preview runtime
@@ -128,7 +136,8 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 `);
-      if (world === "acme-web") await vm.fs.writeTextFile("/opt/openwork-preview/template-hosts", templateHostsEntries());
+      const templated = world === "acme-web" || world === "workbot";
+      if (templated) await vm.fs.writeTextFile("/opt/openwork-preview/template-hosts", templateHostsEntries());
       await runScript(vm, "world", `
 stage_start=$(date +%s%3N)
 mark() { now=$(date +%s%3N); printf '{"stage":"%s","durationMs":%s}\\n' "$1" "$((now-stage_start))" >> /opt/openwork-preview/build-stages.jsonl; stage_start=$now; }
@@ -137,10 +146,10 @@ mark checkout
 tar -xf /opt/openwork-preview/compiled.tar -C /workspace
 mark compile
 export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
-${world === "acme-web" ? "grep -qxF -f /opt/openwork-preview/template-hosts /etc/hosts || cat /opt/openwork-preview/template-hosts >> /etc/hosts" : ""}
+${templated ? "grep -qxF -f /opt/openwork-preview/template-hosts /etc/hosts || cat /opt/openwork-preview/template-hosts >> /etc/hosts" : ""}
 systemctl daemon-reload
 systemctl start openwork-preview-runtime
-${world === "app-web" ? "curl --retry 20 --retry-delay 1 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null" : `for attempt in $(seq 1 480); do
+${world === "app-web" ? "curl --retry 180 --retry-delay 1 --retry-max-time 180 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null" : `for attempt in $(seq 1 480); do
   test ! -f /opt/openwork-preview/failed-world
   if test -f /opt/openwork-preview/ready-world; then break; fi
   sleep 1
@@ -152,17 +161,19 @@ systemctl enable --now openwork-preview-gateway
 mark boot-and-verify
 `, options);
       const timings = await vm.fs.readTextFile("/opt/openwork-preview/build-stages.jsonl")
-        + (world === "acme-web" ? await vm.fs.readTextFile("/opt/openwork-preview/runtime-stages.jsonl") : "");
+        + (templated ? await vm.fs.readTextFile("/opt/openwork-preview/runtime-stages.jsonl") : "");
       for (const line of timings.trim().split("\n")) {
         const value: unknown = JSON.parse(line);
         if (!value || typeof value !== "object" || !("stage" in value) || typeof value.stage !== "string"
-          || !["checkout", "compile", "boot-and-verify", "world-services", "gateway-probe", "den-pages", "app-modules", "desktop"].includes(value.stage) || !("durationMs" in value)
+          || !["checkout", "compile", "boot-and-verify", "world-services", "gateway-probe", "den-pages", "app-modules", "desktop", "workbot-probe"].includes(value.stage) || !("durationMs" in value)
           || typeof value.durationMs !== "number" || !Number.isFinite(value.durationMs) || value.durationMs < 0) throw new Error("Invalid build timing");
         observe({ stage: value.stage, durationMs: value.durationMs });
       }
     },
   }, api);
-  return ensureLayer({ slug, stage: "world", observe, ttlSeconds: 7 * 86400,
+  // Per-commit worlds are built on first launch and rarely reopened. Storage is
+  // billed until deletion, so keep them two days at most and one day unused.
+  return ensureLayer({ slug, stage: "world", observe, metadata: buildLabel(sha, world), ttlSeconds: 2 * 86400, autoDeleteSeconds: 86400,
     parent: async () => running.id,
     prepare: async (vm) => {
       log(`Refreshing ${world} at ${sha} from an isolated running template`);
@@ -175,4 +186,14 @@ node /opt/openwork-preview/refresh.mjs ${sha}`, options);
     },
   }, api);
 
+}
+
+/**
+ * True while a builder VM started for this commit/world is alive. Between layers
+ * and while the source tree is read there is briefly none, so callers should only
+ * treat a sustained "not building, not ready" as a failed build.
+ */
+export async function isBuilding(sha: string, world: PreviewWorld, api = client()): Promise<boolean> {
+  const { vms } = await api.vms.list({ metadata: `openworkBuild:${buildLabel(sha, world).openworkBuild}`, limit: 20 });
+  return vms.some((vm) => vm.state === "starting" || vm.state === "running");
 }

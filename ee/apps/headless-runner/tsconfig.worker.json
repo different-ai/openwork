@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["src", "worker-configuration.d.ts"],
+  "exclude": ["src/server.ts", "src/node-sqlite.ts"]
+}

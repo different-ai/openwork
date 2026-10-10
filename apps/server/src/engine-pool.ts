@@ -245,21 +245,18 @@ export function isEngineConnectionFailure(error: unknown): boolean {
   let current: unknown = error;
   for (let depth = 0; depth < 6 && current !== null && current !== undefined; depth += 1) {
     if (typeof current === "string") {
-      return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|socket hang up|Unable to connect|Headers Timeout Error/i.test(current);
+      return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET|socket hang up|other side closed|Unable to connect|Headers Timeout Error/i.test(current);
     }
     if (!isRecord(current) || visited.has(current)) return false;
     visited.add(current);
     const code = current.code;
-    if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT") return true;
+    // An engine that dies mid-request closes the socket (UND_ERR_SOCKET, EPIPE).
+    if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "EPIPE" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_SOCKET") return true;
     const message = current.message;
-    if (typeof message === "string" && /ECONNREFUSED|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|socket hang up|Unable to connect|Headers Timeout Error/i.test(message)) return true;
+    if (typeof message === "string" && /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET|socket hang up|other side closed|Unable to connect|Headers Timeout Error/i.test(message)) return true;
     current = current.cause;
   }
   return false;
-}
-
-export function isConnectionRefusedClassError(error: unknown): boolean {
-  return isEngineConnectionFailure(error);
 }
 
 function isRoutableGeneration(
@@ -944,7 +941,6 @@ export class EnginePool {
     this.config.opencodeUsername = next.handle.username;
     this.config.opencodePassword = next.handle.password;
     for (const entry of this.config.workspaces) {
-      if (entry.workspaceType === "remote") continue;
       entry.baseUrl = next.handle.url;
       entry.opencodeUsername = next.handle.username;
       entry.opencodePassword = next.handle.password;
@@ -1396,11 +1392,7 @@ export class EnginePool {
   }
 
   private engineProbeDirectories(): Array<string | null> {
-    const directories = new Set(
-      this.config.workspaces
-        .filter((workspace) => workspace.workspaceType !== "remote")
-        .map((workspace) => workspace.path),
-    );
+    const directories = new Set(this.config.workspaces.map((workspace) => workspace.path));
     return directories.size > 0 ? [...directories] : [null];
   }
 

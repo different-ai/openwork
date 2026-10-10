@@ -29,7 +29,7 @@ reply through the gateway. The verification conversation is retained for
 inspection. This is runtime-path verification, not proof of browser sign-in.
 
 Open `webUrl`, sign in to `denWeb` as `alex@acme.test`, and select **Acme AI
-Gateway / Claude Haiku 4.5**. Retrieve the fixture password privately:
+Gateway / Claude Haiku 5.5**. Retrieve the fixture password privately:
 
 ```sh
 pnpm world outputs acme-web --stage gateway-demo --reveal
@@ -75,7 +75,8 @@ CI starts and seeds the whole world, enables AI Gateway in the owner sidebar,
 verifies an OpenCode request through the gateway, and warms browser entry points
 before capturing the running memory snapshot. Each clone resumes those processes
 with independent database and file state; it does not reseed or restart them.
-The private edge maps the snapshot’s virtual origins to each clone’s unique URLs.
+The private edge maps the snapshot’s virtual origins to each clone’s unique URLs,
+including in Den’s own OAuth requests, so OAuth MCP servers connect from each clone.
 Launch checks restored services and renews expired demo sessions when necessary.
 The model upstream alone is deterministic. This is an isolated demo, not production
 accounts or billing. Initial preparation can take several minutes.

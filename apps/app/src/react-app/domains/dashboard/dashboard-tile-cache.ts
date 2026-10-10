@@ -109,7 +109,7 @@ function htmlRefFor(html: string, refs: Map<string, string>): string {
   return ref;
 }
 
-function serializeScope(scope: Map<string, DashboardTileCache>, now: number): string | null {
+function serializeScope(scope: Map<string, DashboardTileCache>, now: number, maxBytes = MAX_SCOPE_CACHE_BYTES): string | null {
   // Newest first so the freshest tiles survive eviction; shared HTML is
   // charged once, when its first referencing entry is kept.
   const ordered = [...scope].sort((left, right) => right[1].cachedAt - left[1].cachedAt);
@@ -135,7 +135,7 @@ function serializeScope(scope: Map<string, DashboardTileCache>, now: number): st
       continue;
     }
     const cost = serialized.length + 1 + htmlCost;
-    if (size + cost > MAX_SCOPE_CACHE_BYTES) {
+    if (size + cost > maxBytes) {
       scope.delete(entryId);
       continue;
     }
@@ -150,7 +150,39 @@ function serializeScope(scope: Map<string, DashboardTileCache>, now: number): st
   return `{${JSON.stringify(SHARED_HTML_KEY)}:{${htmlEntries.join(",")}},${JSON.stringify(SHARED_ENTRIES_KEY)}:{${kept.map((entry) => entry.serialized).join(",")}}}`;
 }
 
-const cacheStore = createDashboardTileCacheStore(parseScope, serializeScope);
+/** A bounded presentation store; each instance owns its own per-key byte budget. */
+export function createPresentationCacheStore(maxBytes: number) {
+  const store = createDashboardTileCacheStore(parseScope, (scope: Map<string, DashboardTileCache>, now: number) => serializeScope(scope, now, maxBytes));
+  return {
+    read(scopeKey: string, entryId: string, now = Date.now()): DashboardTileCache | null {
+      const scope = store.read(scopeKey, now);
+      const cache = scope?.get(entryId);
+      if (!scope || !cache) return null;
+      if (now - cache.cachedAt > MAX_CACHE_AGE_MS) {
+        scope.delete(entryId);
+        store.schedule(scopeKey);
+        return null;
+      }
+      return cache;
+    },
+    write(scopeKey: string, entryId: string, cache: DashboardTileCache): void {
+      const next = parseCache(cache, Date.now());
+      if (!next) return;
+      const scope = store.read(scopeKey);
+      if (!scope) return;
+      scope.set(entryId, next);
+      store.schedule(scopeKey);
+    },
+    remove(scopeKey: string, entryId: string): void {
+      const scope = store.read(scopeKey);
+      if (!scope) return;
+      scope.delete(entryId);
+      store.schedule(scopeKey);
+    },
+  };
+}
+
+const cacheStore = createPresentationCacheStore(MAX_SCOPE_CACHE_BYTES);
 
 export function dashboardTileCacheScopeKey(userId: string | null, organizationId: string | null): string {
   return `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.${userId?.trim() || "local"}.${organizationId?.trim() || "none"}`;
@@ -190,15 +222,7 @@ export function readDashboardTileCache(
   entryId: string,
   now = Date.now(),
 ): DashboardTileCache | null {
-  const scope = cacheStore.read(scopeKey, now);
-  const cache = scope?.get(entryId);
-  if (!scope || !cache) return null;
-  if (now - cache.cachedAt > MAX_CACHE_AGE_MS) {
-    scope.delete(entryId);
-    cacheStore.schedule(scopeKey);
-    return null;
-  }
-  return cache;
+  return cacheStore.read(scopeKey, entryId, now);
 }
 
 export function writeDashboardTileCache(
@@ -206,17 +230,9 @@ export function writeDashboardTileCache(
   entryId: string,
   cache: DashboardTileCache,
 ): void {
-  const next = parseCache(cache, Date.now());
-  if (!next) return;
-  const scope = cacheStore.read(scopeKey);
-  if (!scope) return;
-  scope.set(entryId, next);
-  cacheStore.schedule(scopeKey);
+  cacheStore.write(scopeKey, entryId, cache);
 }
 
 export function removeDashboardTileCache(scopeKey: string, entryId: string): void {
-  const scope = cacheStore.read(scopeKey);
-  if (!scope) return;
-  scope.delete(entryId);
-  cacheStore.schedule(scopeKey);
+  cacheStore.remove(scopeKey, entryId);
 }

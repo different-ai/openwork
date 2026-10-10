@@ -27,7 +27,7 @@ const model = provider(async (ctx) => {
   return witness;
 });
 
-const app = desktop({
+export const app = desktop({
   org,
   app: DOCS_APP,
   model,

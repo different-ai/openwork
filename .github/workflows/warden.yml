@@ -1,7 +1,7 @@
 name: Warden
 
-# Keep these actions aligned with warden.toml. The workflow remains disabled
-# in GitHub until a maintainer explicitly enables it after rollout.
+# Keep these actions aligned with warden.toml. Warden Clearance
+# (warden-clearance.yml) reads this run's warden-summary receipt to approve.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -19,7 +19,9 @@ jobs:
   warden:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Up to 400 files / 60,000 changed lines (warden.toml); the largest PRs
+    # take well over 20 minutes.
+    timeout-minutes: 60
     steps:
       - name: Start timing
         id: timing
@@ -44,6 +46,21 @@ jobs:
             .github/scripts
             .warden
 
+      # The WARDEN_MODEL repository variable swaps the model without a PR.
+      # warden.toml models outrank the WARDEN_MODEL env var, so rewrite the
+      # trusted policy copy; the committed model stays the fallback.
+      - name: Apply model variable
+        if: vars.WARDEN_MODEL != ''
+        env:
+          MODEL: ${{ vars.WARDEN_MODEL }}
+        run: |
+          if ! printf '%s' "$MODEL" | grep -Eq '^[a-z0-9-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error::WARDEN_MODEL must be provider/model-id, got: $MODEL"
+            exit 1
+          fi
+          sed -i -E "s|^model = \".*\"$|model = \"$MODEL\"|" .warden-policy/warden.toml
+          grep -n '^model = ' .warden-policy/warden.toml
+
       - name: Start analysis timing
         id: analysis-timing
         run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -52,7 +69,8 @@ jobs:
         id: analyze
         uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0 (CLI 0.43.0)
         env:
-          WARDEN_MODEL: ${{ secrets.WARDEN_MODEL }}
+          # Registers models newer than the pinned Warden's Pi catalog.
+          PI_CODING_AGENT_DIR: ${{ github.workspace }}/.warden-policy/.warden/pi
           WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
         with:
           mode: analyze
@@ -74,6 +92,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REPORT_PATH: ${{ runner.temp }}/warden-summary.json
+          FINDINGS_REPORT_PATH: ${{ runner.temp }}/warden-findings.json
         run: node .warden-policy/.github/scripts/warden-report.mjs
 
       - name: Save review measurement
@@ -84,3 +103,14 @@ jobs:
           path: ${{ runner.temp }}/warden-summary.json
           retention-days: 90
           if-no-files-found: warn
+
+      # Security findings only (never confidentiality text) for the PR comment
+      # Warden Clearance posts. Absent when the security review is incomplete.
+      - name: Save security findings for the PR comment
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: warden-findings
+          path: ${{ runner.temp }}/warden-findings.json
+          retention-days: 30
+          if-no-files-found: ignore

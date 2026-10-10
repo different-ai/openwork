@@ -8,6 +8,7 @@ import {
   assertMatrixEnvironment, assertMatrixSchema, assertNoPartialMatrix, loadMatrixSnapshot, matrixRecovery,
   MatrixSafetyError, matrixSnapshotShape, matrixSources, matrixTargets, rejectMatrix,
 } from "./migration-0097-schema.ts"
+import { receiptMatchesMigration } from "./superseded-migrations.ts"
 
 export const matrixHash = "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470"
 export const matrixMillis = 1788895934602
@@ -50,7 +51,7 @@ export async function upgradeHistoryPrefix(executor: Executor, plan: UpgradePlan
   for (const [index, row] of rows.entries()) {
     const expected = plan.migrations[index]
     const millis = typeof row.created_at === "number" || typeof row.created_at === "string" || typeof row.created_at === "bigint" ? Number(row.created_at) : NaN
-    if (!expected || row.hash !== expected.hash || millis !== expected.folderMillis) rejectMatrix(`history is not an exact hash/timestamp prefix at receipt ${index + 1}`)
+    if (!expected || !receiptMatchesMigration(row.hash, expected) || millis !== expected.folderMillis) rejectMatrix(`history is not an exact hash/timestamp prefix at receipt ${index + 1}`)
   }
   if (rows.length === 0) rejectMatrix("existing database has no migration receipts")
   return rows.length

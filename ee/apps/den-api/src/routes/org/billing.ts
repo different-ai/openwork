@@ -2,16 +2,16 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
 import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
-import { orgRoleRoute } from "../../middleware/index.js"
+import { orgMemberRoute, orgPermissionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
-import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
+import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
+
+const INFERENCE_SUBSCRIPTION_EXISTS_PORTAL_REQUIRED_MESSAGE = "OpenWork Models is already subscribed for this organization. Updating its payment method needs the “Open the billing portal” permission, so ask someone who has it, such as the owner."
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
 const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat", "web"]).optional() })
@@ -27,6 +27,16 @@ const openWorkWebUnavailableSchema = z.object({
   error: z.literal("openwork_web_not_available"),
   message: z.string(),
 }).meta({ ref: "OpenWorkWebUnavailableError" })
+
+const retiredPolarBillingStatus = {
+  featureGateEnabled: false,
+  hasActivePlan: true,
+  checkoutRequired: false,
+  portalUrl: null,
+  price: null,
+  subscription: null,
+  invoices: [],
+}
 
 function openWorkWebUnavailableResponse(): { error: "openwork_web_not_available"; message: string } {
   return {
@@ -136,7 +146,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         404: jsonResponse("OpenWork Web is not available for this organization.", openWorkWebUnavailableSchema),
       },
     }),
-    orgRoleRoute(["member"]),
+    orgMemberRoute(),
     async (c) => {
       const payload = c.get("organizationContext")
       if (!isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
@@ -158,31 +168,24 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         401: jsonResponse("The caller must be signed in to read billing settings.", unauthorizedSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("billing.view"),
     async (c) => {
       const user = c.get("user")
       const payload = c.get("organizationContext")
       const email = getRequiredUserEmail(user)
-      const canManageBilling = organizationRoleValueSatisfies({
-        roleValue: payload.currentMember.role,
-        requiredRole: ORGANIZATION_SUPER_ADMIN_ROLE,
-        isOwner: payload.currentMember.isOwner,
-      })
+      // The portal URL is a live Stripe session that can change billing, so it
+      // needs the same check as POST /v1/billing/stripe/portal (billing_portal.use,
+      // including the recent sign-in). Without it the URL is omitted; the read still succeeds.
+      const portal = await requirePermission(c, "billing_portal.use")
       const billing = await getOrgBillingSummary({
         organizationId: payload.organization.id,
-        includePortalUrl: canManageBilling,
+        includePortalUrl: portal.ok,
         returnUrl: billingReturnUrl(c),
       })
-      const polar = email
-        ? await getCloudWorkerBillingStatus({
-            userId: user.id,
-            email,
-            name: user.name ?? email,
-          }, {
-            includePortalUrl: canManageBilling,
-            includeInvoices: false,
-          }).catch(() => null)
-        : null
+      // Den web still reads `billing.polar` as the cloud-worker access summary
+      // (den-flow.ts getBillingSummary). Polar billing is retired, so this is
+      // the constant "no gate, access allowed" shape it always had in practice.
+      const polar = email ? retiredPolarBillingStatus : null
 
       return c.json({ billing: { ...billing, polar } })
     },
@@ -197,17 +200,13 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe Checkout session created successfully.", stripeCheckoutResponseSchema),
         401: jsonResponse("The caller must be signed in to start billing.", unauthorizedSchema),
-        403: jsonResponse("Billing access is denied.", z.union([forbiddenSchema, managedModelsPolicyErrorSchema])),
+        403: jsonResponse("Billing access is denied. When an OpenWork Models subscription already exists, the billing portal URL returned instead of a checkout needs the Open the billing portal permission and a recent sign-in.", z.union([forbiddenSchema, managedModelsPolicyErrorSchema])),
         503: jsonResponse("Managed Models policy is unavailable.", managedModelsPolicyErrorSchema),
         404: jsonResponse("OpenWork Web is not available for this organization.", openWorkWebUnavailableSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("billing.manage"),
     async (c) => {
-      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can start billing.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
       const user = c.get("user")
       const email = getRequiredUserEmail(user)
       if (!email) {
@@ -253,6 +252,9 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         if (error instanceof Error && error.message === "stripe_openwork_web_subscription_exists") {
           return "subscription_exists" as const
         }
+        if (error instanceof Error && error.message === "stripe_inference_subscription_exists") {
+          return "inference_subscription_exists" as const
+        }
         throw error
       })
       if (session instanceof ManagedModelsPolicyError) {
@@ -262,6 +264,33 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json({
           error: "stripe_subscription_exists",
           message: "OpenWork Web is already subscribed for this organization. Manage it from Billing.",
+        }, 409)
+      }
+      if (session === "inference_subscription_exists") {
+        // The organization already has an OpenWork Models subscription Stripe
+        // is still collecting on (typically past due after a failed renewal).
+        // A second Checkout would charge them twice, so hand them the billing
+        // portal where the payment method can be fixed instead. The portal URL
+        // is a live Stripe session that can change billing, so it needs the
+        // same check as POST /v1/billing/stripe/portal (billing_portal.use with
+        // a recent sign-in); Start a subscription alone never returns it.
+        const portalAccess = await requirePermission(c, "billing_portal.use")
+        if (!portalAccess.ok) {
+          const failure = portalAccess.response.error === "forbidden"
+            ? { ...portalAccess.response, message: INFERENCE_SUBSCRIPTION_EXISTS_PORTAL_REQUIRED_MESSAGE }
+            : portalAccess.response
+          return c.json(failure, orgAccessFailureStatus(failure), permissionFailureHeaders(failure))
+        }
+        const portal = await createInferencePortalSession({
+          organizationId: payload.organization.id,
+          returnUrl: billingReturnUrl(c),
+        }).catch(() => null)
+        if (portal?.url) {
+          return c.json({ url: portal.url })
+        }
+        return c.json({
+          error: "stripe_subscription_exists",
+          message: "OpenWork Models is already subscribed for this organization. Update the payment method from Billing.",
         }, 409)
       }
       return c.json({ url: session.url })
@@ -277,15 +306,11 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe billing portal session created successfully.", stripePortalResponseSchema),
         401: jsonResponse("The caller must be signed in to manage billing.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins can manage billing.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Open the billing portal permission and a recent sign-in.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("billing_portal.use"),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage billing.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
       const payload = c.get("organizationContext")
       const session = await createInferencePortalSession({
         organizationId: payload.organization.id,
@@ -304,16 +329,12 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       responses: {
         200: jsonResponse("Stripe Checkout session synced successfully.", stripeCheckoutSyncResponseSchema),
         401: jsonResponse("The caller must be signed in to sync billing.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can sync billing.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Start a subscription permission and a recent sign-in.", forbiddenSchema),
         503: jsonResponse("Managed Models policy is unavailable.", managedModelsPolicyErrorSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("billing.manage"),
     async (c) => {
-      const permission = ensureOrganizationAdmin(c, "Only workspace owners and admins can sync billing.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
       const body = await c.req.json().catch(() => ({}))
       const parsed = stripeCheckoutSyncRequestSchema.safeParse(body)
       if (!parsed.success) {

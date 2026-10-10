@@ -1,0 +1,35 @@
+{
+  "name": "@openwork/calendar",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Calendar logic shared by the desktop app and Workbot: time and DST helpers, Google and Outlook adapters over Den's calendar routes, Automation blocks, layout and formatting, and TanStack Query hooks.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./react": {
+      "types": "./src/react.ts",
+      "development": "./src/react.ts",
+      "default": "./src/react.ts"
+    }
+  },
+  "scripts": {
+    "test": "bun test src",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openwork/types": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.90.3"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.90.3",
+    "bun-types": "^1.3.6",
+    "typescript": "^5.9.3"
+  }
+}

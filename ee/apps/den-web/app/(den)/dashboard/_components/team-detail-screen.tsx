@@ -7,7 +7,7 @@ import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getMarketplaceRoute, getMembersRoute } from "../../_lib/den-org";
+import { getMarketplaceRoute, getMembersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { TeamPermissionsPanel } from "./team-permissions-panel";
 import { OrgMemberIdentity } from "./org-member-identity";
@@ -60,6 +60,10 @@ function RoleBadge({ role }: { role: TeamPluginAccessItem["role"] }) {
 
 export function TeamDetailScreen({ teamId }: { teamId: string }) {
   const { orgContext, orgSlug } = useOrgDashboard();
+  // Revoking a team's plugin grant needs manager access to the plugin (`sharing.manage_all`).
+  const canRevokeAccess = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageAllShared
+    : false;
   const [activeTab, setActiveTab] = useState<TeamDetailTab>("access");
   const accessQuery = useTeamPluginAccess(teamId);
   const revokeAccess = useRevokeTeamPluginAccess();
@@ -175,7 +179,7 @@ export function TeamDetailScreen({ teamId }: { teamId: string }) {
                           <p className="text-[13px] text-gray-500 md:pr-4">
                             {item.grantedBy?.name ?? "—"} · {formatGrantedDate(item.grantedAt)}
                           </p>
-                          {item.edge === "direct_team" ? (
+                          {item.edge === "direct_team" && canRevokeAccess ? (
                             <div className="flex justify-end border-t border-gray-100 pt-3 md:border-0 md:pt-0">
                               <DenButton
                                 variant="destructive"

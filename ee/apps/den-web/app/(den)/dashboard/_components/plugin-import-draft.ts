@@ -6,7 +6,11 @@ export type PluginImportServer = {
   serverKey: string;
   url: string | null;
   supported: boolean;
-  skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "unsupported_auth" | null;
+  skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "native_connector" | "unsupported_auth" | null;
+  /** The provider OpenWork already knows for this connector (e.g. "Google Workspace"). */
+  mapsToName: string | null;
+  /** The organization's existing connection the import will use. */
+  reuseConnectionName: string | null;
 };
 
 export type PluginImportSkill = {
@@ -53,7 +57,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function skippedServerReason(value: unknown): PluginImportServer["skippedReason"] {
-  if (value === "headers_unsupported" || value === "invalid_config" || value === "invalid_url" || value === "local_unsupported" || value === "missing_url" || value === "unsupported_auth") {
+  if (value === "headers_unsupported" || value === "invalid_config" || value === "invalid_url" || value === "local_unsupported" || value === "missing_url" || value === "native_connector" || value === "unsupported_auth") {
     return value;
   }
   return null;
@@ -134,6 +138,8 @@ export function parsePluginImportPreview(payload: unknown): PluginImportPreview 
             url: typeof entry.url === "string" ? entry.url : null,
             supported: entry.supported === true,
             skippedReason: skippedServerReason(entry.skippedReason),
+            mapsToName: isRecord(entry.mapsTo) && typeof entry.mapsTo.displayName === "string" ? entry.mapsTo.displayName : null,
+            reuseConnectionName: isRecord(entry.reuse) && typeof entry.reuse.connectionName === "string" ? entry.reuse.connectionName : null,
           }];
         })
       : [],

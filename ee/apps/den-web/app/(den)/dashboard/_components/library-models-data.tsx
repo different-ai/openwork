@@ -26,7 +26,7 @@ export const libraryModelQueryKeys = {
   connections: (orgId: string | null) => ["me", "library", "models", "connections", orgId] as const,
 };
 
-/** How long we wait for Google before offering to try again. */
+/** How long we wait for the sign-in (Google, AWS or Microsoft) before offering to try again. */
 const SIGN_IN_WAIT_MS = 10 * 60 * 1000;
 const SIGN_IN_POLL_MS = 2000;
 
@@ -43,11 +43,11 @@ async function loadUsableProviders(orgId: string, signal?: AbortSignal) {
 }
 
 /** Every model provider the organization gives the viewer, with their sign-in state. */
-export function useLibraryModels() {
+export function useLibraryModels(enabled = true) {
   const { orgId } = useOrgDashboard();
   const providers = useQuery({
     queryKey: libraryModelQueryKeys.providers(orgId),
-    enabled: Boolean(orgId),
+    enabled: enabled && Boolean(orgId),
     queryFn: ({ signal }) => {
       if (!orgId) throw new Error("Select an organization first.");
       return loadUsableProviders(orgId, signal);
@@ -55,7 +55,7 @@ export function useLibraryModels() {
   });
   const connections = useQuery({
     queryKey: libraryModelQueryKeys.connections(orgId),
-    enabled: Boolean(orgId),
+    enabled: enabled && Boolean(orgId),
     queryFn: ({ signal }) => {
       if (!orgId) throw new Error("Select an organization first.");
       return loadGatewayMemberConnections(orgId, signal);

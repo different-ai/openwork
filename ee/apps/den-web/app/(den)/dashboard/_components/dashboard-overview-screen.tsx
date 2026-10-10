@@ -9,12 +9,12 @@ import {
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "../../_lib/den-flow";
-import { getAddConnectorRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { DashboardActivity } from "../_features/activity/dashboard-activity";
 import { ConnectorQuickAddGrid } from "./connector-quick-add-grid";
 import { useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
-import { OrganizationDownloadCard } from "./organization-download-card";
 
 /* ── Types ── */
 
@@ -80,14 +80,38 @@ function StatCard({ icon, title, value, sub, tone }: {
   );
 }
 
+// Keep the previous surface mounted only while the rollout is off. Reverting
+// never removes connections or versions, and never starts Activity reads.
+function QuickAddConnectors() {
+  const router = useRouter();
+  const { activeOrg } = useOrgDashboard();
+  const { data: connections = [] } = useMcpConnections();
+  const { data: presets = [] } = useMcpConnectionPresets();
+
+  return (
+    <section className="mt-7" aria-labelledby="dashboard-quick-add-heading">
+      <div className="mb-3">
+        <h2 id="dashboard-quick-add-heading" className="text-[16px] font-semibold tracking-[-0.02em] text-gray-950">Quick add</h2>
+        <p className="mt-0.5 text-[13px] text-gray-500">Add a connector your whole team can use.</p>
+      </div>
+      <ConnectorQuickAddGrid
+        connections={connections}
+        presets={presets}
+        filter=""
+        onSelect={(id) => router.push(getAddConnectorRoute(activeOrg?.slug, id))}
+        onManage={() => router.push(getMcpConnectionsRoute(activeOrg?.slug))}
+        onInstantAdd={(preset) => router.push(getAddConnectorRoute(activeOrg?.slug, preset.presetId))}
+        instantAddingPresetId={null}
+      />
+    </section>
+  );
+}
+
 /* ── Main screen ── */
 
 export function DashboardOverviewScreen() {
-  const router = useRouter();
   const { activeOrg, orgContext } = useOrgDashboard();
   const { user } = useDenFlow();
-  const { data: connections = [] } = useMcpConnections();
-  const { data: presets = [] } = useMcpConnectionPresets();
 
   const { data: adoption } = useQuery({
     queryKey: ["telemetry", "adoption"],
@@ -96,6 +120,12 @@ export function DashboardOverviewScreen() {
 
   const members = adoption?.members ?? orgContext?.members.length ?? 0;
   const pending = adoption?.pendingInvites ?? (orgContext?.invitations ?? []).filter((i) => i.status === "pending").length;
+  // Quick add creates organization connections, which needs `connections.manage`.
+  const canAddConnectors = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  ).canManageConnections;
 
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
@@ -113,38 +143,13 @@ export function DashboardOverviewScreen() {
         Run locally for free. Keep data on your machine and move to shared workflows when ready.
       </p>
 
-      {/* Download OpenWork */}
-      {activeOrg && orgContext?.capabilities.installLinks ? (
-        <div className="mt-4">
-          <OrganizationDownloadCard organizationId={activeOrg.id} organizationName={activeOrg.name} />
-        </div>
-      ) : null}
-
       {/* Live org data */}
       <div className="mt-5 grid gap-3.5 md:grid-cols-2">
         <StatCard icon={<Users className="h-5 w-5 text-[#6F3DFF]" />} title="OpenWork users" value={`${members}`} sub="Current workspace members" tone="violet" />
         <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Pending invites" value={`${pending}`} sub="Awaiting activation" tone="blue" />
       </div>
 
-      <section className="mt-7" aria-labelledby="dashboard-quick-add-heading">
-        <div className="mb-3">
-          <h2 id="dashboard-quick-add-heading" className="text-[16px] font-semibold tracking-[-0.02em] text-gray-950">Quick add</h2>
-          <p className="mt-0.5 text-[13px] text-gray-500">Add a connector your whole team can use.</p>
-        </div>
-        <ConnectorQuickAddGrid
-          connections={connections}
-          presets={presets}
-          filter=""
-          onSelect={(id) => {
-            router.push(getAddConnectorRoute(activeOrg?.slug, id));
-          }}
-          onManage={() => router.push(getMcpConnectionsRoute(activeOrg?.slug))}
-          onInstantAdd={(preset) => {
-            router.push(getAddConnectorRoute(activeOrg?.slug, preset.presetId));
-          }}
-          instantAddingPresetId={null}
-        />
-      </section>
+      {orgFeatureEnabled(orgContext, "dashboardActivity") ? <DashboardActivity /> : canAddConnectors ? <QuickAddConnectors /> : null}
     </div>
   );
 }

@@ -18,7 +18,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   createDesktopPolicy,
@@ -252,10 +252,10 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canManage = access.canManageSettings;
-  const canView = access.canViewSettings;
+  const canManage = access.canManageDesktopPolicies;
+  const canView = access.canViewDesktopPolicies;
   const isEditing = Boolean(desktopPolicyId);
   const isDefault = policy?.isDefault === true;
   const listRoute = getDesktopPoliciesRoute(orgSlug);
@@ -277,7 +277,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
 
   const handleSave = async () => {
     if (!canManage) {
-      setPageError("Only workspace owners and super-admins can save desktop policies.");
+      setPageError("You don't have permission to save desktop policies.");
       return;
     }
 
@@ -333,7 +333,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
 
   const handleToggleEnabled = async () => {
     if (!canManage) {
-      setPageError("Only workspace owners and super-admins can enable or disable desktop policies.");
+      setPageError("You don't have permission to enable or disable desktop policies.");
       return;
     }
     if (!policy || !desktopPolicyId || isDefault) return;
@@ -401,17 +401,17 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         </section>
       ) : !canView ? (
         <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
-          Only workspace admins can view desktop policies.
+          {permissionLockReason("desktop_policies.view")}
         </div>
       ) : !isEditing && !canManage ? (
         <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
-          Admins can view desktop policies. Owners and super-admins can create them.
+          {`You can view desktop policies. Creating them is locked. ${permissionLockReason("desktop_policies.manage")}`}
         </div>
       ) : (
         <section className="grid gap-5 rounded-[28px] border border-gray-200 bg-white p-6">
           {!canManage ? (
             <div className="rounded-[22px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">
-              Read-only: owners and super-admins can edit desktop policies.
+              {`Read only. ${permissionLockReason("desktop_policies.manage")}`}
             </div>
           ) : null}
           <div className="flex flex-wrap items-end gap-3">

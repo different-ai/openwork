@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
+import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
   getLibraryPluginShareRoute,
   getLibraryRoute,
@@ -18,6 +19,7 @@ import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
+import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
 import { DetailRows, ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
 import { ConnectorLogo, KindTile, LetterTile } from "./item-logo";
 import { draftFromPluginGrants, useSavePluginAccess } from "./item-sharing";
@@ -44,8 +46,16 @@ function thingsLabel(count: number): string {
   return count === 1 ? "1 thing" : `${count} things`;
 }
 
-export function WhatsInside({ plugin }: { plugin: DenPlugin }) {
+export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: DenPlugin; appMcpServersEnabled?: boolean }) {
   const rows = [
+    ...plugin.authoredApps.map((app) => ({
+      key: `app:${app.id}`,
+      logo: <LetterTile name={app.name} />,
+      title: app.name,
+      description: "",
+      kind: "App",
+      href: appMcpServersEnabled ? pluginChatDeepLink({ name: `the ${app.name} app from ${plugin.name}` }) : undefined,
+    })),
     ...plugin.skills.map((skill) => ({
       key: `skill:${skill.id}`,
       logo: <KindTile kind="skill" />,
@@ -74,9 +84,32 @@ export function WhatsInside({ plugin }: { plugin: DenPlugin }) {
       <ItemPanel>
         {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
         {rows.map((row) => (
-          <ItemRow key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
+          <ItemRow key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
         ))}
       </ItemPanel>
+    </section>
+  );
+}
+
+/** Each App is its own MCP server; its URL works in any MCP client with OpenWork sign-in. */
+export function AppMcpServers({ plugin }: { plugin: DenPlugin }) {
+  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { orgContext } = useOrgDashboard();
+  // Den reports App servers only while its deployment switch and the
+  // organization's member-facing MCP connections setting are both on.
+  if (plugin.authoredApps.length === 0 || orgContext?.capabilities.appMcpServers !== true) return null;
+  return (
+    <section className="flex flex-col gap-2.5" data-testid="app-mcp-servers">
+      <SectionTitle title="Use in another app" />
+      {plugin.authoredApps.map((app) => (
+        <McpConnectionAppSetup
+          key={app.id}
+          connection={{ id: app.id, exposeDirectly: true, nativeProviderKey: null }}
+          publicApiUrl={runtimeConfigLoaded ? runtimeConfig.denApiUrl : ""}
+          enabled
+          label={`${app.name} MCP URL`}
+        />
+      ))}
     </section>
   );
 }
@@ -135,9 +168,13 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const data = plugin.data;
   const viewerId = orgContext?.currentMember.id ?? null;
   const mine = data.createdByOrgMembershipId !== null && data.createdByOrgMembershipId === viewerId;
-  const canManage = mine || Boolean(orgContext && getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner).isAdmin);
+  const memberAccess = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
+    : null;
   const draft = access.data ? draftFromPluginGrants(access.data) : null;
   const item = libraryItems?.find((entry) => entry.type === "plugin" && entry.id === pluginId);
+  // Creator, a manager on this plugin, or `sharing.manage_all` (manager on everything shared).
+  const canManage = mine || (item?.type === "plugin" && item.role === "manager") || memberAccess?.canManageAllShared === true;
   const creator = orgContext?.members.find((member) => member.id === data.createdByOrgMembershipId);
   const who = mine && orgContext && draft
     ? ownedAccessStatus(draft, orgContext, viewerId)
@@ -213,7 +250,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
             members={orgContext.members}
             teams={orgContext.teams}
             owner={creator ? { id: creator.id, name: creator.user.name || creator.user.email, isYou: creator.id === viewerId } : null}
-            canShareWithEveryone
+            canShareWithEveryone={memberAccess?.canShareWithEveryone === true}
             everyoneOffDescription={draft.memberIds.filter((id) => id !== data.createdByOrgMembershipId).length === 0 && draft.teamIds.length === 0
               ? "Off. Only you have it so far."
               : "Off. Only the people and teams below have it."}
@@ -223,7 +260,8 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
         </section>
       ) : null}
 
-      <WhatsInside plugin={data} />
+      <WhatsInside plugin={data} appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true} />
+      <AppMcpServers plugin={data} />
 
       {mode === "member" ? (
         <section className="flex flex-col gap-2.5">

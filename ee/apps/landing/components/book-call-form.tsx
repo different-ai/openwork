@@ -63,7 +63,7 @@ export function BookCallForm() {
         const data = await response.json().catch(() => null);
         setState("error");
         setErrorMsg(
-          data?.error ?? "Something went wrong. Please try again."
+          data?.message ?? data?.error ?? "Something went wrong. Please try again."
         );
         return;
       }

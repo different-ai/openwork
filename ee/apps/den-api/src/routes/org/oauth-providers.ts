@@ -2,10 +2,12 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
 import { env } from "../../env.js"
 import {
   jsonValidator,
   orgMemberRoute,
+  orgPermissionRoute,
   paramValidator,
   publicRoute,
   resolveMemberTeamsMiddleware,
@@ -44,7 +46,8 @@ import { getExternalMcpConnection, listUsableNativeProviderConnections } from ".
 import { resolveDefaultNativeProviderCredentialId, resolveManageableNativeProviderCredentialId } from "../../capability-sources/native-provider-connections.js"
 import { listTeamsForMember } from "../../orgs.js"
 import type { MemberTeamSummary } from "../../orgs.js"
-import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, ensureOrganizationAdmin, orgAccessFailureStatus } from "./shared.js"
+import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
+import { CONNECTIONS_READ_SESSION_MAX_AGE_MS, orgAccessFailureStatus } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const providerParamsSchema = z.object({
@@ -302,22 +305,20 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Save an org's OAuth client for a provider",
-      description: "Admin-only. Lets an org bring its own OAuth app (client id + secret) for a native provider such as google-workspace, instead of relying on an OpenWork-owned client.",
+      description: "Requires the Manage OAuth apps permission. Lets an org bring its own OAuth app (client id + secret) for a native provider such as google-workspace, instead of relying on an OpenWork-owned client.",
       responses: {
         200: jsonResponse("OAuth client saved.", clientConfigResponseSchema),
         400: jsonResponse("The request body or providerId was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can configure an OAuth client.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the Manage OAuth apps permission.", forbiddenSchema),
         404: jsonResponse("Unknown providerId.", oauthNotFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("oauth_clients.manage"),
     paramValidator(providerParamsSchema),
     jsonValidator(saveClientBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can configure an OAuth client.")
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
 
       const { providerId } = c.req.valid("param")
       const resolved = await resolveNativeProviderCredential({
@@ -406,24 +407,21 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Get an org's OAuth client configuration for a provider",
-      description: "Admin-only. Returns setup status, the saved OAuth client id when configured, selected permission features, the callback redirect URI, and the full scope list members will be asked to approve. Never returns the client secret.",
+      description: "Requires the View OAuth apps permission and a sign-in within the last 24 hours. Returns setup status, the saved OAuth client id when configured, selected permission features, the callback redirect URI, and the full scope list members will be asked to approve. Never returns the client secret.",
       responses: {
         200: jsonResponse("OAuth client configuration.", clientConfigDetailResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can view an OAuth client configuration.", forbiddenSchema),
+        403: jsonResponse("The caller lacks the View OAuth apps permission.", forbiddenSchema),
         404: jsonResponse("Unknown providerId.", oauthNotFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("oauth_clients.view"),
     paramValidator(providerParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      const admin = ensureOrganizationAdmin(
-        c,
-        "Only workspace owners and admins can view an OAuth client configuration.",
-        CONNECTIONS_READ_SESSION_MAX_AGE_MS,
-      )
-      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+      // oauth_clients.view is not sensitive; this read keeps its own 24 hour recent sign-in window.
+      const fresh = ensureFreshPrivilegedSession(c, CONNECTIONS_READ_SESSION_MAX_AGE_MS)
+      if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
 
       const { providerId } = c.req.valid("param")
       const resolved = await resolveNativeProviderCredential({
@@ -617,6 +615,10 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       if (!client || !pending?.pendingCodeVerifier) {
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
       }
+      // Signed state + resolved member credential + pending verifier prove the
+      // organization and initiating member: attribute before the token exchange.
+      const auditBlocked = await attributeOAuthCallbackMember(c, { organizationId: statePayload.organizationId, memberId: statePayload.orgMembershipId })
+      if (auditBlocked) return auditBlocked
 
       try {
         const tokens = await exchangeCodeForTokens({

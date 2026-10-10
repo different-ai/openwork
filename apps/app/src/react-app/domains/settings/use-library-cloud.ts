@@ -7,6 +7,7 @@ import type {
   DenLibraryOrgDirectory,
   DenLibraryPluginItem,
 } from "../../../app/lib/den-library";
+import { clearCloudInventoryCache } from "../connections/cloud-inventory-cache";
 import { isOwnedLibraryPlugin, libraryAudienceFromGrants, type LibraryAudience } from "./library-sharing";
 import { parseSkillMarkdown, skillMarkdown } from "./library";
 
@@ -14,6 +15,8 @@ export type LibraryShareTarget = { kind: "team"; id: string } | { kind: "person"
 
 export type LibraryCloud = {
   ready: boolean;
+  sharingError: boolean;
+  grantsReadyFor: (pluginId: string) => boolean;
   items: DenLibraryItem[];
   directory: DenLibraryOrgDirectory | null;
   pluginById: Map<string, DenLibraryPluginItem>;
@@ -89,11 +92,14 @@ export function useLibraryCloud(input: {
       queryClient.invalidateQueries({ queryKey: ["library-cloud-items", ...scope] }),
       queryClient.invalidateQueries({ queryKey: ["library-cloud-access", ...scope] }),
       queryClient.invalidateQueries({ queryKey: ["library-cloud-grants", ...scope] }),
+      queryClient.invalidateQueries({ queryKey: ["library-cloud-directory", ...scope] }),
     ]);
   };
 
   return {
     ready: input.enabled && itemsQuery.isSuccess,
+    sharingError: itemsQuery.isError || directoryQuery.isError || grantQueries.some((query) => query.isError),
+    grantsReadyFor: (pluginId) => listedAccess?.has(pluginId) === true || grantQueries[unlisted.findIndex((plugin) => plugin.id === pluginId)]?.isSuccess === true,
     items,
     directory,
     pluginById: new Map(plugins.map((plugin) => [plugin.id, plugin])),
@@ -132,10 +138,14 @@ export function useLibraryCloud(input: {
         ["library-cloud-items", ...scope],
         (current) => current?.filter((item) => item.id !== pluginId),
       );
+      // Archiving can retire the plugin's connections; tell session upkeep to
+      // re-read the org catalog now instead of on its next interval.
+      clearCloudInventoryCache();
       await refresh();
     },
     restore: async (pluginId) => {
       await input.client.restorePlugin(input.organizationId, pluginId);
+      clearCloudInventoryCache();
       await refresh();
     },
     readSkill: async (pluginId) => {

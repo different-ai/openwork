@@ -1,6 +1,7 @@
 "use client";
 
 import { queryOptions, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { mcpAppProjectionSchema } from "@openwork/types/mcp-app";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -97,6 +98,13 @@ export type PluginWorkflow = {
   requiredCapabilityCount: number;
 };
 
+export type PluginAuthoredApp = {
+  id: string;
+  name: string;
+  description: string;
+  revisionId: string;
+};
+
 export type PluginRemoteMcpApp = {
   id: string;
   name: string;
@@ -134,6 +142,7 @@ export type DenPlugin = {
   commands: PluginCommand[];
   workflows: PluginWorkflow[];
   apps: PluginRemoteMcpApp[];
+  authoredApps: PluginAuthoredApp[];
   createdAt: string;
   createdByOrgMembershipId: string | null;
   updatedAt: string;
@@ -182,6 +191,7 @@ export function formatPluginTimestamp(value: string | null): string {
 export function getPluginComponentCount(plugin: DenPlugin): number {
   return (
     plugin.apps.length +
+    plugin.authoredApps.length +
     plugin.skills.length +
     plugin.hooks.length +
     plugin.mcps.length +
@@ -193,8 +203,9 @@ export function getPluginComponentCount(plugin: DenPlugin): number {
 
 export function getPluginPartsSummary(plugin: DenPlugin): string {
   const parts: string[] = [];
-  if (plugin.apps.length > 0) {
-    parts.push(`${plugin.apps.length} ${plugin.apps.length === 1 ? "App" : "Apps"}`);
+  const appCount = plugin.apps.length + plugin.authoredApps.length;
+  if (appCount > 0) {
+    parts.push(`${appCount} ${appCount === 1 ? "App" : "Apps"}`);
   }
   if (plugin.skills.length > 0) {
     parts.push(`${plugin.skills.length} ${plugin.skills.length === 1 ? "Skill" : "Skills"}`);
@@ -267,6 +278,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-10T12:00:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-10T12:00:00Z",
@@ -297,6 +309,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-07T09:00:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-07T09:00:00Z",
@@ -335,6 +348,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-03-28T16:45:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-03-28T16:45:00Z",
@@ -372,6 +386,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-02T18:12:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-02T18:12:00Z",
@@ -409,6 +424,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     ],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-04-14T08:30:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-04-14T08:30:00Z",
@@ -442,6 +458,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-03-20T11:00:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-03-20T11:00:00Z",
@@ -472,6 +489,7 @@ const MOCK_PLUGINS: DenPlugin[] = [
     commands: [],
     workflows: [],
     apps: [],
+    authoredApps: [],
     createdAt: "2026-03-12T14:22:00Z",
     createdByOrgMembershipId: null,
     updatedAt: "2026-03-12T14:22:00Z",
@@ -531,7 +549,20 @@ function pluginMcpTransport(config: Record<string, unknown>): PluginMcpTransport
   return asString(config.url) ? "http" : "stdio";
 }
 
+/**
+ * Marketplace syncs used to title an MCP config object after its file, so a
+ * `.mcp.json` showed up as ".mcp". Such a title says nothing about the server.
+ */
+function isFileDerivedMcpTitle(title: string, currentRelativePath: string | null | undefined) {
+  const normalized = title.trim().toLowerCase();
+  if (normalized === ".mcp" || normalized === "mcp") return true;
+  const fileName = currentRelativePath?.split("/").filter(Boolean).at(-1);
+  if (!fileName) return false;
+  return normalized === fileName.replace(/\.[^.]+$/, "").toLowerCase();
+}
+
 export function pluginMcpEntries(item: {
+  currentRelativePath?: string | null;
   description: string;
   id: string;
   normalizedPayload: Record<string, unknown> | null;
@@ -546,13 +577,16 @@ export function pluginMcpEntries(item: {
   const servers = entries.length > 0
     ? entries
     : [[item.title, payload] satisfies [string, Record<string, unknown>]];
+  const useTitle = servers.length === 1 && !isFileDerivedMcpTitle(item.title, item.currentRelativePath);
+  // Old syncs stored the second line of the JSON file (`"mcpServers": {`) as the description.
+  const description = /^"?(mcpServers|mcp)"?\s*:\s*\{?$/.test(item.description.trim()) ? "" : item.description;
 
   return servers.map(([serverName, config], index) => ({
     configObjectId: item.id,
     connectionId: asString(config.externalMcpConnectionId),
-    description: item.description,
+    description,
     id: servers.length === 1 ? item.id : `${item.id}:${index}`,
-    name: servers.length === 1 ? item.title : serverName,
+    name: useTitle ? item.title : serverName,
     serverName,
     toolCount: typeof config.toolCount === "number" ? config.toolCount : 0,
     transport: pluginMcpTransport(config),
@@ -592,11 +626,27 @@ function parseMembershipConfigObject(entry: unknown) {
   };
 }
 
-function derivePluginCategory(input: { agents: PluginAgent[]; apps: PluginRemoteMcpApp[]; commands: PluginCommand[]; hooks: PluginHook[]; mcps: PluginMcp[]; skills: PluginSkill[]; workflows: PluginWorkflow[] }): PluginCategory {
+export function parsePluginAuthoredApps(payload: unknown): PluginAuthoredApp[] {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
+  return payload.items.flatMap((entry): PluginAuthoredApp[] => {
+    const item = parseMembershipConfigObject(entry);
+    if (!item || item.objectType !== "app") return [];
+    const app = mcpAppProjectionSchema.strip().safeParse(item.normalizedPayload);
+    if (!app.success || app.data.appId !== item.id || app.data.revisionId !== item.latestVersionId) return [];
+    return [{
+      id: app.data.appId,
+      name: app.data.title,
+      description: app.data.description ?? "",
+      revisionId: app.data.revisionId,
+    }];
+  });
+}
+
+function derivePluginCategory(input: { agents: PluginAgent[]; apps: PluginRemoteMcpApp[]; authoredApps: PluginAuthoredApp[]; commands: PluginCommand[]; hooks: PluginHook[]; mcps: PluginMcp[]; skills: PluginSkill[]; workflows: PluginWorkflow[] }): PluginCategory {
   if (input.mcps.length > 0 || input.hooks.length > 0) {
     return "integrations";
   }
-  if (input.agents.length > 0 || input.apps.length > 0 || input.commands.length > 0 || input.workflows.length > 0 || input.skills.length > 0) {
+  if (input.agents.length > 0 || input.apps.length > 0 || input.authoredApps.length > 0 || input.commands.length > 0 || input.workflows.length > 0 || input.skills.length > 0) {
     return "workflows";
   }
   return "output-styles";
@@ -680,6 +730,7 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
   // Standalone URL-imported Apps are retained in storage for a future unit of
   // value, but intentionally stay out of the current Plugin and Library UI.
   const apps: PluginRemoteMcpApp[] = [];
+  const authoredApps = parsePluginAuthoredApps(contents);
   const hooks = membershipItems
     .filter((item) => item.objectType === "hook")
     .map((item) => ({
@@ -690,7 +741,7 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
     } satisfies PluginHook));
   const mcps = membershipItems
     .filter((item) => item.objectType === "mcp")
-    .flatMap(pluginMcpEntries);
+    .flatMap((item) => pluginMcpEntries(item));
 
   const marketplaces = Array.isArray(pluginItem.marketplaces)
     ? pluginItem.marketplaces.flatMap((entry) => {
@@ -705,8 +756,9 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
   return {
     agents,
     apps,
+    authoredApps,
     author: "Connected repository",
-    category: derivePluginCategory({ agents, apps, commands, hooks, mcps, skills, workflows }),
+    category: derivePluginCategory({ agents, apps, authoredApps, commands, hooks, mcps, skills, workflows }),
     commands,
     createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
     createdByOrgMembershipId: asString(pluginItem.createdByOrgMembershipId),
@@ -758,6 +810,7 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
 export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
   /** False when the server did not include access, so callers load it per plugin. */
   accessIncluded: boolean;
+  updatedAt?: string;
 };
 
 function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | null {
@@ -766,6 +819,7 @@ function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | n
   if (!id || !name) return null;
   return {
     accessIncluded: Array.isArray(item.access),
+    updatedAt: asString(item.updatedAt) ?? undefined,
     createdByOrgMembershipId: asString(item.createdByOrgMembershipId),
     description: asString(item.description) ?? "",
     id,
@@ -804,21 +858,27 @@ export function usePluginSummaries({ enabled = true }: { enabled?: boolean } = {
   return useQuery({ ...pluginSummariesQueryOptions(), enabled });
 }
 
-export function pluginDirectoryParams(filters: { q: string; teamId: string | null; memberId: string | null }, cursor: string) {
+export function pluginDirectoryParams(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }, cursor: string) {
   const params = new URLSearchParams({ status: "active", limit: "50", includeAccess: "true" });
-  if (!cursor) params.set("includeTotal", "true");
+  if (!cursor) { params.set("includeTotal", "true"); params.set("includeFacets", "true"); }
   if (filters.q) params.set("name", filters.q);
   if (filters.teamId) params.set("teamId", filters.teamId);
   if (filters.memberId) params.set("memberId", filters.memberId);
+  if (filters.ownerId) params.set("ownerId", filters.ownerId);
   if (cursor) params.set("cursor", cursor);
   return params;
 }
 
-export function pluginDirectoryQueryKey(orgId: string | null, viewerId: string | null, filters: { q: string; teamId: string | null; memberId: string | null }) {
-  return [...pluginQueryKeys.summaries(), "directory", orgId, viewerId, filters.q, filters.teamId, filters.memberId];
+export function pluginDirectoryQueryKey(orgId: string | null, viewerId: string | null, filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
+  return [...pluginQueryKeys.summaries(), "directory", orgId, viewerId, filters.q, filters.teamId, filters.memberId, filters.ownerId ?? null];
 }
 
-export function usePluginDirectory(filters: { q: string; teamId: string | null; memberId: string | null }) {
+function parseDirectoryCounts(value: unknown): Record<string, number> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return Object.fromEntries(value.flatMap((entry) => isRecord(entry) && typeof entry.id === "string" && typeof entry.count === "number" ? [[entry.id, entry.count]] : []));
+}
+
+export function usePluginDirectory(filters: { q: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
   const client = useQueryClient();
   const { orgId, orgContext } = useOrgDashboard();
   return useInfiniteQuery({
@@ -839,6 +899,8 @@ export function usePluginDirectory(filters: { q: string; teamId: string | null; 
         items,
         nextCursor: isRecord(payload) ? asString(payload.nextCursor) : null,
         total: isRecord(payload) && typeof payload.total === "number" ? payload.total : null,
+        teamCounts: parseDirectoryCounts(isRecord(payload) ? payload.teamCounts : null),
+        ownerCounts: parseDirectoryCounts(isRecord(payload) ? payload.ownerCounts : null),
       };
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,

@@ -49,6 +49,8 @@ export type DenLlmProvider = {
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
+  /** providerConfig and model configs are the non-secret view (the caller can't edit the provider and isn't granted it). */
+  configRedacted: boolean;
   accessibleVia: {
     orgMembershipIds: string[];
     teamIds: string[];
@@ -56,10 +58,17 @@ export type DenLlmProvider = {
   models: DenLlmProviderModel[];
   access: {
     allMembers: boolean;
+    /** People with direct access, counted even when their names are hidden. */
+    memberCount: number;
+    /** Den returned no names or emails: the caller can't edit this provider. `members` is then empty. */
+    membersHidden: boolean;
     members: DenLlmProviderMemberAccess[];
     teams: DenLlmProviderTeamAccess[];
   };
 };
+
+export const LLM_PROVIDER_DETAILS_HIDDEN_MESSAGE = "Details are hidden because you can't edit or use this provider.";
+export const LLM_PROVIDER_MEMBERS_HIDDEN_MESSAGE = "Names are hidden because you can't edit this provider.";
 
 export type DenModelsDevProviderSummary = {
   id: string;
@@ -211,6 +220,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
     canManage: value.canManage === true,
+    configRedacted: value.configRedacted === true,
     accessibleVia: {
       orgMembershipIds: asStringList(value.accessibleVia.orgMembershipIds),
       teamIds: asStringList(value.accessibleVia.teamIds),
@@ -220,7 +230,9 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
       : [],
     access: {
       allMembers: value.access.allMembers === true,
-      members: Array.isArray(value.access.members)
+      memberCount: Array.isArray(value.access.members) ? value.access.members.length : 0,
+      membersHidden: value.access.membersHidden === true,
+      members: Array.isArray(value.access.members) && value.access.membersHidden !== true
         ? value.access.members
             .map(asLlmProviderMemberAccess)
             .filter((entry): entry is DenLlmProviderMemberAccess => entry !== null)
@@ -310,6 +322,7 @@ const SIMPLE_ICON_SLUG_BY_PROVIDER_ID: Record<string, string> = {
   mistral: "mistralai",
   xai: "x",
   amazonbedrock: "amazonaws",
+  "amazon-bedrock-mantle": "amazon-bedrock",
   openrouter: "openrouter",
 };
 

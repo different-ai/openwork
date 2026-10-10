@@ -39,7 +39,4 @@ live workflow behavior activates after this change reaches the default branch.
 
 Tests:
 
-    node --test .github/scripts/evidence-preview-card.test.mjs \
-      .github/scripts/evidence-presentation.test.mjs \
-      .github/scripts/pr-proof.test.mjs evals/scripts/publish-review.test.mjs \
-      evals/packages/test-artifacts/test/*.test.ts
+    pnpm evals:e2e native-evidence-review

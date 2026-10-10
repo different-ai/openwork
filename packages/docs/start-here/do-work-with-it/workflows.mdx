@@ -1,12 +1,89 @@
 ---
-title: "Workflows"
-description: "Use chat and session groups to keep OpenWork organized."
+title: "Organize your chats"
+sidebarTitle: "Organize chats"
+description: "Pin, rename, group, and archive chats in the OpenWork sidebar so you can find ongoing work quickly."
+keywords: ["organize chats", "sessions", "pin", "rename session", "groups", "folders", "archive", "unarchive", "restore", "delete session", "sidebar"]
 ---
 
-Workflows are how you turn normal OpenWork chats into organized, repeatable work. In the UI, every session can be renamed, pinned, archived, reordered, or moved into a custom group folder from the session menu. Group folders are workspace-specific: create a group like `Research`, `Ready for review`, `Shipped`, or `Bugs`, then move sessions into that group as the work changes.
+Keep the sidebar tidy as your work piles up. You can pin important chats, give them clear names, sort them into groups, and archive the ones you're done with.
 
-You can also describe the workflow in the composer while you work. For example: `When this is done, rename the session to "Auth cleanup", move it to Ready for review, and pin it`, or `If this turns into a bug investigation, put it in Bugs; otherwise archive it when finished.` Those instructions map to OpenWork's session management primitives: `rename` changes the session title, `move to group` stores a session-to-group assignment, `pin` keeps important sessions at the top, `archive` hides finished sessions without deleting them, and manual ordering lets you arrange sessions and groups around your process.
+Every chat has a menu with these actions. Hover over a chat in the sidebar and click **⋯**, or right-click the chat.
 
-The sidebar's global **Archived** section lists the most recently archived sessions first across all workspaces, using the archive timestamp rather than creation or last-update time. Equal archive timestamps are ordered by workspace ID, then session ID (ascending), so rearranging workspaces or refreshing the session list does not reshuffle ties. Restoring a session removes it from Archived; archiving it again places it according to its new archive timestamp. Active sessions keep their existing pin, manual-order, and group behavior.
+## Pin a chat
 
-This makes session organization dynamic instead of manual bookkeeping. A team can keep groups for `Triage`, `In progress`, `Needs human review`, and `Done`, then ask OpenWork in chat to classify future sessions into those buckets as work completes. The exact groups and actions are configurable from the UI, so the workflow can match how you already work instead of forcing a fixed project-management structure.
+Pinned chats appear in the **Pinned** section at the top of the sidebar, across all your workspaces.
+
+1. Open the chat's menu.
+2. Click **Pin session**.
+
+To remove it from the top, click **Unpin session**. You can also use the pin icon that appears when you hover over a chat. Drag pinned chats to change their order.
+
+## Rename a chat
+
+1. Open the chat's menu.
+2. Click **Rename session**.
+3. Type a new name and click **Save**.
+
+## Sort chats into groups
+
+Groups work like folders. Use them for stages such as "In progress" and "Done", or for topics such as "Research".
+
+Groups belong to a workspace. Each workspace has its own groups.
+
+### Create a group
+
+1. Hover over the workspace name in the sidebar and click **⋯**.
+2. Click **New group...**.
+3. Type a name and click **Save**.
+
+You can also create a group while moving a chat, from **Move to group › New group...**.
+
+### Move a chat into a group
+
+1. Open the chat's menu.
+2. Point to **Move to group**.
+3. Choose a group. To take the chat out of its group, choose **No group**.
+
+Chats that aren't in a group appear under **Ungrouped**.
+
+### Rename or delete a group
+
+Hover over the group name, then point to **⋯**. Three icons appear:
+
+- **+** (**New session in group**) starts a new chat inside that group.
+- The pencil (**Rename Group**) changes its name.
+- The trash can (**Delete Group**) removes the group. Choose where its chats go under **Move sessions to**. Deleting a group doesn't delete its chats.
+
+Drag groups to change their order.
+
+## Archive a chat
+
+Archive chats you've finished with. Archived chats aren't deleted, and you can bring them back at any time.
+
+1. Open the chat's menu.
+2. Click **Archive session**.
+
+You can also use the archive icon that appears when you hover over a chat. If the chat is still working, OpenWork asks whether to **Stop and archive** or **Keep session open**.
+
+Archived chats move to the **Archived** section at the bottom of the sidebar. The number next to it shows how many you have. Click **Archived** to expand it. The most recently archived chats appear first.
+
+An archived chat is read-only. To keep working in it, open it and click **Restore**, or choose **Unarchive session** from its menu.
+
+## Delete a chat
+
+1. Open the chat's menu.
+2. Click **Delete session**.
+3. Click **Delete** to confirm.
+
+Deleting permanently removes the chat and its messages. If you might need it later, archive it instead.
+
+## Ask OpenWork to organize for you
+
+You can also ask in chat. For example:
+
+- "Rename this chat to Q3 budget review and pin it."
+- "Move this chat to the Done group."
+- "Create a group called Needs review and move my last three chats into it."
+- "Archive the chats I finished today."
+
+OpenWork won't archive a chat that's still working.

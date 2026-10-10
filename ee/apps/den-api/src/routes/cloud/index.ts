@@ -55,6 +55,7 @@ import { continueCloudProvisioning, token } from "../workers/shared.js"
 type CloudRouteOptions = CloudRuntimeAvailabilityOptions & {
   memberRoute?: MiddlewareHandler<{ Variables: OrgRouteVariables }>
   orgMode?: DenOrgMode
+  openworkWebEnabled?: boolean
   gatewayKey?: string
   continueProvisioning?: typeof continueCloudProvisioning
   refreshSignedPreview?: RefreshSignedPreview
@@ -339,12 +340,14 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
   },
 }
 
-// Deployment-level availability only. The single-org and no-provisioner 404s
-// are unchanged from the retired per-organization rollout gate, which also
-// returned false outside multi_org; organization entitlement is the separate
-// Web access check on each execution route.
+// Deployment-level availability only: multi-org, or a single-org install with
+// OpenWork Web turned on, plus a configured runtime provider. Organization
+// entitlement is the separate Web access check on each execution route.
 function cloudAvailable(payload: NonNullable<OrgRouteVariables["organizationContext"]>, options: CloudRouteOptions) {
-  return cloudHostingAvailable({ orgMode: options.orgMode ?? env.orgMode })
+  return cloudHostingAvailable({
+    orgMode: options.orgMode ?? env.orgMode,
+    openworkWebEnabled: options.openworkWebEnabled ?? env.openworkWebEnabled,
+  })
     && cloudRuntimeAvailable({ provisionerMode: options.provisionerMode, daytonaApiKey: options.daytonaApiKey })
 }
 

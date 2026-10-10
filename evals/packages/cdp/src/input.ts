@@ -35,24 +35,32 @@ export interface Located {
   covering: { tag: string; text: string; role: string } | null;
 }
 
-/** Read-only DOM geometry and focus; deliberately excludes input values and attributes. */
+/** Read-only DOM geometry, focus and fixed layout styles; excludes input values and attributes. */
 export async function readDom(surface: Surface, selector: string) {
   const snapshot = await callFunctionOnSurface(surface, (selector) => ({
     viewportWidth: document.documentElement.clientWidth,
     documentWidth: document.documentElement.scrollWidth,
     elements: Array.from(document.querySelectorAll(selector), (element) => {
       const { left, right, top, bottom, width, height } = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
       return {
         tag: element.tagName.toLowerCase(),
         text: element.textContent?.trim() ?? "",
         focused: element === document.activeElement,
         rect: { left, right, top, bottom, width, height },
+        style: {
+          colorScheme: style.colorScheme,
+          borderTopWidth: style.borderTopWidth,
+          borderBottomWidth: style.borderBottomWidth,
+          borderTopLeftRadius: style.borderTopLeftRadius,
+        },
       };
     }),
   }), [selector]);
   if (!snapshot || !Number.isFinite(snapshot.viewportWidth) || !Number.isFinite(snapshot.documentWidth)
     || !Array.isArray(snapshot.elements) || !snapshot.elements.every((element) => element
       && typeof element.tag === "string" && typeof element.text === "string" && typeof element.focused === "boolean"
+      && element.style && [element.style.colorScheme, element.style.borderTopWidth, element.style.borderBottomWidth, element.style.borderTopLeftRadius].every(value => typeof value === "string")
       && element.rect && [element.rect.left, element.rect.right, element.rect.top, element.rect.bottom, element.rect.width, element.rect.height].every(Number.isFinite))) {
     throw new Error("DOM inspection returned an invalid snapshot.");
   }
@@ -547,6 +555,8 @@ export async function typeText(surface: Surface, text: string): Promise<void> {
 const EDITING_COMMANDS: Record<string, string[]> = {
   "Meta+A": ["selectAll"],
   "Control+A": ["selectAll"],
+  "Meta+V": ["paste"],
+  "Control+V": ["paste"],
   "Meta+ArrowDown": ["moveToEndOfDocument"],
   "Control+End": ["moveToEndOfDocument"],
   // macOS standard key bindings: bare Home/End scroll the document and only
@@ -568,7 +578,14 @@ export async function pressKey(surface: Surface, key: string): Promise<void> {
     modifiers: descriptor.modifiers,
   };
   const commands = EDITING_COMMANDS[key];
-  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(commands ? { commands } : {}) });
+  // Enter needs a text event for native HTML button activation. Keydown alone
+  // reaches JS handlers but does not produce the browser's default click.
+  // CDP does not derive character insertion from the virtual key code. Native
+  // segmented inputs (date/time) need text on plain printable key presses.
+  const text = descriptor.key === "Enter" && (descriptor.modifiers & (1 | 2 | 4)) === 0
+    ? "\r"
+    : descriptor.key.length === 1 && descriptor.modifiers === 0 ? descriptor.key : undefined;
+  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(text === undefined ? {} : { text }), ...(commands ? { commands } : {}) });
   await surface.client.send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
 }
 

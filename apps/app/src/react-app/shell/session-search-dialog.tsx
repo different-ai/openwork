@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
 import fuzzysort from "fuzzysort";
-import { ClockIcon, Loader2Icon, MessageSquareTextIcon, TypeIcon } from "lucide-react";
+import { ClockIcon, TypeIcon } from "lucide-react";
 
 import {
   Command,
@@ -22,111 +22,39 @@ import {
 } from "@/components/ui/command";
 import { formatRelativeTime } from "@/app/utils";
 import {
-  createSessionSearcher,
   dedupeSearchableSessions,
-  searchableSessionKey,
   type SearchableSession,
-  type SessionMessageFetcher,
-  type SessionSearchMatch,
-  type SessionSearchProgress,
-  type SessionSearchSnippet,
 } from "@/react-app/domains/session/search/session-search";
-import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 
-const MIN_QUERY_LENGTH = 2;
-const DEBOUNCE_MS = 200;
 const RECENT_LIMIT = 15;
-const TITLE_LIMIT = 10;
 const RESULT_LIMIT = 50;
 
 type ResultItem = {
   id: string;
-  kind: "recent" | "title" | "message";
+  kind: "recent" | "title";
   session: SearchableSession;
-  messageId?: string;
-  role?: "user" | "assistant";
-  snippet?: SessionSearchSnippet;
 };
 
 type ResultGroup = {
   value: string;
-  kind: ResultItem["kind"];
   items: ResultItem[];
 };
 
 export type SessionSearchDialogProps = {
   open: boolean;
   onClose: () => void;
-  /** Every session across workspaces, newest first preferred. */
+  /** Every session across workspaces. */
   sessions: SearchableSession[];
-  /** Loads a session transcript. Null while the server is unavailable. */
-  fetchMessages: SessionMessageFetcher | null;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
 };
 
-function useDebouncedValue(value: string, delayMs: number): string {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    if (!value) {
-      setDebounced("");
-      return;
-    }
-    const timer = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(timer);
-  }, [value, delayMs]);
-  return debounced;
-}
-
-function resultIcon(kind: ResultItem["kind"]) {
-  if (kind === "message") {
-    return <MessageSquareTextIcon className="size-4 text-muted-foreground" />;
-  }
-  if (kind === "title") {
-    return <TypeIcon className="size-4 text-muted-foreground" />;
-  }
-  return <ClockIcon className="size-4 text-muted-foreground" />;
-}
-
-function SnippetLine(props: { item: ResultItem }) {
-  const { item } = props;
-  if (item.snippet) {
-    return (
-      <div className="truncate text-muted-foreground text-xs">
-        {item.role === "user" ? "You: " : item.role === "assistant" ? "Agent: " : null}
-        {item.snippet.before}
-        <span className="rounded-[3px] bg-primary/15 font-medium text-foreground">
-          {item.snippet.match}
-        </span>
-        {item.snippet.after}
-      </div>
-    );
-  }
-  return (
-    <div className="truncate text-muted-foreground text-xs">
-      {item.session.workspaceTitle}
-    </div>
-  );
-}
-
 /**
- * Deep search across every session: titles match instantly, transcripts are
- * scanned in the background and stream in as they are found (Cmd/Ctrl+Shift+F).
+ * Session search across every workspace by title (Cmd/Ctrl+Shift+F). With an
+ * empty query it lists recent sessions.
  */
 export function SessionSearchDialog(props: SessionSearchDialogProps) {
   const [query, setQuery] = useState("");
-  const [matches, setMatches] = useState<SessionSearchMatch[]>([]);
-  const [progress, setProgress] = useState<SessionSearchProgress | null>(null);
-
-  const debouncedQuery = useDebouncedValue(query.trim(), DEBOUNCE_MS);
-  const deepQuery = debouncedQuery.length >= MIN_QUERY_LENGTH ? debouncedQuery : "";
   const sessions = useMemo(() => dedupeSearchableSessions(props.sessions), [props.sessions]);
-
-  // The searcher caches transcripts by session id + updatedAt, so it must
-  // outlive individual keystrokes and dialog open/close cycles.
-  const searcher = useMemo(
-    () => (props.fetchMessages ? createSessionSearcher(props.fetchMessages) : null),
-    [props.fetchMessages],
-  );
 
   useEffect(() => {
     if (!props.open) {
@@ -134,28 +62,10 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
     }
   }, [props.open]);
 
-  useEffect(() => {
-    setMatches([]);
-    if (!props.open || !searcher || !deepQuery) {
-      setProgress(null);
-      return;
-    }
-    const collected: SessionSearchMatch[] = [];
-    const run = searcher.search({
-      query: deepQuery,
-      sessions,
-      onMatch: (match) => {
-        collected.push(match);
-        setMatches([...collected]);
-      },
-      onProgress: setProgress,
-    });
-    return () => run.cancel();
-  }, [props.open, sessions, searcher, deepQuery]);
+  const trimmedQuery = query.trim();
 
   const groups = useMemo<ResultGroup[]>(() => {
-    const trimmed = query.trim();
-    if (!trimmed) {
+    if (!trimmedQuery) {
       const recent = [...sessions]
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, RECENT_LIMIT)
@@ -164,77 +74,28 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           kind: "recent" as const,
           session,
         }));
-      return recent.length > 0
-        ? [{ value: "Recent sessions", kind: "recent", items: recent }]
-        : [];
+      return recent.length > 0 ? [{ value: "Recent sessions", items: recent }] : [];
     }
 
-    const seen = new Set<string>();
-
-    const titleItems: ResultItem[] = [];
-    const titleHits = fuzzysort.go(trimmed, sessions, {
-      keys: ["title", "workspaceTitle"],
-      limit: TITLE_LIMIT,
-    });
-    for (const hit of titleHits) {
-      const session = hit.obj;
-      seen.add(searchableSessionKey(session));
-      titleItems.push({
-        id: `title:${session.workspaceId}:${session.sessionId}`,
-        kind: "title",
-        session,
-      });
-    }
-
-    const messageItems: ResultItem[] = [];
-    const messageHits = [...matches].sort(
-      (a, b) => b.session.updatedAt - a.session.updatedAt,
-    );
-    for (const match of messageHits) {
-      const sessionKey = searchableSessionKey(match.session);
-      if (seen.has(sessionKey)) continue;
-      seen.add(sessionKey);
-      if (titleItems.length + messageItems.length >= RESULT_LIMIT) break;
-      messageItems.push({
-        id: `message:${match.session.workspaceId}:${match.session.sessionId}`,
-        kind: "message",
-        session: match.session,
-        messageId: match.messageId,
-        role: match.role,
-        snippet: match.snippet,
-      });
-    }
-
-    const out: ResultGroup[] = [];
-    if (titleItems.length > 0) {
-      out.push({ value: "Session titles", kind: "title", items: titleItems });
-    }
-    if (messageItems.length > 0) {
-      out.push({ value: "Messages", kind: "message", items: messageItems });
-    }
-    return out;
-  }, [matches, query, sessions]);
+    const titleItems = fuzzysort
+      .go(trimmedQuery, sessions, { keys: ["title", "workspaceTitle"], limit: RESULT_LIMIT })
+      .map((hit) => ({
+        id: `title:${hit.obj.workspaceId}:${hit.obj.sessionId}`,
+        kind: "title" as const,
+        session: hit.obj,
+      }));
+    return titleItems.length > 0 ? [{ value: "Sessions", items: titleItems }] : [];
+  }, [sessions, trimmedQuery]);
 
   const resultCount = useMemo(
     () => groups.reduce((sum, group) => sum + group.items.length, 0),
     [groups],
   );
 
-  const trimmedQuery = query.trim();
-  const searching = Boolean(deepQuery) && progress !== null && !progress.done;
-  const emptyText = !trimmedQuery
-    ? "No sessions yet."
-    : trimmedQuery.length < MIN_QUERY_LENGTH
-      ? "Keep typing to search message content…"
-      : searching
-        ? "Searching messages…"
-        : "No sessions or messages match your search.";
-
-  const statusText = !trimmedQuery
-    ? "Recent sessions"
-    : searching
-      ? `Searching messages… ${progress.scanned}/${progress.total}`
-      : `${resultCount.toLocaleString()} ${resultCount === 1 ? "result" : "results"}`;
+  const emptyText = trimmedQuery ? "No session titles match your search." : "No sessions yet.";
+  const statusText = trimmedQuery
+    ? `${resultCount.toLocaleString()} ${resultCount === 1 ? "result" : "results"}`
+    : "Recent sessions";
 
   return (
     <CommandDialog
@@ -252,10 +113,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
           onValueChange={setQuery}
         >
           <CommandHeader>
-            <CommandInput
-              className="w-full"
-              placeholder="Search all sessions and messages…"
-            />
+            <CommandInput className="w-full" placeholder="Search session titles…" />
           </CommandHeader>
           <CommandPanel>
             <CommandEmpty>{emptyText}</CommandEmpty>
@@ -267,9 +125,6 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
                     <span className="font-normal text-muted-foreground/72 tabular-nums">
                       {group.items.length.toLocaleString()}
                     </span>
-                    {group.kind === "message" && searching ? (
-                      <Loader2Icon className="size-3 animate-spin text-muted-foreground/72" />
-                    ) : null}
                   </CommandGroupLabel>
                   <CommandCollection>
                     {(item: ResultItem) => (
@@ -279,25 +134,18 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
                         onClick={() => {
                           props.onClose();
                           props.onOpenSession(item.session.workspaceId, item.session.sessionId);
-                          if (item.kind === "message") {
-                            const target = item.messageId
-                              ? { sessionId: item.session.sessionId, messageId: item.messageId }
-                              : { sessionId: item.session.sessionId };
-                            useSessionFindStore.getState().openFind({ sessionId: item.session.sessionId, query: trimmedQuery, target });
-                          }
                         }}
                       >
-                        <span className="mr-2 shrink-0">{resultIcon(item.kind)}</span>
+                        <span className="mr-2 shrink-0">
+                          {item.kind === "title"
+                            ? <TypeIcon className="size-4 text-muted-foreground" />
+                            : <ClockIcon className="size-4 text-muted-foreground" />}
+                        </span>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-baseline gap-2">
-                            <span className="truncate font-medium">{item.session.title}</span>
-                            {item.kind === "message" ? (
-                              <span className="shrink-0 truncate text-[11px] text-muted-foreground/72">
-                                {item.session.workspaceTitle}
-                              </span>
-                            ) : null}
+                          <span className="block truncate font-medium">{item.session.title}</span>
+                          <div className="truncate text-muted-foreground text-xs">
+                            {item.session.workspaceTitle}
                           </div>
-                          <SnippetLine item={item} />
                         </div>
                         <CommandShortcut className="ps-3">
                           {formatRelativeTime(item.session.updatedAt)}
@@ -310,10 +158,7 @@ export function SessionSearchDialog(props: SessionSearchDialogProps) {
             </CommandList>
           </CommandPanel>
           <CommandFooter>
-            <span className="inline-flex items-center gap-1.5">
-              {searching ? <Loader2Icon className="size-3 animate-spin" /> : null}
-              {statusText}
-            </span>
+            <span>{statusText}</span>
             <span>↑↓ to navigate · ↵ to open</span>
           </CommandFooter>
         </Command>

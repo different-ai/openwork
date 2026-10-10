@@ -11,16 +11,29 @@ Want hosted workspaces, team Collections, or shared providers without running in
   Want to try the self-hosted control plane before planning production infrastructure? Start the [pull-only Docker Compose evaluation stack](/self-host/evaluate-with-docker-compose). It uses published images and does not require cloning or building the repository.
 </Note>
 
+## Deployment options
+
+| Option | Best for | Guide |
+| --- | --- | --- |
+| Docker Compose | Evaluating on one machine | [Evaluate with Docker Compose](/self-host/evaluate-with-docker-compose) |
+| Helm on Amazon EKS | Production on AWS with Amazon RDS for MySQL | [Deploy on AWS](/self-host/deploy-to-your-cloud/aws) |
+| Helm on Azure AKS | Production on Azure with Azure Database for MySQL | [Deploy on Azure](/self-host/deploy-to-your-cloud/azure) |
+| Helm on Google GKE | Production on Google Cloud with Cloud SQL for MySQL | [Deploy on Google Cloud](/self-host/deploy-to-your-cloud/google-cloud) |
+| Another container platform (for example, Amazon ECS/Fargate) | Teams that do not run Kubernetes | Use the published images and the service boundaries below |
+
+The tested production path is the published Helm chart on managed Kubernetes. The repository does not ship Terraform modules or ECS task definitions. If you run on ECS/Fargate or another container platform, deploy the published `openwork-den-web`, `openwork-den-api`, and optional `openwork-inference` images from GHCR with your own infrastructure code, and mirror what the chart does: Den web on port `3005`, Den API on port `8788`, database migrations before Den API receives traffic, a MySQL 8-compatible database, and HTTPS in front of both hostnames. See [Deploy to your cloud](/self-host/deploy-to-your-cloud/overview) for the common architecture and the [Docker packaging](https://github.com/different-ai/openwork/tree/dev/packaging/docker) for image details.
+
 ## What you deploy
 
 OpenWork is split into normal services:
 
 - **OpenWork app**: the desktop or web client people use.
-- **Den web**: the web app for sign-in, worker launch, and connect links if you want a cloud-style setup.
-- **Den controller**: the control plane for auth, workers, and provisioning.
+- **OpenWork server**: the workspace runtime and API. The desktop runs its own local server; a self-hosted server provides the runtime for its web client.
+- **Den web**: the web app for sign-in and organization administration if you want a cloud-style setup.
+- **Den controller**: the control plane for authentication, teams, access, and provisioning.
 - **OpenWork Gateway**: optional model-request routing and metering service from `ee/apps/gateway`, including the existing OpenWork Models proxy. This is not the separate `den-gateway` Web proxy.
 
-If you only need one private remote workspace, deploy the worker runtime. If you want OpenWork Cloud-style accounts, teams, and organization management, deploy Den web, Den controller, and optionally OpenWork Gateway.
+For a standalone workspace runtime, deploy OpenWork server and use its web client. The desktop app does not offer Share workspace or Connect to remote workspace; its embedded server listens only on loopback. If you also need OpenWork Cloud-style accounts, teams, and organization management, deploy Den web, Den controller, and optionally OpenWork Gateway.
 
 For Kubernetes installs, use the published Helm chart:
 
@@ -128,7 +141,6 @@ OpenWork does not require many third-party services for the core runtime. These 
 - Daytona: optional sandbox provider for cloud workers.
 - Vercel: optional Den web hosting and worker DNS automation.
 - PostHog: optional analytics for public web surfaces. You can point it at self-hosted PostHog with `NEXT_PUBLIC_POSTHOG_HOST`, or remove/clear the key in your self-hosted web build if you do not want analytics.
-- Polar: optional billing/paywall for hosted cloud workers.
 - Loops: optional user sync and lifecycle messaging.
 - GitHub/Google OAuth: optional social sign-in providers for Better Auth.
 - GitHub connector app: optional repository connector for importing and syncing plugins or marketplaces from GitHub. For Helm installs, use the [GitHub connector setup guide](/start-here/github-connector-helm).
@@ -152,3 +164,23 @@ At that scale our customers typically want:
 - **Support and rollout help** from our team and custom deployment, not just in GitHub.
 
 You can check the [**Enterprise**](/cloud/enterprise) page or [book a 30-minute call](https://calendar.app.google/86QpCENvhfEzDFLu5).
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Can I self-host OpenWork for free?">
+    The desktop app is free and open source, and self-hosting the full platform is free for organizations with up to 5 users under the EE License; larger organizations need a plan. Shared keys, skills, and SSO need the Team plan, and SCIM and desktop policies need Enterprise; plans cost the same on Cloud and self-hosted. See [Pricing and licensing](/start-here/pricing-and-licensing).
+  </Accordion>
+  <Accordion title="Is there a Terraform module or an ECS deployment?">
+    Not in the repository today. The supported production path is Helm on EKS, AKS, or GKE. You can run the published images on ECS/Fargate with your own infrastructure code by following the service boundaries in [Deployment options](#deployment-options).
+  </Accordion>
+  <Accordion title="Which database does self-hosted OpenWork need?">
+    A MySQL 8-compatible database, such as Amazon RDS for MySQL, Azure Database for MySQL, Cloud SQL for MySQL, or PlanetScale. Postgres is not required.
+  </Accordion>
+  <Accordion title="Can a self-hosted deployment use my own models or AI gateway?">
+    Yes. Members can connect providers in the desktop app, admins can share providers with the team, and you can enable [OpenWork Gateway](/self-host/gateway) for routing and metering. See [Add a custom LLM or AI gateway](/start-here/connect-your-stack/add-a-custom-llm).
+  </Accordion>
+  <Accordion title="Can I share skills and MCP servers from a self-hosted deployment?">
+    Yes. Plugins, connectors, and access rules live in the Den control plane. See [Share skills and MCP servers with your team](/start-here/do-work-with-it/share-your-setup).
+  </Accordion>
+</AccordionGroup>

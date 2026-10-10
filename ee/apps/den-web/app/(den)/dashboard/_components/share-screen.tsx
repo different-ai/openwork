@@ -44,7 +44,7 @@ function ShareLayout({ back, logo, title, subtitle, draft, setDraft, savedDraft,
   const ownerId = orgContext.currentMember.id;
   const count = accessPeopleIds(draft, orgContext, ownerId).length;
   const unchanged = sameAccess(draft, savedDraft);
-  const canShareWithEveryone = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner).isAdmin;
+  const canShareWithEveryone = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canShareWithEveryone;
 
   return (
     <ItemPage testId="share-screen">

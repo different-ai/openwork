@@ -61,7 +61,6 @@ type EnvironmentEditorState = EnvironmentEditorDraft | null;
 
 export type EnvironmentViewProps = {
   client: OpenworkServerClient | null;
-  isRemoteWorkspace: boolean;
   onApplyChanges?: () => Promise<ApplyEnvironmentChangesResult>;
   applyBlocked?: boolean;
   applyBlockedReason?: string | null;
@@ -81,8 +80,8 @@ export function EnvironmentView(props: EnvironmentViewProps) {
 }
 
 function EnvironmentViewContent(props: EnvironmentViewProps) {
-  const { client, isRemoteWorkspace } = props;
-  const canEdit = !isRemoteWorkspace && client !== null;
+  const { client } = props;
+  const canEdit = client !== null;
   const applyBlockedReason = props.applyBlocked
     ? props.applyBlockedReason ?? t("settings.environment.apply_blocked_active_tasks")
     : null;
@@ -100,7 +99,6 @@ function EnvironmentViewContent(props: EnvironmentViewProps) {
     <LayoutStack>
       <EnvironmentSettingsPanel
         client={client}
-        isRemoteWorkspace={isRemoteWorkspace}
         canEdit={canEdit}
         runtimeKey={props.runtimeKey}
         onApplyChanges={props.onApplyChanges}
@@ -115,7 +113,6 @@ function EnvironmentViewContent(props: EnvironmentViewProps) {
 
 type EnvironmentSettingsPanelProps = {
   client: OpenworkServerClient | null;
-  isRemoteWorkspace: boolean;
   canEdit: boolean;
   runtimeKey?: string | null;
   onApplyChanges?: () => Promise<ApplyEnvironmentChangesResult>;
@@ -130,7 +127,6 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
   const queryClient = useQueryClient();
   const { data, error, isLoading } = useEnvironmentVariableList({
     client: props.client,
-    isRemoteWorkspace: props.isRemoteWorkspace,
     runtimeKey: props.runtimeKey,
   });
 
@@ -211,13 +207,9 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
         </div>
       </LayoutSectionHeader>
 
-      {props.isRemoteWorkspace ? (
-        <SettingsNotice>{t("settings.environment.remote_workspace_hint")}</SettingsNotice>
-      ) : null}
-
       {error ? <SettingsNotice tone="error">{error.message}</SettingsNotice> : null}
 
-      {isPendingChanges && !props.isRemoteWorkspace ? (
+      {isPendingChanges ? (
         <EnvironmentPendingChanges
           onApplyChanges={props.onApplyChanges}
           applyBlocked={props.applyBlocked}
@@ -225,23 +217,17 @@ function EnvironmentSettingsPanel(props: EnvironmentSettingsPanelProps) {
         />
       ) : null}
 
-      {!props.isRemoteWorkspace ? (
-        <EnvironmentItemsTable
-          loading={isLoading}
-          items={data?.items ?? []}
-          canEdit={props.canEdit}
-          onAdd={openAdd}
-          onEdit={openEdit}
-          onRevealValue={readEnvironmentValue}
-        />
-      ) : null}
+      <EnvironmentItemsTable
+        loading={isLoading}
+        items={data?.items ?? []}
+        canEdit={props.canEdit}
+        onAdd={openAdd}
+        onEdit={openEdit}
+        onRevealValue={readEnvironmentValue}
+      />
 
-      {!props.isRemoteWorkspace ? (
-        <>
-          <LayoutSectionItemFootnote>{t("settings.environment.footer_hint")}</LayoutSectionItemFootnote>
-          <LayoutSectionItemFootnote>{t("settings.environment.override_hint")}</LayoutSectionItemFootnote>
-        </>
-      ) : null}
+      <LayoutSectionItemFootnote>{t("settings.environment.footer_hint")}</LayoutSectionItemFootnote>
+      <LayoutSectionItemFootnote>{t("settings.environment.override_hint")}</LayoutSectionItemFootnote>
 
       {props.editor ? (
         <EnvironmentEditorModal

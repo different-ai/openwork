@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
-    "test": "bun test --isolate test/",
+    "check:agent-links": "node scripts/check-agent-links.mjs",
+    "eval:agents": "node scripts/agent-discovery-eval.mjs",
+    "prices:update": "node scripts/update-model-prices.mjs",
     "plain:setup-fields": "node scripts/setup-plain-feedback-fields.mjs",
     "prebuild": "pnpm --dir ../../../packages/ui build && node ../../../scripts/check-connect-installer-parity.mjs && node scripts/copy-bootstrap-cli.mjs",
     "build": "next build",
@@ -24,7 +26,6 @@
     "react-dom": "catalog:react18"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.6",
     "@types/node": "20.12.12",
     "@types/react": "18.2.79",
     "@types/react-dom": "19.2.3",

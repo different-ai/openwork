@@ -84,7 +84,7 @@ export async function recoverGatewayUsageRequests(
   for (const requestId of [...new Set(input.requestIds)]) {
     results.push(
       await db.transaction(async (tx) => {
-        await activeUsageMember(tx, input.actor, true, input.apply === true)
+        await activeUsageMember(tx, input.actor, true)
         const [event] = await tx.select().from(E).where(eq(E.id, requestId))
         const [raw] = event
           ? []
@@ -172,7 +172,7 @@ export async function rotateGatewayUsageEpoch(
             input.actor.memberId,
             member.memberId,
           ])
-        await activeUsageMember(tx, input.actor, true, input.apply === true)
+        await activeUsageMember(tx, input.actor, true)
         await activeUsageMember(tx, { ...input.actor, memberId: member.memberId })
         const query = tx
           .select()

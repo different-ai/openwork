@@ -34,6 +34,13 @@ export function createPastedTextChip(text: string): PastedTextChip {
   };
 }
 
+/** Inserts a chip token where the caret was (a draft offset), or at the end when the caret is unknown. */
+export function insertDraftToken(draft: string, token: string, offset?: number) {
+  if (offset === undefined) return `${draft}${token}`;
+  const at = Math.min(Math.max(offset, 0), draft.length);
+  return `${draft.slice(0, at)}${token}${draft.slice(at)}`;
+}
+
 export function resolvePastedTextPlaceholders(text: string, pastedText: readonly Pick<PastedTextChip, "label" | "text">[]) {
   let resolved = text;
   for (const part of pastedText) {

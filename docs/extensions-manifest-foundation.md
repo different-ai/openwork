@@ -28,7 +28,6 @@ Always launch these from the Electron sandbox, not a standalone browser:
 - Marketplace imports appear as installed extensions with resource composition.
 - Image Gen setup accepts `OPENAI_API_KEY`, writes plugin/config files, and can run the test action.
 - Ollama setup detects local availability, lists/pulls models, patches provider config, and reloads.
-- Handsfree setup shows macOS permission/health status, resolves the Electron-local MCP command, installs MCP config, and verifies a tool call.
 - Voice setup saves/uses an OpenAI key, mints a Realtime client secret through the local server, opens the right-side panel, and executes a semantic OpenWork UI action.
 
 Den/local endpoint testing should point Electron at the target Den base URL through the existing Cloud account settings or the desktop bootstrap env/config path. OpenAI-key flows should use the OpenWork env store, preferring short-lived renderer credentials for Realtime.

@@ -9,7 +9,7 @@ import { createDesktopTransferRegistry } from "./binary-transfer.mjs";
 
 async function mainFetchHandler(desktopTransfers, fetcher = fetchFiniteDesktopHttp) {
   const source = await readFile(new URL("./main.mjs", import.meta.url), "utf8");
-  const match = source.match(/"__fetch": (async \(event, \.\.\.args\) => \{[\s\S]*?\n  \}),\n  "__uploadMultipart"/);
+  const match = source.match(/"__fetch": (async \(event, \.\.\.args\) => \{[\s\S]*?\n  \}),\n  "__cancelTransfer"/);
   assert.ok(match, "Main finite-fetch handler must be exercised, not a copied cancellation policy");
   return runInNewContext(`(${match[1]})`, {
     fetchFiniteDesktopHttp: fetcher, electronNet: { fetch: noExternal }, desktopTransfers, URL, AbortSignal,

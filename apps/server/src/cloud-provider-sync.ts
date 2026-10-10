@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
-import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
+import { catalogModelVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import { enginePoolForConfig, rolloverOutcomeApplied, type RolloverOutcome } from "./engine-pool.js";
 import type { EnvService } from "./env-file.js";
@@ -67,6 +67,7 @@ export type CloudProviderSyncStatusProvider = {
   source: string | null;
   updatedAt: string | null;
   modelIds: string[];
+  pinnedModelIds: string[];
   importedAt: number;
   modelConfigVersion: number;
 };
@@ -142,6 +143,7 @@ type DenProvider = {
   updatedAt: string | null;
   providerConfig: JsonRecord;
   models: DenProviderModel[];
+  pinnedModelIds: string[];
 };
 
 type DenProviderConnection = DenProvider & {
@@ -336,6 +338,7 @@ function parseProvider(value: unknown, idPattern: RegExp = /^lpr_/i): DenProvide
     updatedAt: readOptionalString(value.updatedAt),
     providerConfig: parseJsonRecord(value.providerConfig),
     models,
+    pinnedModelIds: [...new Set(readStringList(value.pinnedModelIds))].filter((id) => models.some((model) => model.id === id)),
   };
 }
 
@@ -672,7 +675,7 @@ function buildModelConfig(model: DenProviderModel, providerNpm: unknown): JsonRe
     const value = model.config[key];
     if (value !== undefined) next[key] = value;
   }
-  const variants = catalogFastVariants(model.config, providerNpm);
+  const variants = catalogModelVariants(model.config, providerNpm);
   if (variants) next.variants = variants;
   return next;
 }
@@ -695,7 +698,7 @@ function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   if (api) config.api = api;
   if (isRecord(provider.providerConfig.options)) config.options = provider.providerConfig.options;
   const whitelist = readStringList(provider.providerConfig.whitelist);
-  if (whitelist.length > 0) config.whitelist = whitelist;
+  if (Array.isArray(provider.providerConfig.whitelist)) config.whitelist = whitelist;
   const blacklist = readStringList(provider.providerConfig.blacklist);
   if (blacklist.length > 0) config.blacklist = blacklist;
   return config;
@@ -1020,7 +1023,7 @@ export class CloudProviderSync {
     return {
       hasSession: this.session !== null,
       lastRun: this.lastRun ? { ...this.lastRun } : null,
-      providers: this.providers.map((provider) => ({ ...provider, modelIds: [...provider.modelIds] })),
+      providers: this.providers.map((provider) => ({ ...provider, modelIds: [...provider.modelIds], pinnedModelIds: [...provider.pinnedModelIds] })),
       reloadPending: this.reloadPending,
       skippedProviders: this.skippedProviders.map((provider) => ({ ...provider })),
     };
@@ -1435,7 +1438,7 @@ export class CloudProviderSync {
       const hasStoredConfig = await hasOpenworkWorkspaceConfig(this.config, workspace.id);
       const openwork = hasStoredConfig
         ? await readOpenworkWorkspaceConfig(this.config, workspace.id)
-        : workspace.workspaceType !== "remote" && workspace.path.trim().length > 0
+        : workspace.path.trim().length > 0
           ? await readLegacyOpenworkConfig(openworkConfigPath(workspace.path))
           : null;
       if (!openwork) continue;
@@ -1464,6 +1467,7 @@ export class CloudProviderSync {
         source: entry.provider.source,
         updatedAt: entry.provider.updatedAt,
         modelIds: entry.provider.models.map((model) => model.id).sort(),
+        pinnedModelIds: entry.provider.pinnedModelIds,
         modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
         importedAt,
       };

@@ -10,6 +10,7 @@ import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
 import { ensureSchemaRepairs } from "../src/schema-repairs.ts"
 import { createExecutor, type Executor } from "./db-executor.ts"
 import { migrateWith0097Compatibility } from "./migration-0097-compat.ts"
+import { reconcilePermissionsFromEnv } from "./permission-reconciliation.ts"
 import { rejectMatrix } from "./migration-0097-schema.ts"
 
 export { migrateWith0097Compatibility }
@@ -166,6 +167,16 @@ export async function bootstrapDenDb() {
     await ensureSchemaRepairs(repairExecutor)
   } finally {
     await repairExecutor.close()
+  }
+
+  // Not schema: a failure here must not stop den-api from starting. den-api
+  // also reconciles an organization's default sets when it first resolves
+  // permissions for it, so the next deploy or request catches up.
+  console.log("[den-db] reconciling default permission sets")
+  try {
+    await reconcilePermissionsFromEnv()
+  } catch (error) {
+    console.error(`[den-db] permission reconciliation failed; continuing: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

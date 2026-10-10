@@ -16,6 +16,7 @@ export type ExternalMcpPreset = {
   authType: "oauth" | "apikey" | "none"
   supportedAuthTypes?: readonly ("oauth" | "apikey" | "none")[]
   requiresOAuthClient?: boolean
+  defaultOAuthClientId?: string
   authorizationServerIssuer?: string
   defaultOAuthScopes?: readonly string[]
 }
@@ -28,6 +29,7 @@ export const externalMcpPresetResponseSchema = z.object({
   authType: z.enum(["oauth", "apikey", "none"]),
   supportedAuthTypes: z.array(z.enum(["oauth", "apikey", "none"])).optional(),
   requiresOAuthClient: z.boolean().optional(),
+  defaultOAuthClientId: z.string().min(1).optional(),
   authorizationServerIssuer: z.string().url().optional(),
   defaultOAuthScopes: z.array(z.string()).optional(),
 }).meta({ ref: "ExternalMcpPresetResponse" })
@@ -120,9 +122,12 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
     presetId: "render",
     displayName: "Render",
-    description: "Deploy and manage services, databases, and logs. Paste your org's Render API key from dashboard.render.com.",
+    description: "Deploy and manage services, databases, and logs. Sign in with your Render account.",
     url: "https://mcp.render.com/mcp",
-    authType: "apikey",
+    authType: "oauth",
+    supportedAuthTypes: ["oauth", "apikey"],
+    defaultOAuthClientId: "openwork",
+    authorizationServerIssuer: "https://api.render.com",
   },
   {
     presetId: "context7",

@@ -41,6 +41,8 @@ export type CapabilityMatch = {
   argumentsSchema?: unknown
   /** Tells generic execute callers where MCP arguments must be supplied. */
   invocation?: { argumentsField: "body" }
+  /** For a connection tool: whether its provider marks it read-only and not destructive. */
+  readOnly?: boolean
   /** Exact confined-script path when Code Mode scripts are enabled. */
   scriptPath?: string
   /** Callable capability or a source-specific advisory/content kind. */

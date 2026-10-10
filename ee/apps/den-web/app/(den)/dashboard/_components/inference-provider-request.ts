@@ -5,12 +5,15 @@
  * `inference-providers.ts` schemas.
  */
 
+import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import type {
+  GatewayAwsSsoSettings,
+  GatewayMemberSignInMethod,
   InferenceProviderCredentialKind,
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
 } from "@openwork/types/den/inference";
-import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayUsableModel } from "@openwork/types/den/gateway";
+import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { z } from "zod";
 
 export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_credential_missing";
@@ -50,6 +53,8 @@ export type DenInferenceProvider = {
   credentialSets: GatewayCredentialSet[] | null;
   accessGrants: GatewayAccessGrant[] | null;
   authorizationRequests: GatewayAuthorizationRequest[];
+  /** LiteLLM providers only (manage view). */
+  litellm: GatewayLiteLlmStatus | null;
 };
 
 export type DenInferenceProviderDetails = DenInferenceProvider & {
@@ -69,6 +74,8 @@ const credentialSetSchema: z.ZodType<GatewayCredentialSet> = z.object({
   status: resourceStatusSchema, configured: z.boolean(),
   credentialStatus: z.enum(["ready", "member_auth_required", "org_credential_missing"]),
   oauthClientId: z.string().nullable().optional(), hasOauthClientSecret: z.boolean().optional(),
+  oauthTenantId: z.string().nullable().optional(),
+  awsSso: z.object({ startUrl: z.string(), region: z.string(), accountId: z.string(), roleName: z.string() }).nullable().optional(),
   createdAt: z.string().optional(),
   createdBy: z.object({ id: z.string(), name: z.string().nullable(), email: z.string().nullable() }).nullable().optional(),
 });
@@ -79,6 +86,18 @@ const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
     z.object({ type: z.literal("team"), teamId: z.string() }),
     z.object({ type: z.literal("member"), memberId: z.string() }),
   ]),
+});
+const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
+  mode: z.enum(["org", "member"]),
+  keySource: z.enum(["personal", "issued"]).nullable().catch(null),
+  issueStrategy: z.enum(["per_team", "mirror"]).nullable().catch(null),
+  mirrorFallback: z.enum(["per_team", "error"]).nullable().catch(null),
+  issuedMemberCount: z.number().catch(0),
+  attentionCount: z.number().catch(0),
+  attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })).catch([]),
+  baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(),
+  lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
+  modelCount: z.number(), teamCount: z.number(), connectedMemberCount: z.number(),
 });
 const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
@@ -95,6 +114,8 @@ export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
   "@ai-sdk/google",
   "@ai-sdk/google-vertex",
   "@ai-sdk/google-vertex/anthropic",
+  "@ai-sdk/amazon-bedrock",
+  "@ai-sdk/amazon-bedrock/mantle",
 ] as const;
 
 export function isSupportedGatewayNpm(npm: string | null): boolean {
@@ -113,11 +134,88 @@ export function isAzureNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/azure";
 }
 
-/** Providers den-api allows in credentialMode "member" (`unsupported_credential_mode` otherwise). */
-export const MEMBER_MODE_PROVIDER_IDS = ["google-vertex", "google-vertex-anthropic"] as const;
+/** Amazon Bedrock and Amazon Bedrock (OpenAI) share the region setting and AWS keys. */
+export function isAmazonBedrockNpm(npm: string | null): boolean {
+  return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle";
+}
 
-export function supportsMemberCredentialMode(providerId: string): boolean {
-  return MEMBER_MODE_PROVIDER_IDS.some((entry) => entry === providerId);
+/** Synthetic catalog provider for Claude on Microsoft Foundry; mirrors @openwork-ee/utils/microsoft-foundry-catalog. */
+export const MICROSOFT_FOUNDRY_PROVIDER_ID = "microsoft-foundry";
+
+export function isMicrosoftFoundryProvider(providerId: string | null): boolean {
+  return providerId === MICROSOFT_FOUNDRY_PROVIDER_ID;
+}
+
+/** Providers only reachable through AI Gateway; Bring your own keys hides them. */
+export function isGatewayOnlyNpm(npm: string | null, providerId: string | null = null): boolean {
+  return npm === "@ai-sdk/amazon-bedrock/mantle" || isMicrosoftFoundryProvider(providerId);
+}
+
+/** Mirrors `isAwsRegion` in @openwork-ee/utils/inference-egress. */
+export function isAwsRegion(value: string): boolean {
+  return value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value);
+}
+
+export type AwsKeysInput = { accessKeyId: string; secretAccessKey: string; sessionToken: string };
+
+/** Blank keys keep what is stored; a partial set is rejected rather than silently dropped. */
+export function getAwsKeysError(keys: AwsKeysInput): string | null {
+  const accessKeyId = keys.accessKeyId.trim();
+  const secretAccessKey = keys.secretAccessKey.trim();
+  if (!accessKeyId && !secretAccessKey && !keys.sessionToken.trim()) return null;
+  if (!accessKeyId || !secretAccessKey) return "Enter both the AWS access key ID and secret access key.";
+  if (/\s/.test(accessKeyId) || /\s/.test(secretAccessKey)) return "AWS access keys cannot contain spaces.";
+  return null;
+}
+
+/**
+ * How members sign in to a provider in credentialMode "member", mirroring den-api
+ * (`unsupported_credential_mode` otherwise). AWS and Microsoft sign-in are behind
+ * the gatewayCloudSignIn feature.
+ */
+export function getMemberSignInMethod(providerId: string, cloudSignIn = true): GatewayMemberSignInMethod | null {
+  const method = gatewayMemberSignInMethod(providerId);
+  return method === "google" || (method !== null && cloudSignIn) ? method : null;
+}
+
+export function supportsMemberCredentialMode(providerId: string, cloudSignIn = true): boolean {
+  return getMemberSignInMethod(providerId, cloudSignIn) !== null;
+}
+
+/** The account people sign in with, in their words. */
+export function getMemberSignInBrand(method: GatewayMemberSignInMethod): string {
+  return method === "google" ? "Google" : method === "microsoft" ? "Microsoft" : "AWS";
+}
+
+export const MEMBER_SIGN_IN_DOC_URLS: Record<GatewayMemberSignInMethod, string> = {
+  google: "https://openworklabs.com/docs/ai-gateway/google-agent-platform",
+  aws_sso: "https://openworklabs.com/docs/ai-gateway/amazon-bedrock",
+  microsoft: "https://openworklabs.com/docs/ai-gateway/microsoft-foundry",
+};
+
+export type AwsSsoInput = GatewayAwsSsoSettings;
+export const EMPTY_AWS_SSO: AwsSsoInput = { startUrl: "", region: "", accountId: "", roleName: "" };
+
+/** Mirrors gatewayAwsSsoSettingsSchema in @openwork/types/den/inference. */
+export function getAwsSsoError(input: AwsSsoInput): string | null {
+  let url: URL | null = null;
+  try { url = new URL(input.startUrl.trim()); } catch { url = null; }
+  if (!url || url.protocol !== "https:" || url.search || url.hash || !/\.(?:awsapps\.com|app\.aws)$/i.test(url.hostname)) {
+    return "Enter the AWS access portal URL, for example https://d-xxxxxxxxxx.awsapps.com/start.";
+  }
+  if (!isAwsRegion(input.region.trim())) return "Enter the IAM Identity Center region, for example us-east-1.";
+  if (!/^\d{12}$/.test(input.accountId.trim())) return "Enter the 12-digit AWS account ID where Bedrock is enabled.";
+  if (!/^[\w+=,.@-]{1,32}$/.test(input.roleName.trim())) return "Enter the permission set name, for example BedrockInference.";
+  return null;
+}
+
+export function trimAwsSso(input: AwsSsoInput): AwsSsoInput {
+  return { startUrl: input.startUrl.trim(), region: input.region.trim(), accountId: input.accountId.trim(), roleName: input.roleName.trim() };
+}
+
+/** Mirrors microsoftTenantIdSchema: the directory (tenant) ID GUID. */
+export function isMicrosoftTenantId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
 /** Redirect URI the org's Google OAuth client must allow; mirrors den-api's callback route. */
@@ -126,9 +224,11 @@ export function getOauthCallbackPath() {
 }
 
 /** Settings den-api requires for a given provider SDK (`invalid_settings` otherwise). */
-export function getRequiredSettingKeys(npm: string | null): string[] {
+export function getRequiredSettingKeys(npm: string | null, providerId: string | null = null): string[] {
+  if (isMicrosoftFoundryProvider(providerId)) return ["resourceName"];
   if (isGoogleVertexNpm(npm)) return ["project", "location"];
   if (isAzureNpm(npm)) return ["resourceName"];
+  if (isAmazonBedrockNpm(npm)) return ["region"];
   return [];
 }
 
@@ -170,7 +270,7 @@ function asCredentialStatus(value: unknown): InferenceCredentialStatus {
 
 function asCredentialKind(value: unknown): InferenceProviderCredentialKind | null {
   return value === "api_key" || value === "api_key_map" || value === "aws_keys" || value === "gcp_service_account"
-    || value === "oauth_google" || value === "oauth_azure"
+    || value === "oauth_google" || value === "oauth_azure" || value === "aws_sso"
     ? value
     : null;
 }
@@ -252,6 +352,7 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     credentialSets: value.credentialSets === undefined ? null : z.array(credentialSetSchema).parse(value.credentialSets),
     accessGrants: value.accessGrants === undefined ? null : z.array(accessGrantSchema).parse(value.accessGrants),
     authorizationRequests: value.authorizationRequests === undefined ? [] : z.array(authorizationRequestSchema).parse(value.authorizationRequests),
+    litellm: value.litellm === undefined ? null : liteLlmStatusSchema.parse(value.litellm),
   };
 }
 
@@ -262,8 +363,9 @@ export function readInferenceProviderFromPayload(payload: unknown): DenInference
 export function readInferenceProviderDetails(payload: unknown, catalogPayload: unknown): DenInferenceProviderDetails | null {
   const provider = readInferenceProviderFromPayload(payload);
   if (!provider?.modelGroups || !provider.credentialSets || !provider.accessGrants) return null;
-  const catalog = z.object({ models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) }).parse(catalogPayload);
-  return { ...provider, catalogModels: catalog.models, modelGroups: provider.modelGroups, credentialSets: provider.credentialSets, accessGrants: provider.accessGrants };
+  const catalog = z.object({ catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) }).parse(catalogPayload);
+  // Provider reads no longer refresh the catalog; the models endpoint does and carries the warning.
+  return { ...provider, catalogWarning: provider.catalogWarning ?? catalog.catalogWarning ?? null, catalogModels: catalog.models, modelGroups: provider.modelGroups, credentialSets: provider.credentialSets, accessGrants: provider.accessGrants };
 }
 
 export function readInferenceProvidersFromPayload(payload: unknown): DenInferenceProvider[] {
@@ -303,7 +405,9 @@ export function getCredentialKindLabel(kind: InferenceProviderCredentialKind) {
     case "oauth_google":
       return "Google OAuth";
     case "oauth_azure":
-      return "Azure OAuth";
+      return "Microsoft sign-in";
+    case "aws_sso":
+      return "AWS sign-in";
   }
 }
 
@@ -366,9 +470,17 @@ export type InferenceProviderFormInput = {
   apiKeyValues: Record<string, string>;
   /** Pasted Google service-account JSON (Vertex org mode). */
   serviceAccountJson: string;
-  /** Org-owned Google OAuth client (member mode). Blank secret keeps the stored one. */
+  /** AWS access keys (Amazon Bedrock only); blank keeps the stored keys. */
+  awsKeys?: AwsKeysInput;
+  /** Amazon Bedrock only: copy another Bedrock provider's saved keys server-side instead of entering keys. */
+  reuseCredentialFrom?: string | null;
+  /** Org-owned Google OAuth client or Entra ID app registration (member mode). Blank secret keeps the stored one. */
   oauthClientId: string;
   oauthClientSecret: string;
+  /** Microsoft Foundry member mode: the Entra ID directory (tenant) ID. */
+  oauthTenantId?: string;
+  /** Amazon Bedrock member mode: IAM Identity Center settings. */
+  awsSso?: AwsSsoInput;
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
 };
 
@@ -381,8 +493,11 @@ export type InferenceProviderRequestBody = {
   settings?: Record<string, string>;
   credential?: { kind: InferenceProviderCredentialKind; secret: string };
   apiKeys?: Record<string, string>;
+  reuseCredentialFrom?: string;
   oauthClientId?: string;
   oauthClientSecret?: string;
+  oauthTenantId?: string;
+  awsSso?: AwsSsoInput;
   allMembers: boolean;
   memberIds: string[];
   teamIds: string[];
@@ -422,17 +537,38 @@ export function buildInferenceProviderRequestBody(input: InferenceProviderFormIn
   }
 
   if (input.credentialMode === "member") {
+    const method = gatewayMemberSignInMethod(input.providerId);
+    if (method === "aws_sso") {
+      if (input.awsSso) body.awsSso = trimAwsSso(input.awsSso);
+      return body;
+    }
     body.oauthClientId = input.oauthClientId.trim();
     const oauthClientSecret = input.oauthClientSecret.trim();
     if (oauthClientSecret) {
       body.oauthClientSecret = oauthClientSecret;
     }
+    if (method === "microsoft" && input.oauthTenantId !== undefined) body.oauthTenantId = input.oauthTenantId.trim().toLowerCase();
     return body;
   }
 
   const serviceAccountJson = input.serviceAccountJson.trim();
   if (serviceAccountJson) {
     body.credential = { kind: "gcp_service_account", secret: serviceAccountJson };
+    return body;
+  }
+
+  if (input.reuseCredentialFrom) {
+    body.reuseCredentialFrom = input.reuseCredentialFrom;
+    return body;
+  }
+
+  if (input.awsKeys) {
+    const accessKeyId = input.awsKeys.accessKeyId.trim();
+    const secretAccessKey = input.awsKeys.secretAccessKey.trim();
+    const sessionToken = input.awsKeys.sessionToken.trim();
+    if (accessKeyId && secretAccessKey) {
+      body.credential = { kind: "aws_keys", secret: JSON.stringify({ accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}) }) };
+    }
     return body;
   }
 
@@ -469,6 +605,11 @@ export function validateInferenceProviderForm(input: {
   oauthClientSecret: string;
   /** True when den-api already stores a secret, so a blank field keeps it. */
   hasOauthClientSecret: boolean;
+  awsKeys?: AwsKeysInput;
+  oauthTenantId?: string;
+  awsSso?: AwsSsoInput;
+  /** gatewayCloudSignIn: AWS and Microsoft sign-in. */
+  cloudSignIn?: boolean;
 }): string | null {
   if (!input.providerId) return "Select a provider.";
   if (!isSupportedGatewayNpm(input.npm)) {
@@ -476,17 +617,33 @@ export function validateInferenceProviderForm(input: {
   }
   if (!input.name.trim()) return "Give the provider a name.";
   if (input.modelIds.length === 0) return "Select at least one model.";
-  for (const key of getRequiredSettingKeys(input.npm)) {
+  for (const key of getRequiredSettingKeys(input.npm, input.providerId)) {
     if (!(input.settings[key] ?? "").trim()) {
-      return `${getSettingLabel(key)} is required for this provider.`;
+      return `${getSettingLabel(key, input.providerId)} is required for this provider.`;
     }
   }
+  if (isAmazonBedrockNpm(input.npm) && !isAwsRegion((input.settings.region ?? "").trim())) {
+    return "Enter an AWS region code such as us-east-1.";
+  }
+  const awsKeysError = input.awsKeys ? getAwsKeysError(input.awsKeys) : null;
+  if (awsKeysError) return awsKeysError;
   if (input.credentialMode === "member") {
-    if (!supportsMemberCredentialMode(input.providerId)) {
-      return "Each member signs in is only available for Google Vertex providers.";
+    const method = getMemberSignInMethod(input.providerId, input.cloudSignIn ?? true);
+    if (!method) {
+      return "Each member signs in isn't available for this provider.";
     }
-    if (!input.oauthClientId.trim() || (!input.oauthClientSecret.trim() && !input.hasOauthClientSecret)) {
-      return "Each member signs in requires your Google OAuth client ID and client secret.";
+    if (method === "aws_sso") {
+      const error = getAwsSsoError(input.awsSso ?? EMPTY_AWS_SSO);
+      if (error) return error;
+    } else {
+      if (method === "microsoft" && !isMicrosoftTenantId(input.oauthTenantId ?? "")) {
+        return "Enter the Microsoft Entra directory (tenant) ID.";
+      }
+      if (!input.oauthClientId.trim() || (!input.oauthClientSecret.trim() && !input.hasOauthClientSecret)) {
+        return method === "microsoft"
+          ? "Each member signs in requires your Entra application (client) ID and client secret."
+          : "Each member signs in requires your Google OAuth client ID and client secret.";
+      }
     }
   }
   const json = input.serviceAccountJson.trim();
@@ -503,7 +660,21 @@ export function validateInferenceProviderForm(input: {
   return null;
 }
 
-export function getSettingLabel(key: string) {
+/**
+ * Other Amazon Bedrock providers whose saved organization keys a new Bedrock
+ * provider may reuse. den-api makes the final check and copies the keys itself.
+ */
+export function getReusableAwsKeyProviders(
+  providers: Pick<DenInferenceProvider, "id" | "name" | "status" | "credentialMode" | "credentialStatus" | "providerConfig">[],
+): Array<{ id: string; name: string }> {
+  return providers
+    .filter((provider) => provider.status === "active" && provider.credentialMode === "org" && provider.credentialStatus === "ready"
+      && isAmazonBedrockNpm(typeof provider.providerConfig.npm === "string" ? provider.providerConfig.npm : null))
+    .map((provider) => ({ id: provider.id, name: provider.name }));
+}
+
+export function getSettingLabel(key: string, providerId: string | null = null) {
+  if (key === "resourceName" && isMicrosoftFoundryProvider(providerId)) return "Foundry resource name";
   switch (key) {
     case "project":
       return "Google Cloud project";
@@ -511,6 +682,8 @@ export function getSettingLabel(key: string) {
       return "Region";
     case "resourceName":
       return "Azure resource name";
+    case "region":
+      return "AWS region";
     default:
       return key;
   }

@@ -138,6 +138,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
   return {
     listPolicies(scope: GatewayUsageScope) {
       return transaction(async (tx) => {
+        // Organization-wide read: share-lock the caller's active membership for it (see activeUsageMember).
         await activeUsageMember(tx, scope, true)
         return { policies: await usagePolicies(tx, scope.organizationId) }
       })
@@ -154,7 +155,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             const policyId = id ?? randomUUID()
             const previous = id ? await policyById(tx, scope, id) : null
             if (previous && (previous.archivedAt || previous.revision !== revision))
@@ -208,7 +209,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             const policy = await policyById(tx, scope, id)
             if (policy.revision !== revision)
               return fail(
@@ -236,7 +237,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             const policy = await policyById(tx, scope, id)
             if (policy.revision !== revision)
               return fail(
@@ -291,13 +292,13 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             const policy = await policyById(tx, scope, policyId)
             if (policy.archivedAt)
               return fail("policy_archived", 409, "Archived policies cannot be assigned.")
             const memberId = "memberId" in target ? target.memberId : null
             const teamId = "teamId" in target ? target.teamId : null
-            if (memberId) await activeUsageMember(tx, { ...scope, memberId }, false, true)
+            if (memberId) await activeUsageMember(tx, { ...scope, memberId }, true)
             if (teamId) {
               const [team] = await tx
                 .select()
@@ -334,7 +335,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             await policyById(tx, scope, policyId)
             await tx
               .delete(A)
@@ -355,6 +356,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     members(scope: GatewayUsageScope, query = "") {
       return transaction(async (tx) => {
+        // Returns other members' names and emails: share-lock the caller's active membership so a
+        // concurrent removal can't land between this check and the read (as listResets does).
         await activeUsageMember(tx, scope, true)
         return {
           members: await tx
@@ -380,6 +383,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     getStatus(scope: GatewayUsageScope, memberId?: GatewayUsageScope["memberId"]) {
       return transaction(async (tx, now) => {
+        // Another member's usage: share-lock the caller's active membership for the read.
         if (memberId !== undefined) await activeUsageMember(tx, scope, true)
         return (await readUsageStatus(tx, { ...scope, memberId: memberId ?? scope.memberId }, now))
           .usage
@@ -472,6 +476,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     listResets(scope: GatewayUsageScope, own: boolean, options: GatewayUsageResetListOptions = {}) {
       return transaction(async (tx, now) => {
+        // Organization-wide listings read other members' requests: share-lock the caller's
+        // active membership so a concurrent removal can't land between this check and the read.
         await activeUsageMember(tx, scope, !own)
         return readGatewayUsageResetPage(tx, scope, own, options, now)
       })
@@ -489,7 +495,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           .where(and(eq(R.id, id), eq(R.organizationId, scope.organizationId)))
         if (!subject) return fail("reset_not_found", 404, "Increase request not found.")
         await lockUsageMembers(tx, scope.organizationId, [subject.memberId, scope.memberId])
-        await activeUsageMember(tx, scope, true, true)
+        await activeUsageMember(tx, scope, true)
         const [row] = await tx
           .select()
           .from(R)
@@ -518,7 +524,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
             bucket.policyRevision === row.policyRevision &&
             bucket.baseAllowanceMicroUsd === row.baseAllowanceMicroUsd &&
             bucket.allowRequestReset &&
-            !bucket.extensionUsed &&
             bucket.resetAt > now &&
             current.winners.some(
               (winner) =>
@@ -531,7 +536,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         }
         const extension =
           decision === "approved"
-            ? Math.ceil(bucket.baseAllowanceMicroUsd / 4)
+            ? gatewaySafeMoney(bucket.extensionMicroUsd + Math.ceil(bucket.baseAllowanceMicroUsd / 4))
             : bucket.extensionMicroUsd
         const allowanceMicroUsd = gatewaySafeMoney(bucket.baseAllowanceMicroUsd + extension)
         if (decision === "approved")

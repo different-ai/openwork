@@ -4,13 +4,17 @@ import { z } from "zod"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { auth } from "../../auth.js"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { ssoConnectionRegisteredEvent } from "../../audit/domain/sso.js"
+import { auditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
+  getOrganizationSsoAuditState,
   getOrganizationSsoConnection,
   getOrganizationSsoSignInPath,
   getSsoAcsUrl,
@@ -32,9 +36,8 @@ import {
   failOrganizationSsoTestIntent,
   getSsoTestPresentation,
 } from "../../sso-test-lifecycle.js"
-import { orgMemberRoute } from "../../middleware/index.js"
+import { orgPermissionRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureSsoManager, ensureSsoReader, orgAccessFailureStatus } from "./shared.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -283,17 +286,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         200: { description: "Organization SSO configuration", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can read SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "The caller needs the View single sign-on permission.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.view"),
     async (c) => {
-      const access = ensureSsoReader(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const connection = await getOrganizationSsoConnection(payload.organization.id)
       if (!connection) {
@@ -317,18 +315,13 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
       if (!entitlement.ok) {
         return c.json(entitlement.response, entitlement.status)
@@ -343,6 +336,8 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       }
 
       const payload = c.get("organizationContext")
+      const capture = auditChangeCapture(c)
+      const previous = capture ? await getOrganizationSsoAuditState(payload.organization.id) : null
       const connection = await registerOrganizationSsoConnection({
         kind: "saml",
         organizationId: payload.organization.id,
@@ -350,9 +345,15 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         headers: c.req.raw.headers,
         ...parsed.data,
       })
+      // Registration runs through better-auth's adapter and several short
+      // transactions: the after-snapshot is appended in a fresh transaction.
+      const auditEventIds = await appendDomainChangesAfterCommit(capture, "sso_connection.registered", async () => {
+        const current = await getOrganizationSsoAuditState(payload.organization.id)
+        return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
+      })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
@@ -363,7 +364,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
           issuer: connection.issuer,
           domain: connection.domain,
         },
-      })
+      }, auditEventIds)
 
       return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
     },
@@ -380,18 +381,13 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
       if (!entitlement.ok) {
         return c.json(entitlement.response, entitlement.status)
@@ -406,6 +402,8 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       }
 
       const payload = c.get("organizationContext")
+      const capture = auditChangeCapture(c)
+      const previous = capture ? await getOrganizationSsoAuditState(payload.organization.id) : null
       const connection = await registerOrganizationSsoConnection({
         kind: "oidc",
         organizationId: payload.organization.id,
@@ -413,9 +411,15 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         headers: c.req.raw.headers,
         ...parsed.data,
       })
+      // Registration runs through better-auth's adapter and several short
+      // transactions: the after-snapshot is appended in a fresh transaction.
+      const auditEventIds = await appendDomainChangesAfterCommit(capture, "sso_connection.registered", async () => {
+        const current = await getOrganizationSsoAuditState(payload.organization.id)
+        return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
+      })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
@@ -426,7 +430,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
           issuer: connection.issuer,
           domain: connection.domain,
         },
-      })
+      }, auditEventIds)
 
       return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
     },
@@ -443,22 +447,18 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         204: { description: "Organization SSO connection deleted" },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const connection = await getOrganizationSsoConnection(payload.organization.id)
-      const deleted = await deleteOrganizationSsoConnection(payload.organization.id)
+      const capture = auditChangeCapture(c)
+      const deleted = await deleteOrganizationSsoConnection(payload.organization.id, capture)
       if (deleted && connection) {
-        await recordOrganizationAuditEvent({
+        await finishLegacyAuditAction(capture, {
           organizationId: payload.organization.id,
           actorUserId: payload.currentMember.userId,
           action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted,
@@ -469,7 +469,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
             issuer: connection.issuer,
             domain: connection.domain,
           },
-        })
+        }, deleted.auditEventIds)
       }
       return c.body(null, 204)
     },
@@ -487,10 +487,8 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         409: { description: "SSO configuration cannot be tested", content: { "application/json": { schema: resolver(ssoLifecycleErrorSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) return c.json(access.response, orgAccessFailureStatus(access.response))
       const payload = c.get("organizationContext")
       const entitlement = checkEntitlement(payload.organization.metadata, "sso")
       if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
@@ -525,10 +523,8 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         409: { description: "SSO test cannot be started", content: { "application/json": { schema: resolver(ssoLifecycleErrorSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) return c.json(access.response, orgAccessFailureStatus(access.response))
       const payload = c.get("organizationContext")
       const intentId = c.req.param("intentId")
       const started = await beginOrganizationSsoTestIntent({
@@ -577,14 +573,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       responses: {
         204: { description: "SSO test cancelled" },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) return c.json(access.response, orgAccessFailureStatus(access.response))
       const payload = c.get("organizationContext")
       const connection = await getOrganizationSsoConnection(payload.organization.id)
       const intentId = c.req.param("intentId")
@@ -600,28 +594,27 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
     describeRoute({
       tags: ["SSO"],
       summary: "Enable the tested organization SSO configuration",
-      description: "Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires the Enterprise plan; the change is recorded in the organization audit log.",
+      description: "Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires a Team or Enterprise plan; the change is recorded in the organization audit log.",
       security: [{ bearerAuth: [] }],
       responses: {
         204: { description: "SSO enabled" },
         409: { description: "SSO configuration cannot be enabled", content: { "application/json": { schema: resolver(ssoLifecycleErrorSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) return c.json(access.response, orgAccessFailureStatus(access.response))
       const payload = c.get("organizationContext")
       const entitlement = checkEntitlement(payload.organization.metadata, "sso")
       if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
-      const enabled = await enableOrganizationSsoConnection(payload.organization.id)
+      const capture = auditChangeCapture(c)
+      const enabled = await enableOrganizationSsoConnection(payload.organization.id, capture)
       if (!enabled.ok) return c.json({ error: "sso_lifecycle_error", message: enabled.message }, 409)
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionEnabled,
         payload: { ssoConnectionId: enabled.connectionId, providerId: enabled.providerId },
-      })
+      }, enabled.auditEventIds)
       return c.body(null, 204)
     },
   )
@@ -636,23 +629,22 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       responses: {
         204: { description: "SSO disabled" },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) return c.json(access.response, orgAccessFailureStatus(access.response))
       const payload = c.get("organizationContext")
-      const disabled = await disableOrganizationSsoConnection(payload.organization.id)
+      const capture = auditChangeCapture(c)
+      const disabled = await disableOrganizationSsoConnection(payload.organization.id, capture)
       if (!disabled.ok) return c.json({ error: "organization_not_found" }, 404)
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDisabled,
         payload: { ssoConnectionId: disabled.connectionId, providerId: disabled.providerId },
-      })
+      }, disabled.auditEventIds)
       return c.body(null, 204)
     },
   )
@@ -668,17 +660,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         200: xmlResponse("SAML Service Provider metadata (an `EntityDescriptor` XML document) served as `application/xml`."),
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "Only workspace owners and admins can read SSO metadata.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        403: { description: "The caller needs the View single sign-on permission.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.view"),
     async (c) => {
-      const access = ensureSsoReader(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const parsed = metadataQuerySchema.safeParse(c.req.query())
       if (!parsed.success) {
         return c.json({
@@ -714,18 +701,13 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         201: { description: "Domain verification token returned", content: { "application/json": { schema: resolver(domainVerificationResponseSchema) } } },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const entitlement = checkEntitlement(payload.organization.metadata, "sso")
       if (!entitlement.ok) {
@@ -776,18 +758,13 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         204: { description: "Organization SSO domain verified" },
         400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires an Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
+        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
         404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("sso.manage"),
     async (c) => {
-      const access = ensureSsoManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const entitlement = checkEntitlement(payload.organization.metadata, "sso")
       if (!entitlement.ok) {

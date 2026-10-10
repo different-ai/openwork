@@ -3,52 +3,44 @@ import { chrome } from "@openwork/hosts";
 import { clickAt, evaluateOnSurface, freezeMotion, locate, navigate, reload, setViewport, waitForLocated } from "@openwork/cdp";
 import { eventually, needs, test } from "@openwork/testkit";
 
-test("visitors see consistent monthly Team and Enterprise pricing", async ({ evidence }) => {
+test("visitors see Team at $10 with SSO and Enterprise as custom pricing", async ({ evidence }) => {
   needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
   const origin = process.env.OPENWORK_EVAL_LANDING_URL;
   await using browser = await chrome({ startUrl: `${origin}/pricing`, headless: true });
   const visible = await eventually(async () => evaluateOnSurface(browser, () => (document.body.innerText)), {
     within: 30_000,
-    until: (value) => typeof value === "string" && value.includes("$10") && value.includes("$40"),
+    until: (value) => typeof value === "string" && value.includes("$10") && value.includes("Custom pricing"),
   });
   expect(visible).toContain("$10");
-  expect(visible).toContain("$40");
-  expect(visible).not.toContain("$20");
-  expect(visible).not.toContain("$50");
-  evidence.recordAssertionEvidence("Visitors see the new prices in the browser", "Team $10; Enterprise $40; old prices absent", true);
-  for (const path of ["/pricing"]) {
-    const response = await fetch(`${origin}${path}`, { signal: AbortSignal.timeout(60_000) });
-    expect(response.status).toBe(200);
-    const html = await response.text();
-    expect(html).toMatch(/>\$10<\/span>/);
-    expect(html).toMatch(/>\$40<\/span>/);
-    expect(html).not.toMatch(/>\$(20|50)<\/span>/);
-    expect(html).toContain("per seat / month");
-    expect(html).toContain("per user / month");
-    evidence.recordAssertionEvidence(`${path} displays the new monthly prices`, "Team $10; Enterprise $40; old card prices absent", true);
-    if (path === "/pricing") {
-      const scripts = [...html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/g)];
-      const product = scripts.map((match) => JSON.parse(match[1])).find((data) => data["@type"] === "Product");
-      expect(product.offers.map((offer: { price: string }) => offer.price)).toEqual(["0", "10", "40"]);
-      expect(html).toContain("$10 Team, $40 Enterprise");
-      evidence.recordAssertionEvidence("Search metadata agrees with visible pricing", "Free 0, Team 10, Enterprise 40 USD", true);
-    }
-  }
-  const response = await fetch(`${origin}/llms.txt`, { signal: AbortSignal.timeout(10_000) });
+  expect(visible).toContain("SSO / SAML");
+  expect(visible).toContain("Custom pricing");
+  expect(visible).not.toMatch(/\$(20|40) ?\n?per user/);
+  evidence.recordAssertionEvidence("Visitors see Team $10 with SSO and Enterprise without a list price", "Team $10; Enterprise custom", true);
+  const response = await fetch(`${origin}/pricing`, { signal: AbortSignal.timeout(60_000) });
   expect(response.status).toBe(200);
-  const guide = await response.text();
+  const html = await response.text();
+  expect(html).toMatch(/>\$10<\/span>/);
+  expect(html).not.toMatch(/>\$(20|40)<\/span>/);
+  expect(html).toContain("per seat / month");
+  const scripts = [...html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/g)];
+  const product = scripts.map((match) => JSON.parse(match[1])).find((data) => data["@type"] === "Product");
+  expect(product.offers.map((offer: { price: string }) => offer.price)).toEqual(["0", "10"]);
+  expect(html).toContain("$10 Team with SSO");
+  evidence.recordAssertionEvidence("Search metadata agrees with visible pricing", "Free 0, Team 10 USD; no Enterprise list price", true);
+  const guideResponse = await fetch(`${origin}/llms.txt`, { signal: AbortSignal.timeout(10_000) });
+  expect(guideResponse.status).toBe(200);
+  const guide = await guideResponse.text();
   expect(guide).toContain("Team — $10 per seat/month");
-  expect(guide).toContain("Enterprise — $40 per user/month");
+  expect(guide).toContain("Enterprise — custom pricing");
   expect(guide).not.toContain("Team Starter");
-  expect(guide).not.toContain("Enterprise — custom");
-  evidence.recordAssertionEvidence("The public agent guide agrees with pricing", "Team $10/seat/month and Enterprise $40/user/month", true);
+  evidence.recordAssertionEvidence("The public agent guide agrees with pricing", "Team $10/seat/month with SSO; Enterprise custom", true);
 });
 
 test("visitors can read the trust badge and access every footer link at responsive widths", async ({ evidence }) => {
   needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
   const origin = process.env.OPENWORK_EVAL_LANDING_URL;
   await using browser = await chrome({ startUrl: `${origin}/pricing`, headless: true });
-  await eventually(() => evaluateOnSurface(browser, () => Boolean(document.querySelector("footer svg"))), {
+  await eventually(() => evaluateOnSurface(browser, () => Boolean(document.querySelector('footer img[src="/soc-2-type-ii.svg"]'))), {
     within: 30_000,
     until: Boolean,
   });
@@ -58,11 +50,11 @@ test("visitors can read the trust badge and access every footer link at responsi
     const facts = await evaluateOnSurface(browser, async () => {
       await document.fonts.ready;
       const footer = document.querySelector("footer");
-      const badge = footer?.querySelector('a[aria-label^="SOC 2 Type I"]');
-      const icon = badge?.querySelector("svg");
+      const badge = footer?.querySelector('a[aria-label="SOC 2 Type II. View Trust Center"]');
+      const icon = badge?.querySelector<HTMLImageElement>('img[src="/soc-2-type-ii.svg"]');
       if (!footer || !badge || !icon) throw new Error("Footer trust badge or seal missing");
       const label = badge.getAttribute("aria-label") ?? "";
-      if (!label.includes("SOC 2 Type I") && !badge.textContent?.includes("SOC 2 Type I")) {
+      if (label !== "SOC 2 Type II. View Trust Center") {
         throw new Error("Trust badge text missing");
       }
       const bounds = footer.getBoundingClientRect();
@@ -78,7 +70,7 @@ test("visitors can read the trust badge and access every footer link at responsi
         .map((link) => link.getBoundingClientRect().bottom));
       return {
         viewport: window.innerWidth,
-        textVisible: badge.textContent?.includes("SOC 2 Type I") === true,
+        textVisible: badge.textContent?.includes("SOC 2 Type II") === true,
         iconWidth: iconBounds.width,
         iconHeight: iconBounds.height,
         poweredBy: poweredBy.textContent,
@@ -100,17 +92,18 @@ test("visitors can read the trust badge and access every footer link at responsi
       };
     });
     expect(facts, `footer at ${width}px`).toMatchObject({
-      viewport: width, textVisible: true, iconWidth: 48, iconHeight: 48,
+      viewport: width, textVisible: true, iconWidth: 56, iconHeight: 56,
       footerFits: true, contentFits: true, linksVisible: true,
       poweredBy: "Powered by", brandInline: true, brandRowBelowLinks: true,
     });
     if (width >= 768) expect(facts.badgeBesideBrand, `trust badge beside brand at ${width}px`).toBe(true);
     expect(facts.links).toEqual([
       ["/docs", "Docs"], ["/pricing", "Pricing"], ["/roadmap", "Roadmap"],
-      ["/download", "Desktop"], ["https://app.openworklabs.com", "Cloud"],
+      ["/download", "Desktop"], ["/alternatives/claude-cowork", "Claude Cowork alternative"],
+      ["https://app.openworklabs.com", "Cloud"],
       ["/dashboard", "Dashboard"], ["/enterprise", "Enterprise"], ["/contact", "Contact"],
       ["/trust", "Trust Center"], ["/privacy", "Privacy"], ["/terms", "Terms"],
-      ["https://opencode.ai", ""], ["/trust", "SOC 2 Type I. View Trust Center"],
+      ["https://opencode.ai", "OpenCode"], ["/trust", "SOC 2 Type II. View Trust Center"],
     ]);
     evidence.recordAssertionEvidence(`Footer remains readable and complete at ${width}px`, JSON.stringify(facts), true);
   }
@@ -124,11 +117,11 @@ test("visitors can read the trust badge and access every footer link at responsi
     within: 30_000,
     until: (text) => typeof text === "string" && text.includes("OpenWork Enterprise"),
   });
-  expect(hero).not.toContain("SOC 2 Type II");
-  for (const badge of ["SOC 2 Type I", "SAML SSO + SCIM", "Audit logs", "Self-host or managed", "White labeling"]) {
+  expect(hero).not.toMatch(/SOC 2 Type I\b/);
+  for (const badge of ["SOC 2 Type II", "SAML SSO + SCIM", "Audit logs", "Self-host or managed", "White labeling"]) {
     expect(hero).toContain(badge);
   }
-  evidence.recordAssertionEvidence("Enterprise hero omits the in-progress Type II badge and retains the other badges", hero, true);
+  evidence.recordAssertionEvidence("Enterprise hero shows the completed SOC 2 Type II status and retains the other badges", hero, true);
 });
 
 test("download CTAs request the detected installer once and retain the alternative downloads", async ({ evidence }) => {

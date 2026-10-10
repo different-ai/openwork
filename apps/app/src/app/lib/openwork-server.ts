@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
@@ -13,12 +14,16 @@ import {
   AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
   requestAgentContextDiagnosticsPayload,
 } from "./agent-context-diagnostics-transport";
-import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics, desktopUploadMultipart, electronLocalPathForFile } from "./desktop";
+import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics } from "./desktop";
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
-import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
+import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
+import { desktopFreeAccessStatusSchema } from "./inference-access";
+
+const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
+export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -73,6 +78,67 @@ export type OpenworkCloudProviderSyncStatus = {
   skippedProviders: OpenworkCloudProviderSyncSkippedProvider[];
 };
 
+export interface EngineV2MigrationStatus {
+  state: "idle" | "running" | "completed" | "error";
+  /** Only `copying` moves the counts; older servers omit it. */
+  phase?: "starting" | "converting" | "copying";
+  imported: number;
+  skipped: number;
+  total: number;
+  /** ISO time the current migration started. */
+  startedAt?: string;
+  error?: string;
+  /** Where the v2 chat database was copied before this migration wrote to it. */
+  backupPath?: string;
+}
+
+function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undefined {
+  if (!value || typeof value !== "object" || !("state" in value)
+    || !["idle", "running", "completed", "error"].includes(String(value.state))) return undefined;
+  if (value.state !== "idle" && value.state !== "running" && value.state !== "completed" && value.state !== "error") return undefined;
+  if (!("imported" in value) || typeof value.imported !== "number"
+    || !("skipped" in value) || typeof value.skipped !== "number"
+    || !("total" in value) || typeof value.total !== "number") return undefined;
+  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "copying")
+    ? value.phase : undefined;
+  return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
+    ...(phase ? { phase } : {}),
+    ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
+    ...("backupPath" in value && typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
+    error: "error" in value && typeof value.error === "string" ? value.error : undefined };
+}
+
+/** Work an engine switch or migration would interrupt, as counts only. */
+export interface EngineActivityCount {
+  verdict: "idle" | "busy" | "unknown";
+  busySessions: number;
+  waitingRequests: number;
+}
+
+export interface EngineActivity {
+  v1: EngineActivityCount;
+  /** Null while the v2 sidecar is not running. */
+  v2: EngineActivityCount | null;
+}
+
+function parseEngineActivityCount(value: unknown): EngineActivityCount | null {
+  if (!value || typeof value !== "object" || !("verdict" in value)) return null;
+  const verdict = value.verdict;
+  if (verdict !== "idle" && verdict !== "busy" && verdict !== "unknown") return null;
+  const count = (key: "busySessions" | "waitingRequests") => {
+    const raw: unknown = key in value ? Reflect.get(value, key) : 0;
+    return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
+  };
+  return { verdict, busySessions: count("busySessions"), waitingRequests: count("waitingRequests") };
+}
+
+function parseEngineActivity(value: unknown): EngineActivity {
+  const v1 = value && typeof value === "object" && "v1" in value ? parseEngineActivityCount(value.v1) : null;
+  if (!v1) throw new Error("Invalid engine activity response.");
+  const v2 = value && typeof value === "object" && "v2" in value ? parseEngineActivityCount(value.v2) : null;
+  return { v1, v2 };
+}
+
 export interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
@@ -80,11 +146,35 @@ export interface EngineV2PreviewStatus {
   version?: string;
   pid?: number;
   binSource?: string;
+  migration?: EngineV2MigrationStatus;
+  /** Older servers omit it; treat that as unknown and do not prompt. */
+  v1HistoryAvailable?: boolean;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
+}
+
+const workspaceDefaultModelRefSchema = z.object({
+  providerID: z.string(),
+  modelID: z.string(),
+  variant: z.string().optional(),
+});
+
+const workspaceDefaultModelStateSchema = z.object({
+  model: workspaceDefaultModelRefSchema.nullable(),
+  updatedAt: z.number().nullable(),
+});
+
+/** The model a new chat in a workspace uses, as remembered by its OpenWork server. */
+export type WorkspaceDefaultModelRef = z.infer<typeof workspaceDefaultModelRefSchema>;
+export type WorkspaceDefaultModelState = z.infer<typeof workspaceDefaultModelStateSchema>;
+
+function parseWorkspaceDefaultModelState(value: unknown): WorkspaceDefaultModelState {
+  const parsed = workspaceDefaultModelStateSchema.safeParse(value);
+  if (!parsed.success) throw new OpenworkServerError(502, "invalid_response", "Invalid workspace default model response");
+  return parsed.data;
 }
 
 function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
@@ -99,6 +189,9 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
     throw new Error("Invalid OpenCode v2 engine preview status response.");
   }
   return {
+    migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
+    ...("v1HistoryAvailable" in value && typeof value.v1HistoryAvailable === "boolean"
+      ? { v1HistoryAvailable: value.v1HistoryAvailable } : {}),
     enabled: value.enabled,
     running: value.running,
     chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
@@ -132,6 +225,7 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
     !("name" in value) || typeof value.name !== "string" ||
     !("modelIds" in value) || !Array.isArray(value.modelIds) || !value.modelIds.every((item) => typeof item === "string")
   ) return null;
+  const modelIds = value.modelIds;
   return {
     cloudProviderId: value.cloudProviderId,
     providerId: value.providerId,
@@ -140,6 +234,8 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
     source: "source" in value && typeof value.source === "string" ? value.source : null,
     updatedAt: "updatedAt" in value && typeof value.updatedAt === "string" ? value.updatedAt : null,
     modelIds: value.modelIds,
+    pinnedModelIds: "pinnedModelIds" in value && Array.isArray(value.pinnedModelIds)
+      ? [...new Set(value.pinnedModelIds.filter((id): id is string => typeof id === "string"))].filter((id) => modelIds.includes(id)) : [],
     ...("modelConfigVersion" in value && typeof value.modelConfigVersion === "number"
       ? { modelConfigVersion: value.modelConfigVersion } : {}),
     importedAt: "importedAt" in value && typeof value.importedAt === "number" ? value.importedAt : null,
@@ -267,7 +363,6 @@ export type OpenworkServerSettings = {
   portOverride?: number;
   token?: string;
   hostToken?: string;
-  remoteAccessEnabled?: boolean;
 };
 
 // The shared WorkspaceWire contract now carries the opencode block; keep the
@@ -444,7 +539,7 @@ export type OpenworkDesktopCloudSyncResult = {
   state: OpenworkDesktopCloudSyncState;
 };
 
-export type OpenworkCloudPluginInstallResult = {
+export type OpenworkCloudPluginRemoveResult = {
   item: CloudImportedPlugin;
   warnings: string[];
 };
@@ -452,22 +547,6 @@ export type OpenworkCloudPluginInstallResult = {
 export type OpenworkCloudPluginsResult = {
   marketplaces: Record<string, CloudImportedMarketplace>;
   plugins: Record<string, CloudImportedPlugin>;
-};
-
-export type OpenworkClaudePluginComponent = {
-  type: "mcp" | "skill" | "command" | "agent";
-  name: string;
-  description: string | null;
-};
-
-export type OpenworkClaudePluginPreview = {
-  pluginId: string;
-  name: string;
-  description: string | null;
-  version: string | null;
-  source: { owner: string; repo: string; ref: string; dir: string | null };
-  components: OpenworkClaudePluginComponent[];
-  warnings: string[];
 };
 
 function arrayBufferToBase64(data: ArrayBuffer): string {
@@ -891,20 +970,6 @@ export type OpenworkWorkspaceExportWarning = {
   detail: string;
 };
 
-export type OpenworkArtifactItem = {
-  id: string;
-  name?: string;
-  path?: string;
-  size?: number;
-  createdAt?: number;
-  updatedAt?: number;
-  mime?: string;
-};
-
-export type OpenworkArtifactList = {
-  items: OpenworkArtifactItem[];
-};
-
 export type OpenworkConnectState = {
   ok: true;
   schemaVersion: 1;
@@ -1042,15 +1107,12 @@ export type OpenworkSessionGroupEvent = {
   timestamp: number;
 };
 
-// Fallback for explicit server-mode URL derivation. Desktop local workers replace this
-// with the persisted runtime-discovered port once the host reports it.
-export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
-
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";
 const STORAGE_TOKEN = "openwork.server.token";
 const STORAGE_HOST_AUTH_KEY = "openwork.server.hostToken";
-const STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
+// Remote access was removed; writes clear the key older builds persisted.
+const LEGACY_STORAGE_REMOTE_ACCESS = "openwork.server.remoteAccessEnabled";
 
 type OpenworkBootstrap = {
   token?: string;
@@ -1138,53 +1200,12 @@ export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: str
   }
 }
 
-const OPENWORK_INVITE_PARAM_URL = "ow_url";
-const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
-const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
-const OPENWORK_INVITE_PARAM_AUTO_CONNECT = "ow_auto_connect";
-
 export type OpenworkConnectInvite = {
   url: string;
   token?: string;
   startup?: "server";
   autoConnect?: boolean;
 };
-
-export function readOpenworkConnectInviteFromSearch(input: string | URLSearchParams) {
-  const search =
-    typeof input === "string"
-      ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
-      : input;
-
-  const rawUrl = search.get(OPENWORK_INVITE_PARAM_URL)?.trim() ?? "";
-  const url = normalizeOpenworkServerUrl(rawUrl);
-  if (!url) return null;
-
-  const token = search.get(OPENWORK_INVITE_PARAM_TOKEN)?.trim() ?? "";
-  const startupRaw = search.get(OPENWORK_INVITE_PARAM_STARTUP)?.trim() ?? "";
-  const startup = startupRaw === "server" ? "server" : undefined;
-  const autoConnect = search.get(OPENWORK_INVITE_PARAM_AUTO_CONNECT)?.trim() === "1";
-
-  return {
-    url,
-    token: token || undefined,
-    startup,
-    autoConnect: autoConnect || undefined,
-  } satisfies OpenworkConnectInvite;
-}
-
-export function stripOpenworkConnectInviteFromUrl(input: string) {
-  try {
-    const url = new URL(input);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
-    url.searchParams.delete(OPENWORK_INVITE_PARAM_AUTO_CONNECT);
-    return url.toString();
-  } catch {
-    return input;
-  }
-}
 
 export function readOpenworkServerSettings(): OpenworkServerSettings {
   if (typeof window === "undefined") return {};
@@ -1196,13 +1217,11 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
     const portOverride = portRaw ? Number(portRaw) : undefined;
     const token = window.localStorage.getItem(STORAGE_TOKEN) ?? undefined;
     const hostToken = window.localStorage.getItem(STORAGE_HOST_AUTH_KEY) ?? undefined;
-    const remoteAccessRaw = window.localStorage.getItem(STORAGE_REMOTE_ACCESS) ?? "";
     return {
       urlOverride: urlOverride ?? undefined,
       portOverride: Number.isNaN(portOverride) ? undefined : portOverride,
       token: token?.trim() || undefined,
       hostToken: hostToken?.trim() || undefined,
-      remoteAccessEnabled: remoteAccessRaw === "1",
     };
   } catch {
     return {};
@@ -1216,7 +1235,6 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
     const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
     const token = next.token?.trim() || undefined;
     const hostToken = next.hostToken?.trim() || undefined;
-    const remoteAccessEnabled = next.remoteAccessEnabled === true;
 
     if (urlOverride) {
       window.localStorage.setItem(STORAGE_URL_OVERRIDE, urlOverride);
@@ -1242,11 +1260,7 @@ export function writeOpenworkServerSettings(next: OpenworkServerSettings): Openw
       window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
     }
 
-    if (remoteAccessEnabled) {
-      window.localStorage.setItem(STORAGE_REMOTE_ACCESS, "1");
-    } else {
-      window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
-    }
+    window.localStorage.removeItem(LEGACY_STORAGE_REMOTE_ACCESS);
 
     return readOpenworkServerSettings();
   } catch {
@@ -1342,7 +1356,7 @@ export function clearOpenworkServerSettings() {
     window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
     window.localStorage.removeItem(STORAGE_TOKEN);
     window.localStorage.removeItem(STORAGE_HOST_AUTH_KEY);
-    window.localStorage.removeItem(STORAGE_REMOTE_ACCESS);
+    window.localStorage.removeItem(LEGACY_STORAGE_REMOTE_ACCESS);
   } catch {
     // ignore
   }
@@ -1400,15 +1414,6 @@ const OPENWORK_STREAM_URL_RE = /\/events(\b|\?)|\/event-stream\b|\/stream\b/;
 
 function isStreamUrl(url: string): boolean {
   return OPENWORK_STREAM_URL_RE.test(url);
-}
-
-function isLoopbackUrl(url: string): boolean {
-  try {
-    const hostname = new URL(url).hostname;
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
-  } catch {
-    return false;
-  }
 }
 
 const resolveFetch = (url?: string) => {
@@ -1635,6 +1640,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    desktopFreePreferences: async () => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, timeoutMs: timeouts.config })),
+    setDesktopFreeEnabled: async (enabled: boolean) => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.cloudMcpReconcile })),
+    desktopFreeStatus: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/status", { token, timeoutMs: 15_000 })),
+    desktopFreePreflight: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preflight", { token, method: "POST", timeoutMs: 15_000 })),
     token,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
@@ -1679,6 +1688,33 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         token,
         timeoutMs: timeouts.config,
       })),
+    getWorkspaceDefaultModel: async (workspaceId: string): Promise<WorkspaceDefaultModelState> =>
+      parseWorkspaceDefaultModelState(await requestJson<unknown>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/default-model`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      )),
+    setWorkspaceDefaultModel: async (workspaceId: string, model: WorkspaceDefaultModelRef | null): Promise<WorkspaceDefaultModelState> =>
+      parseWorkspaceDefaultModelState(await requestJson<unknown>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/default-model`,
+        { token, hostToken, method: "PUT", body: { model }, timeoutMs: timeouts.config },
+      )),
+    switchOpencodeEngine: async (engine: "v1" | "v2"): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
+        token, method: "PUT", body: { enabled: engine === "v2", chatRouting: engine === "v2" }, timeoutMs: timeouts.config,
+      })),
+    getEngineActivity: async (): Promise<EngineActivity> =>
+      parseEngineActivity(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/activity", {
+        token,
+        timeoutMs: timeouts.config,
+      })),
+    /** Rejects with `engine_migration_active_sessions` (409) while v1 tasks run, unless allowed. */
+    migrateOpencodeHistory: async (options: { allowActiveSessions?: boolean } = {}): Promise<EngineV2PreviewStatus> =>
+      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/migrate", {
+        token, hostToken, method: "POST", timeoutMs: timeouts.config,
+        body: { confirm: true, ...(options.allowActiveSessions ? { allowActiveSessions: true } : {}) },
+      })),
     setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
         token,
@@ -1705,26 +1741,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-        timeoutMs: timeouts.activateWorkspace,
-      }),
-    createRemoteWorkspace: (payload: {
-      baseUrl: string;
-      openworkHostUrl?: string | null;
-      openworkToken?: string | null;
-      openworkWorkspaceId?: string | null;
-      openworkWorkspaceName?: string | null;
-      displayName?: string | null;
-      directory?: string | null;
-      remoteType?: "openwork" | "opencode";
-      sandboxBackend?: string | null;
-      sandboxRunId?: string | null;
-      sandboxContainerName?: string | null;
-    }) =>
-      requestJson<WorkspaceList>(baseUrl, "/workspaces/remote", {
         token,
         hostToken,
         method: "POST",
@@ -1856,6 +1872,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.config,
         },
       ),
+    getRuntimeDisabledProviders: (workspaceId: string) =>
+      requestJson<OpenworkRuntimeDisabledProvidersResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/disabled-providers`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
     setRuntimeDisabledProviders: (workspaceId: string, providers: string[]) =>
       requestJson<OpenworkRuntimeDisabledProvidersResult>(
         baseUrl,
@@ -1874,7 +1896,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${encodeURIComponent(workspaceId)}/runtime-config`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
-    patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
+    /** `mergeProviderModels`: provider IDs whose saved models are kept, with the patch's models added. */
+    patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown>; mergeProviderModels?: string[] }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
         token,
         hostToken,
@@ -1901,35 +1924,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         timeoutMs: timeouts.config,
       }),
-    installCloudPlugin: (workspaceId: string, payload: { marketplaceId: string | null; marketplace?: DenOrgMarketplace | null; resolved: DenOrgPluginResolved }) =>
-      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-        timeoutMs: timeouts.config,
-      }),
     removeCloudPlugin: (workspaceId: string, pluginId: string) =>
-      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins/${encodeURIComponent(pluginId)}`, {
+      requestJson<OpenworkCloudPluginRemoveResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins/${encodeURIComponent(pluginId)}`, {
         token,
         hostToken,
         method: "DELETE",
-        timeoutMs: timeouts.config,
-      }),
-    previewClaudePlugin: (workspaceId: string, payload: { url: string; ref?: string }) =>
-      requestJson<{ preview: OpenworkClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: { ...payload, dryRun: true },
-        timeoutMs: timeouts.config,
-      }),
-    installClaudePlugin: (workspaceId: string, payload: { url: string; ref?: string }) =>
-      requestJson<OpenworkCloudPluginInstallResult & { preview: OpenworkClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
         timeoutMs: timeouts.config,
       }),
     readOpencodeConfigFile: (workspaceId: string, scope: "project" | "global" = "project") => {
@@ -2268,39 +2267,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
-    uploadInboxPrefersOriginalFile: (file: File) =>
-      isDesktopRuntime() && !isLoopbackUrl(baseUrl) && electronLocalPathForFile(file) !== null,
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
       if (!id) throw new Error("workspaceId is required");
       if (!file) throw new Error("file is required");
       const uploadPath = `/workspace/${encodeURIComponent(id)}/inbox`;
-      let result: { ok: boolean; status: number; text: string };
-      if (isDesktopRuntime() && !isLoopbackUrl(baseUrl) && electronLocalPathForFile(file) !== null) {
-        const response = await desktopUploadMultipart(file, {
-          url: `${baseUrl}${uploadPath}`,
-          method: "POST",
-          headers: buildAuthHeaders(token, hostToken),
-          fields: options?.path?.trim() ? { path: options.path.trim() } : undefined,
-          timeoutMs: timeouts.binary,
-        });
-        result = {
-          ok: response.status >= 200 && response.status < 300,
-          status: response.status,
-          text: response.body,
-        };
-      } else {
-        const form = new FormData();
-        form.append("file", file);
-        if (options?.path?.trim()) form.append("path", options.path.trim());
-        result = await requestMultipartRaw(baseUrl, uploadPath, {
-          token,
-          hostToken,
-          method: "POST",
-          body: form,
-          timeoutMs: timeouts.binary,
-        });
-      }
+      const form = new FormData();
+      form.append("file", file);
+      if (options?.path?.trim()) form.append("path", options.path.trim());
+      const result = await requestMultipartRaw(baseUrl, uploadPath, {
+        token,
+        hostToken,
+        method: "POST",
+        body: form,
+        timeoutMs: timeouts.binary,
+      });
 
       if (!result.ok) {
         let message = result.text.trim();
@@ -2468,18 +2449,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
 
-    downloadWorkspaceFile: (workspaceId: string, path: string) =>
+    /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
+    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
       requestBinary(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
-
-    listArtifacts: (workspaceId: string) =>
-      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
-        token,
-        hostToken,
-      }),
 
     resolveArtifacts: (
       workspaceId: string,
@@ -2496,13 +2472,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/resolve`,
         { token, hostToken, method: "POST", body: { targets } },
-      ),
-
-    downloadArtifact: (workspaceId: string, artifactId: string) =>
-      requestBinary(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
-        { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).

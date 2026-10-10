@@ -1,6 +1,11 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { withOrganizationTeamMutation } from "./organization-team-roles.js"
+import { archiveTeamPermissionSets } from "./permissions/team-set-archive.js"
+import { requireHeldInTransaction } from "./permissions/in-transaction.js"
+import { appendDomainChanges } from "./audit/domain/legacy.js"
+import { scimConnectionDeletedEvent } from "./audit/domain/scim.js"
+import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { auth } from "./auth.js"
 import { cache } from "./cache.js"
@@ -307,27 +312,33 @@ export async function rotateOrganizationScimToken(input: {
   }
 
   return {
+    previous: existing,
     connection,
     scimToken: generated.scimToken,
   }
 }
 
-export async function deleteOrganizationScimConnection(organizationId: OrganizationId) {
+/** null when there is no connection; otherwise the scim_connection.deleted event ids (capture active). */
+/**
+ * `actorMemberId` is the member deleting the connection: scim.manage is re-checked inside the
+ * cleanup transaction (throws PermissionRevokedError).
+ */
+export async function deleteOrganizationScimConnection(organizationId: OrganizationId, capture: AuditChangeCapture | null = null, actorMemberId?: typeof MemberTable.$inferSelect.id) {
   const connection = await getOrganizationScimConnection(organizationId)
   if (!connection) {
-    return false
+    return null
   }
 
-  await cleanupExternalIdentitiesForDeletedScimConnection(connection)
-  return true
+  return { auditEventIds: await cleanupExternalIdentitiesForDeletedScimConnection(connection, capture, actorMemberId) }
 }
 
-async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typeof ScimProviderTable.$inferSelect) {
-  await withOrganizationTeamMutation(connection.organizationId, async (db) => {
+async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typeof ScimProviderTable.$inferSelect, capture: AuditChangeCapture | null = null, actorMemberId?: typeof MemberTable.$inferSelect.id): Promise<string[]> {
+  return withOrganizationTeamMutation(connection.organizationId, async (db) => {
+    if (actorMemberId) await requireHeldInTransaction(db, { organizationId: connection.organizationId, memberId: actorMemberId, key: "scim.manage" })
     const providers = await db.select().from(ScimProviderTable)
       .where(and(eq(ScimProviderTable.id, connection.id), eq(ScimProviderTable.organizationId, connection.organizationId), eq(ScimProviderTable.providerId, connection.providerId))).limit(1)
     const provider = providers[0]
-    if (!provider) return
+    if (!provider) return []
     const groupRows = await db
       .select({ id: ScimGroupTable.id, teamId: ScimGroupTable.teamId })
       .from(ScimGroupTable)
@@ -335,8 +346,12 @@ async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typ
     if (groupRows.length > 0) {
       const teamIds = groupRows.flatMap((group) => group.teamId ? [group.teamId] : [])
       if (teamIds.length > 0 && provider.groupMappingMode === "create_teams") {
+        // The teams and their members are retained as ordinary teams, but nothing the identity
+        // provider projected keeps authority: clear the Admin designation and stop the teams'
+        // permission sets applying until the owner sets them again.
         await db.update(TeamTable).set({ grantsOrganizationAdmin: false })
           .where(and(eq(TeamTable.organizationId, connection.organizationId), inArray(TeamTable.id, teamIds)))
+        await archiveTeamPermissionSets(db, { organizationId: connection.organizationId, teamIds, actorMemberId: null, at: new Date() })
       }
       await db
         .delete(ScimGroupMemberTable)
@@ -381,6 +396,8 @@ async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typ
       .delete(AuthAccountTable)
       .where(eq(AuthAccountTable.providerId, connection.providerId))
     await db.delete(ScimProviderTable).where(eq(ScimProviderTable.id, provider.id))
+    // Organization row locked FOR UPDATE by withOrganizationTeamMutation; append last.
+    return appendDomainChanges(db, capture, [scimConnectionDeletedEvent(connection.organizationId, provider)])
   })
 }
 

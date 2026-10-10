@@ -7,6 +7,7 @@ import { isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-
 import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
+import { signsInInPlace } from "../_lib/auth-resume";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { useDenFlow } from "../_providers/den-flow-provider";
@@ -225,6 +226,9 @@ export function AuthPanel({
   signUpContent,
   signInContent,
   verificationContent,
+  emailStepContent,
+  socialFirst = false,
+  socialProviders = ["google", "github"],
 }: {
   prefilledEmail?: string;
   prefillKey?: string;
@@ -245,6 +249,16 @@ export function AuthPanel({
   signUpContent?: Partial<PanelContent>;
   signInContent?: Partial<PanelContent>;
   verificationContent?: Partial<PanelContent>;
+  /** Title and helper for the email step of the email-first flow. */
+  emailStepContent?: Partial<PanelContent>;
+  /**
+   * One-page flows (agent sign-in, device and claim codes, connection links)
+   * lead with Google and GitHub above the email field, and show the helper
+   * copy under the form instead of an intro paragraph.
+   */
+  socialFirst?: boolean;
+  /** Which providers a social-first panel offers. */
+  socialProviders?: readonly ("google" | "github")[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -365,6 +379,7 @@ export function AuthPanel({
           title: "Start using OpenWork",
           copy: "Enter your email and we'll send you to the right sign-in step.",
           submitLabel: "Next",
+          ...emailStepContent,
         }
       : emailFirstStep === "sso"
       ? {
@@ -576,6 +591,10 @@ export function AuthPanel({
       router.replace(oauthRoute);
       return;
     }
+    // In-place pages re-render with the new session and continue their own step.
+    if (next && signsInInPlace(pathname)) {
+      return;
+    }
     if (next === "dashboard" || next === "join-org") {
       const target = await resolveUserLandingRoute();
       if (target && !isSamePathname(pathname, target)) {
@@ -690,7 +709,27 @@ export function AuthPanel({
             <p className="den-eyebrow">{eyebrow}</p>
             <div className="grid gap-2">
               <h2 className={titleClass}>{activeContent.title}</h2>
-              <p className="den-copy">{activeContent.copy}</p>
+              {socialFirst && emailFirstStep === "email" ? null : <p className="den-copy">{activeContent.copy}</p>}
+            </div>
+          </div>
+        ) : null}
+
+        {socialFirst && showSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep === "email" ? (
+          <div className="grid gap-2.5">
+            {socialProviders.includes("google") ? (
+              <SocialButton onClick={() => void beginSocialAuth("google")} disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}>
+                <GoogleLogo />
+                <span>Continue with Google</span>
+              </SocialButton>
+            ) : null}
+            {socialProviders.includes("github") ? (
+              <SocialButton onClick={() => void beginSocialAuth("github")} disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}>
+                <GitHubLogo />
+                <span>Continue with GitHub</span>
+              </SocialButton>
+            ) : null}
+            <div className="den-divider" aria-hidden="true">
+              <span>or</span>
             </div>
           </div>
         ) : null}
@@ -729,8 +768,11 @@ export function AuthPanel({
               disabled={emailFirstFormBusy}
             >
               {loginOptionBusy ? "Checking..." : "Next"}
-              {!loginOptionBusy ? <ArrowRight className="h-4 w-4" /> : null}
+              {!loginOptionBusy && !socialFirst ? <ArrowRight className="h-4 w-4" /> : null}
             </button>
+            {socialFirst && emailStepContent?.copy ? (
+              <p className="m-0 text-[13px] leading-5 text-[var(--dls-text-secondary)]">{emailStepContent.copy}</p>
+            ) : null}
           </form>
         ) : null}
 

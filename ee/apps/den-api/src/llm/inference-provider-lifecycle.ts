@@ -2,7 +2,11 @@ import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { GatewayKeyTable, GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderOauthStateTable, GatewayProviderTable, InferenceKeyTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
-import { isGoogleOAuthInferenceProviderId, revokeGoogleToken } from "./inference-provider-google-oauth.js"
+import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { logoutAwsSso } from "@openwork-ee/utils/aws-identity-center"
+import { revokeGoogleToken } from "./inference-provider-google-oauth.js"
+import { gatewayMemberSignInMethod, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -25,8 +29,14 @@ export async function revokeInferenceCredentialsForMembers(tx: Tx, memberIds: Me
   return credentials.filter((credential) => credential.status !== "revoked")
 }
 
-export async function revokeGoogleCredentials(credentials: Credential[]) {
+/**
+ * Best-effort upstream cleanup after local credentials are erased: revokes Google
+ * grants and ends IAM Identity Center sessions. Entra ID has no per-token
+ * revocation for confidential clients; erasing the refresh token is the revocation.
+ */
+export async function revokeUpstreamCredentials(credentials: Credential[]) {
   const signal = AbortSignal.timeout(5_000)
+  const awsFetch = credentials.some((credential) => credential.kind === "aws_sso") ? createInferenceEgressFetch({ allowedOrigins: new Set() }) : null
   let index = 0
   await Promise.all(Array.from({ length: Math.min(4, credentials.length) }, async () => {
     while (index < credentials.length) {
@@ -36,9 +46,12 @@ export async function revokeGoogleCredentials(credentials: Credential[]) {
         if (parsed.kind === "oauth_google") {
           if (signal.aborted) console.info("gateway_google_revocation", { outcome: "deadline_exceeded" })
           else await revokeGoogleToken({ token: parsed.token.refreshToken ?? parsed.token.accessToken, signal })
+        } else if (parsed.kind === "aws_sso" && awsFetch) {
+          const ok = !signal.aborted && await logoutAwsSso({ region: parsed.awsSso.sso.region, accessToken: parsed.awsSso.accessToken, fetchImpl: awsFetch, signal })
+          console.info("gateway_aws_sso_logout", { outcome: ok ? "succeeded" : signal.aborted ? "deadline_exceeded" : "unavailable" })
         }
       } catch {
-        console.info("gateway_google_revocation", { outcome: "invalid_local_credential" })
+        console.info("gateway_upstream_revocation", { outcome: "invalid_local_credential" })
       }
     }
   }))
@@ -52,7 +65,7 @@ export async function revokeMemberGatewayCredentials(input: { organizationId: Pr
     // The trusted deletion hook also calls after the membership row is physically gone.
     return revokeInferenceCredentialsForMembers(tx, [input.memberId])
   })
-  await revokeGoogleCredentials(credentials)
+  await revokeUpstreamCredentials(credentials)
 }
 
 export async function memberGatewayTeams(database: Tx | typeof db, organizationId: Provider["organization_id"], memberId: MemberId) {
@@ -79,11 +92,12 @@ export async function lockMemberOAuthAuthorization(tx: Tx, provider: Provider, s
     .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt))).for("update")
   if (!member?.userId || expectedUserId !== undefined && member.userId !== expectedUserId) return false
   const [current] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id)).for("update")
-  if (!current || current.status !== "active" || !isGoogleOAuthInferenceProviderId(current.provider_id)
+  // Member sets: each member's own Google, Microsoft or AWS sign-in, or their own LiteLLM key.
+  if (!current || current.status !== "active" || !(gatewayMemberSignInMethod(current.provider_id) || isLiteLlmProviderId(current.provider_id))
     || current.organization_id !== provider.organization_id || current.provider_id !== provider.provider_id) return false
   const [currentSet] = await tx.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, set.id)).for("update")
   if (!currentSet || currentSet.gateway_provider_id !== provider.id || currentSet.status !== "active" || currentSet.credential_mode !== "member"
-    || currentSet.oauth_client_id !== set.oauth_client_id || currentSet.oauth_client_secret !== set.oauth_client_secret) return false
+    || !sameMemberSignInConfiguration(currentSet, set)) return false
   const teams = await memberGatewayTeams(tx, provider.organization_id, memberId)
   const rows = await tx.select({ grant: GatewayProviderAccessTable }).from(GatewayProviderAccessTable)
     .innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id), eq(GatewayModelGroupTable.status, "active")))

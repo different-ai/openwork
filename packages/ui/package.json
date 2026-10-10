@@ -3,6 +3,11 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./provider-icon": {
+      "types": "./src/react/provider-icon.tsx",
+      "development": "./src/react/provider-icon.tsx",
+      "default": "./src/react/provider-icon.tsx"
+    },
     "./react": {
       "types": "./src/react/index.ts",
       "development": "./src/react/index.ts",

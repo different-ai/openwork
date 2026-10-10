@@ -8,5 +8,5 @@
     "strict": true,
     "target": "ES2022"
   },
-  "include": ["src", "test", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"]
 }

@@ -4,8 +4,8 @@ import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ElementType, ReactNode
 
 // ─── Variant / size tokens ────────────────────────────────────────────────────
 
-export type ButtonVariant = "primary" | "secondary" | "destructive" | "ghost";
-export type ButtonSize = "md" | "sm" | "xs";
+export type ButtonVariant = "primary" | "secondary" | "destructive" | "ghost" | "plain";
+export type ButtonSize = "md" | "sm" | "xs" | "compact" | "inline";
 
 const variantClasses: Record<ButtonVariant, string> = {
     primary: "bg-[#0f172a] text-white hover:bg-[#111c33]",
@@ -14,6 +14,7 @@ const variantClasses: Record<ButtonVariant, string> = {
     destructive:
         "border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300",
     ghost: "text-gray-500 hover:text-gray-900",
+    plain: "text-gray-900 hover:text-gray-600",
 };
 
 // md is sized to match the Shared Workspaces reference buttons (px-5 py-2.5 ≈ h-10)
@@ -21,6 +22,8 @@ const sizeClasses: Record<ButtonSize, string> = {
     md: "h-10 px-5 text-[13px] gap-2",
     sm: "h-8 px-3.5 text-[12px] gap-1.5",
     xs: "h-8 px-3 text-[12px]",
+    compact: "h-8 px-3 text-[13px] leading-4.5 gap-1.5",
+    inline: "h-8 px-0 text-xs leading-4 gap-1.5",
 };
 
 // ─── buttonVariants helper (for <Link> / <a> elements) ───────────────────────

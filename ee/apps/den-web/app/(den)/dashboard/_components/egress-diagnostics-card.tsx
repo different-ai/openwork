@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { permissionLockReason } from "../../_lib/den-org";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
@@ -130,7 +131,7 @@ export function EgressDiagnosticsCard({ canView, canManage }: { canView: boolean
 
   async function runDiagnostic() {
     if (!canManage) {
-      setError("Only workspace owners and super-admins can run this diagnostic.");
+      setError("You don't have permission to run this diagnostic.");
       return;
     }
 
@@ -154,7 +155,7 @@ export function EgressDiagnosticsCard({ canView, canManage }: { canView: boolean
 
   async function saveBearerToken() {
     if (!canManage) {
-      setError("Only workspace owners and super-admins can change the diagnostic token.");
+      setError("You don't have permission to change the diagnostic token.");
       return;
     }
 
@@ -214,7 +215,7 @@ export function EgressDiagnosticsCard({ canView, canManage }: { canView: boolean
         <p className="mt-1">The browser cannot change this target and the test never sends organization data or customer/provider credentials.</p>
       </div>
 
-      {canView && !canManage ? <p className="text-[13px] text-gray-500">Read-only: admins can view diagnostics. Owners and super-admins can run checks or change the token.</p> : null}
+      {canView && !canManage ? <p className="text-[13px] text-gray-500">{`Read only. ${permissionLockReason("egress_diagnostics.manage")}`}</p> : null}
       {loading ? <p className="text-[13px] text-gray-500" role="status">Loading diagnostic configuration...</p> : null}
       {!loading && canView && available && !editingBearerToken ? (
         <div className="flex items-center justify-between gap-3 rounded-[22px] border border-gray-200 bg-gray-50 px-4 py-3 text-[13px] text-gray-600">

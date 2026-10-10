@@ -59,7 +59,10 @@ export const AuthAccountTable = mysqlTable(
   },
   (table) => [
     index("account_user_id").on(table.userId),
-    index("account_account_id_provider_id").on(sql`${table.accountId}(191)`, sql`${table.providerId}(191)`),
+    // provider_id leads so provider-only lookups (Better Auth SCIM user list,
+    // SSO linked-account checks) can seek instead of scanning the table. The
+    // OAuth lookup filters on both columns, so it still uses the full index.
+    index("account_provider_id_account_id").on(sql`${table.providerId}(191)`, sql`${table.accountId}(191)`),
   ],
 )
 
@@ -306,6 +309,32 @@ export const OAuthClientAssertionTable = mysqlTable("oauthClientAssertion", {
   expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
 })
 
+// OAuth 2.0 Device Authorization Grant (RFC 8628) codes for the Better Auth
+// device-authorization plugin. `organization_id` is Den-owned: the approving
+// person picks the organization the device session starts in.
+export const DeviceCodeTable = mysqlTable(
+  "deviceCode",
+  {
+    id: denTypeIdColumn("deviceCode", "id").notNull().primaryKey(),
+    deviceCode: varchar("device_code", { length: 128 }).notNull(),
+    userCode: varchar("user_code", { length: 32 }).notNull(),
+    userId: denTypeIdColumn("user", "user_id"),
+    organizationId: denTypeIdColumn("organization", "organization_id"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    lastPolledAt: timestamp("last_polled_at", { fsp: 3 }),
+    pollingInterval: int("polling_interval"),
+    clientId: varchar("client_id", { length: 255 }),
+    scope: text("scope"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("device_code_device_code").on(table.deviceCode),
+    uniqueIndex("device_code_user_code").on(table.userCode),
+    index("device_code_expires_at").on(table.expiresAt),
+  ],
+)
+
 export const ScimProviderTable = mysqlTable(
   "scim_provider",
   {
@@ -461,6 +490,7 @@ export const oauthConsent = OAuthConsentTable
 export const oauthResource = OAuthResourceTable
 export const oauthClientResource = OAuthClientResourceTable
 export const oauthClientAssertion = OAuthClientAssertionTable
+export const deviceCode = DeviceCodeTable
 export const scimProvider = ScimProviderTable
 export const scimSyncEvent = ScimSyncEventTable
 export const ssoProvider = SsoProviderTable

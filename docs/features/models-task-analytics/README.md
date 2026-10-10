@@ -74,13 +74,21 @@ capability for selected organizations. A newer desktop receiving an unavailable
 settings route keeps analytics off and leaves chat running; failed checks are cached
 to avoid retrying on every streamed update.
 
-`pnpm evals:e2e models-analytics-upgrade` runs a continuous subscriber journey with
-an isolated Den database, real Gateway HTTP service, browser and desktop. Its
-upstream and Langfuse witnesses use synthetic credentials. The journey starts
-with an existing paid account before the analytics tables exist, applies the real
-migration, and checks the same model key, consent UI, accounting, tenant/member
-isolation, export, downgrade, workspace deletion and continued conversation.
-An independently observed HTTP link first returns 404 for analytics settings,
-proving the newer desktop still chats without uploading task events. Restoring
-the endpoint then exercises live task/skill/tool reporting in the same conversation. It does not make a real
-Stripe purchase or call a paid model provider.
+The `models-analytics-upgrade` e2e journey was removed in October 2026: it could no
+longer pass after the model picker changed. There is no end-to-end coverage of the
+upgrade path today.
+
+## Migration history
+
+v0.18.57 briefly retired Organization Analytics, and its
+`0128_remove_legacy_analytics.sql` dropped `telemetry_event` and
+`telemetry_session_dimension` and deleted `source = 'app'` rows from
+`models_analytics_event`.
+
+- `0128` is now a no-op, so installs that skipped v0.18.57 keep that data.
+  `ee/packages/den-db/scripts/superseded-migrations.ts` accepts the released
+  0128 hash so installs that applied it still pass the migration history check.
+- `0135_restore_legacy_analytics.sql` uses `CREATE TABLE IF NOT EXISTS` with
+  inline indexes, so it leaves existing tables and rows untouched and recreates
+  empty tables where v0.18.57 dropped them. Data deleted by v0.18.57 can only
+  come back from a database backup.

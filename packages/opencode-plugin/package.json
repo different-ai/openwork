@@ -1,0 +1,55 @@
+{
+  "name": "opencode-openwork",
+  "version": "0.1.0",
+  "description": "Use OpenWork Cloud in OpenCode: sign in once, and your organization's AI Gateway models and MCP connections load on every start.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/opencode-plugin"
+  },
+  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/opencode-plugin",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "openwork",
+    "mcp",
+    "ai-gateway"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/server.ts",
+      "development": "./src/server.ts",
+      "bun": "./src/server.ts",
+      "default": "./dist/server.js"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "development": "./src/server.ts",
+      "bun": "./src/server.ts",
+      "default": "./dist/server.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "server.ts",
+    "README.md",
+    "!src/*.test.ts",
+    "!src/test-den.ts"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "node --test src/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.3"
+  }
+}

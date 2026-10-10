@@ -13,9 +13,11 @@ export {
   renderEmailTemplate,
   type EmailTemplate,
   type EmailTemplateProps,
+  type ClaimReminderEmailProps,
   type DownloadLinkEmailProps,
   type FeedbackEmailProps,
   type OrganizationInviteEmailProps,
   type PasswordResetEmailProps,
+  type TeamNudgeEmailProps,
   type VerificationEmailProps,
 } from "./templates/index.js"

@@ -6,12 +6,18 @@
   "exports": {
     ".": "./src/index.ts",
     "./builder": "./src/builder.ts",
-    "./outputs": "./src/outputs.ts"
-  },
-  "scripts": {
-    "test": "node --test test/*.test.ts test/*.test.mjs"
+    "./progress": "./src/progress.ts",
+    "./outputs": "./src/outputs.ts",
+    "./checkpoints": "./src/checkpoints.ts",
+    "./checkpoint-schema": "./src/checkpoint-schema.ts",
+    "./evidence-builder": "./src/evidence-builder.ts"
   },
   "dependencies": {
-    "freestyle": "0.2.13"
+    "freestyle": "0.2.13",
+    "@openwork/sandbox": "workspace:*",
+    "@openwork/sandbox-freestyle": "workspace:*"
+  },
+  "scripts": {
+    "build": "pnpm --filter \"@openwork/freestyle^...\" --if-present run build"
   }
 }

@@ -44,16 +44,31 @@ function writeGeneratedVersionFile(latestAppVersion) {
   )
 }
 
-function run(command, args) {
+function run(command, args, env = process.env) {
   const result = spawnSync(command, args, {
     cwd: serviceDir,
-    env: process.env,
+    env,
     stdio: "inherit",
   })
 
   if (result.status !== 0) {
     process.exit(result.status ?? 1)
   }
+}
+
+// Type-checking den-api needs ~2.8 GB of V8 heap, above Node's ~2 GB default
+// cap, so the emit OOMs on build hosts (Render's Starter pipeline has 8 GB RAM)
+// even though the machine has room. Raise only the tsc heap; an explicit
+// --max-old-space-size in NODE_OPTIONS, or DEN_API_TSC_MAX_OLD_SPACE_MB, wins.
+export const tscHeapEnvFlag = "DEN_API_TSC_MAX_OLD_SPACE_MB"
+export const defaultTscHeapMb = 6144
+
+export function tscBuildEnv(env = process.env) {
+  const nodeOptions = env.NODE_OPTIONS?.trim() ?? ""
+  if (/--max-old-space-size[= ]/.test(nodeOptions)) return env
+  const override = Number.parseInt(env[tscHeapEnvFlag] ?? "", 10)
+  const heapMb = Number.isInteger(override) && override > 0 ? override : defaultTscHeapMb
+  return { ...env, NODE_OPTIONS: [nodeOptions, `--max-old-space-size=${heapMb}`].filter(Boolean).join(" ") }
 }
 
 export function envFlagEnabled(value) {
@@ -173,7 +188,7 @@ function main() {
 
   run(pnpmCommand, ["run", "build:workspace-dependencies"])
   verifyProductionWorkspaceExports()
-  run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"])
+  run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"], tscBuildEnv())
   maybeUploadSentrySourcemaps()
 }
 

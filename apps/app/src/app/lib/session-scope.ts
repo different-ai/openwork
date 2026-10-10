@@ -17,18 +17,12 @@ export type TransportDirectory = string & {
   readonly __transportDirectory: unique symbol;
 };
 
-type WorkspaceType = "local" | "remote";
-
 export function resolveScopedClientDirectory(input: {
   directory?: string | null;
   targetRoot?: string | null;
-  workspaceType?: WorkspaceType | null;
 }): TransportDirectory {
   const directory = toSessionTransportDirectory(input.directory);
   if (directory) return directory;
-
-  if (input.workspaceType === "remote") return "" as TransportDirectory;
-
   return toSessionTransportDirectory(input.targetRoot);
 }
 

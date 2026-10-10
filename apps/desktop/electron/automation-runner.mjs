@@ -1,7 +1,13 @@
-import { createHeadlessThreadClient } from "@openwork/headless-threads"
+import { createHeadlessThreadClient, isHeadlessModelAccessError } from "@openwork/headless-threads"
 
 const EMPTY_USAGE = { inputTokens: null, outputTokens: null, costMicros: null }
 const RUNNER_WORK_POLL_MS = 60_000
+/** Inventory is gathered at most this often; it is sent only when it changed. */
+const INVENTORY_MIN_INTERVAL_MS = 2 * 60_000
+const INVENTORY_WORKSPACE_LIMIT = 50
+const INVENTORY_MODEL_LIMIT = 200
+const INVENTORY_REQUEST_TIMEOUT_MS = 10_000
+const INVENTORY_CONCURRENCY = 4
 
 function serializedError(value) {
   if (value instanceof Error) return value.message
@@ -16,7 +22,7 @@ export function classifyAutomationExecutionError(error) {
   if (error?.code === "model_access_lost") {
     return { code: "model_access_lost", message: raw }
   }
-  if (/ProviderModelNotFoundError/i.test(raw) || /model\s+not\s+found\s*:/i.test(raw)) {
+  if (isHeadlessModelAccessError(error)) {
     const identity = raw.match(/model\s+not\s+found\s*:\s*([^.,}\]"\n]+)/i)?.[1]?.trim()
     return {
       code: "model_access_lost",
@@ -28,6 +34,527 @@ export function classifyAutomationExecutionError(error) {
   return {
     code: "execution_failed",
     message: raw || "Desktop Automation execution failed",
+  }
+}
+
+/**
+ * How long a remote session's first turn is watched before it is reported.
+ * Long enough for a provider to reject the request, short enough that the
+ * runner slot held during the window is released promptly.
+ */
+export const REMOTE_SESSION_FIRST_TURN_WINDOW_MS = 20_000
+const REMOTE_SESSION_IDLE_GRACE_MS = 5_000
+const REMOTE_SESSION_POLL_MS = 500
+const REMOTE_SESSION_MESSAGE_LIMIT = 2_000
+
+function isProviderAuthError(error, raw) {
+  if (error?.name === "ProviderAuthError") return true
+  return /invalid\s+api\s+key|authentication\s+failed|unauthori[sz]ed|\b401\b/i.test(raw)
+}
+
+/**
+ * Classifies a remote session's first-turn failure. Desktop Automations keep
+ * `classifyAutomationExecutionError`; this only adds the credential case.
+ */
+export function classifyRemoteSessionError(error) {
+  const raw = serializedError(error)
+  if (isProviderAuthError(error, raw)) {
+    return { code: "provider_auth_failed", message: "The model provider rejected its credentials." }
+  }
+  return classifyAutomationExecutionError(error)
+}
+
+function remoteSessionFailureMessage(sessionId, workspaceId, summary, raw) {
+  const location = `The first reply failed in local session ${sessionId} (workspace ${workspaceId}).`
+  const detail = raw && raw !== summary ? ` Provider error: ${raw}` : ""
+  return `${location} ${summary}${detail}`.slice(0, REMOTE_SESSION_MESSAGE_LIMIT)
+}
+
+function hasAssistantOutput(message) {
+  return (Array.isArray(message?.parts) ? message.parts : []).some((part) => (
+    part?.type === "tool"
+    || ((part?.type === "text" || part?.type === "reasoning") && typeof part.text === "string" && part.text.trim())
+  ))
+}
+
+/**
+ * Watches a freshly prompted session until its first turn shows a reply, an
+ * error, or the window ends. A busy session at the deadline counts as started;
+ * only an explicit error or an idle session without output counts as failed.
+ */
+async function observeRemoteSessionFirstTurn(client, sessionId, workspaceId, options) {
+  const windowMs = options.firstTurnWindowMs ?? REMOTE_SESSION_FIRST_TURN_WINDOW_MS
+  const idleGraceMs = options.idleGraceMs ?? REMOTE_SESSION_IDLE_GRACE_MS
+  const pollIntervalMs = options.pollIntervalMs ?? REMOTE_SESSION_POLL_MS
+  const startedAt = Date.now()
+  const deadlineAt = startedAt + windowMs
+  while (Date.now() < deadlineAt) {
+    const timeoutSignal = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()))
+    let snapshot = null
+    try {
+      snapshot = await client.getThreadSnapshot(sessionId, {
+        signal: AbortSignal.any([options.signal, timeoutSignal]),
+        limit: 50,
+      })
+    } catch (error) {
+      if (options.signal.aborted) throw error
+      // The session exists and accepted its prompt; an unreadable snapshot
+      // is not evidence of failure, so keep watching until the window ends.
+    }
+    const assistants = Array.isArray(snapshot?.messages)
+      ? snapshot.messages.filter((message) => message?.role === "assistant")
+      : []
+    const failed = [...assistants].reverse().find((message) => message?.error)
+    if (failed) {
+      const classified = classifyRemoteSessionError(failed.error)
+      return {
+        outcome: "failed",
+        code: classified.code,
+        message: remoteSessionFailureMessage(sessionId, workspaceId, classified.message, serializedError(failed.error)),
+      }
+    }
+    if (assistants.some(hasAssistantOutput)) return { outcome: "replied" }
+    if (snapshot?.status?.type === "idle" && Date.now() - startedAt >= idleGraceMs) {
+      return {
+        outcome: "failed",
+        code: "no_reply",
+        message: remoteSessionFailureMessage(sessionId, workspaceId, "The session stopped without replying.", ""),
+      }
+    }
+    const remaining = deadlineAt - Date.now()
+    if (remaining <= 0) break
+    await sleep(Math.min(pollIntervalMs, remaining), options.signal)
+  }
+  return { outcome: "busy" }
+}
+
+/**
+ * After a remote session is delivered, its progress is followed in the
+ * background until it settles so Den callers can see the outcome.
+ */
+export const REMOTE_SESSION_WATCH = Object.freeze({
+  fastPollMs: 3_000,
+  fastWindowMs: 5 * 60_000,
+  slowPollMs: 15_000,
+  keepaliveMs: 60_000,
+  maxMs: 6 * 60 * 60_000,
+  /** Consecutive idle polls without any reply before the session counts as silent. */
+  silentIdlePolls: 3,
+})
+const REMOTE_SESSION_FINAL_TEXT_LIMIT = 20_000
+const REMOTE_SESSION_SNAPSHOT_LIMIT = 200
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Reads the optional engine and model a headless thread may carry. */
+export function remoteSessionThreadIdentity(thread) {
+  const engine = thread?.engine === "v1" || thread?.engine === "v2" ? thread.engine : undefined
+  const raw = isRecord(thread?.model) ? thread.model : null
+  const model = raw && typeof raw.providerId === "string" && raw.providerId && typeof raw.modelId === "string" && raw.modelId
+    ? {
+      providerId: raw.providerId,
+      modelId: raw.modelId,
+      ...(typeof raw.variant === "string" && raw.variant ? { variant: raw.variant } : {}),
+    }
+    : undefined
+  return { ...(engine ? { engine } : {}), ...(model ? { model } : {}) }
+}
+
+function messageText(message) {
+  return (Array.isArray(message?.parts) ? message.parts : [])
+    .filter((part) => part?.type === "text" && !part.synthetic && !part.ignored && typeof part.text === "string")
+    .map((part) => part.text.trim())
+    .filter(Boolean)
+    .join("\n\n")
+}
+
+/**
+ * Reads the pending permission or question for a session through the same
+ * engine proxy routes the desktop UI and task recovery already use.
+ * Returns undefined when the probe could not be read.
+ */
+async function readRemoteSessionWaitingFor(local, workspaceId, sessionId, engine, fetchImpl, signal) {
+  const workspace = `/workspace/${encodeURIComponent(workspaceId)}`
+  const session = encodeURIComponent(sessionId)
+  const [permissionPath, questionPath] = engine === "v2"
+    ? [`${workspace}/opencode2/api/session/${session}/permission`, `${workspace}/opencode2/api/session/${session}/form`]
+    : [`${workspace}/opencode/permission`, `${workspace}/opencode/question`]
+  const list = async (requestPath) => {
+    const payload = await requestJson(fetchImpl, local.baseUrl, local.token, requestPath, { signal })
+    const rows = isRecord(payload) && "data" in payload ? payload.data : payload
+    if (!Array.isArray(rows)) throw new Error("Invalid pending request list")
+    return rows.filter((row) => isRecord(row) && (engine === "v2" || row.sessionID === sessionId))
+  }
+  try {
+    const [permissions, questions] = await Promise.all([list(permissionPath), list(questionPath)])
+    if (permissions.length) return "permission"
+    if (questions.length) return "question"
+    return null
+  } catch (error) {
+    if (signal.aborted) throw error
+    return undefined
+  }
+}
+
+/** Turns one local snapshot into the session report Den stores. */
+export function remoteSessionObservation(snapshot, waitingFor) {
+  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : []
+  let lastUser = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") { lastUser = index; break }
+  }
+  const replies = messages.slice(lastUser + 1).filter((message) => message?.role === "assistant")
+  const failed = [...replies].reverse().find((message) => message?.error)
+  const running = snapshot?.status?.type === "busy" || snapshot?.status?.type === "retry"
+  if (failed && !running) {
+    const classified = classifyRemoteSessionError(failed.error)
+    return {
+      status: "error",
+      error: {
+        code: classified.code,
+        message: (classified.message || "The session failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT),
+      },
+      messageCount: messages.length,
+    }
+  }
+  if (waitingFor) return { status: "waiting", waitingFor, messageCount: messages.length }
+  if (running) return { status: "running", messageCount: messages.length }
+  const finalText = [...replies].reverse().map(messageText).find(Boolean)
+  if (finalText || replies.some(hasAssistantOutput)) {
+    return {
+      status: "idle",
+      ...(finalText ? { finalText: finalText.slice(0, REMOTE_SESSION_FINAL_TEXT_LIMIT) } : {}),
+      messageCount: messages.length,
+    }
+  }
+  // Idle with no reply yet: status and messages are read separately, so one
+  // such read is not proof the session stopped.
+  return { status: "silent", messageCount: messages.length }
+}
+
+function observationKey(observation) {
+  return JSON.stringify([
+    observation.status,
+    observation.waitingFor ?? null,
+    observation.error?.code ?? null,
+    observation.error?.message ?? null,
+    observation.finalText ?? null,
+  ])
+}
+
+/**
+ * Follows a delivered remote session and reports its progress until it
+ * settles, the watch window ends, or Den stops accepting reports.
+ * `report` resolves to false when Den retired the command (404/409).
+ */
+export async function watchRemoteSession(input) {
+  const timing = { ...REMOTE_SESSION_WATCH, ...input.timing }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const startedAt = Date.now()
+  let lastKey = null
+  let lastReportedAt = 0
+  let silentPolls = 0
+  while (!input.signal.aborted && Date.now() - startedAt < timing.maxMs) {
+    let observation = null
+    try {
+      const local = await input.getLocalRuntime()
+      if (!local?.baseUrl || !local?.token) throw new Error("The desktop runtime is unavailable")
+      const client = createWorkspaceSessionClient(local, input.workspaceId, fetchImpl)
+      const snapshot = await client.getThreadSnapshot(input.sessionId, {
+        signal: input.signal,
+        limit: REMOTE_SESSION_SNAPSHOT_LIMIT,
+      })
+      const running = snapshot?.status?.type === "busy" || snapshot?.status?.type === "retry"
+      if (input.turn && !remoteSessionTurnVisible(snapshot, input.turn)) {
+        // A follow-up was just accepted; until its user message shows up the
+        // previous turn's answer must not be reported as this turn's.
+        observation = { status: "silent", messageCount: Array.isArray(snapshot?.messages) ? snapshot.messages.length : 0 }
+      } else {
+        const waitingFor = running
+          ? await readRemoteSessionWaitingFor(local, input.workspaceId, input.sessionId, input.engine, fetchImpl, input.signal)
+          : null
+        observation = remoteSessionObservation(snapshot, waitingFor)
+      }
+    } catch (error) {
+      if (input.signal.aborted) return "stopped"
+      if (error?.status === 404) {
+        observation = {
+          status: "error",
+          error: { code: "session_not_found", message: "The local session is no longer available." },
+        }
+      } else {
+        input.log?.(`remote session watch read failed: ${serializedError(error)}`)
+      }
+    }
+    if (observation?.status === "silent") {
+      silentPolls += 1
+      observation = silentPolls >= timing.silentIdlePolls
+        ? {
+          status: "error",
+          error: { code: "no_reply", message: "The session stopped without replying." },
+          messageCount: observation.messageCount,
+        }
+        : null
+    } else if (observation) {
+      silentPolls = 0
+    }
+    if (observation) {
+      const key = observationKey(observation)
+      const terminal = observation.status === "idle" || observation.status === "error"
+      if (key !== lastKey || Date.now() - lastReportedAt >= timing.keepaliveMs) {
+        let accepted
+        try {
+          accepted = await input.report({
+            ...observation,
+            waitingFor: observation.waitingFor ?? null,
+            error: observation.error ?? null,
+            ...(input.engine ? { engine: input.engine } : {}),
+            ...(input.model ? { model: input.model } : {}),
+            observedAt: Date.now(),
+          })
+        } catch (error) {
+          if (input.signal.aborted) return "stopped"
+          input.log?.(`remote session progress report failed: ${serializedError(error)}`)
+          accepted = null
+        }
+        if (accepted === false) return "retired"
+        if (accepted === true) {
+          lastKey = key
+          lastReportedAt = Date.now()
+          if (terminal) return observation.status
+        }
+      }
+    }
+    const elapsed = Date.now() - startedAt
+    try {
+      await sleep(elapsed < timing.fastWindowMs ? timing.fastPollMs : timing.slowPollMs, input.signal)
+    } catch {
+      return "stopped"
+    }
+  }
+  return input.signal.aborted ? "stopped" : "expired"
+}
+
+function lastUserMessageId(snapshot) {
+  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return typeof messages[index].id === "string" ? messages[index].id : null
+  }
+  return null
+}
+
+/** Whether the user message of a just-accepted follow-up is in the snapshot. */
+export function remoteSessionTurnVisible(snapshot, turn) {
+  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : []
+  if (turn.messageId) return messages.some((message) => message?.role === "user" && message.id === turn.messageId)
+  const latest = lastUserMessageId(snapshot)
+  return Boolean(latest) && latest !== turn.previousUserMessageId
+}
+
+/**
+ * Den asks the runner that delivered a remote session to read, follow up on,
+ * or stop it. Each request is short and bounded so it never needs the runner
+ * slot an Automation run holds.
+ */
+export const REMOTE_SESSION_REQUEST_TIMEOUT_MS = 15_000
+export const REMOTE_SESSION_REQUEST_POLL = Object.freeze({
+  /** How often pending requests are fetched while the desktop is in active remote use. */
+  pollMs: 2_000,
+  /** How long after the last remote-session activity the fast poll continues. */
+  activeWindowMs: 30 * 60_000,
+})
+export const REMOTE_SESSION_CONTROL_CAPABILITY = "remote_session_control_v1"
+const TRANSCRIPT_TEXT_LIMIT = 20_000
+const TOOL_SUMMARY_LIMIT = 2_000
+const TOOL_CALLS_PER_MESSAGE_LIMIT = 200
+/** Summaries past this per-message budget are dropped so one message always fits a page. */
+const TOOL_SUMMARY_BUDGET_BYTES = 64 * 1024
+/** Den accepts 256 KB; the rest is headroom for the result envelope. */
+const TRANSCRIPT_PAGE_BUDGET_BYTES = 224 * 1024
+
+function jsonBytes(value) {
+  return Buffer.byteLength(JSON.stringify(value), "utf8")
+}
+
+function boundedSummary(value) {
+  if (value === undefined || value === null) return { text: null, truncated: false }
+  let raw
+  if (typeof value === "string") raw = value
+  else {
+    try { raw = JSON.stringify(value) } catch { raw = String(value) }
+  }
+  if (typeof raw !== "string") return { text: null, truncated: false }
+  return raw.length > TOOL_SUMMARY_LIMIT
+    ? { text: raw.slice(0, TOOL_SUMMARY_LIMIT), truncated: true }
+    : { text: raw, truncated: false }
+}
+
+function transcriptToolCalls(message) {
+  const tools = (Array.isArray(message?.parts) ? message.parts : []).filter((part) => part?.type === "tool")
+  let budget = TOOL_SUMMARY_BUDGET_BYTES
+  return tools.slice(0, TOOL_CALLS_PER_MESSAGE_LIMIT).map((part) => {
+    const input = boundedSummary(part.toolInput)
+    const output = boundedSummary(part.toolOutput)
+    const error = boundedSummary(part.toolError)
+    const call = {
+      id: String(part.id ?? "").slice(0, 240),
+      name: String(part.tool ?? "").slice(0, 240),
+      status: typeof part.toolStatus === "string" ? part.toolStatus.slice(0, 60) : null,
+      input: input.text,
+      output: output.text,
+      error: error.text,
+      truncated: input.truncated || output.truncated || error.truncated,
+    }
+    const size = jsonBytes(call)
+    if (size > budget) {
+      budget = 0
+      const listed = { ...call, input: null, output: null, error: null }
+      return { ...listed, truncated: listed.truncated || call.input !== null || call.output !== null || call.error !== null }
+    }
+    budget -= size
+    return call
+  })
+}
+
+function transcriptMessage(message) {
+  const text = messageText(message)
+  const failure = message?.error ? classifyRemoteSessionError(message.error) : null
+  const toolCount = (Array.isArray(message?.parts) ? message.parts : []).filter((part) => part?.type === "tool").length
+  return {
+    id: String(message.id ?? "").slice(0, 240),
+    role: message.role,
+    createdAt: Number.isSafeInteger(message?.createdAt) && message.createdAt >= 0 ? message.createdAt : null,
+    text: text.slice(0, TRANSCRIPT_TEXT_LIMIT),
+    truncated: text.length > TRANSCRIPT_TEXT_LIMIT || toolCount > TOOL_CALLS_PER_MESSAGE_LIMIT,
+    toolCalls: transcriptToolCalls(message),
+    error: failure
+      ? { code: failure.code.slice(0, 60), message: (failure.message || "The turn failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT) }
+      : null,
+  }
+}
+
+function invalidCursorError(cursor) {
+  const error = new Error(`No message ${cursor} in this session; read again without a cursor.`)
+  Object.defineProperty(error, "code", { value: "invalid_cursor" })
+  return error
+}
+
+/**
+ * One transcript page. Cursors are message ids, so a page stays stable while
+ * the session grows: from "start" pages forward after the cursor, from "end"
+ * pages backward before it. Pages hold at most `limit` messages and stop early
+ * to stay within Den's result size.
+ */
+export function remoteSessionTranscriptPage(snapshot, input, waitingFor) {
+  const messages = (Array.isArray(snapshot?.messages) ? snapshot.messages : [])
+    .filter((message) => message?.role === "user" || message?.role === "assistant")
+  const cursorIndex = input.cursor ? messages.findIndex((message) => message.id === input.cursor) : -1
+  if (input.cursor && cursorIndex < 0) throw invalidCursorError(input.cursor)
+  const forward = input.from === "start"
+  const page = []
+  let bytes = 0
+  let index = forward ? (input.cursor ? cursorIndex + 1 : 0) : (input.cursor ? cursorIndex - 1 : messages.length - 1)
+  while (index >= 0 && index < messages.length && page.length < input.limit) {
+    const mapped = transcriptMessage(messages[index])
+    const size = jsonBytes(mapped)
+    if (page.length > 0 && bytes + size > TRANSCRIPT_PAGE_BUDGET_BYTES) break
+    page.push(mapped)
+    bytes += size
+    index += forward ? 1 : -1
+  }
+  const more = index >= 0 && index < messages.length
+  if (!forward) page.reverse()
+  const observation = remoteSessionObservation(snapshot, waitingFor)
+  const status = observation.status === "silent" ? "idle" : observation.status
+  return {
+    title: typeof snapshot?.title === "string" ? snapshot.title.slice(0, 240) : null,
+    status,
+    waitingFor: status === "waiting" ? observation.waitingFor ?? null : null,
+    lastError: observation.error ?? null,
+    messageCount: messages.length,
+    from: forward ? "start" : "end",
+    messages: page,
+    nextCursor: more && page.length ? (forward ? page.at(-1).id : page[0].id) : null,
+  }
+}
+
+function modelInputFromAssignment(model) {
+  return model
+    ? { providerId: model.providerId, modelId: model.modelId, ...(model.variant ? { variant: model.variant } : {}) }
+    : undefined
+}
+
+/**
+ * Runs one Den request against the local session it names. The caller bounds
+ * it with `options.signal`. A follow-up returns the turn the progress watcher
+ * should wait for.
+ */
+export async function executeRemoteSessionRequest(assignment, options) {
+  const fetchImpl = options.fetchImpl ?? fetch
+  const local = await options.getLocalRuntime()
+  if (!local?.baseUrl || !local?.token) {
+    const error = new Error("The desktop runtime is unavailable")
+    Object.defineProperty(error, "code", { value: "runtime_unavailable" })
+    throw error
+  }
+  const client = createWorkspaceSessionClient(local, assignment.workspaceId, fetchImpl)
+  if (assignment.action === "read") {
+    const snapshot = await client.getThreadSnapshot(assignment.sessionId, { signal: options.signal })
+    const running = snapshot?.status?.type === "busy" || snapshot?.status?.type === "retry"
+    const waitingFor = running
+      ? await readRemoteSessionWaitingFor(local, assignment.workspaceId, assignment.sessionId, assignment.engine ?? undefined, fetchImpl, options.signal)
+      : null
+    return { action: "read", result: remoteSessionTranscriptPage(snapshot, assignment.input, waitingFor ?? null) }
+  }
+  if (assignment.action === "send") {
+    const model = modelInputFromAssignment(assignment.input.model)
+    const before = assignment.input.messageId
+      ? null
+      : await client.getThreadSnapshot(assignment.sessionId, { signal: options.signal, limit: 50 })
+    const accepted = await client.sendTurn(assignment.sessionId, {
+      prompt: assignment.input.prompt,
+      ...(assignment.input.messageId ? { messageId: assignment.input.messageId } : {}),
+      ...(model ? { model } : {}),
+      signal: options.signal,
+    })
+    return {
+      action: "send",
+      result: { messageId: accepted.messageId ?? null, alreadyPresent: accepted.alreadyPresent === true },
+      turn: { messageId: accepted.messageId ?? null, previousUserMessageId: before ? lastUserMessageId(before) : null },
+      model,
+    }
+  }
+  if (assignment.action === "stop") {
+    if (assignment.input.messageId) {
+      const snapshot = await client.getThreadSnapshot(assignment.sessionId, { signal: options.signal, limit: 50 })
+      if (lastUserMessageId(snapshot) !== assignment.input.messageId) {
+        return { action: "stop", result: { stopped: false, reason: "different_turn" } }
+      }
+    }
+    const aborted = await client.abortThread(assignment.sessionId, { signal: options.signal })
+    return { action: "stop", result: { stopped: aborted.accepted === true, reason: null } }
+  }
+  const error = new Error(`Unsupported remote-session request ${String(assignment.action)}`)
+  Object.defineProperty(error, "code", { value: "unsupported_request" })
+  throw error
+}
+
+/** The failure Den stores for a request; never echoes more than 2,000 characters. */
+export function classifyRemoteSessionRequestError(error, timedOut) {
+  if (timedOut) {
+    return { code: "desktop_timeout", message: "The desktop did not finish the request in time." }
+  }
+  if (error?.status === 404) {
+    return { code: "unknown_session", message: "The local session is no longer available." }
+  }
+  if (["invalid_cursor", "runtime_unavailable", "unsupported_request"].includes(error?.code)) {
+    return { code: error.code, message: serializedError(error).slice(0, REMOTE_SESSION_MESSAGE_LIMIT) }
+  }
+  return {
+    code: "request_failed",
+    message: (serializedError(error) || "The desktop request failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT),
   }
 }
 
@@ -68,11 +595,12 @@ async function requestJson(fetchImpl, baseUrl, token, requestPath, options = {})
   return payload
 }
 
-function createWorkspaceSessionClient(local, workspaceId, fetchImpl) {
+function createWorkspaceSessionClient(local, workspaceId, fetchImpl, requireModelAvailability = false) {
   return createHeadlessThreadClient({
     baseUrl: local.baseUrl,
     workspaceId,
     token: local.token,
+    requireModelAvailability,
     // Automation run receipts own recovery; desktop restart must not independently
     // resume an occurrence that its scheduler may already have settled or retried.
     fetch: (input, init) => {
@@ -80,7 +608,7 @@ function createWorkspaceSessionClient(local, workspaceId, fetchImpl) {
       headers.set("x-openwork-task-recovery", "off")
       return fetchImpl(input, { ...init, headers })
     },
-    requestTimeoutMs: 0,
+    requestTimeoutMs: requireModelAvailability ? 15_000 : 0,
   })
 }
 
@@ -152,6 +680,40 @@ export function resolveAssignmentWorkspace(listed, pinnedWorkspaceId) {
   return workspace
 }
 
+/**
+ * Ids of the workspaces this desktop has, or null when the local runtime
+ * cannot say (it is starting, or unreachable).
+ */
+export async function listLocalWorkspaceIds(options) {
+  const local = await options.getLocalRuntime()
+  if (!local?.baseUrl || !local?.token) return null
+  const listed = await requestJson(options.fetchImpl ?? fetch, local.baseUrl, local.token, "/workspaces", { signal: options.signal })
+  const items = Array.isArray(listed?.items) ? listed.items : []
+  return new Set(items.flatMap((item) => (typeof item?.id === "string" && item.id ? [item.id] : [])))
+}
+
+/**
+ * Picks the first work item this desktop can run. A member may have many
+ * desktops and every one of them sees the same work, so a run pinned to a
+ * workspace this desktop lacks is left for the desktop that has it rather
+ * than claimed and failed here. Local workspaces are listed only when a pinned
+ * item appears; when they cannot be listed, pinned items wait for the next poll.
+ */
+export async function selectRunnableWorkItem(items, listWorkspaceIds) {
+  let workspaceIds
+  for (const item of Array.isArray(items) ? items : []) {
+    if (item?.kind === "remote_session_create") {
+      if (item.commandId) return item
+      continue
+    }
+    if (!item?.runId) continue
+    if (!item.workspaceId) return item
+    if (workspaceIds === undefined) workspaceIds = await listWorkspaceIds().catch(() => null)
+    if (workspaceIds?.has(item.workspaceId)) return item
+  }
+  return null
+}
+
 /** Runs the assignment as a normal visible local OpenWork thread. */
 export async function executeDesktopAutomation(assignment, options) {
   const local = await options.getLocalRuntime()
@@ -166,7 +728,7 @@ export async function executeDesktopAutomation(assignment, options) {
   const listed = await localRequest("/workspaces")
   const workspace = resolveAssignmentWorkspace(listed, assignment.workspaceId ?? null)
   const workspaceId = String(workspace.id)
-  const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch)
+  const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch, true)
   const created = await client.createThread({
     title: `Automation: ${assignment.automationName}`.slice(0, 120),
     ...(assignment.instructions ? { prompt: assignment.instructions } : {}),
@@ -232,10 +794,187 @@ export async function executeDesktopAutomation(assignment, options) {
   }
 }
 
+function trimmedText(value, limit) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, limit) : null
+}
+
+/** Runs `task` over `items` with at most `limit` in flight, preserving order. */
+async function mapBounded(items, limit, task) {
+  const results = new Array(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await task(items[index])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+function modelsFromV1Providers(payload) {
+  const providers = Array.isArray(payload?.all) ? payload.all : []
+  const connected = Array.isArray(payload?.connected) ? new Set(payload.connected) : null
+  const models = []
+  for (const provider of providers) {
+    const providerId = trimmedText(provider?.id, 160)
+    if (!providerId || (connected && !connected.has(providerId))) continue
+    const entries = provider?.models && typeof provider.models === "object" ? Object.entries(provider.models) : []
+    for (const [key, model] of entries) {
+      const modelId = trimmedText(model?.id, 160) ?? trimmedText(key, 160)
+      if (!modelId) continue
+      models.push({ providerId, modelId, name: trimmedText(model?.name, 200) ?? modelId })
+    }
+  }
+  return models
+}
+
+function modelsFromV2Catalog(payload) {
+  const items = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : []
+  return items.flatMap((model) => {
+    const providerId = trimmedText(model?.providerID, 160)
+    const modelId = trimmedText(model?.id, 160)
+    if (!providerId || !modelId) return []
+    return [{ providerId, modelId, name: trimmedText(model?.name, 200) ?? modelId }]
+  })
+}
+
+function defaultModelFrom(payload) {
+  const model = payload?.model
+  const providerId = trimmedText(model?.providerID, 160)
+  const modelId = trimmedText(model?.modelID, 160)
+  if (!providerId || !modelId) return null
+  const variant = trimmedText(model?.variant, 60)
+  return { providerId, modelId, ...(variant ? { variant } : {}) }
+}
+
+/**
+ * What this desktop has for remote-session callers: a friendly computer
+ * label and, per workspace, its engine, default model and usable models.
+ * Every source is optional: an endpoint this openwork-server lacks (404) or
+ * that fails reads as "nothing known" rather than failing the report. Returns
+ * null when the local runtime is not up yet.
+ */
+export async function collectDesktopInventory(options) {
+  const local = await options.getLocalRuntime()
+  if (!local?.baseUrl || !local?.token) return null
+  const computer = await options.describeComputer()
+  const localRequest = (requestPath) => requestJson(options.fetchImpl ?? fetch, local.baseUrl, local.token, requestPath, {
+    signal: options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(INVENTORY_REQUEST_TIMEOUT_MS)])
+      : AbortSignal.timeout(INVENTORY_REQUEST_TIMEOUT_MS),
+  })
+  const optional = (requestPath) => localRequest(requestPath).catch(() => null)
+  const listed = await localRequest("/workspaces")
+  const status = await optional("/experimental/engine-v2-preview/status")
+  const engine = status?.enabled === true && status?.chatRouting === true ? "v2" : "v1"
+  const items = (Array.isArray(listed?.items) ? listed.items : [])
+    .filter((item) => typeof item?.id === "string" && item.id)
+    .slice(0, INVENTORY_WORKSPACE_LIMIT)
+  const workspaces = await mapBounded(items, INVENTORY_CONCURRENCY, async (item) => {
+    const base = `/workspace/${encodeURIComponent(item.id)}`
+    const [defaults, catalog] = await Promise.all([
+      optional(`${base}/default-model`),
+      optional(engine === "v2" ? `${base}/opencode2/api/model` : `${base}/opencode/provider`),
+    ])
+    const models = engine === "v2" ? modelsFromV2Catalog(catalog) : modelsFromV1Providers(catalog)
+    return {
+      workspaceId: String(item.id).slice(0, 240),
+      name: trimmedText(item.displayName, 120) ?? trimmedText(item.name, 120) ?? "Workspace",
+      active: item.id === listed?.activeId,
+      engine,
+      defaultModel: defaultModelFrom(defaults),
+      models: models.slice(0, INVENTORY_MODEL_LIMIT),
+    }
+  })
+  return {
+    computer: {
+      label: trimmedText(computer?.label, 120) ?? "Computer",
+      platform: computer.platform,
+      appVersion: trimmedText(computer?.appVersion, 80) ?? "unknown",
+    },
+    workspaces,
+  }
+}
+
+/**
+ * Describes this computer for remote-session callers. macOS has a
+ * user-visible computer name (System Settings > General > Sharing); other
+ * platforms, and a Mac whose name cannot be read, use the host name.
+ */
+export function createComputerDescriber(options) {
+  return async () => {
+    const named = options.platform === "darwin" && options.readComputerName
+      ? trimmedText(await options.readComputerName().catch(() => null), 120)
+      : null
+    let hostname = null
+    try { hostname = trimmedText(options.hostname(), 120) } catch { /* unnamed host */ }
+    return {
+      label: named ?? hostname ?? "Computer",
+      platform: options.platform,
+      appVersion: options.appVersion,
+    }
+  }
+}
+
+function workspaceUnavailable(workspaceId) {
+  const error = new Error(`Workspace ${workspaceId} is not available on this desktop`)
+  Object.defineProperty(error, "code", { value: "workspace_unavailable" })
+  return error
+}
+
+/**
+ * The desktop app is connected and took the command, but its local OpenWork
+ * server or engine is not answering. Den shows this code as final, so the
+ * caller does not queue the same task again until OpenWork is running.
+ */
+const LOCAL_RUNTIME_UNREACHABLE = Object.freeze({
+  code: "openwork_unreachable",
+  message: "Can't reach OpenWork on your desktop. Make sure OpenWork is running.",
+})
+
+/** Codes the local OpenWork server answers with when its engine is down or not started. */
+const LOCAL_ENGINE_DOWN_CODES = new Set(["opencode_unreachable", "opencode_engine_unreachable", "engine_v2_preview_not_running"])
+
+/** True only when the local runtime gave no answer, or said its engine is down; an engine's own error is not that. */
+function isLocalRuntimeUnreachable(error) {
+  if (error?.code === "runtime_unavailable" || error?.name === "TimeoutError") return true
+  // The session client keeps the server's code, or its whole body when the body uses `error`.
+  if (LOCAL_ENGINE_DOWN_CODES.has(error?.code) || LOCAL_ENGINE_DOWN_CODES.has(error?.body?.error)) return true
+  if (typeof error?.status === "number") return false
+  // No response at all: the session client's network failure, or a raw fetch that was refused, reset or timed out.
+  if (error?.code === "request_failed") return true
+  return /fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|other side closed/i
+    .test(`${serializedError(error)} ${serializedError(error?.cause ?? "")}`)
+}
+
+/** The failure Den stores when a remote command could not start a local session. */
+export function classifyRemoteSessionCommandError(error) {
+  if (error?.code === "workspace_unavailable") {
+    return { code: "workspace_unavailable", message: serializedError(error).slice(0, REMOTE_SESSION_MESSAGE_LIMIT) }
+  }
+  const detail = serializedError(error)
+  // Once a session exists the task started; only a failure to start it is about reachability.
+  if (Reflect.get(Object(error), "sessionId") === undefined && isLocalRuntimeUnreachable(error)) {
+    return {
+      code: LOCAL_RUNTIME_UNREACHABLE.code,
+      message: `${LOCAL_RUNTIME_UNREACHABLE.message}${detail ? ` (details: ${detail.slice(0, 300)})` : ""}`,
+    }
+  }
+  return {
+    code: "execution_failed",
+    message: (detail || "Remote session creation failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT),
+  }
+}
+
 /** Delivers a remote command as a normal visible local OpenWork session. */
 export async function executeDesktopRemoteSession(assignment, options) {
   const local = await options.getLocalRuntime()
-  if (!local?.baseUrl || !local?.token) throw new Error("The desktop runtime is unavailable")
+  if (!local?.baseUrl || !local?.token) {
+    const error = new Error("The desktop runtime is unavailable")
+    Object.defineProperty(error, "code", { value: "runtime_unavailable" })
+    throw error
+  }
   const localRequest = (requestPath, request = {}) => requestJson(
     options.fetchImpl ?? fetch,
     local.baseUrl,
@@ -244,9 +983,15 @@ export async function executeDesktopRemoteSession(assignment, options) {
     { ...request, signal: options.signal },
   )
   const listed = await localRequest("/workspaces")
-  const workspaces = Array.isArray(listed?.items) ? listed.items : []
-  const workspace = workspaces.find((item) => item?.id === listed?.activeId) ?? workspaces[0]
-  if (!workspace?.id) throw new Error("No local workspace is available")
+  let workspace
+  try {
+    // The caller's chosen workspace must exist here, exactly like an
+    // Automation's pinned workspace; never fall back to the active one.
+    workspace = resolveAssignmentWorkspace(listed, assignment.workspaceId ?? null)
+  } catch (error) {
+    if (assignment.workspaceId) throw workspaceUnavailable(assignment.workspaceId)
+    throw error
+  }
   const workspaceId = String(workspace.id)
   const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch)
   let sessionId = null
@@ -259,7 +1004,10 @@ export async function executeDesktopRemoteSession(assignment, options) {
     })
     sessionId = created.id
     const started = created.started
-    return { sessionId, workspaceId, started }
+    const firstTurn = started
+      ? await observeRemoteSessionFirstTurn(client, sessionId, workspaceId, options)
+      : { outcome: "not_started" }
+    return { sessionId, workspaceId, started, firstTurn, ...remoteSessionThreadIdentity(created) }
   } catch (error) {
     const contextualError = error instanceof Error ? error : new Error(serializedError(error))
     if (sessionId && Reflect.get(contextualError, "sessionId") === undefined) {
@@ -303,10 +1051,12 @@ function runnerTokenBinding(token) {
     const scope = [decoded?.o, decoded?.m, decoded?.r].every((value) => typeof value === "string")
       ? `${decoded.o}\n${decoded.m}\n${decoded.r}`
       : null
-    if (decoded?.v === 1) return { version: 1, audience: null, scope }
+    // Den signs the capabilities it accepted at registration into the token.
+    const capabilities = Array.isArray(decoded?.c) ? decoded.c.filter((value) => typeof value === "string") : []
+    if (decoded?.v === 1) return { version: 1, audience: null, scope, capabilities }
     if (decoded?.v !== 2 || typeof decoded.a !== "string") return null
     const audience = normalizeRunnerBaseUrl(decoded.a)
-    return audience ? { version: 2, audience, scope } : null
+    return audience ? { version: 2, audience, scope, capabilities } : null
   } catch {
     return null
   }
@@ -314,6 +1064,19 @@ function runnerTokenBinding(token) {
 
 export function runnerTokenAudience(token) {
   return runnerTokenBinding(token)?.audience ?? null
+}
+
+const RUNNER_OFF_VALUES = new Set(["off", "0", "false", "disabled"])
+
+/**
+ * `OPENWORK_AUTOMATION_RUNNER=off` keeps this desktop from claiming any
+ * Automation run or remote-session command. Eval desktops set it by default:
+ * Den hands a member's work to any of that member's runners, so a test
+ * desktop signed in to a real account would otherwise take real work.
+ */
+export function automationRunnerDisabledReason(env) {
+  const value = String(env?.OPENWORK_AUTOMATION_RUNNER ?? "").trim().toLowerCase()
+  return RUNNER_OFF_VALUES.has(value) ? `OPENWORK_AUTOMATION_RUNNER=${value}` : null
 }
 
 export function createDesktopAutomationRunner(options) {
@@ -325,6 +1088,8 @@ export function createDesktopAutomationRunner(options) {
   const heartbeatMissLimit = options.heartbeatMissLimit ?? 3
   const workPollTimeoutMs = options.workPollTimeoutMs ?? 30_000
   const lifecycleRequestTimeoutMs = options.lifecycleRequestTimeoutMs ?? 30_000
+  const requestPoll = { ...REMOTE_SESSION_REQUEST_POLL, ...options.remoteSessionRequestPoll }
+  const remoteRequestTimeoutMs = options.remoteSessionRequestTimeoutMs ?? REMOTE_SESSION_REQUEST_TIMEOUT_MS
   const legacyBaseUrls = new Set((options.legacyBaseUrls ?? [])
     .map((value) => normalizeRunnerBaseUrl(value))
     .filter(Boolean))
@@ -333,6 +1098,51 @@ export function createDesktopAutomationRunner(options) {
   let pendingConfiguration = null
   let stopped = false
   const rejectedCredentials = new Set()
+
+  const inventoryMinIntervalMs = options.inventoryMinIntervalMs ?? INVENTORY_MIN_INTERVAL_MS
+  const now = options.now ?? Date.now
+
+  /**
+   * Tells Den what this desktop has, so remote-session callers can choose a
+   * computer, workspace and model. Sent once per credential (registration)
+   * and then only when it changed, gathered at most once per interval. Den
+   * versions without the endpoint answer 404 and are not asked again under
+   * this credential. A failure never affects polling for work.
+   */
+  const reportInventory = (state) => {
+    if (!options.describeComputer || state.inventoryUnsupported || state.inventoryInFlight || !isCurrent(state)) return
+    if (state.inventoryCheckedAt !== null && now() - state.inventoryCheckedAt < inventoryMinIntervalMs) return
+    state.inventoryCheckedAt = now()
+    state.inventoryInFlight = (async () => {
+      try {
+        const inventory = await collectDesktopInventory({
+          getLocalRuntime: options.getLocalRuntime,
+          describeComputer: options.describeComputer,
+          fetchImpl,
+          signal: state.controller.signal,
+        })
+        if (!inventory || !isCurrent(state)) {
+          // The local runtime is still starting: try again on the next poll.
+          if (!inventory) state.inventoryCheckedAt = null
+          return
+        }
+        const key = JSON.stringify(inventory)
+        if (key === state.inventoryKey) return
+        await runnerRequest(state, "/v1/automation-runner/inventory", {
+          method: "PUT",
+          body: inventory,
+          signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+        })
+        state.inventoryKey = key
+      } catch (error) {
+        if (error?.status === 404) state.inventoryUnsupported = true
+        else options.log?.(`runner inventory report failed: ${serializedError(error)}`)
+      } finally {
+        state.inventoryInFlight = null
+        options.onInventoryReported?.()
+      }
+    })()
+  }
 
   const credentialKey = (configuration) => `${configuration.baseUrl}\n${configuration.token}`
   const isCurrent = (state) => !stopped
@@ -531,26 +1341,30 @@ export function createDesktopAutomationRunner(options) {
     const active = { assignment, controller }
     state.active = active
     let result
+    let delivered = null
     try {
       const output = await executeDesktopRemoteSession(assignment, {
         getLocalRuntime: options.getLocalRuntime,
         fetchImpl,
         signal: controller.signal,
+        firstTurnWindowMs: options.remoteSessionFirstTurnWindowMs,
+        idleGraceMs: options.remoteSessionIdleGraceMs,
+        pollIntervalMs: options.remoteSessionPollIntervalMs,
       })
-      result = {
-        status: "delivered",
-        sessionId: output.sessionId,
-        workspaceId: output.workspaceId,
-        resultSummary: "Remote session created",
-      }
+      // Released Den rejects session ids on a failed completion, so the
+      // failure message carries them for a person to find the local session.
+      result = output.firstTurn.outcome === "failed"
+        ? { status: "failed", error: { code: output.firstTurn.code, message: output.firstTurn.message } }
+        : {
+          status: "delivered",
+          sessionId: output.sessionId,
+          workspaceId: output.workspaceId,
+          resultSummary: "Remote session created",
+        }
+      // A session without a first turn has nothing to follow.
+      if (result.status === "delivered" && output.started) delivered = output
     } catch (error) {
-      result = {
-        status: "failed",
-        error: {
-          code: "execution_failed",
-          message: (serializedError(error) || "Remote session creation failed").slice(0, 2_000),
-        },
-      }
+      result = { status: "failed", error: classifyRemoteSessionCommandError(error) }
     }
     try {
       await runnerRequest(state, `/v1/remote-session-commands/${encodeURIComponent(assignment.commandId)}/complete`, {
@@ -558,12 +1372,192 @@ export function createDesktopAutomationRunner(options) {
         body: result,
         signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
       })
+      if (result.status === "delivered") state.lastRemoteActivityAt = Date.now()
+      if (delivered) {
+        startRemoteSessionWatch(state, assignment.commandId, {
+          sessionId: delivered.sessionId,
+          workspaceId: delivered.workspaceId,
+          engine: delivered.engine,
+          model: delivered.model ?? modelInputFromAssignment(assignment.model),
+        })
+      }
     } finally {
       if (state.active === active) state.active = null
       if (isCurrent(state) && pendingConfiguration) {
         const next = pendingConfiguration
         pendingConfiguration = null
         activateConfiguration(next)
+      }
+    }
+  }
+
+  /**
+   * Follows a delivered session in the background. It holds no runner slot,
+   * so the work loop keeps claiming; retiring the generation (configuration
+   * change, credential rejection, or stop) aborts it. Watchers live only in
+   * memory: a desktop restart stops reporting. A follow-up restarts the
+   * command's watcher for the new turn.
+   */
+  const startRemoteSessionWatch = (state, commandId, session, turn = null) => {
+    const commandPath = `/v1/remote-session-commands/${encodeURIComponent(commandId)}/session`
+    state.watchControllers.get(commandId)?.abort(new Error("Remote session watch restarted"))
+    const controller = new AbortController()
+    state.watchControllers.set(commandId, controller)
+    const watch = watchRemoteSession({
+      sessionId: session.sessionId,
+      workspaceId: session.workspaceId,
+      ...(session.engine ? { engine: session.engine } : {}),
+      ...(session.model ? { model: session.model } : {}),
+      ...(turn ? { turn } : {}),
+      getLocalRuntime: options.getLocalRuntime,
+      fetchImpl,
+      signal: AbortSignal.any([state.controller.signal, controller.signal]),
+      timing: options.remoteSessionWatch,
+      log: options.log,
+      report: async (body) => {
+        try {
+          await runnerRequest(state, commandPath, {
+            method: "POST",
+            body,
+            signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+          })
+          return true
+        } catch (error) {
+          // An older Den without this route, or a command that is no longer
+          // delivered: stop reporting rather than retrying forever.
+          if (error?.status === 404 || error?.status === 409) return false
+          throw error
+        }
+      },
+    })
+    state.watchers.add(watch)
+    watch
+      .then((outcome) => options.log?.(`remote session ${commandId} watch ended: ${outcome}`))
+      .catch((error) => options.log?.(`remote session ${commandId} watch failed: ${serializedError(error)}`))
+      .finally(() => {
+        state.watchers.delete(watch)
+        if (state.watchControllers.get(commandId) === controller) state.watchControllers.delete(commandId)
+        // Remote use keeps request polling fast for a while after the watch ends.
+        state.lastRemoteActivityAt = Math.max(state.lastRemoteActivityAt, Date.now())
+      })
+  }
+
+  /** Claims, runs, and answers one Den request without taking the runner slot. */
+  const runRemoteSessionRequest = async (state, requestId) => {
+    const requestPath = `/v1/remote-session-requests/${encodeURIComponent(requestId)}`
+    let claimed
+    try {
+      claimed = await runnerRequest(state, `${requestPath}/claim`, {
+        method: "POST",
+        body: {},
+        signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+      })
+    } catch (error) {
+      if (error?.status === 409) return
+      throw error
+    }
+    const assignment = claimed?.assignment
+    if (!assignment?.requestId) return
+    state.lastRemoteActivityAt = Date.now()
+    const remainingMs = Number(assignment.expiresAt) - Date.now()
+    let body
+    let followUp = null
+    if (!(remainingMs > 0)) {
+      // Never act on a stale request, least of all a follow-up nobody awaits.
+      body = { status: "failed", error: { code: "request_expired", message: "The request expired before the desktop ran it." } }
+    } else {
+      const timeout = AbortSignal.timeout(Math.min(remoteRequestTimeoutMs, remainingMs))
+      try {
+        const outcome = await executeRemoteSessionRequest(assignment, {
+          getLocalRuntime: options.getLocalRuntime,
+          fetchImpl,
+          signal: AbortSignal.any([state.controller.signal, timeout]),
+        })
+        body = { status: "done", outcome: { action: outcome.action, result: outcome.result } }
+        if (outcome.action === "send" && !outcome.result.alreadyPresent) followUp = outcome
+      } catch (error) {
+        if (!isCurrent(state)) return
+        body = { status: "failed", error: classifyRemoteSessionRequestError(error, timeout.aborted) }
+      }
+    }
+    const complete = (payload) => runnerRequest(state, `${requestPath}/complete`, {
+      method: "POST",
+      body: payload,
+      signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+    })
+    try {
+      await complete(body)
+    } catch (error) {
+      if (error?.status !== 400 || body.status !== "done") throw error
+      // Den rejected the result itself (for example its size): report why.
+      await complete({ status: "failed", error: { code: "result_rejected", message: "Den rejected the desktop's result." } })
+    }
+    // Den marks the command running again on completion; only then may the
+    // watcher report, so it cannot be overwritten.
+    if (followUp) {
+      startRemoteSessionWatch(state, assignment.commandId, {
+        sessionId: assignment.sessionId,
+        workspaceId: assignment.workspaceId,
+        engine: assignment.engine ?? undefined,
+        model: followUp.model,
+      }, followUp.turn)
+    }
+  }
+
+  const drainRemoteSessionRequests = (state) => {
+    if (!state.controlCapable || !isCurrent(state)) return Promise.resolve()
+    if (state.requestDrain) return state.requestDrain
+    const promise = (async () => {
+      const attempted = new Set()
+      while (isCurrent(state)) {
+        const response = await runnerRequest(state, "/v1/remote-session-requests/pending", {
+          signal: AbortSignal.timeout(workPollTimeoutMs),
+        })
+        const ids = (Array.isArray(response?.items) ? response.items : [])
+          .filter((item) => item?.kind === "remote_session_request" && typeof item.requestId === "string")
+          .map((item) => item.requestId)
+          .filter((id) => !attempted.has(id))
+        if (!ids.length) return
+        for (const id of ids) {
+          if (!isCurrent(state)) return
+          attempted.add(id)
+          try {
+            await runRemoteSessionRequest(state, id)
+          } catch (error) {
+            if (!isCurrent(state)) return
+            if ([401, 403].includes(error?.status)) return
+            options.log?.(`remote session request ${id} failed: ${serializedError(error)}`)
+          }
+        }
+      }
+    })().finally(() => {
+      if (state.requestDrain === promise) state.requestDrain = null
+    })
+    state.requestDrain = promise
+    return promise
+  }
+
+  /**
+   * Requests are polled every few seconds only while the desktop is in
+   * active remote use: a session is being watched, or one was delivered or
+   * asked about recently. Otherwise the regular work poll picks them up.
+   */
+  const remoteSessionRequestLoop = async (state) => {
+    while (isCurrent(state)) {
+      const active = state.watchers.size > 0
+        || Date.now() - state.lastRemoteActivityAt < requestPoll.activeWindowMs
+      if (active) {
+        try {
+          await drainRemoteSessionRequests(state)
+        } catch (error) {
+          if (!isCurrent(state)) return
+          options.log?.(`remote session request poll failed: ${serializedError(error)}`)
+        }
+      }
+      try {
+        await sleep(requestPoll.pollMs, state.controller.signal)
+      } catch {
+        return
       }
     }
   }
@@ -580,9 +1574,23 @@ export function createDesktopAutomationRunner(options) {
           signal: AbortSignal.timeout(workPollTimeoutMs),
         })
         if (!isCurrent(state)) break
-        const item = response?.items?.[0]
-        if (item?.kind === "remote_session_create") {
-          if (!item.commandId) break
+        const items = Array.isArray(response?.items) ? response.items : []
+        // Session requests run beside the slot; the loop continues with the
+        // first item that needs it.
+        if (items.some((entry) => entry?.kind === "remote_session_request")) {
+          drainRemoteSessionRequests(state).catch((error) => {
+            options.log?.(`remote session request drain failed: ${serializedError(error)}`)
+          })
+        }
+        // A run pinned to a workspace this desktop lacks is left for the
+        // owner's desktop that has it; request items are never selected here.
+        const item = await selectRunnableWorkItem(items, () => listLocalWorkspaceIds({
+          getLocalRuntime: options.getLocalRuntime,
+          fetchImpl,
+          signal: AbortSignal.any([state.controller.signal, AbortSignal.timeout(workPollTimeoutMs)]),
+        }))
+        if (!isCurrent(state) || !item) break
+        if (item.kind === "remote_session_create") {
           state.claimInFlight = true
           let claimed
           try {
@@ -601,7 +1609,6 @@ export function createDesktopAutomationRunner(options) {
           await runRemoteSessionCommand(state, claimed.assignment)
           continue
         }
-        if (!item?.runId) break
         state.claimInFlight = true
         let claimed
         try {
@@ -631,6 +1638,7 @@ export function createDesktopAutomationRunner(options) {
   const connectLoop = async (state) => {
     let reconnectAttempt = 0
     while (isCurrent(state)) {
+      reportInventory(state)
       try {
         await reconcile(state)
         reconnectAttempt = 0
@@ -662,15 +1670,35 @@ export function createDesktopAutomationRunner(options) {
       reconcilePromise: null,
       claimInFlight: false,
       active: null,
+      watchers: new Set(),
+      watchControllers: new Map(),
+      controlCapable: (runnerTokenBinding(configuration.token)?.capabilities ?? []).includes(REMOTE_SESSION_CONTROL_CAPABILITY),
+      requestDrain: null,
+      lastRemoteActivityAt: 0,
       retired: false,
       credentialRejected: false,
+      inventoryKey: null,
+      inventoryCheckedAt: null,
+      inventoryInFlight: null,
+      inventoryUnsupported: false,
     }
     current = state
     void connectLoop(state)
+    if (state.controlCapable) void remoteSessionRequestLoop(state)
   }
+
+  const disabledReason = options.disabledReason ?? null
+  let loggedDisabled = false
 
   return {
     configure(next) {
+      if (disabledReason) {
+        if (next && !loggedDisabled) {
+          loggedDisabled = true
+          options.log?.(`ignoring runner configuration: disabled by ${disabledReason}; this desktop will not claim Automation runs or remote-session commands`)
+        }
+        return { connected: false }
+      }
       const baseUrl = next ? normalizeRunnerBaseUrl(next.baseUrl) : null
       const token = next?.token ? String(next.token) : ""
       const binding = token ? runnerTokenBinding(token) : null
@@ -717,6 +1745,7 @@ export function createDesktopAutomationRunner(options) {
     wake() {
       const state = current
       if (stopped || !state || !isCurrent(state)) return { polled: false }
+      reportInventory(state)
       reconcile(state).catch((error) => {
         options.log?.(`runner wake poll failed: ${error instanceof Error ? error.message : String(error)}`)
       })

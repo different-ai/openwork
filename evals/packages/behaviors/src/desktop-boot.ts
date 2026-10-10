@@ -94,7 +94,7 @@ function workspaceIdFromRoute(route: string): string {
 async function waitForTaskUi(app: Surface, workspaceId: string): Promise<string> {
   await go(app, `/workspace/${workspaceId}/session`);
   await waitFor(app, browserScript((workspaceId) => {
-    const match = /^#?\/workspace\/([^/?#]+)\/session\/?$/.exec(window.location.hash);
+    const match = /^#?\/workspace\/([^/?#]+)\/session\/?$/.exec(window.location.hash || window.location.pathname);
     const routeReady = match?.[1] === workspaceId;
     const text = document.body.innerText;
     const runTask = [...document.querySelectorAll("button")]
@@ -150,6 +150,10 @@ export async function createAndSelectWorkspace(
     }
   } else {
     if (route.includes("/onboarding")) await completeOrganizationOnboarding(app);
+    // Right after sign-in the session route shows "Preparing workspace" while it
+    // connects to the local server. workspace.create fired in that window makes
+    // no request, yet reports success, and nothing is ever selected (#4848).
+    await waitUntilInteractive(app);
     workspaceId = await resolveWorkspaceId(app);
     // First launch selects a bootstrap "OpenWork Chat" workspace by itself, so a
     // selected workspace only satisfies the caller when it sits at the requested folder.

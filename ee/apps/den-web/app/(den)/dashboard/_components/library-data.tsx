@@ -3,6 +3,7 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { needsViewerSignIn } from "./library-view";
 import type { PluginAccessRole } from "./plugin-access-data";
 
 type LibraryNamedEntity = {
@@ -290,4 +291,10 @@ export function libraryQueryOptions() {
 
 export function useLibrary() {
   return useQuery(libraryQueryOptions());
+}
+
+/** Counts what waits on the viewer's sign-in, for the quiet sidebar dot. */
+export function useLibraryNeedsSignInCount(enabled: boolean): number {
+  const library = useQuery({ ...libraryQueryOptions(), enabled });
+  return (library.data ?? []).filter(needsViewerSignIn).length;
 }

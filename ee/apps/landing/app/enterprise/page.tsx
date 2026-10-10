@@ -5,7 +5,7 @@ import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 export const metadata = withSocialMetadata({
   title: "OpenWork Enterprise — Self-hosted AI agents for teams",
   description:
-    "Deploy shared skills, MCPs, and agent workflows across your org. Self-hosted or managed, 50+ LLM providers, HIPAA / SOC 2 / ISO 27001 / GDPR ready.",
+    "Deploy shared skills, MCPs, and agent workflows across your org. Self-hosted or managed, 50+ LLM providers, SOC 2 Type II audit complete.",
   alternates: {
     canonical: "/enterprise"
   },

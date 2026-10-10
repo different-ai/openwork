@@ -120,25 +120,6 @@ export function connectionForPresetUrl(
   return connections.find((connection) => comparableMcpUrl(connection.url) === target);
 }
 
-/** The configured connection a popular row represents, when one exists. */
-export function configuredConnectionForPopular(
-  connector: PopularConnector,
-  connections: readonly ExternalMcpConnection[],
-  presets: readonly ExternalMcpPreset[],
-): ExternalMcpConnection | undefined {
-  switch (connector.target.kind) {
-    case "google-workspace":
-      return connections.find((connection) => connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.nativeProviderKey === "google-workspace");
-    case "microsoft-365":
-      return connections.find((connection) => connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "microsoft-365");
-    case "preset": {
-      const presetId = connector.target.presetId;
-      const preset = presets.find((entry) => entry.presetId === presetId);
-      return preset ? connectionForPresetUrl(connections, preset.url) : undefined;
-    }
-  }
-}
-
 /** Curated presets that are not already represented by a popular row. */
 export function remainingPresets(presets: readonly ExternalMcpPreset[]): ExternalMcpPreset[] {
   const popularPresetIds = new Set(

@@ -46,6 +46,8 @@ export type ExtensionDetailModalProps = {
   connected?: boolean;
   connectedLabel?: string;
   disconnectedLabel?: string;
+  /** A saved personal key: show a neutral "Key saved" badge, never a green "Ready" claim. */
+  savedKeyOnly?: boolean;
   connecting?: boolean;
   /** Whether this item is hidden from the normal extensions catalog. */
   hidden?: boolean;
@@ -214,6 +216,7 @@ export function ExtensionDetailModal({
   connected = false,
   connectedLabel,
   disconnectedLabel,
+  savedKeyOnly = false,
   connecting = false,
   hidden = false,
   preview = false,
@@ -276,7 +279,11 @@ export function ExtensionDetailModal({
       <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
         {extensionTaxonomyLabel(taxonomy)}
       </span>
-      {connected ? (
+      {connected && savedKeyOnly ? (
+        <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {t("extensions.detail_key_saved")}
+        </span>
+      ) : connected ? (
         <span className="flex items-center gap-1 rounded-md bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">
           <CheckCircle2 size={10} strokeWidth={3} />
           {t("extensions.detail_ready")}
@@ -301,7 +308,7 @@ export function ExtensionDetailModal({
         <div
           className={cn(
             "flex size-12 items-center justify-center rounded-xl border",
-            connected ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
+            connected && !savedKeyOnly ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
           )}
         >
           {resolvedIconSrc ? (
@@ -316,7 +323,7 @@ export function ExtensionDetailModal({
             />
           )}
         </div>
-        {connected ? (
+        {connected && !savedKeyOnly ? (
           <div className="absolute -bottom-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-dls-surface bg-green-9">
             <CheckCircle2 size={11} className="text-white" strokeWidth={3} />
           </div>
@@ -548,7 +555,7 @@ export function ExtensionDetailModal({
 
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Status</span>
-                <span className={cn("font-medium", connected ? "text-green-11" : "text-muted-foreground")}>
+                <span className={cn("font-medium", connected && !savedKeyOnly ? "text-green-11" : "text-muted-foreground")}>
                   {connected
                     ? connectedLabel ?? (taxonomy === "plugin" ? "Installed" : "Connected")
                     : connecting

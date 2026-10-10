@@ -23,7 +23,7 @@ for (let iteration = 0; iteration < iterations; iteration++) {
     const label = `${engine}-${iteration + 1}`;
     const jsonPath = join(out, `${label}.json`);
     const before = new Set(await readdir(evidenceRoot).catch(() => []));
-    const specs = iteration ? ["engine-live-launch"] : ["engine-live-desktop", "engine-live-chat", "engine-live-launch"];
+    const specs = iteration ? ["engine-live-launch"] : ["engine-live-desktop", "engine-live-launch"];
     const cliArgs = ["--dir", "evals", "exec", "vitest", "run", "--project", "e2e", ...specs.map(name => `specs/${name}.e2e.test.ts`),
       "--no-file-parallelism", "--reporter=default", "--reporter=json", `--outputFile.json=${jsonPath}`];
     console.log(`\n${label}: ${iteration ? "fresh native launch" : "real-model native user journeys"}`);

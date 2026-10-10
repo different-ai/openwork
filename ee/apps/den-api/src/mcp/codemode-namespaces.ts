@@ -20,6 +20,19 @@ export function codemodeScriptPath(namespace: string, toolName: string): string 
     : `tools.${namespace}[${JSON.stringify(toolName)}]`
 }
 
+const BRACKET_SEGMENT_PATTERN = /\["((?:[^"\\]|\\.)*)"\]/gu
+
+/**
+ * The name Code Mode records for a call (its path joined with "."), for a
+ * script path: `tools.notion["notion-query"]` becomes `notion.notion-query`.
+ */
+export function codemodeCallName(scriptPath: string): string {
+  return scriptPath.replace(/^tools\./u, "").replace(BRACKET_SEGMENT_PATTERN, (match, body: string) => {
+    const segment: unknown = JSON.parse(`"${body}"`)
+    return typeof segment === "string" ? `.${segment}` : match
+  })
+}
+
 export function sanitizeNamespaceSegment(name: string): string {
   const sanitized = name.toLowerCase().replace(/[^a-z0-9_]+/g, "_")
   if (!sanitized) return "_"

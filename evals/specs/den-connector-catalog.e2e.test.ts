@@ -23,8 +23,8 @@ test("an admin sees the whole catalog, sets up Microsoft 365 on its own page, an
   await step("the add page lists every catalog connector plus Google Workspace and Microsoft 365", async () => {
     await admin.see({ role: "heading", label: "Add a connector" }, { timeoutMs: 90_000 });
     await admin.see({ role: "link", label: "Add Microsoft 365" }, { timeoutMs: 90_000 });
-    // Google Workspace already has an older org client, so it opens instead of adding again.
-    await admin.see({ role: "link", label: "Open Google Workspace" }, { timeoutMs: 60_000 });
+    // An existing org client must not hide the way to create another connector.
+    await admin.see({ role: "link", label: "Add another Google Workspace" }, { timeoutMs: 60_000 });
     for (const name of presetNames) await admin.see({ role: "link", label: new RegExp(`^(Add|Open) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
     const rows = await catalogRows();
     expect(rows).toHaveLength(presetNames.length + 2);
@@ -83,7 +83,8 @@ test("an admin sees the whole catalog, sets up Microsoft 365 on its own page, an
   });
 
   await step("a new Google Workspace app saves on its own page with its selected permissions", async () => {
-    await admin.navigate(`${base}/new/google-workspace`);
+    await admin.navigate(`${base}/new`);
+    await admin.click({ role: "link", label: "Add another Google Workspace" });
     await admin.see({ role: "heading", label: "Add Google Workspace" }, { timeoutMs: 60_000 });
     await admin.see({ testId: "native-provider-redirect-uri" }, { text: /\/connect\/callback/, timeoutMs: 60_000 });
     await admin.type({ label: "Name" }, "Workspace Documents", { replace: true });
@@ -100,6 +101,37 @@ test("an admin sees the whole catalog, sets up Microsoft 365 on its own page, an
     expect(saved).toMatchObject({ nativeProviderKey: "google-workspace", connectedForMe: false });
     expect((await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token")).toEqual(authBefore);
     evidence.recordAssertionEvidence("Google Workspace saves its own app without signing anyone in", `Connection ${String(saved?.id)} belongs to google-workspace; its settings show the saved client ID; connectedForMe=false`, true);
+    await admin.screenshot();
+  });
+
+  await step("another Google Workspace connector keeps the first app and permissions intact", async () => {
+    const before = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
+    const first = isRecord(before.body) ? records(before.body.connections).find((entry) => entry.name === "Workspace Documents") : undefined;
+    if (typeof first?.id !== "string") throw new Error("The first Workspace connector is missing.");
+    const firstClient = await probe.api(world.den.admin, `/v1/oauth-providers/${first.id}/client`);
+    await admin.navigate(`${base}/new`);
+    await admin.see({ role: "link", label: "Add another Google Workspace" }, { timeoutMs: 60_000 });
+    await admin.screenshot();
+    await admin.click({ role: "link", label: "Add another Google Workspace" });
+    await admin.see({ role: "heading", label: "Add Google Workspace" });
+    await admin.type({ label: "Name" }, "Workspace Calendar", { replace: true });
+    await admin.type({ testId: "native-provider-client-id" }, "calendar-test.apps.googleusercontent.com");
+    await admin.type({ testId: "native-provider-client-secret" }, "catalog-calendar-test-secret");
+    await admin.click({ label: "Read Gmail" });
+    await admin.click({ testId: "native-provider-save" });
+    await admin.see({ role: "heading", label: "Workspace Calendar" }, { timeoutMs: 60_000 });
+    const after = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable");
+    const second = isRecord(after.body) ? records(after.body.connections).find((entry) => entry.name === "Workspace Calendar") : undefined;
+    expect(second).toMatchObject({ nativeProviderKey: "google-workspace", connectedForMe: false });
+    expect(second?.id).not.toBe(first.id);
+    expect((await probe.api(world.den.admin, `/v1/oauth-providers/${first.id}/client`)).body).toEqual(firstClient.body);
+    const secondClient = await probe.api(world.den.admin, `/v1/oauth-providers/${String(second?.id)}/client`);
+    expect(secondClient.body).toMatchObject({ clientId: "calendar-test.apps.googleusercontent.com" });
+    expect(isRecord(secondClient.body) ? secondClient.body.features : null).toContain("gmailRead");
+    await admin.navigate(base);
+    await admin.see({ text: "Workspace Documents" });
+    await admin.see({ text: "Workspace Calendar" });
+    evidence.recordAssertionEvidence("Google Workspace can be added twice from the catalog", "Add another remains available; both named connectors exist with distinct IDs and OAuth clients; the first app and permissions are unchanged.", true);
     await admin.screenshot();
   });
 

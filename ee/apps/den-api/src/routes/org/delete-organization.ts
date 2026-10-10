@@ -4,6 +4,12 @@ import {
   AuthApiKeyTable,
   AuthSessionTable,
   AuditEventTable,
+  AuditEventResourceTable,
+  AuditOperationTable,
+  AuditOperationStepTable,
+  AuditPolicyTable,
+  AuditStateTable,
+  AuditUsageFactTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -30,6 +36,7 @@ import {
   InferenceOrgUsageBucketTable,
   GatewayKeyTable,
   GatewayCredentialSetTable,
+  GatewayLiteLlmIssuedKeyTable,
   GatewayModelGroupTable,
   GatewayModelGroupModelTable,
   GatewayProviderAccessTable,
@@ -58,6 +65,9 @@ import {
   OrganizationTable,
   OrganizationWebOriginTable,
   OrgSubscriptionTable,
+  PermissionSetPermissionTable,
+  PermissionSetTable,
+  PermissionSetTeamTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginMcpRequirementBindingTable,
@@ -85,6 +95,7 @@ import { deleteModelsAnalyticsForOrganization } from "@openwork-ee/telemetry"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { completeLinearIssue, createLinearIssue, type LinearIssue } from "../../linear.js"
@@ -350,6 +361,10 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       },
     }),
     async (c) => {
+      // The purge removes this organization's tenant audit history, so the
+      // platform record (success or failure) carries it as the target; the id
+      // comes from the verified organizationContext, never request input.
+      addAuditRequestResource(c, { type: "organization", id: c.get("organizationContext").organization.id, relationship: "target" })
       const permission = ensureOwner(c)
       if (!permission.ok) {
         return c.json(permission.response, orgAccessFailureStatus(permission.response))
@@ -465,6 +480,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           .map((row) => row.id)
         if (gatewayProviderIds.length > 0) {
           await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
+          // Keys OpenWork created in a customer's LiteLLM outlive this record; that proxy is not ours to change.
+          await tx.delete(GatewayLiteLlmIssuedKeyTable).where(inArray(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, gatewayProviderIds))
           const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
           if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
           await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
@@ -501,6 +518,10 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(WorkspaceBootstrapTable).where(eq(WorkspaceBootstrapTable.organizationId, organizationId))
         await tx.delete(InstallLinkTable).where(eq(InstallLinkTable.organizationId, organizationId))
         await tx.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.organizationId, organizationId))
+        // Permission rows are append-only; organization erasure is the one sanctioned hard delete.
+        await tx.delete(PermissionSetTeamTable).where(eq(PermissionSetTeamTable.organizationId, organizationId))
+        await tx.delete(PermissionSetPermissionTable).where(eq(PermissionSetPermissionTable.organizationId, organizationId))
+        await tx.delete(PermissionSetTable).where(eq(PermissionSetTable.organizationId, organizationId))
 
         await tx.delete(ScimProviderTable).where(eq(ScimProviderTable.organizationId, organizationId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.organizationId, organizationId))
@@ -508,7 +529,16 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.organizationId, organizationId))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.organizationId, organizationId))
 
+        // Explicit owner-authorized organization erasure, not resource cleanup.
+        // No settlement is active for these pilot facts. Billing evidence needs
+        // a separate retention policy before commercial settlement is enabled.
+        await tx.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId))
         await tx.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId))
+        await tx.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId))
+        await tx.delete(AuditOperationTable).where(eq(AuditOperationTable.organization_id, organizationId))
+        await tx.delete(AuditUsageFactTable).where(eq(AuditUsageFactTable.organization_id, organizationId))
+        await tx.delete(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId))
+        await tx.delete(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId))
         await tx.delete(WorkerTable).where(eq(WorkerTable.org_id, organizationId))
         await tx.delete(TelemetryEventTable).where(eq(TelemetryEventTable.org_id, organizationId))
         await tx.delete(TelemetrySessionDimensionTable).where(eq(TelemetrySessionDimensionTable.org_id, organizationId))

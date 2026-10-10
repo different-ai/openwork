@@ -4,6 +4,17 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./google-drive-upload": {
+      "types": "./src/google-drive-upload.ts",
+      "development": "./src/google-drive-upload.ts",
+      "bun": "./src/google-drive-upload.ts",
+      "default": "./dist/google-drive-upload.js"
+    },
+    "./den/managed-deployments": {
+      "types": "./src/den/managed-deployments.ts",
+      "development": "./src/den/managed-deployments.ts",
+      "default": "./src/den/managed-deployments.ts"
+    },
     "./cloud-model-fast": {
       "types": "./src/cloud-model-fast.ts",
       "development": "./src/cloud-model-fast.ts",
@@ -41,10 +52,32 @@
       "development": "./src/automations.ts",
       "default": "./src/automations.ts"
     },
+    "./automation-models": {
+      "types": "./src/automation-models.ts",
+      "development": "./src/automation-models.ts",
+      "default": "./src/automation-models.ts"
+    },
+    "./automation-schedule": {
+      "types": "./src/automation-schedule.ts",
+      "development": "./src/automation-schedule.ts",
+      "default": "./src/automation-schedule.ts"
+    },
     "./workflows": {
       "types": "./src/workflows.ts",
       "development": "./src/workflows.ts",
       "default": "./src/workflows.ts"
+    },
+    "./mcp-app-timing": {
+      "types": "./src/mcp-app-timing.ts",
+      "development": "./src/mcp-app-timing.ts",
+      "bun": "./src/mcp-app-timing.ts",
+      "browser": "./src/mcp-app-timing.ts",
+      "default": "./dist/mcp-app-timing.js"
+    },
+    "./mcp-app": {
+      "types": "./src/mcp-app.ts",
+      "development": "./src/mcp-app.ts",
+      "default": "./src/mcp-app.ts"
     },
     "./skill-created-app": {
       "types": "./src/skill-created-app.ts",
@@ -62,6 +95,11 @@
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",
       "default": "./src/den/desktop-app-restrictions.ts"
+    },
+    "./den/permissions": {
+      "types": "./src/den/permissions.ts",
+      "development": "./src/den/permissions.ts",
+      "default": "./src/den/permissions.ts"
     },
     "./den/desktop-policies": {
       "types": "./src/den/desktop-policies.ts",
@@ -87,6 +125,11 @@
       "types": "./src/den/deployment-capabilities.ts",
       "development": "./src/den/deployment-capabilities.ts",
       "default": "./src/den/deployment-capabilities.ts"
+    },
+    "./den/audit": {
+      "types": "./src/den/audit.ts",
+      "development": "./src/den/audit.ts",
+      "default": "./src/den/audit.ts"
     },
     "./den/gateway": {
       "types": "./src/den/gateway.ts",
@@ -118,6 +161,11 @@
       "types": "./src/den/organization-web-origins.ts",
       "development": "./src/den/organization-web-origins.ts",
       "default": "./src/den/organization-web-origins.ts"
+    },
+    "./den/workbot-settings": {
+      "types": "./src/den/workbot-settings.ts",
+      "development": "./src/den/workbot-settings.ts",
+      "default": "./src/den/workbot-settings.ts"
     },
     "./den/mcp-connection-action": {
       "types": "./src/den/mcp-connection-action.ts",
@@ -159,6 +207,7 @@
     "build": "tsup"
   },
   "dependencies": {
+    "@openwork/managed-deployments": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {

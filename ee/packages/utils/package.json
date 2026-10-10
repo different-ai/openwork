@@ -31,10 +31,20 @@
       "development": "./src/inference-egress.ts",
       "default": "./dist/inference-egress.js"
     },
+    "./bedrock-mantle-catalog": {
+      "types": "./src/bedrock-mantle-catalog.ts",
+      "development": "./src/bedrock-mantle-catalog.ts",
+      "default": "./dist/bedrock-mantle-catalog.js"
+    },
     "./inference-credentials": {
       "types": "./src/inference-credentials.ts",
       "development": "./src/inference-credentials.ts",
       "default": "./dist/inference-credentials.js"
+    },
+    "./free-inference-digest": {
+      "types": "./src/free-inference-digest.ts",
+      "development": "./src/free-inference-digest.ts",
+      "default": "./dist/free-inference-digest.js"
     },
     "./gateway-bearer-key": {
       "types": "./src/gateway-bearer-key.ts",
@@ -60,11 +70,41 @@
       "types": "./src/inference-bearer-key.ts",
       "development": "./src/inference-bearer-key.ts",
       "default": "./dist/inference-bearer-key.js"
+    },
+    "./litellm-catalog": {
+      "types": "./src/litellm-catalog.ts",
+      "development": "./src/litellm-catalog.ts",
+      "default": "./dist/litellm-catalog.js"
+    },
+    "./ai-sdk-env-settings": {
+      "types": "./src/ai-sdk-env-settings.ts",
+      "development": "./src/ai-sdk-env-settings.ts",
+      "default": "./dist/ai-sdk-env-settings.js"
+    },
+    "./aws-sigv4": {
+      "types": "./src/aws-sigv4.ts",
+      "development": "./src/aws-sigv4.ts",
+      "default": "./dist/aws-sigv4.js"
+    },
+    "./aws-identity-center": {
+      "types": "./src/aws-identity-center.ts",
+      "development": "./src/aws-identity-center.ts",
+      "default": "./dist/aws-identity-center.js"
+    },
+    "./microsoft-entra": {
+      "types": "./src/microsoft-entra.ts",
+      "development": "./src/microsoft-entra.ts",
+      "default": "./dist/microsoft-entra.js"
+    },
+    "./microsoft-foundry-catalog": {
+      "types": "./src/microsoft-foundry-catalog.ts",
+      "development": "./src/microsoft-foundry-catalog.ts",
+      "default": "./dist/microsoft-foundry-catalog.js"
     }
   },
   "scripts": {
     "build": "tsup",
-    "test": "bun test src/observability.test.ts src/den-urls.test.ts src/inference-bearer-key.test.ts"
+    "test": "node --test src/*.test.ts"
   },
   "dependencies": {
     "luxon": "^3.6.1",

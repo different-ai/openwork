@@ -13,7 +13,8 @@ import type { Place } from "../../evals/packages/env/src/place.ts";
 import { defaultDaytonaExec, execInSandbox, startScriptOnSandbox } from "../../evals/packages/hosts/src/index.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
 
-export const ACME_MODEL = "claude-haiku-4-5-20251001";
+// Use a catalog-supported alias; inventing a version/date makes Den reject the provider.
+export const ACME_MODEL = "claude-haiku-5-5";
 export const ACME_REPLY = "Acme AI Gateway is working.";
 export const ACME_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 
@@ -21,7 +22,14 @@ export function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export async function startAcmeUpstream(stack: AsyncDisposableStack) {
+export interface AcmeStreamCheckpoint {
+  trigger: string;
+  prefix: string;
+  suffix: string;
+  hold(): Promise<void>;
+}
+
+export async function startAcmeUpstream(stack: AsyncDisposableStack, checkpoint?: AcmeStreamCheckpoint) {
   const key = randomUUID();
   const requests: { model: string; authenticated: boolean }[] = [];
   const upstream = createServer(async (request, response) => {
@@ -49,10 +57,18 @@ export async function startAcmeUpstream(stack: AsyncDisposableStack) {
         usage: { input_tokens: 25, output_tokens: 12 } };
       if (record(body) && body.stream === true) {
         response.writeHead(200, { "content-type": "text/event-stream", "request-id": randomUUID() });
+        const held = checkpoint && record(body) && JSON.stringify(body.messages).includes(checkpoint.trigger) ? checkpoint : undefined;
         for (const event of [
           { type: "message_start", message: { ...message, content: [], stop_reason: null, usage: { input_tokens: 25, output_tokens: 0 } } },
           { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: ACME_REPLY } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: held?.prefix ?? ACME_REPLY } },
+        ]) response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        if (held) {
+          await held.hold();
+          const next = { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: held.suffix } };
+          response.write(`event: ${next.type}\ndata: ${JSON.stringify(next)}\n\n`);
+        }
+        for (const event of [
           { type: "content_block_stop", index: 0 },
           { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 12 } },
           { type: "message_stop" },
@@ -206,7 +222,12 @@ export async function seedAcmeGateway(admin: DenSession, upstream: { key: string
       credential: { kind: "api_key", secret: upstream.key }, settings: { upstreamBaseUrl: `${upstream.baseUrl}/v1` }, allMembers: true }),
   });
   const provider = record(created.body) && record(created.body.inferenceProvider) ? created.body.inferenceProvider : undefined;
-  if (created.response.status !== 201 || typeof provider?.id !== "string") throw new Error(`Acme provider creation failed: HTTP ${created.response.status}`);
+  if (created.response.status !== 201 || typeof provider?.id !== "string") {
+    // Log only the structured error code, never credentials or the raw response.
+    const error = record(created.body) && typeof created.body.error === "string" && /^[a-z_]{1,64}$/.test(created.body.error)
+      ? ` (${created.body.error})` : "";
+    throw new Error(`Acme provider creation failed: HTTP ${created.response.status}${error}`);
+  }
   const providerId = provider.id;
   const connected = await denFetch(admin, `/v1/inference-providers/${providerId}/connect`, { headers: orgHeaders });
   const connection = record(connected.body) && record(connected.body.inferenceProvider) ? connected.body.inferenceProvider : undefined;

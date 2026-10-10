@@ -15,8 +15,8 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"],
-    "paths": { "@/*": ["../apps/app/src/*"] }
+    "paths": { "@/*": ["../apps/app/src/*"], "react": ["../apps/app/node_modules/@types/react"], "react-dom/*": ["../apps/app/node_modules/@types/react-dom/*"] }
   },
-  "include": ["docs-shots/**/*.ts", "drivers/**/*.mts", "../packages/handsfree/test/e2e/browser.ts", "runner/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "specs/**/*.ts", "worlds/**/*.ts", "vitest.config.ts"],
+  "include": ["docs-shots/**/*.ts", "drivers/**/*.mts", "runner/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "specs/**/*.ts", "worlds/**/*.ts", "vitest.config.ts"],
   "exclude": ["results"]
 }

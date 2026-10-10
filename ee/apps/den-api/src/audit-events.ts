@@ -29,10 +29,13 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   dpaSignedUpdated: "organization.dpa_signed.updated",
   webOriginApproved: "organization.web_origin.approved",
   webOriginRemoved: "organization.web_origin.removed",
+  permissionSetCreated: "organization.permission_set.created",
+  permissionSetPermissionsChanged: "organization.permission_set.permissions_changed",
+  permissionSetArchived: "organization.permission_set.archived",
 }
 
-type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
-type OrganizationAuditPayload = Record<string, string | number | boolean | null>
+export type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
+export type OrganizationAuditPayload = Record<string, string | number | boolean | null>
 const logger = appLogger.child({ component: "audit_events" })
 
 export function buildOrganizationAuditEvent(input: {
@@ -77,7 +80,13 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginApproved:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetPermissionsChanged:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetArchived:
       return true
+    // Intentionally unchanged by the operation audit work: ownership transfer
+    // has never raised an operator [audit-alert]; widening that contract is out of scope.
+    case ORGANIZATION_AUDIT_ACTIONS.memberOwnershipTransferred:
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
       return false
   }
@@ -94,16 +103,32 @@ export function buildOrganizationAuditAlertLogLine(event: OrganizationAuditEvent
 }
 
 export function logOrganizationAuditEvent(event: OrganizationAuditEvent) {
-  if (isOrganizationAuditAlertAction(event.action)) {
-    logger.warn(`${AUDIT_ALERT_OPERATIONAL_MARKER} organization audit alert`, {
-      operational_marker: AUDIT_ALERT_OPERATIONAL_MARKER,
-      audit_event_id: event.id,
-      organization_id: event.org_id,
-      actor_user_id: event.actor_user_id,
-      action: event.action,
-      payload: event.payload,
-    })
-  }
+  logOrganizationAuditAlert({ auditEventId: event.id, organizationId: event.org_id, actorUserId: event.actor_user_id ?? null, action: event.action, payload: event.payload })
+}
+
+/**
+ * The `[audit-alert]` operator contract, independent of which store recorded the
+ * action: the legacy row id, or the operation change event id (null when the
+ * bridged action changed nothing) plus the request id.
+ */
+export function logOrganizationAuditAlert(input: {
+  auditEventId: string | null
+  organizationId: string
+  actorUserId: string | null
+  action: OrganizationAuditAction
+  payload: OrganizationAuditPayload | null
+  requestId?: string | null
+}) {
+  if (!isOrganizationAuditAlertAction(input.action)) return
+  logger.warn(`${AUDIT_ALERT_OPERATIONAL_MARKER} organization audit alert`, {
+    operational_marker: AUDIT_ALERT_OPERATIONAL_MARKER,
+    audit_event_id: input.auditEventId,
+    organization_id: input.organizationId,
+    actor_user_id: input.actorUserId,
+    action: input.action,
+    payload: input.payload,
+    ...(input.requestId ? { request_id: input.requestId } : {}),
+  })
 }
 
 export async function recordOrganizationAuditEvent(input: Parameters<typeof buildOrganizationAuditEvent>[0]) {

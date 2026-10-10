@@ -63,6 +63,20 @@ if (waited.outcome === "settled") {
 `thread.id` is the native session id. Opening OpenWork on the same workspace
 shows this conversation in the sidebar.
 
+## Engine and model
+
+By default (`engine: "auto"`) the client asks the server once which OpenCode
+engine its chats use (`GET /experimental/engine-v2-preview/status`), so a
+thread lands where the app reads it. A server without that route is v1; any
+other failed lookup throws a retryable `HeadlessThreadError` instead of
+guessing. Pass `engine: "v1"` or `"v2"` to skip the lookup.
+
+When a call names no model and there is no `defaultModel`, the client reads the
+workspace default (`GET /workspace/:id/default-model`). v1 without any model
+lets the engine choose; v2 throws `model_required` before creating anything.
+v2 assigns its own message ids, so a `messageId` cannot make a v2 turn
+idempotent: waits use the pre-turn message count instead.
+
 ## Contract
 
 `AgentSessionClient` is the intentionally small replaceable runtime port:

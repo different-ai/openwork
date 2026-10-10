@@ -104,12 +104,6 @@ const getBehaviorTitle = (
 
 const getVariantLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
 
-export const formatGenericBehaviorLabel = (value: string | null) => {
-  const normalized = normalizeModelBehaviorValue(value);
-  if (!normalized) return defaultBehaviorOption().label;
-  return getVariantLabel(normalized);
-};
-
 /** Cycle supplied choices, including the provider's Default (null). */
 export const nextModelBehaviorValue = (
   options: readonly Pick<ModelBehaviorOption, "value">[],

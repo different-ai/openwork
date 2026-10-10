@@ -41,6 +41,15 @@ Containerized production installs run the precompiled artifact directly:
 node /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
+`db:migrate`, `db:push` and `bootstrap.js` finish by reconciling default
+permission sets: catalog permissions that are new since a Member or Admin set
+was created get a row (`source = 'reconcile'`). It is idempotent and needs no
+migration file, so the Den DB Migrate workflow also runs it on its own:
+
+```bash
+pnpm --dir ee/packages/den-db db:reconcile-permissions
+```
+
 ## Production 0097 upgrade preconditions
 
 For an existing database with canonical 0097 still pending, use the compiled
@@ -88,7 +97,8 @@ refused rather than treating incomplete metadata visibility as proof of absence.
 Affected table/column collations must match the database defaults. The runner does
 not change engine settings, PK requirements, grants, encryption or TLS.
 
-History must be the exact canonical hash/timestamp prefix. Unknown, superseded,
+History must be the exact canonical hash/timestamp prefix; the only exceptions
+are released bodies listed in `scripts/superseded-migrations.ts`. Unknown, superseded,
 unjournaled, nonempty intermediate or partial-0097 states require separately
 reviewed recovery; bootstrap does not repair, replay partial DDL, or baseline them.
 A failed or uncertain completion must be inspected before any restart. For callers

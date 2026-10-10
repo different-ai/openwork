@@ -1,10 +1,11 @@
 import type { UIMessage } from "ai";
+import { autoAccessWallFromError, autoAccessWallSchema, autoWallCopy, type AutoAccessWall } from "@/app/lib/inference-access";
 import { parseGatewayUsageError, gatewayUsageErrorEvidenceSchema, type GatewayUsageErrorEvidence } from "../../cloud/gateway-usage-state";
 
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-selection-required" | "session-group-assignment" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-selection-required" | "session-group-assignment" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -19,6 +20,7 @@ export type OpencodeSessionErrorPresentation = {
    */
   connectUrl?: string | null;
   gatewayUsage?: GatewayUsageErrorEvidence;
+  autoAccessWall?: AutoAccessWall;
   providerId?: string | null;
 };
 
@@ -94,7 +96,24 @@ function sessionErrorKind(
   if (name === "MessageOutputLengthError") return "output-limit";
   if (/file part media type.*not supported/i.test(searchable)) return "attachment-unsupported";
   if (name === "ProviderAuthError" || (name === "APIError" && status === 401)) return "provider-credentials";
-  if (name === "APIError" && /\bENOTFOUND\b|\bEAI_AGAIN\b|^fetch failed$/i.test([code, message].filter(Boolean).join(" "))) return "network-unavailable";
+  const transport = [code, message].filter(Boolean).join(" ");
+  // OpenCode v2 names a missing or retired model with its internal ids.
+  if (/^Model unavailable:/i.test(message ?? "")) return "model-unavailable";
+  // v2 also reports provider HTTP failures as text, not as an APIError status.
+  const httpStatus = Number(/Provider request failed with HTTP (\d{3})\b/i.exec(message ?? "")?.[1] ?? NaN);
+  if (Number.isFinite(httpStatus)) {
+    if (httpStatus === 429) return "rate-limited";
+    if (httpStatus === 401) return "provider-credentials";
+    if (httpStatus === 403) return "provider-access-denied";
+    if (httpStatus >= 500 && httpStatus < 600) return "provider-unavailable";
+  }
+  if (name === "APIError" && /\bENOTFOUND\b|\bEAI_AGAIN\b|^fetch failed$/i.test(transport)) return "network-unavailable";
+  // OpenCode v2 reports provider transport failures as plain messages (an
+  // UnknownError carrying Bun's fetch text), not as APIError codes.
+  if (/\bgetaddrinfo\s+(?:ENOTFOUND|EAI_AGAIN|ETIMEOUT)\b/i.test(transport)) return "network-unavailable";
+  if (/\bConnectionRefused\b|\bECONNREFUSED\b|Unable to connect\. Is the computer able to access the url/i.test(transport)
+    && !/127\.0\.0\.1|localhost|\[::1\]/.test(transport)) return "provider-unreachable";
+  if (/\bECONNRESET\b|socket connection was closed unexpectedly|\bsocket hang up\b/i.test(transport)) return "provider-connection-dropped";
   if (
     name === "MessageAbortedError" ||
     code === "ABORT_ERR" ||
@@ -110,6 +129,8 @@ function sessionErrorKind(
     return "provider-timeout";
   }
   if (/upstream_(?:incomplete|interrupted|malformed_stream|malformed_response|timeout)|connection reset by server/i.test(searchable)) return "provider-incomplete";
+  // v2 reports a provider reply it could not parse as "Decode error (200 POST <url>)".
+  if (/^Decode error \(\d{3} [A-Z]+ /i.test(message ?? "")) return "provider-incomplete";
   if (responseBody?.includes("FreeUsageLimitError") || message?.includes("FreeUsageLimitError")) {
     return "free-model-limit";
   }
@@ -136,6 +157,9 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "output-limit") return "The response reached the model’s length limit";
   if (kind === "attachment-unsupported") return "This model can’t read an attached file";
   if (kind === "network-unavailable") return "Can’t reach the model service";
+  if (kind === "provider-unreachable") return "Couldn’t reach the model provider";
+  if (kind === "provider-connection-dropped") return "Connection to the model dropped";
+  if (kind === "model-unavailable") return "This model isn’t available";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
   if (kind === "gateway-auth-required") return GATEWAY_AUTH_REQUIRED_TITLE;
   if (kind === "gateway-selection-required") return "Choose a Gateway model group and credential set";
@@ -168,6 +192,9 @@ function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAu
   if (kind === "output-limit") return "Ask for a shorter response or continue from the last completed section.";
   if (kind === "attachment-unsupported") return "Remove the attachment or choose a model that supports this file.";
   if (kind === "network-unavailable") return "Check your connection, then try again.";
+  if (kind === "provider-unreachable") return "Try again, or choose another model.";
+  if (kind === "provider-connection-dropped") return "Try again. Check any completed steps before continuing.";
+  if (kind === "model-unavailable") return "Choose another model to continue.";
   if (kind === "free-model-limit") {
     return "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own model provider in Settings → AI Providers to keep working.";
   }
@@ -212,7 +239,7 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
 }
 
 function errorRecoveryPrompt(kind: OpencodeSessionErrorKind) {
-  return kind === "aborted" || kind === "provider-timeout" || kind === "provider-incomplete" || kind === "provider-unavailable" || kind === "network-unavailable" || kind === "rate-limited" || kind === "output-invalid"
+  return kind === "aborted" || kind === "provider-timeout" || kind === "provider-incomplete" || kind === "provider-unavailable" || kind === "network-unavailable" || kind === "provider-unreachable" || kind === "provider-connection-dropped" || kind === "model-unavailable" || kind === "rate-limited" || kind === "output-invalid"
     ? interruptedTaskRecoveryPrompt
     : null;
 }
@@ -319,6 +346,11 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 }
 
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
+  const wall = autoAccessWallFromError(error);
+  if (wall) {
+    const copy = autoWallCopy(wall, true);
+    return { kind: "generic", title: copy.title, description: copy.detail, technicalDetails: "", recoveryPrompt: null, autoAccessWall: wall };
+  }
   const fields = sessionErrorFields(error, fallback);
   const gatewayAuth = detectGatewayAuthRequired(error, fields);
   const gatewaySelection = safeStringify(error)?.includes("gateway_selection_required") === true;
@@ -364,6 +396,7 @@ export function sessionErrorPresentationFromUIMessage(message: UIMessage): Openc
   ) {
     return null;
   }
+  if (candidate.autoAccessWall !== undefined && !autoAccessWallSchema.safeParse(candidate.autoAccessWall).success) return null;
   if (candidate.gatewayUsage !== undefined && !gatewayUsageErrorEvidenceSchema.safeParse(candidate.gatewayUsage).success) return null;
   if (candidate.providerId !== undefined && candidate.providerId !== null && typeof candidate.providerId !== "string") return null;
   return candidate as OpencodeSessionErrorPresentation;

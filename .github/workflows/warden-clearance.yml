@@ -1,0 +1,84 @@
+name: Warden Clearance
+
+# Approves a same-repository PR as the diff-warden App when its latest Warden
+# review is complete for the current head with no high/medium security findings
+# and no confidentiality findings; otherwise withdraws an earlier clearance.
+# Either way it keeps one PR comment with the result and security findings.
+# PRs that change Warden itself (warden.yml, this file, the warden-*.mjs
+# scripts, warden.toml, .warden/) always need a human. See .warden/README.md.
+#
+# workflow_run executes this file and its script from the default branch, so a
+# PR cannot change the clearance logic. The App never pushes, so it satisfies
+# require_last_push_approval; any new push dismisses its approval.
+on:
+  workflow_run:
+    workflows: [Warden]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: warden-clearance-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  clearance:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.path == '.github/workflows/warden.yml' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: warden-clearance
+    steps:
+      - name: Checkout trusted clearance script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      # A missing receipt (failed or cancelled analysis) is handled as not clear.
+      - name: Download review receipt
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: warden-summary
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/warden-receipt
+
+      # Security findings for the PR comment; absent for incomplete reviews.
+      - name: Download security findings
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: warden-findings
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/warden-findings
+
+      - name: Mint clearance token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+
+      - name: Grant or withdraw clearance
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          RECEIPT_PATH: ${{ runner.temp }}/warden-receipt/warden-summary.json
+          FINDINGS_PATH: ${{ runner.temp }}/warden-findings/warden-findings.json
+        run: node .github/scripts/warden-clearance.mjs

@@ -62,15 +62,16 @@ jobs:
 
             // Route, schema, or contract changes must ship the regenerated
             // packages/docs/openapi.json and packages/sdk/src/gen.
-            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/sdk/"]
+            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/features/", "packages/sdk/"]
             // The workflow itself is listed so changes to this check exercise it.
-            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", ".github/workflows/ci-tests.yml"])
+            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", "scripts/den-contract.mjs", "scripts/den-contract-database.mjs", "scripts/den-contract-hook.mjs", "scripts/features-sync.mjs", "scripts/tests/den-contract-database.test.mjs", "scripts/tests/den-contract-hook.test.mjs", "scripts/tests/den-contract-format.test.mjs", ".github/workflows/ci-tests.yml"])
             const touchesDenContract = (name) => Boolean(name) && (denContractFiles.has(name) || denContractPrefixes.some((prefix) => name.startsWith(prefix)))
             const denContract = lane === "full" && files.some((file) => touchesDenContract(file.filename) || touchesDenContract(file.previous_filename))
             core.setOutput("den_contract", denContract ? "true" : "false")
             core.info(`Den API contract check: ${denContract ? "required" : "not affected"}`)
 
   openwork-tests-core:
+    name: Unit tests
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'full'
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -81,35 +82,56 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Run core product regressions
-        run: pnpm test:core
-      - name: Check journey selection, reporting, and alerts
-        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs .github/scripts/warden-report.test.mjs
-
-  workflow-authoring:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-tests
-      - name: Build MCP App resources required by the server
-        run: pnpm --filter @openwork/mcp-apps build
-      - name: Verify immutable runtime and authoring contracts
-        run: node --test scripts/ci/workflow-authoring-gate.test.mjs && pnpm --filter @openwork/codemode test && pnpm --filter @openwork-ee/den-api test:authoring
-      - name: Verify shared encrypted receipt retention against Redis
-        env:
-          WORKFLOW_AUTHORING_TEST_REDIS_URL: redis://127.0.0.1:6379
-        run: pnpm --filter @openwork-ee/den-api exec bun test --conditions development test/workflow-authoring-retention.redis.test.ts
+      - name: Check Den web hook order
+        run: pnpm --filter @openwork-ee/den-web lint
+      - name: Typecheck the headless runner
+        run: pnpm --filter @openwork-ee/headless-runner typecheck
+      - name: Test shared headless computer and configuration
+        run: |
+          pnpm --filter @openwork-ee/headless-computer build
+          pnpm --filter @openwork-ee/headless-computer test
+          pnpm --filter @openwork-ee/headless-runner test:computer-config
+      - name: Test headless conversations (follow-ups, read-only lookups, waiting messages)
+        run: pnpm --filter @openwork-ee/headless-runner test:conversation
+      - name: Boot the app provider tree
+        run: pnpm test:boot
+      - name: Test the shared Calendar logic
+        run: pnpm --filter @openwork/calendar test
+      - name: Test fork authorization and free screening policy
+        run: node --test .github/scripts/contributor-pr.test.mjs .github/scripts/contributor-screen.test.mjs .github/scripts/warden-check.test.mjs .github/scripts/warden-report.test.mjs
+      - name: Run core unit tests
+        run: pnpm --dir evals run test:core
+      # Uses the pinned OpenCode that Setup tests put on PATH.
+      - name: Run Den provider unit tests
+        run: |
+          pnpm --filter @openwork-ee/utils test
+          pnpm --filter @openwork/automations test
+          pnpm --filter @openwork-ee/den-api test
+          pnpm --filter @openwork-ee/workbot test:model
+      - name: Check sandbox contracts and adapters (no cloud resources)
+        run: |
+          pnpm --filter @openwork/sandbox build
+          pnpm --filter @openwork/sandbox test
+          pnpm --filter @openwork/sandbox-daytona typecheck
+          pnpm --filter @openwork/sandbox-daytona test
+          pnpm --filter @openwork/sandbox-freestyle typecheck
+          pnpm --filter @openwork/sandbox-freestyle test
+      - name: Test shared Workbot world transports (no cloud resources)
+        run: |
+          pnpm --filter @openwork/sandbox-freestyle build
+          pnpm --filter @openwork/sandbox-daytona build
+          pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/sandbox-daytona.test.ts packages/env/src/freestyle-sandbox-preview.test.ts packages/env/src/workbot-oauth-url.test.ts
+      - name: Check contract generation and commit-hook safety
+        run: pnpm test:contracts
+      # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;
+      # it used to run only nightly, and debt piled up unnoticed.
+      - name: Check the test framework (lint and ratchets)
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          pnpm evals:check
 
   openwork-tests-build:
+    name: Build and boot the desktop app
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'full'
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -235,12 +257,8 @@ jobs:
         run: |
           rm -rf packages/types/dist
           pnpm --filter openwork-server build
-      - name: Check packaged Fast module consumption
-        run: node --test packages/types/tests/packaged-cloud-model-fast.test.mjs
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
-      - name: Check virtual display bootstrap contract
-        run: node --test scripts/ci/ubuntu-apt-https.test.mjs apps/desktop/scripts/packaged-smoke-runner.test.mjs
       - name: Package and smoke-test the installed desktop
         timeout-minutes: 7
         env:
@@ -255,16 +273,17 @@ jobs:
           path: |
             ${{ runner.temp }}/openwork-packaged-smoke/timing.json
             ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
+            ${{ runner.temp }}/openwork-packaged-smoke/logs/**
             evals/results/test-runs/**
           include-hidden-files: true
           retention-days: 7
 
-  # Broad tests, source-layout guards, and test-framework checks remain visible
+  # Broad journeys, source-layout guards, and test-framework checks remain visible
   # here without blocking unrelated PRs. No retries or ignored failures.
   openwork-tests-extended:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -275,27 +294,28 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Run all app tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork/app test
-      - name: Run all server tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter openwork-server test
-      - name: Run Den API tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork-ee/den-api test
-      - name: Run all desktop tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork/desktop test
-      - name: Run release script tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: node --test scripts/release/*.test.mjs
+      # The test framework and its PR lane run on Linux only: some specs boot a
+      # local Den, which needs MySQL in Docker, and the desktop's bundled
+      # OpenCode binary. macOS keeps the platform builds below.
       - name: Run test-framework checks
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm test:eval-runner
+        if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          pnpm evals:check
+      - name: Start MySQL and prepare the bundled OpenCode binary
+        id: lane
+        if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm dev:den:mysql
+          pnpm --filter @openwork/desktop prepare:sidecar
+      # One file at a time: every local Den boot resets den-web's shared .next/dev
+      # build directory, so parallel Den specs crash each other's Den web.
       - name: Run all PR specs
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm sdk:build && pnpm evals:pr
+        if: (success() || failure()) && steps.lane.outcome == 'success'
+        run: pnpm sdk:build && pnpm --dir evals exec vitest run --config vitest.config.ts --project pr --no-file-parallelism
       - name: Run engine smoke tests
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm test:e2e
@@ -305,6 +325,129 @@ jobs:
       - name: Typecheck Electron
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm --filter @openwork/desktop typecheck:electron
+
+  # The Linux packaged smoke boots an unpacked directory, which writes no crash
+  # reports and cannot install an update. This lane builds real enterprise .app
+  # bundles so desktop-quit-path asserts DiagnosticReports stays empty and
+  # packaged-update-install proves download -> install on quit -> relaunch.
+  packaged-desktop-macos:
+    name: Packaged desktop on macOS
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: blacksmith-12vcpu-macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - name: Setup tests
+        uses: ./.github/actions/setup-tests
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Package, sign, and run the macOS packaged journeys
+        timeout-minutes: 30
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke-macos
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node apps/desktop/scripts/packaged-smoke-macos.mjs --server-built
+      - name: Upload macOS packaged evidence and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-desktop-macos-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/profiles/**/electron.log
+            evals/results/test-runs/**
+          include-hidden-files: true
+          retention-days: 7
+
+  # The update path every existing enterprise customer takes, which the fast
+  # packaged smoke gate cannot cover: the latest public enterprise release
+  # signs in to a local Den and picks a workspace, then this commit's
+  # enterprise package opens that same profile, and opens it again after a
+  # restart (released-enterprise-activated, #4848). Scheduled only; it needs a
+  # local Den and a downloaded release.
+  packaged-upgrade-path:
+    name: Open the latest release's enterprise profile in this build
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Same runner as PR proof's packaged lane, which already runs packaged-smoke here.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - name: Setup tests
+        uses: ./.github/actions/setup-tests
+      - name: Download the latest public enterprise release as the baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          version=${tag#v}
+          dir="$RUNNER_TEMP/baseline"
+          mkdir -p "$dir"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "openwork-enterprise-linux-x64-$version.tar.gz" --dir "$dir"
+          tar -xzf "$dir/openwork-enterprise-linux-x64-$version.tar.gz" -C "$dir"
+          binary="$dir/openwork-enterprise-linux-x64-$version/openwork-enterprise"
+          test -x "$binary"
+          echo "binary=$binary" >> "$GITHUB_OUTPUT"
+          echo "Baseline: enterprise $tag at $binary" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      # After the bundle step, which removes packages/types/dist that the local Den needs.
+      - name: Build local Den dependencies and start MySQL
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm dev:den:mysql
+      - name: Package this commit and open the baseline's profile in it
+        timeout-minutes: 25
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          OPENWORK_EVAL_RELEASED_BASELINE_BINARY: ${{ steps.baseline.outputs.binary }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Same Chromium SUID-sandbox constraint as PR proof's packaged lane.
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          node apps/desktop/scripts/packaged-smoke.mjs --server-built --journey released-enterprise-activated
+      - name: Upload upgrade-path evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-upgrade-path-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke/logs/**
+            evals/results/test-runs/**
+          include-hidden-files: true
+          retention-days: 7
 
   validate-models-snapshot:
     needs: classify-changes
@@ -434,10 +577,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build den-api workspace dependencies
         run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
-      - name: Prepare the throwaway schema-export database
-        run: pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --force
-        env:
-          NODE_OPTIONS: --conditions=development
+      - name: Test contract generation guards
+        run: node --test scripts/tests/den-contract-hook.test.mjs scripts/tests/den-contract-database.test.mjs scripts/tests/den-contract-format.test.mjs
+      # den:contract owns schema preparation and cleanup, just as locally.
       - name: Regenerate the OpenAPI snapshot and SDK
         run: pnpm den:contract
       - name: Fail if the committed contract drifted from the route source
@@ -448,13 +590,17 @@ jobs:
             exit 1
           fi
           echo "OpenAPI snapshot and generated SDK match the route source."
+      # Every den-api route and better-auth endpoint must carry an audit
+      # declaration (src/audit/routes) and src/audit/COVERAGE.md must be current.
+      - name: Check audit route coverage
+        run: pnpm --filter @openwork-ee/den-api audit:coverage
       - name: Lint the contract and typecheck the SDK
         run: pnpm api:lint && pnpm --filter @openwork/sdk typecheck
 
   # Single stable context for branch rulesets to require. Green only when
   # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: [classify-changes, openwork-tests-core, openwork-tests-build, workflow-authoring, validate-models-snapshot, validate-docs, den-contract]
+    needs: [classify-changes, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs, den-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -464,7 +610,6 @@ jobs:
           LANE: ${{ needs.classify-changes.outputs.lane }}
           CORE_RESULT: ${{ needs.openwork-tests-core.result }}
           BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
-          AUTHORING_RESULT: ${{ needs.workflow-authoring.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
           DOCS_RESULT: ${{ needs.validate-docs.result }}
           DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
@@ -474,7 +619,6 @@ jobs:
           echo "Den API contract (required: $DEN_CONTRACT): $DEN_CONTRACT_RESULT"
           echo "core product regressions: $CORE_RESULT"
           echo "packaging and IPC contract: $BUILD_RESULT"
-          echo "workflow authoring contracts: $AUTHORING_RESULT"
           echo "snapshot validation: $SNAPSHOT_RESULT"
           echo "docs validation: $DOCS_RESULT"
 
@@ -494,13 +638,13 @@ jobs:
 
           case "$LANE" in
             full)
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$AUTHORING_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             snapshot)
-              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$AUTHORING_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             docs)
-              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$AUTHORING_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
+              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
               ;;
             *)
               echo "Changed-file classification returned an unexpected value; blocking merge." >&2

@@ -1,0 +1,58 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: openwork-den-api
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/cloudsql-instances: REPLACE_PROJECT_ID:REPLACE_REGION:REPLACE_SQL_INSTANCE
+    spec:
+      serviceAccountName: openwork-cloud-run@REPLACE_PROJECT_ID.iam.gserviceaccount.com
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: REPLACE_REGION-docker.pkg.dev/REPLACE_PROJECT_ID/openwork/openwork-den-api:REPLACE_OPENWORK_VERSION
+          ports:
+            - name: http1
+              containerPort: 8788
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - { name: NODE_ENV, value: production }
+            - { name: CI, value: "true" }
+            - { name: DB_MODE, value: mysql }
+            - { name: OPENWORK_DEV_MODE, value: "0" }
+            - { name: DEN_ORG_MODE, value: single_org }
+            - { name: DEN_SINGLE_ORG_NAME, value: REPLACE_ORGANIZATION_NAME }
+            - { name: DEN_SINGLE_ORG_SLUG, value: REPLACE_ORGANIZATION_SLUG }
+            - { name: DEN_SINGLE_ORG_OWNER_EMAILS, value: REPLACE_ADMIN_EMAIL }
+            - { name: DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP, value: "false" }
+            - { name: DEN_REQUIRE_EMAIL_VERIFICATION, value: "false" }
+            - { name: DEN_BASE_URL, value: REPLACE_WEB_ORIGIN }
+            - { name: BETTER_AUTH_URL, value: REPLACE_WEB_ORIGIN }
+            - { name: DEN_API_PUBLIC_URL, value: REPLACE_API_ORIGIN }
+            - { name: DEN_MCP_RESOURCE_URL, value: REPLACE_API_ORIGIN/mcp }
+            - { name: DEN_MCP_CLAIM_NAMESPACE, value: REPLACE_WEB_ORIGIN }
+            - { name: DEN_BETTER_AUTH_TRUSTED_ORIGINS, value: REPLACE_WEB_ORIGIN }
+            - { name: DEN_WEB_APP_HOSTS, value: REPLACE_WEB_HOST }
+            - { name: DEN_BOOTSTRAP_ADMIN_EMAILS, value: REPLACE_ADMIN_EMAIL }
+            - { name: DEN_CORS_ORIGINS, value: "REPLACE_WEB_ORIGIN,REPLACE_API_ORIGIN" }
+            - { name: CORS_ORIGINS, value: "REPLACE_WEB_ORIGIN,REPLACE_API_ORIGIN" }
+            - { name: DEN_AUTOMATIONS_ENABLED, value: "false" }
+            - { name: DEN_AUTOMATIONS_RUNTIME_ENABLED, value: "false" }
+            - { name: PROVISIONER_MODE, value: stub }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: openwork-database-url, key: latest } }
+            - name: BETTER_AUTH_SECRET
+              valueFrom: { secretKeyRef: { name: openwork-better-auth-secret, key: latest } }
+            - name: DEN_DB_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: openwork-db-encryption-key, key: latest } }
+            - name: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
+              valueFrom: { secretKeyRef: { name: openwork-bootstrap-code, key: latest } }

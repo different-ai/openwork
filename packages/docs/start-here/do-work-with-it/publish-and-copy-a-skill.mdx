@@ -1,26 +1,89 @@
 ---
 title: "Publish and copy a skill"
-description: "Publish a skill through a Cloud Collection or copy it without changing the shared original"
+description: "Create a skill in OpenWork Cloud, choose who can use it, and make your own copy of a shared skill without changing the original."
+keywords: ["publish skill", "share skill", "who can use it", "share with team", "add person", "add team", "duplicate skill", "copy skill", "my library", "settings library"]
 ---
 
+Any member can create a skill in OpenWork Cloud and share it with the people and teams who need it. This page covers creating, sharing, finding, and copying a skill.
+
 <Note>
-**Personal or managed.** Local workspace skills remain free and need no OpenWork Cloud sign-in. Cloud members can also create personal skills for themselves today. Publishing a skill for other people is a managed Cloud flow for owners and admins by default.
+**Personal or managed.** Local workspace skills are free and need no OpenWork Cloud sign-in. Skills you create in OpenWork Cloud start just for you. You choose when to share them.
 </Note>
 
 ## Publish a skill for your team
 
-1. In the Cloud dashboard, open `Plugin Directory` and create or open a plugin.
-2. Add a skill inside the plugin. Give it a clear name, describe when the agent should use it, and write the instructions.
-3. In the plugin's `Share` section, choose a `Collection`. If you need a new one, open `Collections`, click `New collection`, and then return to the plugin.
-4. Open that Collection and use `Who can access this` to grant it to everyone in the organization, selected teams, or individual members.
-5. Assigned members find the plugin and its skill in `Settings > Library` in the desktop app. The plugin creator keeps access automatically.
+### 1. Create the skill
 
-Only owners and admins can create and publish skills for other people by default. Members can currently create personal skills for themselves. An admin restriction that prevents members from creating their own skills is in development.
+In OpenWork Cloud, a skill lives inside a plugin. When you create a skill, OpenWork makes a plugin for it.
 
-Follow [Team quickstart](/cloud/team-quickstart) for the complete first-time setup. Use [Collections](/cloud/share-with-your-team/collections) when you need to group several plugins, reuse the same audience, or manage more complex assignments.
+1. In the OpenWork Cloud dashboard, open **My Library** and click **Add to your Library**.
+2. Choose **Skill** and click **Continue**.
+3. On **Create a skill**, enter a **Plugin name** and a short **Description**.
+4. Fill in the skill: a name, when the AI should use it, and the steps in plain words.
+5. To add more to the same plugin, click **Skill**, **Command**, or **Connector** under **What's inside**.
+6. Click **Create plugin**.
+
+Only you can use it until you share it.
+
+You can also create a skill in the desktop app from **Settings › Library › Add to library**. Admins can create plugins from **Manage › Plugins › Create a plugin**.
+
+### 2. Choose who can use it
+
+**If you're a member:**
+
+1. In **My Library**, open the skill's plugin and click **Share**. You can also use **Share** in the row's ⋯ menu.
+2. Under **Who can use it**, click **Add person** or **Add team** and pick who should get it.
+3. Click **Share with** followed by the number of people.
+
+You can share only what you made. Only admins can share with everyone in the organization. In the desktop app, you can also share from **Settings › Library**: open the ⋯ menu on the item and choose **Share…**.
+
+**If you're an admin** (owner, super-admin, or admin):
+
+1. Open **Manage › Plugins** and click the plugin.
+2. Under **Who can use it**, turn on **Everyone in the organization**, or click **Add person** or **Add team**.
+
+Changes on this page save right away. When you add access, a message appears with **Undo** in case you change your mind.
+
+To let someone edit the plugin as well as use it, open the ⋯ menu, choose **Edit contents**, and use **Who can access this**. Pick a person or team, choose **Can edit**, and click **Grant**.
+
+<Tip>
+To give the same audience several plugins at once, group them in a [Collection](/cloud/share-with-your-team/collections). For a single skill or plugin, sharing it directly is simpler.
+</Tip>
+
+### 3. Find it in the desktop app
+
+Teammates don't need to install anything.
+
+1. Open **Settings › Library** in the desktop app.
+2. Look under **From OpenWork**, or click the **Skills** filter.
+3. If a recent change hasn't appeared yet, click the refresh button (its tooltip says **Refresh**).
+
+Teammates can now ask for the task in plain words. The AI picks the skill up when a request matches its description.
 
 ## Copy without changing the shared skill
 
-Create a new private plugin, copy the skill instructions into a new skill, and edit that copy. Do not edit the team plugin unless everyone assigned to its Collection should receive the change.
+When you edit a shared skill, everyone who has it gets the change in their next task. To try changes on your own, make a copy first. A copy is just for you until you share it.
 
-For a small personal adjustment, you can instead create a new skill that tells the agent to use the shared skill first and then apply your extra instructions.
+**A skill you made:**
+
+1. Open **Settings › Library** in the desktop app.
+2. Open the ⋯ menu on the skill and choose **Duplicate**.
+3. OpenWork creates a copy named "(copy)". Edit the copy.
+
+If you've already started editing a skill you shared, the edit screen offers **Save a copy just for me**. That saves your changes as a new skill and leaves the shared one as it was.
+
+**A skill someone else shared with you:**
+
+There's no copy button for skills other people made. Copy it by hand:
+
+1. In **Settings › Library**, open the shared skill and copy the text under **Instructions**.
+2. Click **Add to library**, choose **Skill**, and paste the instructions into the new skill.
+3. Give it a new name and create it.
+
+For a small personal tweak, you can instead create a short skill that tells the AI to use the shared skill first and then apply your extra steps.
+
+## Related
+
+- [Share skills and MCP servers with your team](/start-here/do-work-with-it/share-your-setup)
+- [Collections](/cloud/share-with-your-team/collections)
+- [Team quickstart](/cloud/team-quickstart)

@@ -11,6 +11,39 @@ The document is also consumed at runtime: `src/mcp/catalog.ts` derives the MCP
 `search_capabilities` catalog from it, so summaries, descriptions, tags and
 request schemas are user-facing text for agents, not just for Swagger.
 
+## Fast contract workflow
+
+Run `pnpm den:contract` after editing Den routes/shared schemas or feature keys
+and before committing. `pnpm features:sync` also runs it after regenerating Helm.
+It builds the MCP App assets once, snapshots the API once, and feeds
+that snapshot directly to SDK generation. Start local MySQL with
+`pnpm dev:den:mysql`; the command creates, prepares and removes its own
+throwaway database, including after a failed export. It ignores `DATABASE_URL`
+and never connects to a remote database. For alternate local credentials/ports,
+set `OPENWORK_CONTRACT_MYSQL_URL` (default `mysql://root:password@127.0.0.1:3306`). Commit both generated outputs with
+the source change; there is no repair-bot commit or second CI run.
+
+`openapi.json` is fully indented JSON (one value per line), keeps
+route-registration order, and ends with a newline. Git treats edits on
+neighbouring lines as a conflict, so long lines made unrelated PRs collide,
+most often when two PRs each added a feature flag (the flag list is copied into
+several schemas). One value per line lets those edits merge; the file is long,
+but it is marked generated in `.gitattributes` so reviews collapse it.
+It is still generated JSON: do not edit it by hand.
+
+For automatic generation during commits, opt in with `pnpm hooks:install`.
+Unrelated commits skip generation. API/schema, feature-registry or generated-contract commits
+regenerate and stage only `packages/docs/openapi.json` and
+`packages/sdk/src/gen/**`. Unstaged/untracked contract inputs or outputs stop the
+hook before it writes anything: finish staging the intended source first. The
+installer refuses to replace an existing hook setup. Disable the hook with
+`git config --local --unset core.hooksPath`.
+
+If a merge still conflicts, resolve source conflicts, run `pnpm den:contract`,
+and stage the regenerated outputs. Never choose ours/theirs for the whole
+contract or regenerate migration snapshots. Hooks are optional and bypassable;
+CI freshness checks remain the authority. No Warden or CI exemption is added.
+
 ## How the gate works
 
 | Check | Where | Fails the build when |

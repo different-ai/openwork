@@ -32,13 +32,25 @@ import {
   type Spread,
   TextNode,
   type EditorConfig,
+  type LexicalNode,
   type NodeKey,
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { parseConnectSkillToken } from "./connect-skill-token";
 import { encodeConnectorToken, parseConnectorToken } from "./connector-token";
-import { humanizeCapabilityName } from "./composer-plus-menu-model";
+import { COMPOSER_DRAFT_TOKEN_RE, COMPOSER_TOKEN_CLASS } from "./composer-pills";
+import {
+  agentBadge,
+  composerPillBadge,
+  createChipIconDom,
+  fileMentionBadge,
+  pastedTextBadge,
+  renderAttachmentFileChipDom,
+  renderComposerBadgeDom,
+  type ComposerBadge,
+} from "./composer-chips";
+import { isComputerTarget } from "./computer-mentions";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
@@ -50,6 +62,8 @@ export type ComposerAttachmentToken = {
   name: string;
   kind: "image" | "file";
   previewUrl?: string;
+  mime?: string;
+  bytes?: number;
 };
 
 type EditorProps = {
@@ -66,7 +80,7 @@ type EditorProps = {
   onExpandAttachment?: (id: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
-  onPasteText?: (text: string) => void;
+  onPasteText?: (text: string, draftOffset?: number) => void;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
@@ -77,6 +91,8 @@ export type LexicalPromptEditorHandle = {
   insertMentionAtSelection: (kind: ComposerMentionKind, value: string) => string | null;
   insertConnectorAtSelection: (connectorName: string) => void;
   insertFileMentionAtSelection: (path: string) => string;
+  /** Caret position in the serialized draft, so pasted chips land where the user pasted. */
+  draftOffsetAtSelection: () => number | null;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -108,17 +124,20 @@ type SerializedComposerSkillNode = Spread<
   SerializedTextNode
 >;
 
-const MENTION_PILL_CLASS: Record<ComposerMentionKind, string> = {
-  computer: "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11",
-  file: "inline-flex items-center rounded-full border border-gray-6 bg-gray-3 px-2.5 py-1 text-xs font-medium text-gray-11",
-  agent: "inline-flex items-center rounded-full border border-sky-6/35 bg-sky-3/20 px-2.5 py-1 text-xs font-medium text-sky-11",
-  app: "inline-flex items-center rounded-full border border-cyan-6/35 bg-cyan-3/20 px-2.5 py-1 text-xs font-medium text-cyan-11",
-};
+function mentionBadge(value: string, kind: ComposerMentionKind): ComposerBadge {
+  switch (kind) {
+    case "agent":
+      return agentBadge(value);
+    case "file":
+      return fileMentionBadge(value);
+    case "computer":
+      return isComputerTarget(value) ? composerPillBadge({ kind: "computer", target: value }) : agentBadge(value);
+  }
+}
 
-const COMPOSER_TOKEN_CLASS = "inline-flex items-center rounded-md bg-gray-3 px-1.5 py-0.5 text-xs font-medium text-gray-12";
-
-function mentionPillText(value: string, kind: ComposerMentionKind) {
-  return `@${kind === "file" ? value.split(/[\\/]/).pop() || value : value}`;
+function renderMentionDom(dom: HTMLElement, value: string, kind: ComposerMentionKind) {
+  renderComposerBadgeDom(dom, mentionBadge(value, kind));
+  dom.title = `@${value}`;
 }
 
 class ComposerMentionNode extends TextNode {
@@ -155,19 +174,15 @@ class ComposerMentionNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    dom.className = MENTION_PILL_CLASS[this.__kind];
-    dom.textContent = mentionPillText(this.__value, this.__kind);
+    renderMentionDom(dom, this.__value, this.__kind);
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
-    dom.title = `@${this.__value}`;
     return dom;
   }
 
   override updateDOM(prevNode: ComposerMentionNode, dom: HTMLElement) {
     if (prevNode.__value !== this.__value || prevNode.__kind !== this.__kind) {
-      dom.className = MENTION_PILL_CLASS[this.__kind];
-      dom.textContent = mentionPillText(this.__value, this.__kind);
-      dom.title = `@${this.__value}`;
+      renderMentionDom(dom, this.__value, this.__kind);
     }
     return false;
   }
@@ -295,18 +310,15 @@ class ComposerSkillNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    dom.className = COMPOSER_TOKEN_CLASS;
-    dom.textContent = humanizeCapabilityName(this.__skillName);
+    renderComposerBadgeDom(dom, composerPillBadge({ kind: "skill", name: this.__skillName }));
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
-    dom.title = `Skill: ${this.__skillName}`;
     return dom;
   }
 
   override updateDOM(prevNode: ComposerSkillNode, dom: HTMLElement) {
     if (prevNode.__skillName !== this.__skillName) {
-      dom.textContent = humanizeCapabilityName(this.__skillName);
-      dom.title = `Skill: ${this.__skillName}`;
+      renderComposerBadgeDom(dom, composerPillBadge({ kind: "skill", name: this.__skillName }));
     }
     return false;
   }
@@ -373,20 +385,17 @@ class ComposerConnectorNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    dom.className = COMPOSER_TOKEN_CLASS;
-    dom.textContent = this.__connectorName;
+    renderComposerBadgeDom(dom, composerPillBadge({ kind: "connector", name: this.__connectorName }));
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     dom.dataset.composerConnector = this.__connectorName;
-    dom.title = `Connector: ${this.__connectorName}`;
     return dom;
   }
 
   override updateDOM(prevNode: ComposerConnectorNode, dom: HTMLElement) {
     if (prevNode.__connectorName !== this.__connectorName) {
-      dom.textContent = this.__connectorName;
+      renderComposerBadgeDom(dom, composerPillBadge({ kind: "connector", name: this.__connectorName }));
       dom.dataset.composerConnector = this.__connectorName;
-      dom.title = `Connector: ${this.__connectorName}`;
     }
     return false;
   }
@@ -412,57 +421,25 @@ function $createComposerConnectorNode(connectorName: string) {
   return $applyNodeReplacement(new ComposerConnectorNode(connectorName));
 }
 
-function pastedTextChipLabel(lines: number) {
-  return `Pasted · ${lines} line${lines === 1 ? "" : "s"}`;
+/** The chevron expands the pasted text back into the draft (see PasteChipPlugin). */
+function renderPastedTextChipDom(dom: HTMLElement, label: string, lines: number) {
+  const expand = document.createElement("button");
+  expand.type = "button";
+  expand.className = "-mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-gray-3 hover:text-foreground";
+  expand.title = "Expand";
+  expand.setAttribute("aria-label", "Expand pasted text in composer");
+  expand.dataset.pastedExpandLabel = label;
+  expand.append(createChipIconDom("chevron", "size-3"));
+  renderComposerBadgeDom(dom, pastedTextBadge(lines), expand);
+  dom.title = `Pasted text · ${label}`;
 }
 
 function createPastedTextChipDom(label: string, lines: number) {
   const dom = document.createElement("span");
-  dom.className = "inline-flex items-center gap-1 rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-1 text-xs font-medium text-amber-11";
   dom.contentEditable = "false";
   dom.setAttribute("spellcheck", "false");
-  dom.title = `Pasted text · ${label}`;
-
-  const text = document.createElement("span");
-  text.textContent = pastedTextChipLabel(lines);
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "ml-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium text-amber-11 underline decoration-amber-8 underline-offset-2 transition-colors hover:bg-amber-4 hover:text-amber-12";
-  button.title = "Expand";
-  button.setAttribute("aria-label", "Expand pasted text in composer");
-  button.dataset.pastedExpandLabel = label;
-
-  const actionText = document.createElement("span");
-  actionText.textContent = "Expand";
-
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.5");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  svg.setAttribute("class", "h-3 w-3");
-  svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "m6 3 5 5-5 5");
-  svg.append(path);
-  button.append(actionText, svg);
-  dom.append(text, button);
+  renderPastedTextChipDom(dom, label, lines);
   return dom;
-}
-
-function updatePastedTextChipDom(dom: HTMLElement, label: string, lines: number) {
-  const text = dom.firstElementChild;
-  if (text) text.textContent = pastedTextChipLabel(lines);
-  const button = dom.querySelector("button[data-pasted-expand-label]");
-  if (button instanceof HTMLButtonElement) {
-    button.title = "Expand";
-    button.setAttribute("aria-label", "Expand pasted text in composer");
-    button.dataset.pastedExpandLabel = label;
-  }
-  dom.title = `Pasted text · ${label}`;
 }
 
 type SerializedComposerPastedTextNode = Spread<
@@ -517,7 +494,7 @@ class ComposerPastedTextNode extends TextNode {
 
   override updateDOM(prevNode: ComposerPastedTextNode, dom: HTMLElement) {
     if (prevNode.__pastedLabel !== this.__pastedLabel || prevNode.__pastedLines !== this.__pastedLines) {
-      updatePastedTextChipDom(dom, this.__pastedLabel, this.__pastedLines);
+      renderPastedTextChipDom(dom, this.__pastedLabel, this.__pastedLines);
     }
     return false;
   }
@@ -545,7 +522,7 @@ function $createComposerPastedTextNode(label: string, lines: number) {
 
 function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   const dom = document.createElement("span");
-  dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
+  dom.className = "relative mx-0.5 inline-flex h-10 max-w-[240px] shrink-0 items-center align-middle";
   dom.contentEditable = "false";
   dom.setAttribute("spellcheck", "false");
   dom.title = attachment.name;
@@ -568,11 +545,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
     dom.append(expand);
   } else {
     const chip = document.createElement("span");
-    chip.className = "inline-flex h-10 max-w-[140px] items-center gap-1.5 rounded-xl border border-border/70 bg-muted/40 px-2";
-    const label = document.createElement("span");
-    label.className = "truncate text-[11px] font-medium text-foreground";
-    label.textContent = attachment.name;
-    chip.append(label);
+    chip.dataset.attachmentFileChip = "true";
+    renderAttachmentFileChipDom(chip, { filename: attachment.name, mime: attachment.mime ?? "", bytes: attachment.bytes });
     dom.append(chip);
   }
 
@@ -639,8 +613,8 @@ function updateAttachmentChipDom(dom: HTMLElement, attachment: ComposerAttachmen
     img.src = attachment.previewUrl;
     img.alt = attachment.name;
   }
-  const label = dom.querySelector("span.truncate");
-  if (label) label.textContent = attachment.name;
+  const chip = dom.querySelector<HTMLElement>("[data-attachment-file-chip]");
+  if (chip) renderAttachmentFileChipDom(chip, { filename: attachment.name, mime: attachment.mime ?? "", bytes: attachment.bytes });
 }
 
 type SerializedComposerAttachmentNode = Spread<
@@ -649,6 +623,8 @@ type SerializedComposerAttachmentNode = Spread<
     attachmentName: string;
     attachmentKind: "image" | "file";
     attachmentPreviewUrl?: string;
+    attachmentMime?: string;
+    attachmentBytes?: number;
     type: "composer-attachment";
     version: 1;
   },
@@ -660,6 +636,8 @@ class ComposerAttachmentNode extends TextNode {
   __attachmentName: string;
   __attachmentKind: "image" | "file";
   __attachmentPreviewUrl?: string;
+  __attachmentMime?: string;
+  __attachmentBytes?: number;
 
   static override getType() {
     return "composer-attachment";
@@ -672,6 +650,8 @@ class ComposerAttachmentNode extends TextNode {
         name: node.__attachmentName,
         kind: node.__attachmentKind,
         previewUrl: node.__attachmentPreviewUrl,
+        mime: node.__attachmentMime,
+        bytes: node.__attachmentBytes,
       },
       node.__key,
     );
@@ -683,6 +663,8 @@ class ComposerAttachmentNode extends TextNode {
       name: serializedNode.attachmentName,
       kind: serializedNode.attachmentKind,
       previewUrl: serializedNode.attachmentPreviewUrl,
+      mime: serializedNode.attachmentMime,
+      bytes: serializedNode.attachmentBytes,
     });
   }
 
@@ -692,6 +674,8 @@ class ComposerAttachmentNode extends TextNode {
     this.__attachmentName = attachment.name;
     this.__attachmentKind = attachment.kind;
     this.__attachmentPreviewUrl = attachment.previewUrl;
+    this.__attachmentMime = attachment.mime;
+    this.__attachmentBytes = attachment.bytes;
   }
 
   getAttachmentId() {
@@ -705,6 +689,8 @@ class ComposerAttachmentNode extends TextNode {
       attachmentName: this.__attachmentName,
       attachmentKind: this.__attachmentKind,
       attachmentPreviewUrl: this.__attachmentPreviewUrl,
+      attachmentMime: this.__attachmentMime,
+      attachmentBytes: this.__attachmentBytes,
       type: "composer-attachment",
       version: 1,
     };
@@ -716,6 +702,8 @@ class ComposerAttachmentNode extends TextNode {
       name: this.__attachmentName,
       kind: this.__attachmentKind,
       previewUrl: this.__attachmentPreviewUrl,
+      mime: this.__attachmentMime,
+      bytes: this.__attachmentBytes,
     });
   }
 
@@ -725,12 +713,16 @@ class ComposerAttachmentNode extends TextNode {
       || prevNode.__attachmentName !== this.__attachmentName
       || prevNode.__attachmentKind !== this.__attachmentKind
       || prevNode.__attachmentPreviewUrl !== this.__attachmentPreviewUrl
+      || prevNode.__attachmentMime !== this.__attachmentMime
+      || prevNode.__attachmentBytes !== this.__attachmentBytes
     ) {
       updateAttachmentChipDom(dom, {
         id: this.__attachmentId,
         name: this.__attachmentName,
         kind: this.__attachmentKind,
         previewUrl: this.__attachmentPreviewUrl,
+        mime: this.__attachmentMime,
+        bytes: this.__attachmentBytes,
       });
     }
     return false;
@@ -839,7 +831,7 @@ function setPrompt(
     value = slashMatch[2] ?? "";
   }
 
-  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/);
+  const segments = value.split(COMPOSER_DRAFT_TOKEN_RE);
   const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
@@ -974,6 +966,56 @@ function serializePromptFromRoot(): string {
     .join("\n");
 }
 
+// Caret position as an offset into serializePromptFromRoot(): paragraphs join
+// with one "\n", and a caret inside a chip counts as after it.
+function $draftOffsetAtSelection(): number | null {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return null;
+  const point = selection.isBackward() ? selection.focus : selection.anchor;
+  const node = point.getNode();
+  const paragraphs = $getRoot().getChildren();
+  const before = (nodes: LexicalNode[]) => nodes.reduce((sum, child) => sum + child.getTextContentSize(), 0);
+  if (node.is($getRoot())) return before(paragraphs.slice(0, point.offset)) + point.offset;
+  const paragraph = node.getTopLevelElement();
+  if (!paragraph) return null;
+  const index = paragraphs.findIndex((child) => child.is(paragraph));
+  let offset = before(paragraphs.slice(0, index)) + index;
+  if (node.is(paragraph) && $isElementNode(paragraph)) return offset + before(paragraph.getChildren().slice(0, point.offset));
+  offset += before(node.getPreviousSiblings());
+  if (!$isTextNode(node)) return offset;
+  return offset + (isComposerInlineTokenNode(node) && point.offset > 0 ? node.getTextContentSize() : point.offset);
+}
+
+// Inverse of $draftOffsetAtSelection for a freshly built prompt.
+function $selectDraftOffset(offset: number) {
+  let remaining = offset;
+  const paragraphs = $getRoot().getChildren();
+  for (const [index, paragraph] of paragraphs.entries()) {
+    const size = paragraph.getTextContentSize();
+    if (remaining > size && index < paragraphs.length - 1) {
+      remaining -= size + 1;
+      continue;
+    }
+    if (!$isElementNode(paragraph)) return false;
+    const children = paragraph.getChildren();
+    for (const [childIndex, child] of children.entries()) {
+      if (remaining <= 0) {
+        paragraph.select(childIndex, childIndex);
+        return true;
+      }
+      const childSize = child.getTextContentSize();
+      if (remaining < childSize && $isTextNode(child) && !isComposerInlineTokenNode(child)) {
+        child.select(remaining, remaining);
+        return true;
+      }
+      remaining -= childSize;
+    }
+    paragraph.select(children.length, children.length);
+    return true;
+  }
+  return false;
+}
+
 function SyncPlugin(props: {
   value: string;
   mentions: Record<string, ComposerMentionKind>;
@@ -992,7 +1034,7 @@ function SyncPlugin(props: {
     // NOTE: serializePromptFromRoot() calls $getRoot() which requires an
     // active editor state. Outside of editor.update()/editor.read() we
     // must wrap it in editor.getEditorState().read().
-    const currentText = editor.getEditorState().read(() => serializePromptFromRoot());
+    const [currentText, caretOffset] = editor.getEditorState().read(() => [serializePromptFromRoot(), $draftOffsetAtSelection()] as const);
     const forceRebuild = !props.value.trim() && currentText.trim() !== "";
     if (!forceRebuild && valueRef.current === props.value) return;
     valueRef.current = props.value;
@@ -1008,6 +1050,10 @@ function SyncPlugin(props: {
       // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
+      // A chip pasted mid-draft rebuilds the prompt: keep the caret before
+      // the same trailing text, i.e. right after the new chip.
+      const tail = caretOffset === null ? "" : currentText.slice(caretOffset);
+      if (!forceRebuild && tail && props.value.endsWith(tail) && $selectDraftOffset(props.value.length - tail.length)) return;
       // $getRoot().selectEnd() doesn't work when the last node is a
       // token (chip) — Lexical can't position a cursor inside a token,
       // so the selection collapses to position 0. Use element-level
@@ -1101,7 +1147,7 @@ function pastedTextWouldOverflowEditor(text: string, editorElement: HTMLElement 
   }
 }
 
-function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
+function PasteChipPlugin(props: { onPasteText?: (text: string, draftOffset?: number) => void }) {
   const [editor] = useLexicalComposerContext();
   const onPasteTextRef = useRef(props.onPasteText);
 
@@ -1124,7 +1170,7 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
         if (shouldCollapsePastedText(text, wouldOverflowComposer)) {
           if (!onPasteTextRef.current) return false;
           event.preventDefault();
-          onPasteTextRef.current(text);
+          onPasteTextRef.current(text, $draftOffsetAtSelection() ?? undefined);
           return true;
         }
         event.preventDefault();
@@ -1369,6 +1415,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       }, { discrete: true });
       editor.focus();
       return draft;
+    },
+    draftOffsetAtSelection() {
+      return editor.getEditorState().read(() => $draftOffsetAtSelection());
     },
   }), [editor]);
 

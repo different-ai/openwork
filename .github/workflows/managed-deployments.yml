@@ -1,0 +1,56 @@
+name: Managed Deployments
+
+on:
+  pull_request:
+    paths:
+      - "infra/managed-deployments/**"
+      - "infra/terraform/modules/openwork-aws-ecs/**"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published OpenWork image version to pin in the AWS installer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Install verified Terraform
+        run: |
+          curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.16.5/terraform_1.16.5_linux_amd64.zip
+          echo '2bc2fcfff033265c9e02ca0351f01794eb122f62a9b2a49a3294b9e49eaab5e4  /tmp/terraform.zip' | sha256sum -c -
+          unzip -q /tmp/terraform.zip -d /tmp/terraform-bin
+          echo /tmp/terraform-bin >> "$GITHUB_PATH"
+      - name: Terraform contract and AWS root
+        run: |
+          terraform fmt -check -recursive infra/managed-deployments
+          (cd infra/managed-deployments/contract && terraform init -backend=false -input=false && terraform test)
+          (cd infra/managed-deployments/aws/terraform && terraform init -backend=false -input=false -lockfile=readonly && terraform validate && terraform test)
+      - name: Installer and health agent tests
+        run: |
+          python3 -m pip install --disable-pip-version-check boto3==1.43.110 botocore==1.43.110
+          node infra/managed-deployments/aws/bootstrap/template.mjs /tmp/cloudformation.json
+          diff -u infra/managed-deployments/aws/bootstrap/cloudformation.json /tmp/cloudformation.json
+          python3 -m unittest discover -s infra/managed-deployments/tests -v
+
+  installer:
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Build pinned AWS installer
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node infra/managed-deployments/tools/build-release.mjs aws "$RELEASE_VERSION" dist/managed-deployments/aws
+      - name: Retain installer for operator publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: managed-deployment-aws-installer
+          path: dist/managed-deployments/aws/
+          retention-days: 30

@@ -28,7 +28,10 @@ jobs:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
+    # Only for the automation App's key (release tags and dev may use it).
+    environment: warden-clearance
     env:
+      HAS_AUTOMATION_APP: ${{ secrets.AUTOMATION_PRIVATE_KEY != '' }}
       BASE_BRANCH: dev
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
       BRANCH_NAME: automation/changelog-${{ github.event.release.tag_name || inputs.tag }}-${{ github.run_id }}
@@ -192,10 +195,26 @@ jobs:
           git add packages/docs/changelog.mdx changelog/
           git commit -S -m "docs(changelog): release notes for $TAG"
 
+      # Opened by the automation App once it is configured (AUTOMATION_APP_ID
+      # and AUTOMATION_PRIVATE_KEY in the warden-clearance environment), so the
+      # repository can turn off "Allow GitHub Actions to create and approve
+      # pull requests". Not diff-warden: it approves this PR, and an App can't
+      # approve its own. Falls back to GITHUB_TOKEN until then.
+      - name: Mint PR token
+        id: automation
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false' && env.HAS_AUTOMATION_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: read
+
       - name: Open pull request
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PR_TOKEN: ${{ steps.automation.outputs.token || github.token }}
         run: |
           set -euo pipefail
 
@@ -203,7 +222,7 @@ jobs:
           printf '%s\n\n%s\n' \
             "These release notes were auto-generated from the pull request descriptions between \`$PREV\` and \`$TAG\` by the changelog agent and verified by \`scripts/check-changelog-output.mjs\`. The tracker's Pull requests table records why each change was included or left out." \
             "This is a docs-only change with no runtime surface." > /tmp/pr_body.txt
-          pr_url="$(gh pr create \
+          pr_url="$(GH_TOKEN="$PR_TOKEN" gh pr create \
             --base "$BASE_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "docs(changelog): release notes for $TAG" \

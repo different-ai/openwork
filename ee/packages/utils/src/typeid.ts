@@ -83,6 +83,7 @@ export const idTypesMapNameToPrefix = {
   automationRunEvent: "ate",
   automationThread: "ath",
   remoteSessionCommand: "rsc",
+  remoteSessionRequest: "rsr",
   codemodeRun: "cmr",
   workflowRun: "wfr",
   artifactView: "arv",
@@ -115,6 +116,16 @@ export const idTypesMapNameToPrefix = {
   gatewayModelGroupModel: "gmm",
   gatewayCredentialSet: "gcs",
   organizationWebOrigin: "owo",
+  deviceCode: "dvc",
+  workspaceClaimCode: "wcc",
+  auditOperation: "aop",
+  auditEventResource: "aer",
+  auditUsageFact: "auf",
+  platformAuditEvent: "pae",
+  permissionSet: "pms",
+  permissionSetPermission: "psp",
+  permissionSetTeam: "pst",
+  capabilityUsageEvent: "cue",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

@@ -3,10 +3,13 @@ import * as React from "react";
 
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import type { DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
-import type { DenOrgLlmProvider } from "@/app/lib/den";
+import type { DenOrgLlmProvider, DenOrgLlmProviderAccess } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
+import { GatewayConnectRow } from "./ai-view";
+import { ProviderIcon } from "../../../design-system/provider-icon";
+import { gatewayConnectProviderKey, type GatewayConnectProvider } from "../../connections/provider-auth/cloud-provider-config";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import {
   CloudProvidersSection,
@@ -23,7 +26,16 @@ import type {
   CloudProviderServerSyncState,
   CloudProviderSyncError,
 } from "@/react-app/domains/connections/provider-auth/store";
-import { SettingsNotice, SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { SettingsStack } from "@/react-app/domains/settings/settings-section";
+
+/** "Everyone", the team names, or a member count; null when Den did not say. */
+export function providerAccessLabel(access: DenOrgLlmProviderAccess | undefined): string | null {
+  if (!access) return null;
+  if (access.allMembers) return "Everyone";
+  if (access.teamNames.length) return access.teamNames.join(", ");
+  if (access.memberCount) return access.memberCount === 1 ? "1 member" : `${access.memberCount} members`;
+  return null;
+}
 
 export type CloudProviderRowStateInput = {
   imported: boolean;
@@ -77,6 +89,11 @@ export type CloudProvidersViewProps = {
   runCloudProviderSync: (reason: "manual") => Promise<unknown>;
   /** Server-side sync facts (reload pending, skips); null on the legacy renderer-import path. */
   serverSync: CloudProviderServerSyncState | null;
+  gatewayConnectProviders?: GatewayConnectProvider[];
+  connectingGatewayProviderId?: string | null;
+  onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  onOpenDen?: () => void;
+  onOpenModelConnections?: () => void;
 };
 
 export function CloudProvidersView({
@@ -92,6 +109,11 @@ export function CloudProvidersView({
   refreshCloudOrgProviders,
   runCloudProviderSync,
   serverSync,
+  gatewayConnectProviders = [],
+  connectingGatewayProviderId,
+  onConnectGatewayProvider,
+  onOpenDen,
+  onOpenModelConnections,
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -100,7 +122,7 @@ export function CloudProvidersView({
 
   const rows = React.useMemo<CloudProviderRow[]>(() => {
     const restrictToCloud = checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
-    return cloudOrgProviders.map((provider) => {
+    const liveRows = cloudOrgProviders.map((provider) => {
       const imported = importedCloudProviders[provider.id] ?? null;
       const outOfSync = imported ? isCloudProviderOutOfSync(provider, imported) : false;
       const allowed = isProviderAllowedByDesktopPolicy({
@@ -124,11 +146,9 @@ export function CloudProvidersView({
         skippedByServer: Boolean(serverSync?.skippedProviders[provider.id]),
         reloadPending: serverSync?.reloadPending === true,
       });
-      const source = provider.source === "custom" ? "custom" : "managed";
-      const modelCount = provider.models.length;
-      const providerDetail = modelCount === 0
-        ? `All Models · ${source} provider`
-        : t("den.cloud_provider_detail", { count: modelCount, source });
+      const providerDetail = provider.source === "openwork"
+        ? `Organization credential · ${provider.models.length ? `${provider.models.length} models` : "All models"}`
+        : `${imported?.source === "openwork_gateway" ? "OpenWork Gateway" : "Organization credential"} · ${provider.credentialMode === "per_member" ? "Each member signs in" : "Shared org key"}`;
       const detail = status === "blocked"
         ? t("den.cloud_provider_blocked")
         : status === "unavailable"
@@ -147,11 +167,24 @@ export function CloudProvidersView({
         status,
         name: provider.name,
         detail,
+        metaId: provider.source === "openwork" ? "openwork" : provider.id,
+        access: providerAccessLabel(provider.access),
+        credentialReady: provider.source === "openwork" || provider.hasApiKey || provider.hasMyCredential === true || Boolean(imported),
       };
     });
+    const importedRows: CloudProviderRow[] = Object.values(importedCloudProviders).filter((provider) => !cloudOrgProviders.some((live) => live.id === provider.cloudProviderId)).map((provider) => ({
+      key: `imported:${provider.cloudProviderId}`, cloudProviderId: provider.cloudProviderId, provider: null, imported: provider, name: provider.name,
+      status: resolveCloudProviderRowStatus({ imported: true, outOfSync: false, allowed: isProviderAllowedByDesktopPolicy({ providerId: provider.providerId, restrictToCloud, checkRestriction: checkDesktopAppRestriction }), importsUnavailable, needsCredential: false, needsServer: false, syncError: null, reloadPending: serverSync?.reloadPending, skippedByServer: Boolean(serverSync?.skippedProviders[provider.cloudProviderId]) }),
+      detail: provider.source === "openwork_gateway" ? "OpenWork Gateway · Organization credential" : "Managed in Den",
+      metaId: provider.cloudProviderId,
+      credentialReady: true,
+    }));
+    const combined = [...liveRows, ...importedRows];
+    return combined.filter((row) => !gatewayConnectProviders.some((provider) => provider.cloudProviderId === row.cloudProviderId)).map<CloudProviderRow>((row) => serverSync?.lastRun?.status === "failed" ? { ...row, status: "unavailable", detail: "Could not verify with Den. Sync again to check access." } : row);
   }, [
     checkDesktopAppRestriction,
     cloudOrgProviders,
+    gatewayConnectProviders,
     importedCloudProviders,
     importsUnavailable,
     lastSyncError,
@@ -161,7 +194,12 @@ export function CloudProvidersView({
 
   React.useEffect(() => {
     if (!isSignedIn || !activeOrganization?.id) return;
-    void refreshCloudOrgProviders();
+    let current = true;
+    setBusy(true);
+    void refreshCloudOrgProviders().catch(() => {
+      if (current) setActionError("Could not verify organization providers. Sync again to retry.");
+    }).finally(() => { if (current) setBusy(false); });
+    return () => { current = false; };
   }, [activeOrganization?.id, isSignedIn, refreshCloudOrgProviders]);
 
   const syncNow = React.useCallback(async () => {
@@ -192,14 +230,23 @@ export function CloudProvidersView({
 
   if (!isSignedIn) {
     const notice = (
-      <SettingsNotice>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <span>{t("skills.share_team_sign_in_hint")}</span>
-          <Button size="sm" onClick={onOpenAccount}>
-            {t("skills.share_team_sign_in")}
-          </Button>
+      <section className="flex flex-col gap-3" aria-labelledby="ai-providers-organization">
+        <div className="space-y-1">
+          <h2 id="ai-providers-organization" className="text-base font-medium text-dls-text">From your organization</h2>
+          <p className="text-sm text-muted-foreground">Providers your team pays for, delivered through the OpenWork Gateway. Nothing to set up on this device.</p>
         </div>
-      </SettingsNotice>
+        <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-dls-border px-5 py-5 sm:flex-row sm:items-center">
+          <div className="flex shrink-0 items-center -space-x-2" aria-hidden>
+            {["openai", "openrouter", "google"].map((id) => <span key={id} className="flex size-8 items-center justify-center rounded-full border border-dls-border bg-dls-surface"><ProviderIcon providerId={id} size={16} /></span>)}
+            <span className="flex size-8 items-center justify-center rounded-full border border-dls-border bg-dls-hover text-[11px] font-medium text-muted-foreground">+2</span>
+          </div>
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <h3 className="text-sm font-medium text-dls-text">No organization yet</h3>
+            <p className="text-sm text-muted-foreground">Sign in to see what your organization already provides. Your keys on this device keep working either way.</p>
+          </div>
+          <Button variant="outline" className="shrink-0 self-start sm:self-center" onClick={onOpenAccount}>Sign in to OpenWork</Button>
+        </div>
+      </section>
     );
     return embedded ? notice : (
       <SettingsStack>
@@ -211,12 +258,17 @@ export function CloudProvidersView({
 
   const section = (
     <CloudProvidersSection
-      actionError={actionError}
+      actionError={actionError ?? (serverSync?.lastRun?.status === "failed" ? "Could not verify providers with Den. Sync again to retry." : null)}
       actionId={actionId}
       busy={busy}
       rows={rows}
       onRefresh={syncNow}
       onRetry={retryProvider}
+      onOpenDen={onOpenDen}
+      onOpenModelConnections={onOpenModelConnections}
+      lastVerifiedAt={serverSync?.lastVerifiedAt}
+      additionalCount={gatewayConnectProviders.length}
+      additionalRows={gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}
     />
   );
 

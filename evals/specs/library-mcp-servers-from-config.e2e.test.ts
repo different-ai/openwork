@@ -58,12 +58,14 @@ test("the Library lists MCP servers written by hand into opencode.json, whicheve
     // Advanced still owns creation only; the inventory does not live there.
     await user.click({ role: "button", label: /^Advanced\b/ });
     await user.see({ role: "button", label: "Add workspace MCP" });
+    // Plugins arrive through the organization, never as files imported here.
+    await user.notSee({ role: "button", label: "From GitHub" });
     expect((await probe.dom('button[aria-expanded="true"]')).elements.filter((element) => /^Advanced\b/.test(element.text))).toHaveLength(1);
     await user.click({ role: "button", label: /^Advanced\b/ });
     await user.screenshot();
     evidence.recordAssertionEvidence(
       "Library readiness follows a real MCP connection",
-      `The fixture wrote ready-helper into opencode.json before opening the workspace, without an MCP registration API call. It completed MCP initialize and the workspace engine reported connected. On this computer lists all four servers; ready: ${ready.join(", ")}; the three disabled entries carry no ready mark.`,
+      `The fixture wrote ready-helper into opencode.json before opening the workspace, without an MCP registration API call. It completed MCP initialize and the workspace engine reported connected. On this computer lists all four servers; ready: ${ready.join(", ")}; the three disabled entries carry no ready mark. Advanced offers Add workspace MCP and no "From GitHub" plugin import.`,
       ready.includes("ready-helper"),
     );
   });

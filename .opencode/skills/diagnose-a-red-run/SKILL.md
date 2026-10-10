@@ -9,7 +9,7 @@ description: Test is red, typecheck failed, CI job failed, flaky, timed out, was
 
 - Record the exact command, commit SHA, exit code, and passed/failed/skipped
   counts. Quote the first actionable failure; do not summarize it away.
-- Classify the check: testkit spec, unit suite, typecheck, build, lint, or CI job.
+- Classify the check: testkit spec, typecheck, build, lint, or CI job.
 
 ## Run a clean control
 
@@ -42,6 +42,16 @@ git worktree remove /tmp/openwork-dev-control
 - Authorize URL points at the real provider: Den booted without mock env.
 - Teardown `403 fresh_auth_required`: the session aged; a `freshSession` retry
   exists.
+
+## Red core journey (`pr-proof.yml` "Core journey")
+
+- Open the job summary's "Freestyle world" table first: it names the path
+  (reused, fast, full build) and its reason.
+- World preparation failed: read the "builder log" group in the job log; it is
+  the VM's own build or boot output. A fast path that fails falls back to a full
+  build by itself, so a red here is a real build or boot failure.
+- Journey failed: the timeout prints the on-screen state. Reproduce with the
+  `run-tests` core journey command on the same pushed commit.
 
 ## Environment forensics
 

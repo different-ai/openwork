@@ -118,22 +118,14 @@ test("side chats keep questions, replies, and saved splits attached to their own
         ), {
           within: 10_000,
           label: "idle row restores its title space after selection and hover settle",
-          until: ({ elements }) => elements.length === (sessionId === selected ? 4 : 3)
+          until: ({ elements }) => elements.length === 3
             && elements[1]!.rect.right - elements[2]!.rect.right <= 11,
         });
-        const [row, main, title, side] = layout.elements;
+        const [row, main, title] = layout.elements;
         if (!row || !main || !title) throw new Error("Missing conversation row geometry");
         expect(title.rect.width).toBeGreaterThan(0);
         expect(main.rect.right - title.rect.right, "no invisible action gutter").toBeCloseTo(10, 0);
-        if (sessionId === selected) {
-          if (!side) throw new Error("The selected conversation must offer a side chat");
-          expect(side.rect.width).toBeGreaterThan(0);
-          expect(main.rect.right).toBeCloseTo(side.rect.left, 0);
-          expect(side.rect.right).toBeCloseTo(row.rect.right, 0);
-        } else {
-          expect(side).toBeUndefined();
-          expect(main.rect.right, "other conversations use the plus space").toBeCloseTo(row.rect.right, 0);
-        }
+        expect(main.rect.right, "rows never reserve side-chat space").toBeCloseTo(row.rect.right, 0);
       }
     }
     expect(await ids(), "switching rows must not create a side chat").toEqual(before);
@@ -172,12 +164,6 @@ test("side chats keep questions, replies, and saved splits attached to their own
       await send("primary", world.primaryQuestionPrompt);
       await user.see({ text: "Which format should the main task use?" }, { timeoutMs: 45_000 });
       expect(await pane("secondary")).not.toHaveProperty("text", expect.stringContaining("Which format should the main task use?"));
-      await probe.eventually(() => probe.eval(browserScript((id) => {
-        const row = document.querySelector<HTMLElement>('[data-sidebar-session-id="' + id + '"]');
-        return Boolean(row?.querySelector<HTMLElement>('[data-session-side-chat] [data-session-attention-indicator]'));
-      }, [primary])), {
-        within: 15_000, label: "the attached side chat shows that it needs an answer", until: (value) => value === true,
-      });
       await user.screenshot();
     } catch (error) {
       await user.screenshot();
@@ -208,25 +194,23 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await answer("primary", "User context:", "Main conversation reference");
   });
 
-  await step("the split belongs to the session row and follows it into Pinned", async () => {
+  await step("side chats stay out of the sidebar, including when the session is pinned", async () => {
     const rowLayout = () => probe.eval(browserScript((id) => {
       const row = document.querySelector<HTMLElement>('[data-sidebar-session-id="' + id + '"]');
-      const main = row?.querySelector<HTMLElement>('[data-session-tab-id]')?.getBoundingClientRect();
-      const side = row?.querySelector<HTMLElement>('[data-session-side-chat]')?.getBoundingClientRect();
       const headers = [...document.querySelectorAll<HTMLElement>('[data-workbench-pane-header]')];
       return {
-        attached: Boolean(main && side && side.left >= main.right - 1 && Math.abs(main.top - side.top) < 2),
+        sideChatControls: document.querySelectorAll<HTMLElement>('[data-session-side-chat]').length,
         pinned: Boolean(row?.closest('[data-global-pinned-sessions]')),
         compactHeaders: headers.length === 2 && headers.every((node) => node.getBoundingClientRect().height <= 44),
         oldControls: document.querySelectorAll<HTMLElement>('[data-session-tab-split-pill], [data-sidebar-new-split], [data-second-chat-intro], [data-chat-composer-label]').length,
       };
     }, [primary]));
-    expect(await rowLayout()).toMatchObject({ attached: true, pinned: false, compactHeaders: true, oldControls: 0 });
+    expect(await rowLayout()).toMatchObject({ sideChatControls: 0, pinned: false, compactHeaders: true, oldControls: 0 });
     await user.rightClick(await rowTarget(primary));
     await user.screenshot();
     await user.click({ role: "menuitem", label: /^Pin session$/ });
-    await probe.eventually(rowLayout, { within: 15_000, label: "the session and its side-chat control move into Pinned",
-      until: (value) => isRecord(value) && value.pinned === true && value.attached === true,
+    await probe.eventually(rowLayout, { within: 15_000, label: "the session moves into Pinned without a side-chat control",
+      until: (value) => isRecord(value) && value.pinned === true && value.sideChatControls === 0,
     });
     await user.screenshot();
   });
@@ -239,10 +223,9 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await user.click({ role: "button", label: "Open side chat" });
     const other = await waitSplit(world.switchSession.sessionId);
     expect(other.secondary).not.toBe(first.secondary);
-    await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
+    await reopen(primary);
     await waitSplit(primary, first.secondary);
-    await probe.eventually(facts, { within: 15_000, label: "the attached side-chat button focuses the side pane", until: (value) => value.focused === "secondary" });
-    await user.click({ role: "button", label: `Side chat · ${world.switchSession.title}` });
+    await reopen(world.switchSession.sessionId);
     await waitSplit(other.primary, other.secondary);
     await send("secondary", world.secondaryPrompt);
     await answer("secondary", "Secondary split received", "Primary split received");
@@ -255,7 +238,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await preservedHistory(other.primary, world.primaryPrompt, "Primary split received");
     await reopen(other.secondary);
     await preservedHistory(other.secondary, world.secondaryPrompt, "Secondary split received");
-    await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
+    await reopen(primary);
     await waitSplit(primary, first.secondary);
     await user.reload();
     await waitSplit(primary, first.secondary);
@@ -308,7 +291,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
     });
     expect(await mainCreation.read()).toMatchObject({ workspaceLists: 0, creates: 1, reblocked: false, expired: false });
     await mainCreation[Symbol.asyncDispose]();
-    await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
+    await reopen(primary);
     await waitSplit(primary, third.secondary);
     const saved = await ids();
     await user.click({ role: "button", label: "Open as main chat" });
@@ -325,7 +308,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
   });
 
   await step("the workspace plus opens a new main thread even when the side chat is focused", async () => {
-    await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
+    await reopen(primary);
     const original = await waitSplit(primary);
     await user.click({ placeholder: "Describe your task...", nth: 1 });
     await probe.eventually(facts, { within: 10_000, label: "the side chat owns focus before clicking plus",
@@ -349,7 +332,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
     const created = (await ids()).filter(id => !saved.includes(id));
     expect(created).toHaveLength(1);
     expect(await facts()).toMatchObject({ primary: created[0], panes: 0 });
-    await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
+    await reopen(primary);
     await waitSplit(primary, original.secondary);
     await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline");
   });

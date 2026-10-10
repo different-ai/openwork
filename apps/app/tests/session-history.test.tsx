@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { act, StrictMode, useEffect, type ReactNode } from "react";
+import { act, StrictMode, useEffect, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { focusManager, notifyManager, onlineManager, QueryClientProvider, skipToken, useQuery } from "@tanstack/react-query";
@@ -18,6 +18,7 @@ import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usec
 import { resolveForkBoundaryId } from "../src/react-app/domains/session/sync/transcript-reconcile";
 import { resolveAdmissionOutcome } from "../src/react-app/domains/session/surface/session-admission-outcome";
 import { mergeSessionHistoryPages } from "../src/react-app/domains/session/surface/session-history-pages";
+import { useSessionScrollController } from "../src/react-app/domains/session/surface/scroll-controller";
 
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -99,7 +100,36 @@ async function paint() {
   });
 }
 
-function fixture() {
+function fixture(navigation = false) {
+  let scrollControls: ReturnType<typeof useSessionScrollController> | undefined;
+  function NavigationViewport({ opening, owner, children }: { opening: ReturnType<typeof useOpeningSessionHistory>; owner: string; children: ReactNode }) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
+    const top = useRef(0);
+    const scroll = useSessionScrollController({
+      selectedSessionId: owner, geometryOwner: owner, submittedMessageId: null,
+      historyReady: opening.pages.ready, windowReady: opening.pages.ready && !opening.pages.anchorPending,
+      historyComplete: opening.complete, historyPages: opening.pages,
+      renderedMessages: opening.pageMessages, containerRef, contentRef,
+    });
+    scrollControls = scroll;
+    return <div data-thread-scroll onScroll={scroll.handleScroll} ref={(node) => {
+      containerRef.current = node;
+      if (!node) return;
+      const height = () => Math.max(200, node.querySelectorAll("[data-message-id]").length * 300);
+      Object.defineProperties(node, {
+        clientHeight: { configurable: true, get: () => 200 },
+        clientWidth: { configurable: true, get: () => 500 },
+        scrollHeight: { configurable: true, get: height },
+        scrollTop: { configurable: true, get: () => top.current, set: (value: number) => { top.current = Math.max(0, Math.min(value, height() - 200)); } },
+        scrollTo: { configurable: true, value: (options: ScrollToOptions) => { node.scrollTop = options.top ?? top.current; } },
+        getBoundingClientRect: { configurable: true, value: () => new DOMRect(0, 0, 500, 200) },
+      });
+      [...node.querySelectorAll<HTMLElement>("[data-message-id]")].forEach((message, index) => {
+        message.getBoundingClientRect = () => new DOMRect(0, index * 300 - top.current, 500, 300);
+      });
+    }}><div ref={contentRef} data-thread-history-complete={opening.complete}>{children}</div></div>;
+  }
   const client = getReactQueryClient();
   const host = document.createElement("div");
   document.body.append(host);
@@ -147,13 +177,16 @@ function fixture() {
     const unanswered = opening.complete && resolveAdmissionOutcome({ messages, statusType: "idle", sending: false,
       hasActiveQuestion: false, hasActivePermission: false, hasSessionError: false }) === "unresolved";
     const failed = Boolean(opening.openingError) || full.isError && !full.isFetching || opening.pages.failed;
+    const transcriptView = <SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
+      <div data-history-complete={opening.complete} data-admission-unresolved={unanswered}>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.parts.map((part) => part.type === "text" ? part.text : part.type === "dynamic-tool" ? `${part.state}:${JSON.stringify({ input: part.input, output: "output" in part ? part.output : null })}` : "").join(" ")}</div>)}
+    </SessionHistoryBoundary>;
     return <><span>Composer {owner}</span><input aria-label="Draft" /><div className="flex min-h-0 flex-col">
       <SessionHistoryStatus key={cacheOwner} complete={opening.complete && !opening.openingError} pending={pending}
         loading={opening.openingLoading || full.isFetching && opening.partial || opening.pages.loading} failed={failed}
         onRetry={() => opening.openingError ? opening.retryOpening() : opening.pages.failed ? opening.pages.retry() : full.refetch()} />
-      <div className="relative min-h-0 flex-1"><div data-thread-scroll><SessionHistoryBoundary owner={cacheOwner} pending={pending} saved={opening.saved} failed={failed}>
-        <div data-history-complete={opening.complete} data-admission-unresolved={unanswered}>{current?.session.title}</div>{messages.map((message) => <div key={message.id} data-message-id={message.id}>{message.parts.map((part) => part.type === "text" ? part.text : part.type === "dynamic-tool" ? `${part.state}:${JSON.stringify({ input: part.input, output: "output" in part ? part.output : null })}` : "").join(" ")}</div>)}
-      </SessionHistoryBoundary></div></div>
+      <div className="relative min-h-0 flex-1">{navigation
+        ? <NavigationViewport opening={opening} owner={owner}>{transcriptView}</NavigationViewport>
+        : <div data-thread-scroll>{transcriptView}</div>}</div>
     </div></>;
   }
   function RuntimeOwners({ owners, children }: { owners: Parameters<typeof useSessionHistoryRuntimeOwners>[0]; children: ReactNode }) {
@@ -167,6 +200,10 @@ function fixture() {
   cleanups.push(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); });
   return {
     reads, latestReads, host, client, input, renderInput, panePages,
+    get controls() {
+      if (!scrollControls) throw new Error("Navigation is not mounted");
+      return scrollControls;
+    },
     get openingError() { return openingError; },
     async renderRuntimeOwners(owners: Parameters<typeof useSessionHistoryRuntimeOwners>[0] | null, panes: ReturnType<typeof input>[], strict = false) {
       const tree = <QueryClientProvider client={client}>{owners && <RuntimeOwners owners={owners}>
@@ -231,6 +268,174 @@ async function demand(view: ReturnType<typeof fixture>, direction: "older" | "ne
 function visibleIds(view: ReturnType<typeof fixture>) {
   return [...view.host.querySelectorAll("[data-message-id]")].map((message) => message.getAttribute("data-message-id"));
 }
+
+describe("explicit navigation cancels saved-page recovery", () => {
+  function saveAnchor(before: string | null = null, owner = "a") {
+    const store = useSessionScrollStore.getState();
+    store.setManualScroll(owner, 500, null, { messageId: "saved-anchor", offset: -20 });
+    store.setGeometry(owner, { owner, scrollHeight: 1000, viewportWidth: 500, before: 0, after: 300,
+      messageIds: ["saved-anchor"], page: { before, limit: 24, lineage: before ? [null, before] : [null] } });
+  }
+
+  test.each(["scrollToBottom", "jumpToLatest"])("%s does not restart an abandoned older anchor after latest replaces its IDs", async (action) => {
+    saveAnchor("middle");
+    const view = fixture(true);
+    await view.render();
+    await view.resolve(0, page(["saved-anchor"], "middle", "older"));
+    expect(view.pages.hasNewer).toBe(true);
+    await act(async () => action === "scrollToBottom" ? view.controls.scrollToBottom("auto") : view.controls.jumpToLatest("auto"));
+    expect(view.reads[1].window).toEqual({ limit: 24 });
+    await view.resolve(1, page(["latest"], null, "middle"));
+    await paint();
+    expect(view.pages.anchorPending).toBe(false);
+    expect(view.reads).toHaveLength(2);
+    expect(visibleIds(view)).toEqual(["latest"]);
+    expect(view.host.querySelector("[data-thread-scroll]")?.scrollTop).toBe(100);
+    const older = await demand(view, "older");
+    await view.resolve(2, page(["saved-anchor"], "middle", "older"));
+    await older.settled;
+    expect(visibleIds(view)).toEqual(["saved-anchor", "latest"]);
+  });
+
+  test("latest cancels an in-flight automatic recovery even when the current page is already newest", async () => {
+    saveAnchor();
+    const view = fixture(true);
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "older"));
+    expect(view.pages.hasNewer).toBe(false);
+    expect(view.reads[1].window).toEqual({ limit: 24, before: "older" });
+    await act(async () => view.controls.jumpToLatest("auto"));
+    await view.resolve(1, page(["abandoned"], "older", "more"));
+    await paint();
+    expect(visibleIds(view)).toEqual(["latest"]);
+    expect(view.reads[1].signal.aborted).toBe(true);
+    expect(view.pages.anchorPending).toBe(false);
+    expect(view.pages.loading).toBe(false);
+    expect(view.reads).toHaveLength(2);
+  });
+
+  test("cancelling automatic recovery releases its request without cancelling subsequent user paging or refresh", async () => {
+    saveAnchor();
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "older"));
+    await act(async () => view.pages.cancelRestore());
+    expect(view.reads[1].signal.aborted).toBe(true);
+    const older = await demand(view, "older");
+    expect(view.reads).toHaveLength(3);
+    await act(async () => view.pages.cancelRestore());
+    expect(view.reads[2].signal.aborted).toBe(false);
+    await view.resolve(1, page(["abandoned"], "older", "more"));
+    expect(view.pages.loading).toBe(true);
+    await view.resolve(2, page(["chosen"], "older", "more"));
+    await older.settled;
+    expect(visibleIds(view)).toEqual(["chosen", "latest"]);
+    await act(async () => { void view.client.invalidateQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    await act(async () => view.pages.cancelRestore());
+    expect(view.reads[3].signal.aborted).toBe(false);
+    await view.resolve(3, page(["latest", "live"], null, "older"));
+    expect(visibleIds(view)).toEqual(["chosen", "latest", "live"]);
+    expect(view.pages.failed).toBe(false);
+  });
+
+  test("cancelling recovery preserves a queued live refresh and ignores its old response", async () => {
+    saveAnchor();
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "older"));
+    await act(async () => { void view.client.invalidateQueries({ queryKey: snapshotKey("workspace", "a"), exact: true }); });
+    expect(view.reads).toHaveLength(2);
+    await act(async () => view.pages.cancelRestore());
+    expect(view.reads[1].signal.aborted).toBe(true);
+    expect(view.reads[2].window).toEqual({ limit: 24 });
+    await view.resolve(1, page(["abandoned"], "older", "more"));
+    expect(view.pages.loading).toBe(true);
+    await view.resolve(2, page(["latest", "live"], null, "older"));
+    expect(visibleIds(view)).toEqual(["latest", "live"]);
+    expect(view.pages.anchorPending).toBe(false);
+    expect(view.reads).toHaveLength(3);
+  });
+
+  test("passive sticky follow leaves an in-flight saved-anchor recovery alive", async () => {
+    saveAnchor();
+    const view = fixture(true);
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "older"));
+    await act(async () => {
+      useSessionScrollStore.getState().setStickyBottom(sessionScrollKey("a", "a"), null);
+      view.controls.refresh();
+    });
+    await paint();
+    expect(view.reads[1].signal.aborted).toBe(false);
+    expect(view.pages.anchorPending).toBe(true);
+    await view.resolve(1, page(["saved-anchor"], "older", null));
+    expect(visibleIds(view)).toEqual(["saved-anchor", "latest"]);
+    expect(view.pages.anchorPending).toBe(false);
+  });
+
+  test.each(["find", "start"])("%s cancels automatic recovery without a late response changing its destination", async (action) => {
+    saveAnchor();
+    const view = fixture(true);
+    await view.render();
+    await view.resolve(0, page(fullWindow, null, "older"));
+    const scroller = view.host.querySelector("[data-thread-scroll]");
+    if (!(scroller instanceof HTMLDivElement)) throw new Error("Missing viewport");
+    await act(async () => {
+      if (action === "find") {
+        view.controls.markScrollGesture(scroller);
+        scroller.scrollTop = 3600;
+        scroller.dispatchEvent(new Event("scroll"));
+      } else {
+        useSessionScrollStore.getState().setTopClippedMessageId(sessionScrollKey("a", "a"), fullWindow[23]);
+        view.controls.jumpToStartOfMessage("auto");
+      }
+    });
+    await view.resolve(1, page(["abandoned"], "older", "more"));
+    await paint();
+    expect(view.reads[1].signal.aborted).toBe(true);
+    expect(visibleIds(view)).toEqual(fullWindow);
+    expect(scroller.scrollTop).toBe(action === "find" ? 3600 : 6900);
+    expect(view.reads).toHaveLength(2);
+  });
+
+  test("stale navigation and page callbacks cannot cancel another session's recovery", async () => {
+    saveAnchor();
+    saveAnchor(null, "b");
+    const view = fixture(true);
+    await view.render();
+    await view.resolve(0, page(["latest-a"], null, "older-a"));
+    const oldPages = view.pages;
+    const oldControls = view.controls;
+    await view.render("b");
+    await view.resolve(2, page(["latest-b"], null, "older-b", "b"));
+    await act(async () => {
+      oldPages.cancelRestore();
+      oldControls.jumpToLatest("auto");
+      oldControls.jumpToStartOfMessage("auto");
+      oldControls.markScrollGesture();
+      expect(await oldControls.scrollToTop()).toBe(false);
+    });
+    expect(view.reads[3].signal.aborted).toBe(false);
+    expect(view.pages.anchorPending).toBe(true);
+    await view.resolve(1, page(["abandoned-a"], "older-a", null));
+    expect(visibleIds(view)).toEqual(["latest-b"]);
+    await view.resolve(3, page(["saved-anchor"], "older-b", null, "b"));
+    expect(visibleIds(view)).toEqual(["saved-anchor", "latest-b"]);
+    expect(view.reads).toHaveLength(4);
+  });
+
+  test("cancellation does not abort an explicit older read already in flight", async () => {
+    const view = fixture();
+    await view.render();
+    await view.resolve(0, page(["latest"], null, "older"));
+    const older = await demand(view, "older");
+    await act(async () => view.pages.cancelRestore());
+    expect(view.reads[1].signal.aborted).toBe(false);
+    await view.resolve(1, page(["chosen"], "older", null));
+    await older.settled;
+    expect(visibleIds(view)).toEqual(["chosen", "latest"]);
+  });
+});
 
 describe("independent opening regression audit", () => {
   test("a disjoint opening revalidation retains manual cumulative history until its gap is bridged", async () => {
@@ -383,23 +588,6 @@ describe("independent opening regression audit", () => {
         .toEqual(["earlier", "old", "new"]);
       expect(view.panePages.get(pane)?.pageForAnchor("earlier")?.before).toBe("older");
     }
-  });
-
-  for (const engine of ["opencode", "opencode2"]) test(`runtime authority admits the resolved remote ${engine} endpoint rather than its sidebar alias`, async () => {
-    const view = fixture();
-    const endpoint = resolveWorkspaceEndpoint({ id: "rem_alias", workspaceType: "remote", baseUrl: "https://worker.example",
-      openworkToken: "remote-token", openworkWorkspaceId: "runtime-x" }, { baseUrl: "http://localhost:7777", token: "local-token" });
-    if (!endpoint) throw new Error("Remote endpoint is missing");
-    const identity = sessionHistoryIdentity({ draftScope: "principal", opencodeBaseUrl: `${endpoint.mountedBaseUrl}/${engine}`,
-      runtimeWorkspaceId: endpoint.workspaceId, sessionId: "a" });
-    const selected = { ...view.input("a", endpoint.token), ...identity, transcriptQueryKey: transcriptKey(endpoint.workspaceId, "a") };
-    await view.renderRuntimeOwners([{ owner: identity.runtimeOwner, authToken: endpoint.token }], [selected]);
-    expect(view.reads).toHaveLength(1);
-    expect(view.reads[0].signal.aborted).toBe(false);
-    expect(identity.snapshotQueryKey).toEqual(snapshotKey("runtime-x", "a"));
-    await view.resolve(0, page(["remote-message"], null, "older"));
-    expect(visibleIds(view)).toEqual(["remote-message"]);
-    expect(view.openingError).toBeNull();
   });
 
   test("retry after failed stale-cache revalidation replaces the displayed page and cursor", async () => {
@@ -1381,11 +1569,10 @@ describe("opening a thread", () => {
     expect(cached?.todos).toBeUndefined();
   });
 
-  for (const openworkWorkspaceId of [undefined, "runtime-x"]) test(`remote sidebar alias shares runtime preview/full keys with click (explicit runtime ID=${Boolean(openworkWorkspaceId)})`, async () => {
-    const sidebarWorkspaceId = "rem_x";
-    const endpoint = resolveWorkspaceEndpoint({ id: sidebarWorkspaceId, workspaceType: "remote", baseUrl: "https://worker.example", openworkToken: "remote-token", openworkWorkspaceId }, { baseUrl: "http://localhost:7777", token: "local-token" });
-    if (!endpoint) throw new Error("Missing remote endpoint");
-    const runtimeWorkspaceId = openworkWorkspaceId ?? "x";
+  test("sidebar prefetch shares runtime preview/full keys with click", async () => {
+    const endpoint = resolveWorkspaceEndpoint({ id: "x" }, { baseUrl: "http://localhost:7777", token: "remote-token" });
+    if (!endpoint) throw new Error("Missing workspace endpoint");
+    const runtimeWorkspaceId = "x";
     expect(endpoint.workspaceId).toBe(runtimeWorkspaceId);
     // The route's resolved engine can be v2 even though endpoint.opencodeBaseUrl
     // is v1. Both prefetch and the mounted primary surface use this resolved URL.
@@ -1396,9 +1583,7 @@ describe("opening a thread", () => {
     expect(prefetchIdentity).toEqual(surfaceIdentity);
     expect(prefetchIdentity.owner).toBe(JSON.stringify([draftScope, opencodeBaseUrl, runtimeWorkspaceId, "a"]));
     expect(prefetchIdentity.snapshotQueryKey).toEqual(snapshotKey(runtimeWorkspaceId, "a"));
-    expect(prefetchIdentity.snapshotQueryKey).not.toEqual(snapshotKey(sidebarWorkspaceId, "a"));
     const view = fixture();
-    view.client.setQueryData(snapshotKey(sidebarWorkspaceId, "a"), snapshot("a", "Wrong alias cache"));
     const warmed = { ...view.input("a", endpoint.token), ...prefetchIdentity };
     const clicked = { ...view.input("a", endpoint.token), ...surfaceIdentity };
     const cancel = prefetchOpeningSessionHistory(view.client, warmed);
@@ -1407,7 +1592,6 @@ describe("opening a thread", () => {
     cancel?.();
     expect(view.reads).toHaveLength(1);
     expect(view.reads[0].signal.aborted).toBe(false);
-    expect(view.host.textContent).not.toContain("Wrong alias cache");
     await view.resolve(0, "Shared remote preview");
     expect(view.host.textContent).toContain("Shared remote preview");
     expect(view.reads).toHaveLength(1);
@@ -1416,7 +1600,7 @@ describe("opening a thread", () => {
     for (const identity of [
       sessionHistoryIdentity({ draftScope: "org-a/member-b", opencodeBaseUrl, runtimeWorkspaceId, sessionId: "a" }),
       sessionHistoryIdentity({ draftScope, opencodeBaseUrl: endpoint.opencodeBaseUrl, runtimeWorkspaceId, sessionId: "a" }),
-      sessionHistoryIdentity({ draftScope, opencodeBaseUrl, runtimeWorkspaceId: sidebarWorkspaceId, sessionId: "a" }),
+      sessionHistoryIdentity({ draftScope, opencodeBaseUrl, runtimeWorkspaceId: "other", sessionId: "a" }),
     ]) expect(openingSessionHistoryOptions({ ...clicked, ...identity }).queryKey).not.toEqual(openingKey);
     const rotated = { ...view.input("a", "rotated-token"), ...surfaceIdentity };
     expect(openingSessionHistoryOptions(rotated).queryKey).not.toEqual(openingKey);
@@ -1434,7 +1618,7 @@ describe("opening a thread", () => {
     await view.resolve(2, "Current principal preview");
     expect(view.host.textContent).toContain("Current principal preview");
 
-    // A complete runtime snapshot, not the sidebar alias entry, skips warming.
+    // A complete runtime snapshot skips warming.
     await act(async () => view.client.setQueryData(surfaceIdentity.snapshotQueryKey, snapshot("a", "Complete runtime history")));
     await settle();
     prefetchOpeningSessionHistory(view.client, nextPrincipal);

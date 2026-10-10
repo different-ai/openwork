@@ -15,13 +15,6 @@ declare global {
     __reauthOriginalOpen?: typeof window.open;
     __OPENWORK_ELECTRON__: {
       shell: { relaunch(): Promise<void> };
-      browserLogins: {
-        testWitnessUrl(): Promise<string>;
-        writeTestStore(request: { path: string; cookies: unknown[] }): Promise<unknown>;
-        signedInSites(): Promise<unknown>;
-        state(): Promise<unknown>;
-        pause(): Promise<unknown>;
-      };
       invokeDesktop<C extends DesktopCommandName>(command: C, ...args: DesktopCommandArgs<C>): Promise<DesktopCommandResult<C>>;
       /** Development-only native popup observation; absent from packaged builds. */
       contextMenu: {

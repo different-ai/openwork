@@ -1,0 +1,30 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: openwork-den-migrate
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/cloudsql-instances: REPLACE_PROJECT_ID:REPLACE_REGION:REPLACE_SQL_INSTANCE
+    spec:
+      taskCount: 1
+      template:
+        spec:
+          serviceAccountName: openwork-cloud-run@REPLACE_PROJECT_ID.iam.gserviceaccount.com
+          maxRetries: 0
+          timeoutSeconds: "1800"
+          containers:
+            - image: REPLACE_REGION-docker.pkg.dev/REPLACE_PROJECT_ID/openwork/openwork-den-api:REPLACE_OPENWORK_VERSION
+              command: [node]
+              args: [/app/ee/packages/den-db/dist/scripts/bootstrap.js]
+              resources:
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              env:
+                - { name: DB_MODE, value: mysql }
+                - name: DATABASE_URL
+                  valueFrom: { secretKeyRef: { name: openwork-database-url, key: latest } }
+                - name: DEN_DB_ENCRYPTION_KEY
+                  valueFrom: { secretKeyRef: { name: openwork-db-encryption-key, key: latest } }

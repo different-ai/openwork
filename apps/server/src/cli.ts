@@ -34,8 +34,11 @@ import {
   ensureManagedEngine,
   loadOrCreateWebTokens,
   openInBrowser,
+  opencodeGlobalConfigDir,
+  opencodePluginDepsArchive,
   readBinaryVersion,
   resolveBundledPluginDir,
+  seedOpencodePluginDeps,
   resolvePackageRoot,
   resolveWebRoot,
   updateHint,
@@ -93,6 +96,14 @@ if (args.web) {
   });
   process.env.OPENWORK_OPENCODE_BIN = engine.bin;
   setInstalledOpencodeVersion(engine.installedVersion);
+  if (packageRoot && engine.source !== "env") {
+    const seed = await seedOpencodePluginDeps({
+      archive: opencodePluginDepsArchive(packageRoot, constants.opencodeVersion),
+      configDir: opencodeGlobalConfigDir(process.env),
+    });
+    if (seed.seeded) console.log(`Prepared OpenCode plugin dependencies in ${seed.durationMs} ms`);
+    else if (seed.reason === "failed") console.log(`Could not prepare OpenCode plugin dependencies (${seed.error}); OpenCode will install them.`);
+  }
 }
 
 const config = await resolveServerConfig(args);

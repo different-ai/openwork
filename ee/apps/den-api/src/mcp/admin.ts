@@ -3,7 +3,7 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
-import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
+import { getMcpResourceContext, mcpPrincipalCredentialId, verifyMcpRequest } from "./auth.js"
 import { protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
@@ -63,7 +63,7 @@ export function registerAdminMcpRoutes<T extends { Variables: Record<string, unk
       name: "den-admin",
       version: DEN_ADMIN_MCP_VERSION,
     })
-    registerAdminMcpTools(server)
+    registerAdminMcpTools(server, { userId: principal.userId, credentialId: mcpPrincipalCredentialId(principal) })
 
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)

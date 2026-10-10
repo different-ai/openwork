@@ -45,7 +45,11 @@ import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from 
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
+import { exchangePreclaimAssertion, JWT_BEARER_GRANT_TYPE } from "../../workspace-preclaim.js"
+import { withAgentAuthMetadata } from "../../agent-auth-metadata.js"
+import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
+import { registerRawRoleRefusalRoutes } from "./raw-role-refusals.js"
 import { registerScimAuthRoutes } from "./scim.js"
 
 const logger = appLogger.child({ component: "auth" })
@@ -448,7 +452,12 @@ async function makeAuthorizationResponseIssuerOptional(response: Response) {
 }
 
 async function getOAuthAuthorizationServerMetadata(request: Request) {
-  return makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const response = await makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const metadata: unknown = await response.clone().json().catch(() => null)
+  if (!isRecord(metadata)) return response
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(JSON.stringify(withAgentAuthMetadata(metadata, env.apiPublicUrl ?? env.betterAuthUrl)), { status: response.status, headers })
 }
 
 async function getOAuthOpenIdConfiguration(request: Request) {
@@ -632,6 +641,24 @@ async function getOrganizationSsoCallbackRequest(request: Request) {
   }
 }
 
+/**
+ * RFC 7523 JWT-bearer grant for pre-claim workspace assertions. Better Auth's
+ * token endpoint does not know this grant, so Den answers it before handing
+ * the request over. Returns null for every other grant type.
+ */
+async function handleJwtBearerGrant(request: Request): Promise<Response | null> {
+  if (!(request.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded")) return null
+  const form = new URLSearchParams(await request.text())
+  if (form.get("grant_type") !== JWT_BEARER_GRANT_TYPE) return null
+  const assertion = form.get("assertion")?.trim()
+  const headers = { "cache-control": "no-store", pragma: "no-cache" }
+  if (!assertion) {
+    return Response.json({ error: "invalid_request", error_description: "The assertion parameter is required." }, { status: 400, headers })
+  }
+  const result = await exchangePreclaimAssertion(assertion)
+  return Response.json(result.body, { status: result.ok ? 200 : result.status, headers })
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
   const observabilityRequest = request.method === "POST"
@@ -647,6 +674,15 @@ async function handleAuthRequest(c: Context) {
       logger.warn("oauth token request rate limited", rateLimitFields)
     }
     return oauthTokenRateLimit.response
+  }
+  if (observabilityRequest) {
+    const jwtBearerResponse = await handleJwtBearerGrant(observabilityRequest.clone())
+    if (jwtBearerResponse) {
+      if (oauthTokenRateLimit && !jwtBearerResponse.ok) {
+        await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, jwtBearerResponse, checkRateLimit)
+      }
+      return jwtBearerResponse
+    }
   }
   const authRequest = await normalizeMcpOAuthRequest(request)
   if (authRequest instanceof Response) {
@@ -771,6 +807,7 @@ async function handleAuthRequest(c: Context) {
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerScimAuthRoutes(app)
+  registerRawRoleRefusalRoutes(app)
   app.use("/api/auth/sso/saml2/callback/*", samlResponsePolicyMiddleware)
   app.use("/api/auth/sso/saml2/sp/acs/*", samlResponsePolicyMiddleware)
   // Better Auth uses this configured base URL for the callback `iss` value.
@@ -993,4 +1030,5 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     (c) => handleAuthRequest(c),
   )
   registerDesktopAuthRoutes(app)
+  registerDeviceAuthRoutes(app)
 }

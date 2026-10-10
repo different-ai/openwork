@@ -84,7 +84,7 @@ const test = spec.world(async (seed) => {
   if (failed.response.ok) throw new Error("Missing workflow input must fail");
   const web = await seed.web({ den, signedInAs: "admin", startPath: "/dashboard/workflow-runs", headless: true, viewport: { width: 1440, height: 1000 } });
   return { den, web, setEnterprise, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
-}, { timeout: 600_000 });
+}, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den"] } });
 
 test("workflow activity shows linked version diagrams and keeps one-off and inaccessible runs readable", async ({ world, user, probe, seed, evidence, step }) => {
   const readRuns = async (session = world.den.admin) => {
@@ -136,7 +136,7 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
 
   await step("read existing diagrams directly in the run list", async () => {
     await user.see({ text: "Workflow Runs" }, { timeoutMs: 90_000 });
-    await user.see({ text: "Workflows are repeatable tasks you and your team can save, share, and run again. See their recent activity here." });
+    await user.see({ role: "heading", label: "Workflow Runs" });
     for (const receiptId of [world.receiptId, failedReceiptId]) {
       // Scope rendered node text to each receipt; an empty diagram or the latest
       // version (Revised count) must fail even when another card is correct.

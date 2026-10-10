@@ -24,6 +24,7 @@ import { mcpProtectedResourceMetadataUrl, mcpRouteResource, resolveMcpResourceFr
 import { DEN_MCP_REQUESTED_SCOPE } from "./scopes.js"
 import { getMcpGrantLiveness } from "./grant-liveness.js"
 import { getMcpSessionLiveness } from "./session-liveness.js"
+import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM, isHeadlessRunMcpToken } from "./headless-run-token.js"
 export { hasActiveMcpSession } from "./session-liveness.js"
 
 export type McpPrincipal = {
@@ -133,6 +134,21 @@ function readStringClaim(payload: Record<string, unknown>, claim: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
+/**
+ * Non-secret identifier of the credential behind a principal, for audit
+ * attribution: the OAuth grant id, else the headless-run token row id, else the
+ * OAuth client id (JWT `client_id`/`azp`). Never token material.
+ */
+export function mcpPrincipalCredentialId(principal: McpPrincipal): string | null {
+  const payload = principal.payload
+  const grantId = readStringClaim(payload, DEN_MCP_GRANT_ID_CLAIM)
+  if (grantId) return `grant:${grantId}`
+  const runTokenId = payload.client_id === DEN_MCP_HEADLESS_RUN_CLIENT_ID ? readStringClaim(payload, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM) : null
+  if (runTokenId) return `run_token:${runTokenId}`
+  const clientId = readStringClaim(payload, "client_id") ?? readStringClaim(payload, "azp")
+  return clientId ? `client:${clientId}` : null
+}
+
 function readTokenAudiences(payload: Record<string, unknown>) {
   const audience = payload.aud
   if (typeof audience === "string" && audience.trim()) return [audience.trim()]
@@ -173,13 +189,17 @@ function readTokenResource(payload: Record<string, unknown>, source: McpTokenSou
   return null
 }
 
+const FIRST_PARTY_OPAQUE_CLIENT_IDS: ReadonlySet<string> = new Set([DEN_MCP_FIRST_PARTY_CLIENT_ID, DEN_MCP_HEADLESS_RUN_CLIENT_ID])
+
 function isFirstPartyMcpToken(payload: Record<string, unknown>, source: McpTokenSource) {
   if (source !== "opaque") {
     return false
   }
 
-  return readStringClaim(payload, "client_id") === DEN_MCP_FIRST_PARTY_CLIENT_ID
+  const clientId = readStringClaim(payload, "client_id")
+  return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
 }
+
 
 function bearerChallenge(input: {
   metadataUrl: string
@@ -304,7 +324,7 @@ async function verifyOpaqueMcpToken(token: string) {
   }
 
   const storedScopes = readStoredScopes(accessToken.scopes)
-  const resource = accessToken.clientId === DEN_MCP_FIRST_PARTY_CLIENT_ID ? DEN_MCP_RESOURCE : DEN_MCP_OAUTH_RESOURCE
+  const resource = FIRST_PARTY_OPAQUE_CLIENT_IDS.has(accessToken.clientId) ? DEN_MCP_RESOURCE : DEN_MCP_OAUTH_RESOURCE
   // Only first-party opaque tokens are accepted below. Those skip OAuth consent,
   // so they intentionally remain session-coupled through the compatibility path.
   return {
@@ -317,6 +337,8 @@ async function verifyOpaqueMcpToken(token: string) {
     [DEN_MCP_RESOURCE_CLAIM]: resource,
     ...(accessToken.sessionId ? { sid: accessToken.sessionId } : {}),
     ...(accessToken.referenceId ? { [DEN_MCP_ORG_ID_CLAIM]: accessToken.referenceId } : {}),
+    // Lets work started by a headless run find the run it belongs to (for example its Slack thread).
+    ...(accessToken.clientId === DEN_MCP_HEADLESS_RUN_CLIENT_ID ? { [DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM]: accessToken.id } : {}),
   }
 }
 
@@ -426,7 +448,7 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
         referenceId,
       }, bearerChallenge({ metadataUrl: options.metadataUrl, error: "invalid_token", message }))
     }
-  } else {
+  } else if (!isHeadlessRunMcpToken(payload, source)) {
     const sessionId = readStringClaim(payload, "sid")
     if (!sessionId) {
       const message = "The MCP bearer token is not tied to an active session."

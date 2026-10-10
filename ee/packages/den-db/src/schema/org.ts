@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm"
-import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import type { ConnectLinkClaims } from "@openwork/types/connect-link"
 import { denTypeIdColumn, mediumBlobColumn } from "../columns"
@@ -88,6 +88,12 @@ export const MemberTable = mysqlTable(
     joinedAt: timestamp("joined_at", { fsp: 3 }).defaultNow(),
     removedAt: timestamp("removed_at", { fsp: 3 }),
     removedByOrgMember: denTypeIdColumn("member", "removed_by_org_member"),
+    /**
+     * The sign-in-less agent user that holds a provisional workspace until a
+     * person claims it. It is never a seat, never listed as a member, and is
+     * removed when the workspace is claimed or expires.
+     */
+    isSetupAgent: boolean("is_setup_agent").notNull().default(false),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
@@ -138,9 +144,24 @@ export const WorkspaceBootstrapTable = mysqlTable(
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     claimedAt: timestamp("claimed_at", { fsp: 3 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    // Pre-claim agent identity: a sign-in-less user that is the setup member
+    // until a person claims the workspace. The assertion jti names the only
+    // live pre-claim assertion; credentialsRevokedAt ends every pre-claim
+    // credential at claim or expiry.
+    agentUserId: denTypeIdColumn("user", "agent_user_id"),
+    assertionJti: varchar("assertion_jti", { length: 64 }),
+    credentialsRevokedAt: timestamp("credentials_revoked_at", { fsp: 3 }),
+    // Optional address the person gave the setup agent. Only used to prefill
+    // the claim page and to send one claim reminder before the workspace expires.
+    ownerEmail: varchar("owner_email", { length: 255 }),
+    // Teammates the person asked to invite. Returned to the owner when the claim
+    // is accepted so the claim page sends the invites, whichever link or
+    // sign-up round trip got them there.
+    teammateEmails: json("teammate_emails").$type<string[] | null>(),
   },
   (table) => [
     index("workspace_bootstrap_organization_id").on(table.organizationId),
+    index("workspace_bootstrap_agent_user_id").on(table.agentUserId),
     index("workspace_bootstrap_status").on(table.status),
     index("workspace_bootstrap_expires_at").on(table.expiresAt),
   ],
@@ -166,6 +187,29 @@ export const WorkspaceClaimTable = mysqlTable(
     index("workspace_claim_organization_id").on(table.organizationId),
     index("workspace_claim_status").on(table.status),
     index("workspace_claim_expires_at").on(table.expiresAt),
+  ],
+)
+
+// RFC 8628-style claim codes for a provisional workspace. Only a hash of the
+// user code is stored; each new code cancels the previous unused one.
+export const WorkspaceClaimCodeTable = mysqlTable(
+  "workspace_claim_code",
+  {
+    id: denTypeIdColumn("workspaceClaimCode", "id").notNull().primaryKey(),
+    bootstrapId: denTypeIdColumn("workspaceBootstrap", "bootstrap_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    userCodeHash: varchar("user_code_hash", { length: 128 }).notNull(),
+    state: varchar("state", { length: 32 }).notNull().default("pending"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    claimedByUserId: denTypeIdColumn("user", "claimed_by_user_id"),
+    acceptedAt: timestamp("accepted_at", { fsp: 3 }),
+    reconciledAt: timestamp("reconciled_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("workspace_claim_code_user_code_hash").on(table.userCodeHash),
+    index("workspace_claim_code_bootstrap_id").on(table.bootstrapId),
+    index("workspace_claim_code_state").on(table.state),
   ],
 )
 

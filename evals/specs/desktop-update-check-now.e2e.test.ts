@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { spec } from "@openwork/testkit";
+import { spec, type Probe, type Step, type User } from "@openwork/testkit";
 import { desktopUpdateCheckNowWorld } from "../worlds/desktop-update-check-now.ts";
 
 const test = spec.world(desktopUpdateCheckNowWorld, {
@@ -29,34 +29,87 @@ function expectReadableControls(layout: UpdateLayout) {
   expect(layout.status.y).toBeCloseTo(layout.actions.y, 1);
 }
 
+async function stageInitialRelease({ world, user, probe, step }: {
+  world: Awaited<ReturnType<typeof desktopUpdateCheckNowWorld>>;
+  user: User;
+  probe: Probe;
+  step: Step;
+}) {
+  const { staged, channel } = world.releases;
+  await world.openSettings();
+  if (channel === "alpha") {
+    await user.click({ role: "combobox", label: "Release channel" });
+    await user.click({ role: "option", label: "Alpha" });
+  }
+  // Re-arm the real timer after the world installs its interval witness.
+  await user.click({ role: "switch", label: "Check automatically" });
+  await user.click({ role: "switch", label: "Check automatically" });
+  await user.click({ role: "button", text: "Check now" });
+  await user.see({ text: "You're up to date" });
+  await step("the downloaded update is ready to install", async () => {
+    await world.publishInitial();
+    await user.click({ role: "button", text: "Check now" });
+    await probe.eventually(world.snapshot, { within: 10_000, label: "the initial release downloads", until: (value) => value.downloads.length === 1 });
+    await world.finishDownload();
+    await user.see({ text: `Ready to install: v${staged}` });
+    await user.see({ text: "Restart to update" });
+    await user.screenshot();
+  });
+}
+
+test("A release that ships after a download replaces it in the background, so one restart installs the newest", async ({ world, user, probe, evidence, step }) => {
+  const { staged, newer, channel } = world.releases;
+  await stageInitialRelease({ world, user, probe, step });
+  const ready = await world.snapshot();
+  expect(ready).toMatchObject({ stagedVersion: staged, downloads: [staged], installs: [], automaticChecksEnabled: true, automaticDownloadsEnabled: true, capsuleText: "Restart to update" });
+
+  await step("an automatic check while ready downloads the newer release", async () => {
+    await world.openWorkspace();
+    await world.advanceFeed();
+    await world.triggerAutomaticChecks();
+    await probe.eventually(world.snapshot, { within: 10_000, label: "the newer release replaces the staged one", until: (value) => value.downloads.length === 2 });
+    await user.notSee({ text: "Restart to update" });
+    const replacing = await world.snapshot();
+    expect(replacing).toMatchObject({ downloads: [staged, newer], stagedVersion: null, installs: [] });
+    expect(replacing.checks).toHaveLength(ready.checks.length + 1);
+    expect(replacing.checks.at(-1)).toMatchObject({ channel, preserveStaged: true });
+    if (channel === "stable") expect(replacing.checks.at(-1)?.targetVersion).toBe(newer);
+    await world.finishDownload();
+    await user.see({ text: "Restart to update" });
+    await user.screenshot();
+  });
+
+  await step("one confirmed restart installs the newest release", async () => {
+    await user.click("Restart to update");
+    await user.see({ text: "Restart OpenWork?" });
+    await user.click("Restart & update");
+    await probe.eventually(world.snapshot, { within: 10_000, label: "the restart installs the newest release", until: (value) => value.installs.length === 1 });
+    const installed = await world.snapshot();
+    expect(installed).toMatchObject({ downloads: [staged, newer], installs: [newer] });
+    // The restart looks for a newer release once more before installing.
+    expect(installed.checks).toHaveLength(ready.checks.length + 2);
+    expect(installed.checks.at(-1)).toMatchObject({ channel, preserveStaged: true });
+    evidence.recordAssertionEvidence(
+      "A newer release published while an update was staged is downloaded in the background and a single restart installs it (fake installer)",
+      JSON.stringify({ ready, installed }),
+      true,
+    );
+  });
+});
+
 for (const replaceStaged of [false, true]) {
   test(replaceStaged
     ? "A desktop user downloads a newer update with a version-free button before restarting"
-    : "A desktop user discovers a newer update and can still install the downloaded version", async ({ world, user, probe, evidence, step }) => {
+    : "A desktop user discovers a newer update and Install & restart fetches it before restarting", async ({ world, user, probe, evidence, step }) => {
     const { staged, newer, channel } = world.releases;
-    await world.openSettings();
-    if (channel === "alpha") {
-      await user.click({ role: "combobox", label: "Release channel" });
-      await user.click({ role: "option", label: "Alpha" });
-    }
-    // Re-arm the real timer after the world installs its interval witness.
-    await user.click({ role: "switch", label: "Check automatically" });
-    await user.click({ role: "switch", label: "Check automatically" });
-    await user.click({ role: "button", text: "Check now" });
-    await user.see({ text: "You're up to date" });
-    await step("the downloaded update is ready to install", async () => {
-      await world.publishInitial();
-      await user.click({ role: "button", text: "Check now" });
-      await probe.eventually(world.snapshot, { within: 10_000, label: "the initial release downloads", until: (value) => value.downloads.length === 1 });
-      await world.finishDownload();
-      await user.see({ text: `Ready to install: v${staged}` });
-      await user.see({ text: "Restart to update" });
-      await user.screenshot();
-    });
+    await stageInitialRelease({ world, user, probe, step });
     const ready = await world.snapshot();
     const readyLayout = await world.layout();
     expectReadableControls(readyLayout);
     expect(ready).toMatchObject({ stagedVersion: staged, downloads: [staged], installs: [], automaticChecksEnabled: true, automaticDownloadsEnabled: true, capsuleText: "Restart to update", updateInSidebar: false });
+    // Manual discovery only: automatic checks would replace the staged release.
+    await user.click({ role: "switch", label: "Check automatically" });
+    expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: ready.checks });
 
     await user.click("Restart to update");
     await user.see({ text: "Restart OpenWork?" });
@@ -67,12 +120,6 @@ for (const replaceStaged of [false, true]) {
     await user.click("Keep working");
     await user.notSee({ text: "Restart OpenWork?" });
     await world.advanceFeed();
-    await world.triggerAutomaticChecks();
-    const quietUntil = Date.now() + 750;
-    await probe.eventually(async () => {
-      expect(await world.snapshot()).toMatchObject({ checks: ready.checks, downloads: [staged], stagedVersion: staged, installs: [] });
-      return Date.now() >= quietUntil;
-    }, { within: 5_000, label: "automatic timer, focus, online and visibility leave ready A alone", until: Boolean });
 
     const checkingLayout = await step("checking keeps the version rows and plain action buttons in place", async () => {
       await world.holdNextCheck();
@@ -133,12 +180,6 @@ for (const replaceStaged of [false, true]) {
       evidence.recordAssertionEvidence("Version values remain single-line and the action row stays inside an 860px viewport", JSON.stringify(layout), true);
       await world.resize(1200);
     });
-    await world.triggerAutomaticChecks();
-    const candidateQuietUntil = Date.now() + 750;
-    await probe.eventually(async () => {
-      expect(await world.snapshot()).toMatchObject({ checks: discovered.checks, downloads: [staged], stagedVersion: staged, installs: [] });
-      return Date.now() >= candidateQuietUntil;
-    }, { within: 5_000, label: "automatic checks cannot download the discovered candidate", until: Boolean });
     await user.click("Restart to update");
     await user.see({ text: "Restart OpenWork?" });
     expect((await world.snapshot()).panelText).toBe(panel);
@@ -146,18 +187,23 @@ for (const replaceStaged of [false, true]) {
     await user.notSee({ text: "Restart OpenWork?" });
     expect((await world.snapshot()).installs).toEqual([]);
     evidence.recordAssertionEvidence(
-      "Manual discovery preserves A, offers explicit B, and leaves the titlebar panel and background checks unchanged",
+      "Manual discovery preserves A, offers explicit B, and leaves the titlebar panel unchanged",
       JSON.stringify({ ready, discovered, unchangedPanel: panel }),
       true,
     );
 
     if (!replaceStaged) {
-      await step("the already downloaded update remains installable", async () => {
+      await step("Install & restart fetches the newer update first and installs it", async () => {
         await user.click({ role: "button", text: "Install & restart" });
-        await probe.eventually(world.snapshot, { within: 10_000, label: "Settings installs A, not the discovered B", until: (value) => value.installs.length === 1 });
+        await probe.eventually(world.snapshot, { within: 10_000, label: "the restart fetches B before installing", until: (value) => value.downloads.length === 2 });
+        expect(await world.snapshot()).toMatchObject({ downloads: [staged, newer], installs: [] });
+        await world.finishDownload();
+        await probe.eventually(world.snapshot, { within: 10_000, label: "one restart installs B", until: (value) => value.installs.length === 1 });
         const installed = await world.snapshot();
-        expect(installed).toMatchObject({ checks: discovered.checks, downloads: [staged], installs: [staged] });
-        evidence.recordAssertionEvidence("Settings still installs staged A without downloading B (fake installer)", JSON.stringify(installed), true);
+        expect(installed).toMatchObject({ downloads: [staged, newer], installs: [newer] });
+        expect(installed.checks).toHaveLength(discovered.checks.length + 1);
+        expect(installed.checks.at(-1)).toMatchObject({ channel, preserveStaged: true });
+        evidence.recordAssertionEvidence("Install & restart replaces staged A with the newer B and installs B once (fake installer)", JSON.stringify(installed), true);
       });
       return;
     }
@@ -178,12 +224,6 @@ for (const replaceStaged of [false, true]) {
       expect(installedLayout.buttons.map((button) => button.disabled)).toEqual([false, true, false]);
       await user.screenshot();
     });
-    await world.triggerAutomaticChecks();
-    const replacementQuietUntil = Date.now() + 750;
-    await probe.eventually(async () => {
-      expect(await world.snapshot()).toMatchObject({ checks: discovered.checks, downloads: [staged, newer], stagedVersion: newer, installs: [] });
-      return Date.now() >= replacementQuietUntil;
-    }, { within: 5_000, label: "automatic checks also leave ready B alone", until: Boolean });
     await world.openWorkspace();
     await user.see({ text: "Restart to update" });
     expect(await world.snapshot()).toMatchObject({ checks: discovered.checks, downloads: [staged, newer], stagedVersion: newer, installs: [], capsuleText: "Restart to update", updateInSidebar: false });
@@ -194,7 +234,9 @@ for (const replaceStaged of [false, true]) {
     await user.click("Restart & update");
     await probe.eventually(world.snapshot, { within: 10_000, label: "the unchanged titlebar confirmation installs B", until: (value) => value.installs.length === 1 });
     const installed = await world.snapshot();
-    expect(installed).toMatchObject({ checks: discovered.checks, downloads: [staged, newer], installs: [newer] });
+    expect(installed).toMatchObject({ downloads: [staged, newer], installs: [newer] });
+    // The restart confirms nothing newer than B shipped before installing it.
+    expect(installed.checks).toHaveLength(discovered.checks.length + 1);
     evidence.recordAssertionEvidence("Explicit Download replaces A with B; unchanged titlebar confirmation installs B (fake installer)", JSON.stringify(installed), true);
   });
 }

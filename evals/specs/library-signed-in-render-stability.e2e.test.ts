@@ -51,7 +51,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
 
   // The repository workspace ships skills under .opencode/skills, so Skills is
   // the deterministic card inventory for a fresh member. OpenWork's own
-  // runtimes (Browser, Computer Use) are no longer Library cards. The
+  // runtimes (such as Browser) are no longer Library cards. The
   // regression this spec guards against fires on the Library route itself:
   // repeated Den settings echoes retrigger provider sync and remove/re-add
   // inventory cards.
@@ -60,8 +60,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     desktopApp,
     () => (document.body.innerText.includes("browser-automation")
       && document.body.innerText.includes("create-plugin")
-      && !document.body.innerText.includes("OpenWork Browser")
-      && !document.body.innerText.includes("Computer Use")),
+      && !document.body.innerText.includes("OpenWork Browser")),
     { timeoutMs: 120_000, label: "signed-in Library inventory" },
   );
 

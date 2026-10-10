@@ -1,28 +1,39 @@
 ---
 title: "Managing members and RBAC"
-description: "Manage owners, super-admins, admins, members, custom roles, and team-inherited Admin access, including SCIM groups"
+description: "Manage owners, admins, members, and team-inherited Admin access, including SCIM groups"
+keywords: ["members", "roles", "RBAC", "invite member", "teams", "admin team", "permissions", "SCIM groups", "allowed email domains"]
 ---
 
 OpenWork Cloud separates org membership from team assignment. Teams are used for Collection and provider access; roles control what a person can manage across the org. An explicitly approved team can also grant organization-wide `Admin` access to its members.
 
-## Default roles
+## Roles
 
-OpenWork Cloud comes with four default roles:
+OpenWork Cloud has three roles:
 
-- `Owner`: full org control, including member roles and custom roles.
-- `Super Admin` (`super-admin`): can manage organization settings, SSO, SCIM, API keys, member roles, and custom roles, as well as routine administration.
-- `Admin`: can invite `Member` users, manage ordinary teams, remove members subject to access safeguards, and manage shared Cloud resources. Cannot assign roles or change organization security settings.
+- `Owner`: full org control. Only the owner can delete the organization or transfer ownership.
+- `Admin`: can invite `Member` users, manage ordinary teams, remove members subject to access safeguards, manage shared Cloud resources, connections, providers and usage limits, start a subscription, and view settings such as SSO, SCIM, API keys, approved web origins and desktop policies.
 - `Member`: can use resources shared with them but cannot manage org administration.
 
-Only owners and super-admins can change member roles, manage custom roles, or designate teams that grant `Admin`. Ownership transfer and organization deletion remain owner-only; `Owner` cannot be assigned through an invitation or the ordinary role editor.
+`Super Admin` no longer exists. Every former super-admin is now an `Admin`, and admins keep exactly what they could do before. What only super-admins could do is now owner-only:
+
+- changing member roles and inviting someone as an `Admin`
+- designating Admin teams and changing who is in them
+- organization settings, branding and approved web origins
+- managing SSO, SCIM, organization API keys, desktop policies and network diagnostics
+- opening the billing portal
+- editing or removing a connection someone else added
+
+Custom roles have also been removed; members who had one are treated as `Member`. Enterprise organizations can use Permissions to give any of the owner-only actions to admins or to a team, and to change what members and admins can do.
+
+`Owner` cannot be assigned through an invitation or the role editor. Ownership can only be transferred to an active admin, and the previous owner becomes an admin.
 
 ## Invite members
 
-1. Open `Members`.
-2. On the `Members` or `Invitations` tab, click `Add member` or `Invite member`.
-3. Enter the teammate `Email`.
-4. If you are an owner or super-admin, choose the initial `Role`. Admins can invite only `Member` users.
-5. Click `Send invite`.
+1. Open **Members**.
+2. On the **Members** tab, click **Add member**.
+3. Enter the teammate's **Email**.
+4. If you are the owner, choose the initial **Role**: `Member` or `Admin`. Admins can invite only `Member` users.
+5. Click **Send invite**.
 
 <Frame>
   ![Members and RBAC dashboard in OpenWork Cloud](/images/cloud-members-and-rbac-dashboard.png)
@@ -40,26 +51,26 @@ Elevated access requires an explicit OpenWork role assignment, ownership transfe
 
 If you only want teammates from specific companies or domains to join:
 
-1. Open `Org settings`.
-2. Turn on `Restrict allowed email domains`.
-3. Add each approved domain to the `Domain allowlist`.
-4. Click `Save settings`.
+1. Open **Settings › General** (the page is titled **Org settings**).
+2. Turn on **Restrict allowed email domains**.
+3. Add each approved domain to the **Domain allowlist**.
+4. Click **Save settings**.
 
 When this is enabled, OpenWork Cloud only lets people join with email addresses from the approved domains. Existing invites still target a specific email address, so both checks apply: the invitee must use the invited email address and that address must match the allowlist.
 
 ## Create teams
 
-1. Open `Members -> Teams`.
-2. Click `Create Team`.
-3. Set `Team name`.
-4. Choose `Team members`.
-5. Click `Create team`.
+1. Open **Members › Teams**.
+2. Click **Create Team**.
+3. Set **Team name**.
+4. Choose **Team members**.
+5. Click **Create team**.
 
 You can use teams to control access to Collections and LLM providers without assigning people one by one.
 
 ### Manage teams with SCIM Groups
 
-Organizations using SCIM can open `SCIM` and enable **Create teams from SCIM groups**. OpenWork then creates a team for each provisioned Group and keeps its membership synchronized from the identity provider. These teams are labeled **Managed by SCIM** and must be changed in the identity provider; manually created teams and memberships remain independent.
+Organizations using SCIM can open **Settings › SCIM** and enable **Create teams from SCIM groups**. OpenWork then creates a team for each provisioned Group and keeps its membership synchronized from the identity provider. These teams are labeled **Managed by SCIM** and must be changed in the identity provider; manually created teams and memberships remain independent.
 
 To connect an identity provider, follow
 [Okta SCIM provisioning](/cloud/scim-okta) or
@@ -73,63 +84,51 @@ An Admin team grants the built-in organization `Admin` role, not just administra
 
 ### Approve an Admin team
 
-1. Sign in as an organization owner or super-admin.
-2. Open **Members -> Teams** and review the team's members.
-3. Select `Grant organisation Admin to all members of {team name}` beneath the team in the list. The same checkbox is available directly below the heading on the team's detail page, above **Overview** and **Access**.
-4. The checkbox saves immediately. In **Members**, check `Admin via {team name}` to see the source of inherited access.
+1. Sign in as the organization owner.
+2. Open **Members › Teams** and review the team's members.
+3. Select **Grant organisation Admin to all members of** *(team name)* beneath the team in the list. The same checkbox is available directly below the heading on the team's detail page, above **Overview** and **Access**.
+4. The checkbox saves immediately. In **Members**, check **Admin via** *(team name)* to see the source of inherited access.
 
-Only owners and super-admins can enable or clear this checkbox. Admins, including people who inherit Admin from a team, cannot designate another Admin team or change the designation of their own team.
+Only the owner can enable or clear this checkbox. Admins, including people who inherit Admin from a team, see it locked and cannot designate another Admin team or change the designation of their own team, unless an Enterprise organization gives them that permission.
 
 ### Direct and inherited roles
 
 - A **direct role** is assigned to the person in OpenWork. Team membership does not rewrite it.
 - **Inherited Admin** is added while the person is an active organization member of an approved Admin team. Their direct role and other grants still apply.
-- Teams never grant `Owner`, `Super Admin`, or a custom role. Inherited Admin does not unlock owner/super-admin-only settings or role management.
+- Teams never grant `Owner`. Inherited Admin gives the same access as a direct `Admin` role, and does not unlock owner-only actions.
 - Removing someone from one Admin team, or clearing that team's checkbox, removes only that source of Admin access. A direct `Admin` role or another approved Admin team still grants Admin. Changing a direct role to `Member` does not remove an existing team grant.
 
 For access reviews, inspect both the person's direct role and every team named in **Admin via**. OpenWork checks current team authority on subsequent requests; the person does not need a new sign-in for team access changes to apply.
 
 ### Who manages membership
 
-For a **manually managed Admin team**, only owners and super-admins can add or remove members or delete the team. This applies whether membership is edited from the team or the member list. Admins also cannot remove an organization member with Admin team access or refresh or cancel an invitation carrying that access.
+For a **manually managed Admin team**, only the owner can add or remove members or delete the team. This applies whether membership is edited from the team or the member list. Admins also cannot remove an organization member with Admin team access or refresh or cancel an invitation carrying that access. A member of an Admin team who wants to leave the organization asks the owner to remove them from the team first.
 
-For a team labeled **Managed by SCIM**, change its name and membership in the identity provider, not in OpenWork. Owners and super-admins still control the Admin checkbox in OpenWork. Approving it means trusting the identity provider's group-membership administrators to determine who receives organization Admin through that group.
+For a team labeled **Managed by SCIM**, change its name and membership in the identity provider, not in OpenWork. The owner still controls the Admin checkbox in OpenWork. Approving it means trusting the identity provider's group-membership administrators to determine who receives organization Admin through that group.
 
 SCIM changes apply only after the identity provider sends them and OpenWork processes them successfully. A removal still waiting in an Entra provisioning cycle or Okta group push has not yet revoked access in OpenWork. Check provider provisioning logs, OpenWork SCIM health, and **Admin via** rather than assuming an IdP edit has taken effect. SCIM user deprovisioning removes active organization access, not just one team's grant.
 
 ### SCIM mapping changes and reapproval
 
-When **Create teams from SCIM groups** is switched off in **Settings -> SCIM**, OpenWork clears the affected teams' Admin grants but retains the teams and their current memberships as manually managed teams. Retaining a team does not retain its approval to grant Admin. An owner or super-admin must review the retained membership and select the Admin checkbox again if manual Admin access is intended.
+When **Create teams from SCIM groups** is switched off in **Settings › SCIM**, OpenWork clears the affected teams' Admin grants but retains the teams and their current memberships as manually managed teams. Retaining a team does not retain its approval to grant Admin. The owner must review the retained membership and select the Admin checkbox again if manual Admin access is intended.
 
 While team sync is off, subsequent SCIM group renames, membership updates, or group deletion do not change the retained manual team's name, membership, or reapproved Admin grant. This does not disable SCIM user deprovisioning. Saving the already-disabled mapping mode (`metadata_only`) again does not clear a manual reapproval.
 
 Re-enabling team sync clears the Admin grant again and replaces retained manual membership with the SCIM group's membership. Review the synchronized membership before approving the team again.
 
-While team sync is enabled, deleting the SCIM Group or connector also clears the affected Admin grant. Any retained team needs explicit owner or super-admin reapproval before it can grant Admin as a manual team. Deleting the Group removes its synchronized team memberships; do not use retained team records as proof of continuing access.
-
-## Use custom roles when needed
-
-1. Open `Members -> Roles`.
-2. Click `Create role`.
-3. Enter `Role name`.
-4. Choose the permissions that role should have.
-5. Click `Create role`.
-
-Custom permissions do not bypass built-in role requirements. Managing SSO, SCIM, organization API keys, or Admin team designation requires an owner or super-admin; a custom role with `security_configuration.manage` alone is not sufficient.
+While team sync is enabled, deleting the SCIM Group or connector also clears the affected Admin grant. Any retained team needs explicit owner reapproval before it can grant Admin as a manual team. Deleting the Group removes its synchronized team memberships; do not use retained team records as proof of continuing access.
 
 ## Practical access pattern
 
 A simple setup that works well for most orgs:
 
 - keep ownership with a designated, protected `Owner` account
-- reserve `Super Admin` for trusted settings and access administrators
-- give day-to-day operators direct `Admin` or membership in an approved Admin team
+- give trusted administrators direct `Admin` or membership in an approved Admin team
 - keep most people as `Member`
 - use `Teams` to decide who can see specific Collections or providers
 
 ## Notes
 
 - You cannot change the org owner's role through the ordinary role editor or remove the owner; use ownership transfer when handing over control.
-- Owners, super-admins, and admins can manage ordinary teams and member invitations. Admin team access has the stricter rules described above.
-- Only owners and super-admins can change `Org settings`, including allowed email domains and desktop restrictions.
-- You cannot delete a custom role while members or pending invitations still use it.
+- Owners and admins can manage ordinary teams and member invitations. Admin team access has the stricter rules described above.
+- Only the owner can change **Org settings**, including allowed email domains and **Allowed Desktop Versions**. Admins see them read only.

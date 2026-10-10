@@ -2,7 +2,7 @@ import {
   ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
   ORGANIZATION_OWNER_ROLE,
-  ORGANIZATION_SUPER_ADMIN_ROLE,
+  normalizeOrganizationRoleName,
   organizationRoleValueIncludes,
   splitOrganizationRoles,
 } from "./organization-role-hierarchy.js"
@@ -27,20 +27,21 @@ function addRole(roleValue: string, roleName: string) {
 }
 
 function removeTransferManagedRoles(roleValue: string) {
-  return splitOrganizationRoles(roleValue).filter((role) => (
-    role !== ORGANIZATION_OWNER_ROLE
-    && role !== ORGANIZATION_SUPER_ADMIN_ROLE
-    && role !== ORGANIZATION_ADMIN_ROLE
-    && role !== ORGANIZATION_MEMBER_ROLE
-  ))
+  return splitOrganizationRoles(roleValue).filter((role) => {
+    const normalized = normalizeOrganizationRoleName(role)
+    return normalized !== ORGANIZATION_OWNER_ROLE
+      && normalized !== ORGANIZATION_ADMIN_ROLE
+      && normalized !== ORGANIZATION_MEMBER_ROLE
+  })
 }
 
+/** The previous owner becomes an admin; the new owner keeps any other (non built-in) role entries. */
 export function getRoleValueAfterOwnershipTransfer(input: {
   currentRole: string
   targetRole: string
 }) {
   const currentRoles = removeTransferManagedRoles(input.currentRole)
-  const previousOwnerRole = addRole(currentRoles.join(","), ORGANIZATION_SUPER_ADMIN_ROLE)
+  const previousOwnerRole = addRole(currentRoles.join(","), ORGANIZATION_ADMIN_ROLE)
   const targetRoles = removeTransferManagedRoles(input.targetRole)
   const newOwnerRole = addRole(targetRoles.join(","), ORGANIZATION_OWNER_ROLE)
 
@@ -54,14 +55,12 @@ export function roleIncludesOwner(roleValue: string) {
   return organizationRoleValueIncludes(roleValue, ORGANIZATION_OWNER_ROLE)
 }
 
-export function roleIncludesSuperAdmin(roleValue: string) {
-  return organizationRoleValueIncludes(roleValue, ORGANIZATION_SUPER_ADMIN_ROLE)
+export function roleIncludesAdmin(roleValue: string) {
+  return organizationRoleValueIncludes(roleValue, ORGANIZATION_ADMIN_ROLE)
 }
 
 export function roleIncludesPrivileged(roleValue: string) {
-  return roleIncludesOwner(roleValue)
-    || roleIncludesSuperAdmin(roleValue)
-    || organizationRoleValueIncludes(roleValue, ORGANIZATION_ADMIN_ROLE)
+  return roleIncludesOwner(roleValue) || roleIncludesAdmin(roleValue)
 }
 
 function hasOtherActivePrivilegedMember(input: {
@@ -119,7 +118,7 @@ export function validateOrganizationMemberRoleChange(input: {
     return {
       ok: false,
       error: "last_privileged_member",
-      message: "Add another workspace owner, super-admin, or admin before changing this member's role.",
+      message: "Add another workspace owner or admin before changing this member's role.",
     }
   }
 

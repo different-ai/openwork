@@ -5,8 +5,8 @@ import { join, relative, resolve } from "node:path";
 import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const cases = ["PARITY-BOOT", "PARITY-STREAM", "PARITY-SKILLS", "PARITY-GATEWAY", "PARITY-CONNECTORS"];
-const specs = ["engine-parity", "engine-gateway-parity", "engine-connectors-parity"].map(name => `specs/${name}.e2e.test.ts`);
+const cases = ["PARITY-BOOT", "PARITY-STREAM", "PARITY-SKILLS", "PARITY-CONNECTORS"];
+const specs = ["engine-parity", "engine-connectors-parity"].map(name => `specs/${name}.e2e.test.ts`);
 
 export function verifyRun(report, engine, required = cases) {
   const assertions = (report.testResults ?? []).flatMap(file => file.assertionResults ?? []);

@@ -1,6 +1,7 @@
 version = 1
 
-# Security review only. GitHub's admin-team rule owns merge approval.
+# Security and confidentiality review. warden-clearance.yml approves clean PRs;
+# see .warden/README.md.
 [defaults]
 defaultBranch = "dev"
 reportOn = "low"
@@ -8,12 +9,17 @@ ignorePaths = ["**/node_modules/**", "**/pnpm-lock.yaml", "**/dist/**", "**/*.mi
 
 [defaults.scan]
 maxFileLines = 5000
+# Warden's defaults (150 files, 10,000 changed lines) left big PRs half
+# reviewed, and a partial review never clears. PRs beyond these still come
+# back incomplete: split them.
+maxFiles = 400
+maxChangedLines = 60000
 
 [defaults.agent]
-model = "openai/gpt-5.6-luna"
+model = "openai/gpt-6-luna"
 
 [defaults.auxiliary]
-model = "openai/gpt-5.6-luna"
+model = "openai/gpt-6-luna"
 
 [[skills]]
 name = "diff-security-review"

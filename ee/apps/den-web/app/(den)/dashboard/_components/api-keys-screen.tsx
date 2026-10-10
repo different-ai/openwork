@@ -12,6 +12,7 @@ import {
     getOrgAccessFlags,
     parseOrgApiKeysPayload,
     type DenOrgApiKey,
+    permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -70,13 +71,13 @@ export function ApiKeysScreen() {
             getOrgAccessFlags(
                 orgContext?.currentMember.role ?? "member",
                 orgContext?.currentMember.isOwner ?? false,
-                orgContext?.roles,
+                orgContext?.currentMember.permissions,
             ),
-        [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
+        [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.currentMember.permissions],
     );
 
     async function loadApiKeys(isCurrent = () => true) {
-        if (!orgId || !access.canViewSettings) {
+        if (!orgId || !access.canViewApiKeys) {
             if (isCurrent()) {
                 setApiKeys([]);
             }
@@ -133,7 +134,7 @@ export function ApiKeysScreen() {
         return () => {
             active = false;
         };
-    }, [orgId, access.canViewSettings]);
+    }, [orgId, access.canViewApiKeys]);
 
     useEffect(() => {
         if (!copied) {
@@ -151,7 +152,7 @@ export function ApiKeysScreen() {
             return;
         }
         if (!access.canManageApiKeys) {
-            setError("Only workspace owners and super-admins can create API keys.");
+            setError("You don't have permission to create API keys.");
             return;
         }
 
@@ -207,7 +208,7 @@ export function ApiKeysScreen() {
 
     function openCreateForm() {
         if (!access.canManageApiKeys) {
-            setError("Only workspace owners and super-admins can create API keys.");
+            setError("You don't have permission to create API keys.");
             return;
         }
 
@@ -226,7 +227,7 @@ export function ApiKeysScreen() {
 
     async function handleDelete(apiKey: DenOrgApiKey) {
         if (!access.canManageApiKeys) {
-            setError("Only workspace owners and super-admins can delete API keys.");
+            setError("You don't have permission to delete API keys.");
             return;
         }
 
@@ -309,9 +310,9 @@ export function ApiKeysScreen() {
             description="Manage your OpenWork API keys."
             colors={["#E6FFFA", "#0F766E", "#14B8A6", "#99F6E4"]}
         >
-            {!access.canViewSettings ? (
+            {!access.canViewApiKeys ? (
                 <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
-                    Only workspace admins can view API keys.
+                    {permissionLockReason("api_keys.view")}
                 </div>
             ) : (
                 <>
@@ -321,7 +322,7 @@ export function ApiKeysScreen() {
 
                     {!access.canManageApiKeys ? (
                         <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
-                            Read-only: owners and super-admins can create or delete API keys.
+                            {`Read only. ${permissionLockReason("api_keys.manage")}`}
                         </div>
                     ) : null}
 

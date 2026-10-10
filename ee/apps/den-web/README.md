@@ -6,9 +6,9 @@ Frontend for `app.openworklabs.com`.
 
 - Signs up / signs in users against Den service auth.
 - Handles invited-org signup flows where the invited email stays locked and the user verifies access before joining.
-- Lists and connects existing cloud workers.
+- Hosts the organization dashboard: members and teams, skills, plugins and marketplaces, connections, model providers, and desktop policies.
 - Sends users to the organization billing page for subscription management.
-- Offers desktop handoff actions so users can open the generated worker directly in OpenWork or copy the connect credentials manually.
+- Hands sign-ins started from the OpenWork desktop app back to the desktop, and opens OpenWork Web from the dashboard Web tab.
 - Calls the Den API directly at the matching `api.*` origin (for example, `app.openworklabs.com` -> `api.app.openworklabs.com`), including Better Auth traffic.
 - Keeps a same-origin auth proxy (`/api/auth/*`) only for compatibility with already-registered auth callbacks that still land on the web host.
 
@@ -17,7 +17,7 @@ Frontend for `app.openworklabs.com`.
 1. Sign in with a standard provider or accept an org invite.
 2. Create or select an organization without a billing gate.
 3. Manage billing from the organization billing page.
-4. Open existing workers in the desktop app with the provided deep link, or copy the URL/token into `Connect remote` manually.
+4. Return to the desktop app if sign-in started there, or open OpenWork Web from the dashboard Web tab.
 
 ## Local development
 
@@ -58,9 +58,6 @@ Tailwind 4 requires Safari 16.4+, Chrome 111+, or Firefox 128+; see the
 - `DEN_API_PUBLIC_URL` (server/runtime): browser-reachable Den API origin handed to clients by `/api/runtime-config` and used as the `Location` of the legacy `/api/den/*` 307 redirect. Set it whenever `DEN_API_BASE` is a container-internal URL; when unset, the redirect falls back to `DEN_API_BASE`, then `api.<web host>`.
 - `DEN_AUTH_ORIGIN` (server-only): Origin header sent to Better Auth endpoints when the browser request does not include one. Required outside local dev wrappers.
 - `DEN_WEB_PUBLIC_ORIGIN` (server/runtime): public origin used for metadata.
-- `DEN_WEB_OPENWORK_APP_CONNECT_URL` (runtime): Base URL for "Open in App" links.
-  - Example: `https://openworklabs.com/app`
-  - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
 - `DEN_WEB_OPENWORK_WEB_URL` (runtime): URL opened by the dashboard Web tab.
   - default: `https://web.openworklabs.com`
 - `DEN_WEB_OPENWORK_AUTH_CALLBACK_URL` (runtime): Canonical URL where the app returns after auth completes.
@@ -71,7 +68,6 @@ Tailwind 4 requires Safari 16.4+, Chrome 111+, or Firefox 128+; see the
 - `instrumentation-client.ts` follows the [official Next.js SDK setup](https://posthog.com/docs/libraries/next-js): import the pinned `posthog-js` package and call `posthog.init` before hydration. The existing `window.posthog` analytics calls receive that same singleton. There is no inline CDN bootstrap, custom SDK queue, method replacement, or change to authentication helpers.
 - The SDK core is bundled with the app. Browser analytics requests always use `/ow`; ordered Next.js rewrites forward to the region selected by `NEXT_PUBLIC_POSTHOG_HOST`. Arbitrary upstream hosts and browser-side proxy bypass are unsupported. The `/ow` sanitizer strips outgoing Cookie, Authorization, and Referer headers and does not intercept auth routes or modify browser cookies.
 - SDK settings use localStorage persistence and route pageviews plus existing explicit events; autocapture, replay, surveys and automatic flags are disabled. The documented `before_send` hook removes query/fragment/userinfo from SDK URL properties and email/name from outbound event/person properties while preserving the public ingestion token. This is outbound filtering, not a guarantee that person properties never enter SDK memory or localStorage. Existing consent remains managed by the SDK; no forced opt-in or legacy-cookie cleanup is added.
-- Run `pnpm run test:posthog` for client/config tests, a real SDK smoke test with all transports blocked, and the real Next.js routing fixture with loopback-only upstreams. No test sends events to PostHog.
 - `GET /api/health` returns a shallow app health payload for container probes.
 
 ### Observability

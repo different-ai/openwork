@@ -4,6 +4,7 @@ import { getConnectionStatusProbeId } from "@/lib/capability-call";
 import { getMcpServerName, MCP_QUICK_CONNECT } from "@/app/constants";
 import type { DenExternalMcpConnection } from "@/app/lib/den";
 import type { McpServerEntry } from "@/app/types";
+import { CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX } from "./cloud-mcp-user-state";
 import {
   resolveExtensionIconSrc,
   resolveExtensionIconUrl,
@@ -16,6 +17,8 @@ export type ConnectorToolIdentity = {
   serviceUrl: string | null;
   toolNamespace: string | null;
   connectionId: string | null;
+  /** Live member status from the org connection list; absent when unknown. */
+  connectedForMe?: boolean;
 };
 
 const NATIVE_CONNECTOR_IDENTITIES: ConnectorToolIdentity[] = [
@@ -100,6 +103,7 @@ function identityFromConnection(connection: DenExternalMcpConnection): Connector
     serviceUrl: native?.serviceUrl ?? url,
     toolNamespace: null,
     connectionId: connection.id,
+    connectedForMe: connection.connectedForMe && connection.needsReconnect !== true,
   };
 }
 
@@ -150,6 +154,36 @@ function capabilityName(part: DynamicToolUIPart): string | null {
   return typeof name === "string" && name.trim() ? name.trim() : null;
 }
 
+/** Same slug the server uses in `connectDirectMcpRuntimeName`. */
+function directSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+
+/**
+ * Directly exposed org connections run as `openwork-direct-<slug>-<digest>`
+ * tools. Attribute them to the org connection with that name (its own icon
+ * and display name); when the name is ambiguous or unknown, fall back to the
+ * catalog entry for the service so the logo still shows.
+ */
+function directConnectionIdentity(toolName: string, identities: ConnectorToolIdentity[]): ConnectorToolIdentity | null {
+  if (!toolName.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX)) return null;
+  const namespace = toolName.split("_")[0] ?? "";
+  const slug = namespace.slice(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX.length).replace(/-?[0-9a-f]{6}$/i, "");
+  if (!slug) return null;
+  const connections = identities.filter((identity) => identity.connectionId && directSlug(identity.name) === slug);
+  if (connections.length === 1) return connections[0] ?? null;
+  const catalog = identities.find((identity) => identity.id.startsWith("catalog:")
+    && (normalized(identity.name) === normalized(slug) || normalized(identity.toolNamespace ?? "") === normalized(slug)));
+  if (catalog) return catalog;
+  const quickConnect = quickConnectFor({ name: slug });
+  const iconUrl = iconFor({ name: slug, url: quickConnect?.url ?? null });
+  return iconUrl ? {
+    id: `direct:${slug}`,
+    name: quickConnect?.name ?? slug.split("-").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" "),
+    iconUrl, serviceUrl: quickConnect?.url ?? null, toolNamespace: namespace, connectionId: null,
+  } : null;
+}
+
 /** Resolve a rendered tool call only when it can be attributed to a connector. */
 export function resolveConnectorToolIdentity(
   part: DynamicToolUIPart,
@@ -180,6 +214,9 @@ export function resolveConnectorToolIdentity(
     ));
     if (named) return named;
   }
+
+  const direct = directConnectionIdentity(part.toolName, identities);
+  if (direct) return direct;
 
   const namespaceMatch = identities
     .filter((identity) => identity.toolNamespace)

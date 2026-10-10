@@ -1,0 +1,168 @@
+/* Workbot (Paper: "WorkBot — one chat, set up once", pages v4 and v5). */
+.workbot {
+  --wb-bg: #fbfcfd;
+  --wb-ink: #011627;
+  --wb-on-ink: #eef2f6;
+  --wb-mark-text: #e6edf3;
+  --wb-text: #11181c;
+  --wb-muted: #687076;
+  --wb-faint: #8b9196;
+  --wb-bubble: #e9edf0;
+  --wb-chip: #f1f3f5;
+  --wb-tray: #f6f8f9;
+  --wb-surface: #ffffff;
+  --wb-disabled: #c1c8cd;
+  --wb-shimmer-light: #c9ced3;
+  --wb-hairline: #0116270f;
+  --wb-row-line: #0116270d;
+  --wb-ring: #01162717;
+  --wb-composer-shadow: 0 0 0 1px #01162717, 0 4px 14px -6px #0116271a;
+  --wb-mark-shadow: 0 6px 16px -8px #01162780;
+  --wb-sheet-shadow: -1px 0 0 #0116270f, -12px 0 32px -24px #0116272e;
+  --wb-thumb: linear-gradient(135deg, #dce6ee, #b9c9d6);
+  --wb-type-pdf: #c4302b;
+  --wb-type-doc: #2b5797;
+  --wb-type-sheet: #1d7044;
+  --wb-type-slides: #c55a11;
+  --wb-danger: #c4302b;
+  --wb-type-image: #6e56cf;
+  --wb-card-shadow: 0 0 0 1px #0116270f, 0 1px 2px #0116270a;
+  --wb-panel-shadow: 0 0 0 1px #0116270d, 0 12px 32px -12px #01162724, 0 2px 6px -2px #0116270f;
+  --wb-page-shadow: 0 0 0 1px #0116270f, 0 6px 16px -8px #0116271f;
+  --wb-user-bubble: #eef1f4;
+  /* Keyboard focus: a soft halo with a faint edge, the same on every control (Den's input focus, in Workbot's ink). */
+  --wb-focus: 0 0 0 1px #01162733, 0 0 0 4px #01162712;
+  --wb-card-shadow-hover: 0 0 0 1px #01162714, 0 4px 12px -4px #0116271f;
+  /* Workbot's computer glyph: a soft blue screen; its lines brighten while it works. */
+  --wb-computer-screen: #e6f4fe;
+  --wb-computer-frame: #687076;
+  --wb-computer-line: #5eb1ef;
+  --wb-computer-line-live: #0090ff;
+}
+
+/* Workbot: shimmer on the one running step line, and a caret while the reply is being written. */
+.workbot-shimmer {
+  color: var(--wb-muted);
+  background: linear-gradient(90deg, var(--wb-muted) 0%, var(--wb-muted) 35%, var(--wb-shimmer-light) 50%, var(--wb-muted) 65%, var(--wb-muted) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: workbot-shimmer 1.8s linear infinite;
+}
+@keyframes workbot-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+/* Workbot's computer glyph: while it works, the lines on its screen write themselves one after another. */
+.workbot-computer-screen { fill: var(--wb-computer-screen); stroke: var(--wb-computer-frame); transition: stroke 150ms ease-out; }
+.workbot-computer-stand { stroke: var(--wb-computer-frame); transition: stroke 150ms ease-out; }
+.workbot-computer-line {
+  stroke: var(--wb-computer-line);
+  transform-box: fill-box;
+  transform-origin: left center;
+  transition: stroke 150ms ease-out;
+}
+.workbot-computer.is-working .workbot-computer-screen,
+.workbot-computer.is-working .workbot-computer-stand { stroke: var(--wb-ink); }
+.workbot-computer.is-working .workbot-computer-line { stroke: var(--wb-computer-line-live); }
+.workbot-computer.is-working .workbot-computer-line {
+  animation: workbot-computer-write 1.8s cubic-bezier(.2, .8, .2, 1) infinite;
+}
+.workbot-computer.is-working .workbot-computer-line:nth-of-type(3) { animation-delay: .25s; }
+/* The computer's newest update fades in under its step, replacing the last. */
+.workbot-subtitle-enter { animation: workbot-subtitle-enter 240ms cubic-bezier(.2, 0, 0, 1) both; }
+@keyframes workbot-subtitle-enter {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+/* What it is doing now rises in softly, over what it was doing before. */
+.workbot-row-enter { animation: workbot-row-enter 200ms cubic-bezier(.2, 0, 0, 1) both; }
+@keyframes workbot-row-enter {
+  from { opacity: 0; transform: translateY(4px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+/* Welcome: each part rises in after the one before; the step leaves as one. */
+.workbot-welcome-rise { animation: workbot-welcome-rise 200ms cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes workbot-welcome-rise {
+  from { opacity: 0; transform: translateY(8px); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+.workbot-welcome-leave { animation: workbot-welcome-leave 180ms ease-out both; }
+@keyframes workbot-welcome-leave {
+  to { opacity: 0; transform: translateY(-6px); filter: blur(2px); }
+}
+/* An app joining the "Using …" line slides in beside the others. */
+.workbot-app-enter { animation: workbot-app-enter 200ms cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes workbot-app-enter {
+  from { opacity: 0; transform: translateX(-4px) scale(.8); }
+  to { opacity: 1; transform: none; }
+}
+/* The little person at the computer: types, nods along, and lines appear on the screen while it works. */
+.workbot-worker-arm, .workbot-worker-head { transform-box: fill-box; }
+.workbot-worker-arm { transform-origin: 0% 0%; }
+.workbot-worker-head { transform-origin: 50% 100%; }
+.workbot-worker-line { transform-box: fill-box; transform-origin: left center; opacity: .55; }
+.workbot-worker.is-working .workbot-worker-arm { animation: workbot-worker-type 520ms ease-in-out infinite alternate; }
+.workbot-worker.is-working .workbot-worker-head { animation: workbot-worker-nod 1.6s ease-in-out infinite; }
+.workbot-worker.is-working .workbot-worker-line { opacity: 1; animation: workbot-computer-write 1.8s cubic-bezier(.2, .8, .2, 1) infinite; }
+.workbot-worker.is-working .workbot-worker-line:nth-of-type(4) { animation-delay: .3s; }
+@keyframes workbot-worker-type {
+  from { transform: rotate(-6deg); }
+  to { transform: rotate(10deg); }
+}
+@keyframes workbot-worker-nod {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(.4px) rotate(4deg); }
+}
+/* Emoji in the system's own color emoji font, whatever the page's text font. */
+.workbot-emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol", sans-serif; }
+/* A reaction grows out of the message's corner once, without overshoot. */
+.workbot-reaction { animation: workbot-reaction 200ms cubic-bezier(.2, .8, .2, 1) both; transform-origin: 75% 75%; }
+@keyframes workbot-reaction {
+  from { opacity: 0; transform: scale(.5); }
+  to { opacity: 1; transform: none; }
+}
+/* Browser surfaces in Workbot's palette: selection and thin, quiet scrollbars. */
+.workbot ::selection { background: #0116271f; }
+.workbot * { scrollbar-width: thin; scrollbar-color: #c1c8cd transparent; }
+/* Messages fade out softly as they scroll under the header, instead of a hard rule. */
+.workbot-scroll { mask-image: linear-gradient(to bottom, transparent 0, #000 28px); }
+/* Rendered pages fade in as they arrive. */
+.workbot-fade-in { animation: workbot-fade-in 240ms ease-out both; }
+@keyframes workbot-fade-in { from { opacity: 0; } to { opacity: 1; } }
+/* The preview panel slides in from the right; on small screens it covers the page. */
+.workbot-panel-enter { animation: workbot-panel-enter 220ms cubic-bezier(.2, 0, 0, 1) both; }
+@keyframes workbot-panel-enter {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: none; }
+}
+/* Typing bubble: three dots that darken one after another, like a messaging app. */
+.workbot-typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--wb-muted);
+  opacity: .3;
+  animation: workbot-typing 1.2s ease-in-out infinite;
+}
+.workbot-typing-dot:nth-child(2) { animation-delay: .2s; }
+.workbot-typing-dot:nth-child(3) { animation-delay: .4s; }
+@keyframes workbot-typing {
+  0%, 60%, 100% { opacity: .3; }
+  30% { opacity: .85; }
+}
+@keyframes workbot-computer-write {
+  0% { transform: scaleX(0); opacity: .35; }
+  35%, 80% { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(1); opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workbot-shimmer { animation: none; -webkit-text-fill-color: var(--wb-muted); }
+  .workbot-computer.is-working .workbot-computer-line { animation: none; }
+  .workbot-worker.is-working .workbot-worker-arm, .workbot-worker.is-working .workbot-worker-head,
+  .workbot-worker.is-working .workbot-worker-line { animation: none; }
+  .workbot-row-enter, .workbot-reaction, .workbot-subtitle-enter, .workbot-panel-enter, .workbot-fade-in,
+  .workbot-welcome-rise, .workbot-welcome-leave, .workbot-app-enter { animation: none; }
+  .workbot-typing-dot { animation: none; opacity: .55; }
+}

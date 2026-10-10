@@ -1,13 +1,12 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
+import type { Seed } from "@openwork/env";
 import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
 import { sessionlessFirstSendWorld } from "./first-run.ts";
 import { eventually } from "@openwork/testkit";
 
 export async function localSendDenOutageWorld(seed: Seed) {
-  if (resolveEvalEngine() !== "v1") throw new SkipError("DEN-LOCAL-SEND requires the real v1 engine");
-  const base = await sessionlessFirstSendWorld(seed);
+  const base = await sessionlessFirstSendWorld(seed, { engine: "v1" });
   await using setup = new AsyncDisposableStack();
   let unavailable = false;
   const counts: { method: string; path: string; status: number; count: number }[] = [];
@@ -45,8 +44,12 @@ export async function localSendDenOutageWorld(seed: Seed) {
     signal: AbortSignal.timeout(30_000),
   });
   if (installed.status !== 204) throw new Error(`Outage fixture identity installation failed: ${installed.status}`);
-  if (!counts.some((entry) => entry.path === "/v1/me/desktop-config" && entry.status === 200)) {
-    throw new Error("Identity installation did not validate healthy Den policy");
+  // Installing an identity reads Den policy in the background (managed-desktop-policy.ts setSession);
+  // wait for that read instead of racing the 204.
+  const policyDeadline = Date.now() + 15_000;
+  while (!counts.some((entry) => entry.path === "/v1/me/desktop-config" && entry.status === 200)) {
+    if (Date.now() > policyDeadline) throw new Error("Identity installation did not validate healthy Den policy");
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   // Identity policy writes schedule an asynchronous engine reload. A 204 is
   // not engine readiness: fault only after the server reports that reload applied.

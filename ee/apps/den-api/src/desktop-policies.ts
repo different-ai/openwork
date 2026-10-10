@@ -1,24 +1,18 @@
-import { and, asc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { readDesktopPolicyForOrgMember } from "@openwork-ee/den-db"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   DesktopPolicyMemberTable,
   DesktopPolicyTable,
-  MemberTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
-  allDesktopPolicies,
-  calculateEffectiveDesktopPolicy,
   desktopPolicyDefaults,
-  normalizeDesktopPolicyDocument,
-  resolveDesktopExecutionPolicy,
-  selectEffectiveOnboardingPromptConfig,
   type DesktopConfig,
   type DesktopPolicyValue,
 } from "@openwork/types/den/desktop-policies"
 import { db } from "./db.js"
-import { matchingDesktopPolicyAssignmentRoles } from "./desktop-policy-role-assignments.js"
 
 export type DesktopPolicyId = typeof DesktopPolicyTable.$inferSelect.id
 export type DesktopPolicyRow = typeof DesktopPolicyTable.$inferSelect
@@ -82,93 +76,5 @@ export async function calculateDesktopPolicyForOrgMember(input: {
   organizationId: OrgId
   orgMemberId: OrgMemberId
 }): Promise<EffectiveDesktopPolicyConfig> {
-  const orgPolicies = await db
-    .select({
-      id: DesktopPolicyTable.id,
-      isDefault: DesktopPolicyTable.isDefault,
-      isEnabled: DesktopPolicyTable.isEnabled,
-      priority: DesktopPolicyTable.priority,
-      policy: DesktopPolicyTable.policy,
-      createdAt: DesktopPolicyTable.createdAt,
-    })
-    .from(DesktopPolicyTable)
-    .where(and(
-      eq(DesktopPolicyTable.organizationId, input.organizationId),
-      isNull(DesktopPolicyTable.deletedAt),
-    ))
-    .orderBy(asc(DesktopPolicyTable.createdAt))
-
-  if (orgPolicies.length === 0) {
-    return allDesktopPolicies(true)
-  }
-
-  const defaultPolicy = orgPolicies.find((policy) => policy.isDefault === true && policy.isEnabled === true) ?? null
-  const memberRows = await db
-    .select({ role: MemberTable.role })
-    .from(MemberTable)
-    .where(and(
-      eq(MemberTable.organizationId, input.organizationId),
-      eq(MemberTable.id, input.orgMemberId),
-      isNull(MemberTable.removedAt),
-    ))
-    .limit(1)
-  const memberRole = memberRows[0]?.role ?? null
-  const teamIds = await listTeamIdsForOrgMember(input)
-  const matchingRoles = memberRole ? matchingDesktopPolicyAssignmentRoles(memberRole) : []
-  const assignedWhere = teamIds.length > 0
-    ? or(
-        eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId),
-        inArray(DesktopPolicyMemberTable.teamId, teamIds),
-        inArray(DesktopPolicyMemberTable.role, matchingRoles),
-      )
-    : or(
-        eq(DesktopPolicyMemberTable.orgMemberId, input.orgMemberId),
-        inArray(DesktopPolicyMemberTable.role, matchingRoles),
-      )
-
-  const assignedPolicies = assignedWhere
-    ? await db
-        .select({
-          id: DesktopPolicyTable.id,
-          priority: DesktopPolicyTable.priority,
-          policy: DesktopPolicyTable.policy,
-          createdAt: DesktopPolicyTable.createdAt,
-        })
-        .from(DesktopPolicyMemberTable)
-        .innerJoin(DesktopPolicyTable, eq(DesktopPolicyMemberTable.desktopPolicyId, DesktopPolicyTable.id))
-        .where(and(
-          eq(DesktopPolicyTable.organizationId, input.organizationId),
-          eq(DesktopPolicyTable.isEnabled, true),
-          isNull(DesktopPolicyTable.deletedAt),
-          assignedWhere,
-        ))
-    : []
-  const assignedPoliciesById = new Map<string, (typeof assignedPolicies)[number]>()
-  for (const policy of assignedPolicies) {
-    if (!assignedPoliciesById.has(policy.id)) {
-      assignedPoliciesById.set(policy.id, policy)
-    }
-  }
-  const uniqueAssignedPolicies = [...assignedPoliciesById.values()]
-
-  const effectivePolicy = calculateEffectiveDesktopPolicy({
-    orgPolicyCount: orgPolicies.length,
-    defaultPolicy: defaultPolicy?.policy ?? {},
-    assignedPolicies: uniqueAssignedPolicies.map((row) => row.policy),
-  })
-  const onboardingPromptConfig = selectEffectiveOnboardingPromptConfig({
-    defaultPolicy: defaultPolicy?.policy ?? {},
-    assignedPolicies: uniqueAssignedPolicies.map((row) => ({
-      id: row.id,
-      priority: row.priority,
-      createdAt: row.createdAt,
-      policy: normalizeDesktopPolicyDocument(row.policy),
-    })),
-  })
-
-  return {
-    ...effectivePolicy,
-    execution: resolveDesktopExecutionPolicy([defaultPolicy?.policy, ...uniqueAssignedPolicies.map((row) => row.policy)]),
-    ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
-  }
+  return readDesktopPolicyForOrgMember(db, input)
 }

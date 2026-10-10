@@ -53,7 +53,7 @@ export function PluginDetailScreen({
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles ?? [],
+    orgContext?.currentMember.permissions,
   );
 
   useEffect(() => {
@@ -96,6 +96,11 @@ export function PluginDetailScreen({
   }
 
   const marketplaces = plugin.marketplaces ?? [];
+  const libraryItem = libraryQuery.data?.find((item) => item.type === "plugin" && item.id === plugin.id);
+  // Creator, a manager on this plugin, or `sharing.manage_all` (manager on everything shared).
+  const canManagePlugin = (plugin.createdByOrgMembershipId !== null && plugin.createdByOrgMembershipId === orgContext?.currentMember.id)
+    || (libraryItem?.type === "plugin" && libraryItem.role === "manager")
+    || access.canManageAllShared;
   const creator = orgContext?.members.find((member) => member.id === plugin.createdByOrgMembershipId) ?? null;
   const accessBlastRadius = getPluginAccessBlastRadius(
     pluginAccessQuery.data ?? [],
@@ -130,7 +135,7 @@ export function PluginDetailScreen({
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
-        {access.isAdmin ? (
+        {canManagePlugin ? (
           <div ref={actionsRef} className="relative">
             <button
               type="button"
@@ -224,10 +229,10 @@ export function PluginDetailScreen({
           isLoading={pluginAccessQuery.isLoading}
           error={pluginAccessQuery.error}
         />
-        <SkillsSection orgSlug={orgSlug} plugin={plugin} canEdit={access.isAdmin} />
+        <SkillsSection orgSlug={orgSlug} plugin={plugin} canEdit={canManagePlugin} />
         <WorkflowsSection
           plugin={plugin}
-          canEdit={access.isAdmin}
+          canEdit={canManagePlugin}
           onAdd={() => {
             attachWorkflow.reset();
             setAddWorkflowOpen(true);

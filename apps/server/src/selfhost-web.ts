@@ -4,10 +4,11 @@
  * path (`npm i -g openwork-server && openwork-server web`).
  */
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { openworkServerDataDir } from "@openwork/paths";
 
 export const OPENCODE_GITHUB_REPO = "anomalyco/opencode";
@@ -112,13 +113,67 @@ async function findFile(root: string, name: string): Promise<string | null> {
   return null;
 }
 
+/**
+ * Windows ships bsdtar as System32\tar.exe, which extracts .zip. A Git Bash or
+ * MSYS PATH puts GNU tar first instead: it cannot read .zip and treats a
+ * drive-letter path such as C:\... as a remote host ("Cannot connect to C:").
+ */
+function tarCommand(): string {
+  if (process.platform !== "win32") return "tar";
+  const systemRoot = process.env.SystemRoot?.trim() || process.env.windir?.trim() || "C:\\Windows";
+  const bsdtar = join(systemRoot, "System32", "tar.exe");
+  return existsSync(bsdtar) ? bsdtar : "tar";
+}
+
 function extractArchive(archive: string, asset: string, destination: string): void {
   const useUnzip = asset.endsWith(".zip") && process.platform !== "win32";
-  const command = useUnzip ? "unzip" : "tar";
-  const args = useUnzip ? ["-q", archive, "-d", destination] : ["-xf", archive, "-C", destination];
-  const result = spawnSync(command, args, { stdio: "inherit" });
+  const command = useUnzip ? "unzip" : tarCommand();
+  // Relative paths keep drive letters out of tar's archive argument.
+  const cwd = dirname(archive);
+  const target = relative(cwd, destination) || ".";
+  const args = useUnzip ? ["-q", archive, "-d", destination] : ["-xf", basename(archive), "-C", target];
+  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} exited with ${result.status} while extracting ${asset}`);
+}
+
+const RENAME_RETRY_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+/**
+ * Rename, retrying while Windows still holds the file. Right after the new
+ * engine runs `--version`, antivirus scanning or the exiting process's image
+ * handle can keep opencode.exe locked for a few seconds, and a plain rename
+ * fails with EBUSY and stops the server on first run.
+ */
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  options: {
+    platform?: NodeJS.Platform;
+    renameImpl?: (from: string, to: string) => Promise<void>;
+    delaysMs?: readonly number[];
+  } = {},
+): Promise<void> {
+  const renameImpl = options.renameImpl ?? rename;
+  const delays = (options.platform ?? process.platform) === "win32"
+    ? options.delaysMs ?? [100, 250, 500, 1_000, 2_000, 4_000, 8_000]
+    : [];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await renameImpl(from, to);
+      return;
+    } catch (error) {
+      const code = errorCode(error);
+      const delay = delays[attempt];
+      if (delay === undefined || !code || !RENAME_RETRY_CODES.has(code)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 /**
@@ -175,18 +230,72 @@ export async function ensureManagedEngine(input: {
     if (!extracted) throw new Error(`Archive ${asset} did not contain ${binaryName}`);
     await mkdir(dirname(bin), { recursive: true });
     const partial = `${bin}.partial`;
-    await rename(extracted, partial);
+    await renameWithRetry(extracted, partial, { platform });
     if (platform !== "win32") await chmod(partial, 0o755);
     const downloadedVersion = readBinaryVersion(partial);
     if (downloadedVersion !== version) {
       await rm(partial, { force: true });
       throw new Error(`Downloaded OpenCode reports ${downloadedVersion ?? "no version"}; expected ${version}.`);
     }
-    await rename(partial, bin);
+    await renameWithRetry(partial, bin, { platform });
     input.log(`Installed OpenCode ${version} to ${bin}`);
     return { bin, installedVersion: downloadedVersion, source: "downloaded" };
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
+  }
+}
+
+/** OpenCode's global config folder: `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode` (all platforms). */
+export function opencodeGlobalConfigDir(env: NodeJS.ProcessEnv, home: string = homedir()): string {
+  const xdgConfig = env.XDG_CONFIG_HOME?.trim() || join(home, ".config");
+  return join(xdgConfig, "opencode");
+}
+
+export function opencodePluginDepsArchive(packageRoot: string, opencodeVersion: string): string {
+  return join(packageRoot, "dist", `opencode-plugin-deps-${opencodeVersion.replace(/^v/, "")}.tgz`);
+}
+
+const OPENCODE_INSTALL_STATE = ["node_modules", "package.json", "package-lock.json"] as const;
+
+export type PluginDepsSeedResult =
+  | { seeded: true; durationMs: number }
+  | { seeded: false; reason: "no-archive" | "already-set-up" | "failed"; error?: string };
+
+/**
+ * OpenCode blocks the first folder load on `npm install @opencode-ai/plugin`
+ * into its global config folder whenever plugins are configured, and OpenWork
+ * always configures plugins: 10-15 s on Windows. The npm package ships that
+ * exact install pre-resolved; on a fresh profile (no node_modules, manifest or
+ * lockfile yet) unpack it so OpenCode finds the dependency already installed.
+ * Any existing install state is left to OpenCode. Never throws: on failure
+ * OpenCode installs as before.
+ */
+export async function seedOpencodePluginDeps(input: {
+  archive: string;
+  configDir: string;
+  now?: () => number;
+}): Promise<PluginDepsSeedResult> {
+  const now = input.now ?? Date.now;
+  const startedAt = now();
+  if (!await isFile(input.archive)) return { seeded: false, reason: "no-archive" };
+  for (const name of OPENCODE_INSTALL_STATE) {
+    if (existsSync(join(input.configDir, name))) return { seeded: false, reason: "already-set-up" };
+  }
+  let staging: string | null = null;
+  try {
+    await mkdir(input.configDir, { recursive: true });
+    staging = await mkdtemp(join(input.configDir, ".openwork-plugin-deps-"));
+    extractArchive(input.archive, basename(input.archive), staging);
+    // node_modules first: if this stops part-way, OpenCode sees an
+    // incomplete lockfile and runs its own install, as it would have.
+    for (const name of OPENCODE_INSTALL_STATE) {
+      await renameWithRetry(join(staging, name), join(input.configDir, name));
+    }
+    return { seeded: true, durationMs: Math.max(0, now() - startedAt) };
+  } catch (error) {
+    return { seeded: false, reason: "failed", error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (staging) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

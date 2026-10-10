@@ -7,6 +7,13 @@ import {
   libraryCreateSkillModal,
   librarySkills,
 } from "./desktop.ts";
+import {
+  denLegacyProviderCatalogForm,
+  denLegacyProviderCustomForm,
+  denLegacyProviderDetail,
+  denLegacyProviders,
+  desktopCloudProviders,
+} from "./providers.ts";
 import { openworkWebTab } from "./web-tab.ts";
 
 export const shots: Shot[] = [
@@ -19,4 +26,9 @@ export const shots: Shot[] = [
   denSkillEditor,
   denOpenworkWeb,
   openworkWebTab,
+  denLegacyProviders,
+  denLegacyProviderCatalogForm,
+  denLegacyProviderCustomForm,
+  denLegacyProviderDetail,
+  desktopCloudProviders,
 ];

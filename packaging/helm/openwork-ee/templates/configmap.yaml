@@ -16,12 +16,23 @@ data:
   # prefer rediss:// whenever the provider supports TLS.
   DATABASE_REDIS_ALLOW_INSECURE_INTERNAL: {{ ternary "1" "0" .Values.redis.allowInsecureInternal | quote }}
   DB_MODE: {{ .Values.config.databaseMode | quote }}
+  # Feature registry: packages/features/src/registry.ts. Keys come from the
+  # generated config.features block; never add per-feature lines here.
+  DEN_DEPLOYMENT: {{ .Values.config.deployment | default "self_hosted" | quote }}
+  {{- range $key, $value := .Values.config.features }}
+  {{- if ne (toString $value) "" }}
+  DEN_FEATURE_{{ $key | snakecase | upper }}: {{ toString $value | quote }}
+  {{- end }}
+  {{- end }}
   DEN_ORG_MODE: {{ .Values.config.tenancy.mode | quote }}
   DEN_SINGLE_ORG_NAME: {{ .Values.config.tenancy.singleOrgName | quote }}
   DEN_SINGLE_ORG_SLUG: {{ .Values.config.tenancy.singleOrgSlug | quote }}
   DEN_SINGLE_ORG_OWNER_EMAILS: {{ .Values.config.tenancy.ownerEmails | quote }}
   DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: {{ .Values.config.tenancy.allowPublicSignup | quote }}
   DEN_REQUIRE_EMAIL_VERIFICATION: {{ .Values.config.tenancy.requireEmailVerification | quote }}
+  DEN_AUDIT_SELF_HOSTED_ENABLED: {{ .Values.config.audit.selfHostedEnabled | quote }}
+  DEN_AUDIT_CAPTURE_ENABLED: {{ .Values.config.audit.captureEnabled | quote }}
+  DEN_AUDIT_VISIBILITY_ENABLED: {{ .Values.config.audit.visibilityEnabled | quote }}
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: {{ .Values.config.auth.passwordBreachScreeningEnabled | quote }}
   GITHUB_CONNECTOR_APP_ID: {{ .Values.config.githubConnector.appId | quote }}
   GITHUB_CONNECTOR_APP_CLIENT_ID: {{ .Values.config.githubConnector.clientId | quote }}
@@ -48,12 +59,12 @@ data:
   DEN_WEB_APP_HOSTS: {{ .Values.config.public.webAppHosts | quote }}
   {{ end }}
   DEN_BOOTSTRAP_ADMIN_EMAILS: {{ .Values.config.public.bootstrapAdminEmails | quote }}
-  DEN_INSTALL_LINKS_GATING_ENABLED: {{ .Values.config.public.installLinksGatingEnabled | quote }}
   DEN_AUTOMATIONS_ENABLED: {{ .Values.config.public.automationsEnabled | quote }}
   DEN_DASHBOARDS_ENABLED: {{ .Values.config.public.dashboardsEnabled | quote }}
   DEN_OPENWORK_WEB_ENABLED: {{ .Values.config.public.openworkWebEnabled | quote }}
   DEN_AUTOMATIONS_RUNTIME_ENABLED: {{ .Values.config.public.automationsRuntimeEnabled | quote }}
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: {{ .Values.config.public.generatedArtifactViewsEnabled | quote }}
+  DEN_APP_MCP_SERVERS_ENABLED: {{ .Values.config.public.appMcpServersEnabled | quote }}
   DEN_CONNECT_LINK_MODE: {{ .Values.config.public.connectLinkMode | quote }}
   {{ if .Values.config.public.connectLinkKeyId }}
   DEN_CONNECT_LINK_KEY_ID: {{ .Values.config.public.connectLinkKeyId | quote }}
@@ -85,28 +96,12 @@ data:
   {{ end }}
   INFERENCE_PROXY_BASE_URL: {{ include "openwork-ee.modelsProxyUrl" . | quote }}
   {{ end }}
-  POLAR_FEATURE_GATE_ENABLED: {{ .Values.config.polar.featureGateEnabled | quote }}
   DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: {{ .Values.config.daytona.signedPreviewExpiresSeconds | quote }}
   DEN_API_BASE: {{ include "openwork-ee.denApiInternalUrl" . | quote }}
   DEN_AUTH_FALLBACK_BASE: {{ include "openwork-ee.authFallbackInternalUrl" . | quote }}
   DEN_AUTH_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
   DEN_WEB_PUBLIC_ORIGIN: {{ .Values.config.public.webOrigin | quote }}
   DEN_WEB_OPENWORK_AUTH_CALLBACK_URL: {{ .Values.config.public.authCallbackUrl | quote }}
-  {{ with .Values.config.polar.apiBase }}
-  POLAR_API_BASE: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.productId }}
-  POLAR_PRODUCT_ID: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.benefitId }}
-  POLAR_BENEFIT_ID: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.successUrl }}
-  POLAR_SUCCESS_URL: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.polar.returnUrl }}
-  POLAR_RETURN_URL: {{ . | quote }}
-  {{ end }}
   {{ with .Values.config.daytona.apiUrl }}
   DAYTONA_API_URL: {{ . | quote }}
   {{ end }}
@@ -190,9 +185,6 @@ data:
   {{ end }}
   {{ with .Values.config.inference.creditsPerDollar }}
   INFERENCE_CREDITS_PER_DOLLAR: {{ . | quote }}
-  {{ end }}
-  {{ with .Values.config.public.openworkAppConnectUrl }}
-  DEN_WEB_OPENWORK_APP_CONNECT_URL: {{ . | quote }}
   {{ end }}
   {{ with .Values.config.public.openworkWebUrl }}
   DEN_WEB_OPENWORK_WEB_URL: {{ . | quote }}

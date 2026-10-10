@@ -1,3 +1,4 @@
+import { builtMcpAppCatalogSchema, type BuiltMcpAppCatalogEntry } from "./built-mcp-app-catalog";
 import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
@@ -12,12 +13,15 @@ import type {
   AutomationDetail,
   AutomationDesktopRunnerPresence,
   AutomationDesktopRunnerRegistration,
+  AutomationExecutionTargetList,
   AutomationList,
   AutomationRun,
+  AutomationRunRange,
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
   CreateAutomation,
   CreateCloudAutomation,
+  RunAutomationNow,
   UpdateAutomation,
 } from "@openwork/types/automations";
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
@@ -46,10 +50,20 @@ import {
 } from "./desktop";
 import { enterpriseActivationRequired } from "./enterprise-activation";
 import { observeDenRequest } from "./den-request-diagnostics";
-import { getOpenworkGatewayOrigin } from "./gateway-runtime";
+import { getOpenworkGatewayOrigin, readOpenworkGatewayDenBaseUrl } from "./gateway-runtime";
 import { clearDesktopSignInIntent, clearOrgSelectionPending } from "./den-sign-in-intent";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
 import { isDesktopRuntime } from "./runtime-env";
+import {
+  calendarRangeSearch,
+  denGoogleCalendarEventsResponseSchema,
+  denMicrosoftCalendarEventsResponseSchema,
+  DEN_GOOGLE_CALENDAR_EVENTS_PATH,
+  DEN_MICROSOFT_CALENDAR_EVENTS_PATH,
+  type DenCalendarRangeQuery,
+  type DenGoogleCalendarEvent,
+  type DenMicrosoftCalendarEvent,
+} from "@openwork/calendar";
 import type { ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,
@@ -88,8 +102,8 @@ const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
-export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
 const BUILD_DEN_BASE_URL =
+  readOpenworkGatewayDenBaseUrl() ||
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
     : "").trim() || "https://app.openworklabs.com";
@@ -120,7 +134,6 @@ function readForceEnvDenSettings(): boolean {
 }
 
 export const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
-export const HOSTED_DEFAULT_DEN_API_BASE_URL = "https://api.app.openworklabs.com";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
@@ -129,8 +142,6 @@ export const DEN_INFERENCE_PATH = "/dashboard/inference";
 export type * from "./den-types";
 import type {
   DenAssignedMarketplaceCapability,
-  DenDashboardElement,
-  DenGrantedDashboard,
   DenMeLibraryPlugin,
   DenOrgExtensionProjection,
   DenOrgMarketplace,
@@ -219,7 +230,7 @@ export type DenBootstrapConfig = DenBaseUrls & {
 
 export type DenDesktopConfig = SharedDesktopConfig;
 
-export type DenCanonicalOrgRole = "super-admin" | "owner" | "admin" | "member";
+export type DenCanonicalOrgRole = "owner" | "admin" | "member";
 export type DenOrgRole = string;
 
 export type DenOrgSummary = {
@@ -231,9 +242,9 @@ export type DenOrgSummary = {
 
 function normalizeDenCanonicalOrgRole(role: string): DenCanonicalOrgRole | null {
   const normalized = role.trim().toLowerCase().replace(/[\s_]+/g, "-");
-  if (normalized === "super-admin") return "super-admin";
   if (normalized === "owner") return "owner";
-  if (normalized === "admin") return "admin";
+  // Super-admin was merged into admin; a stray value from an older server reads as admin.
+  if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
 }
@@ -250,7 +261,6 @@ function denCanonicalOrgRoles(roleValue: string) {
 export function getDenCanonicalOrgRole(roleValue: string): DenCanonicalOrgRole {
   const roles = denCanonicalOrgRoles(roleValue);
   if (roles.has("owner")) return "owner";
-  if (roles.has("super-admin")) return "super-admin";
   if (roles.has("admin")) return "admin";
   return "member";
 }
@@ -261,13 +271,12 @@ export function isDenOrgAdminRole(roleValue: string | null | undefined) {
 }
 
 export function formatDenOrgRoleLabel(roleValue: string) {
-  return roleValue
+  const labels = roleValue
     .split(",")
     .map((role) => role.trim())
     .filter(Boolean)
     .map((role) => {
       const canonicalRole = normalizeDenCanonicalOrgRole(role);
-      if (canonicalRole === "super-admin") return "Super admin";
       if (canonicalRole === "owner") return "Owner";
       if (canonicalRole === "admin") return "Admin";
       if (canonicalRole === "member") return "Member";
@@ -276,27 +285,10 @@ export function formatDenOrgRoleLabel(roleValue: string) {
         .filter(Boolean)
         .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
         .join(" ");
-    })
-    .join(", ");
+    });
+  // "admin,super-admin" from an older server must not read "Admin, Admin".
+  return [...new Set(labels)].join(", ");
 }
-
-export type DenWorkerSummary = {
-  workerId: string;
-  workerName: string;
-  status: string;
-  instanceUrl: string | null;
-  provider: string | null;
-  isMine: boolean;
-  createdAt: string | null;
-};
-
-export type DenWorkerTokens = {
-  clientToken: string | null;
-  ownerToken: string | null;
-  hostToken: string | null;
-  openworkUrl: string | null;
-  workspaceId: string | null;
-};
 
 export type DenCloudInstance = {
   status: "provisioning" | "waking" | "ready" | "failed";
@@ -339,6 +331,12 @@ export type DenOrgLlmProviderModel = {
   createdAt: string | null;
 };
 
+export type DenOrgLlmProviderAccess = {
+  allMembers: boolean;
+  teamNames: string[];
+  memberCount: number;
+};
+
 export type DenOrgLlmProvider = {
   id: string;
   source: "models_dev" | "custom" | "openwork";
@@ -358,12 +356,18 @@ export type DenOrgLlmProvider = {
    * provider list; `hasApiKey` is always false for per-member providers.
    */
   hasMyCredential?: boolean;
+  /** "per_member": each member signs in with their own account; absent on older Den servers. */
+  credentialMode?: "shared" | "per_member";
+  /** Who Den grants this provider to; absent on older Den servers. */
+  access?: DenOrgLlmProviderAccess;
   models: DenOrgLlmProviderModel[];
+  pinnedModelIds?: string[];
   createdAt: string | null;
   updatedAt: string | null;
 };
 
 export type DenExternalMcpConnection = {
+  credentialHealth?: "unknown" | "ready" | "reconnect_required";
   id: string;
   name: string;
   url: string;
@@ -414,50 +418,6 @@ export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
 export type DenOrgMarketplaceResolved = {
   marketplace: DenOrgMarketplace;
   plugins: DenOrgPlugin[];
-};
-
-export type DenBillingPrice = {
-  amount: number | null;
-  currency: string | null;
-  recurringInterval: string | null;
-  recurringIntervalCount: number | null;
-};
-
-export type DenBillingSubscription = {
-  id: string;
-  status: string;
-  amount: number | null;
-  currency: string | null;
-  recurringInterval: string | null;
-  recurringIntervalCount: number | null;
-  currentPeriodStart: string | null;
-  currentPeriodEnd: string | null;
-  cancelAtPeriodEnd: boolean;
-  canceledAt: string | null;
-  endedAt: string | null;
-};
-
-export type DenBillingInvoice = {
-  id: string;
-  createdAt: string | null;
-  status: string;
-  totalAmount: number | null;
-  currency: string | null;
-  invoiceNumber: string | null;
-  invoiceUrl: string | null;
-};
-
-export type DenBillingSummary = {
-  featureGateEnabled: boolean;
-  hasActivePlan: boolean;
-  checkoutRequired: boolean;
-  checkoutUrl: string | null;
-  portalUrl: string | null;
-  price: DenBillingPrice | null;
-  subscription: DenBillingSubscription | null;
-  invoices: DenBillingInvoice[];
-  productId: string | null;
-  benefitId: string | null;
 };
 
 export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | null;
@@ -1909,95 +1869,6 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
   });
 }
 
-function getDashboardElement(entry: unknown): DenDashboardElement | null {
-  if (!isRecord(entry)) return null;
-  if (
-    typeof entry.serverName !== "string"
-    || typeof entry.toolName !== "string"
-    || typeof entry.projectedToolName !== "string"
-    || typeof entry.resourceUri !== "string"
-    || typeof entry.title !== "string"
-  ) {
-    return null;
-  }
-  return {
-    serverName: entry.serverName,
-    ...(typeof entry.connectionId === "string" ? { connectionId: entry.connectionId } : {}),
-    toolName: entry.toolName,
-    projectedToolName: entry.projectedToolName,
-    resourceUri: entry.resourceUri,
-    title: entry.title,
-    ...(isRecord(entry.launchArguments) ? { launchArguments: entry.launchArguments } : {}),
-    ...(entry.requiresApproval === true ? { requiresApproval: true } : {}),
-    ...(entry.organizationAutoLaunch === true ? { organizationAutoLaunch: true } : {}),
-  };
-}
-
-function getGrantedDashboards(payload: unknown): DenGrantedDashboard[] {
-  if (!isRecord(payload) || !Array.isArray(payload.items)) {
-    return [];
-  }
-
-  return payload.items.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.name !== "string") return [];
-    const elements = Array.isArray(entry.elements)
-      ? entry.elements.flatMap((element) => {
-          const parsed = getDashboardElement(element);
-          return parsed ? [parsed] : [];
-        })
-      : [];
-    return [
-      {
-        id: entry.id,
-        name: entry.name,
-        elements,
-        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : null,
-      } satisfies DenGrantedDashboard,
-    ];
-  });
-}
-
-function getWorkers(payload: unknown): DenWorkerSummary[] {
-  if (!isRecord(payload) || !Array.isArray(payload.workers)) {
-    return [];
-  }
-
-  return payload.workers.flatMap((entry) => {
-    if (!isRecord(entry)) return [];
-    const instance = isRecord(entry.instance) ? entry.instance : null;
-    if (typeof entry.id !== "string" || typeof entry.name !== "string") {
-      return [];
-    }
-    return [
-      {
-        workerId: entry.id,
-        workerName: entry.name,
-        status: typeof entry.status === "string" ? entry.status : "unknown",
-        instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
-        provider: instance && typeof instance.provider === "string" ? instance.provider : null,
-        isMine: Boolean(entry.isMine),
-        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : null,
-      } satisfies DenWorkerSummary,
-    ];
-  });
-}
-
-function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
-  if (!isRecord(payload) || !isRecord(payload.tokens)) {
-    return null;
-  }
-
-  const tokens = payload.tokens;
-  const connect = isRecord(payload.connect) ? payload.connect : null;
-  return {
-    clientToken: typeof tokens.client === "string" ? tokens.client : null,
-    ownerToken: typeof tokens.owner === "string" ? tokens.owner : null,
-    hostToken: typeof tokens.host === "string" ? tokens.host : null,
-    openworkUrl: connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null,
-    workspaceId: connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null,
-  };
-}
-
 function parseCloudInstance(payload: unknown): DenCloudInstance | null {
   if (
     !isRecord(payload) ||
@@ -2105,6 +1976,15 @@ function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | n
   };
 }
 
+function parseDenOrgLlmProviderAccess(value: Record<string, unknown>): DenOrgLlmProviderAccess {
+  const teams = Array.isArray(value.teams) ? value.teams : [];
+  return {
+    allMembers: value.allMembers === true,
+    teamNames: teams.flatMap((team) => isRecord(team) && typeof team.name === "string" && team.name.trim() ? [team.name.trim()] : []),
+    memberCount: Array.isArray(value.members) ? value.members.length : 0,
+  };
+}
+
 function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
   if (
     !isRecord(value) ||
@@ -2126,7 +2006,10 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     providerConfig: parseJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
     runtimeEnvKeys: parseStringList(value.runtimeEnvKeys),
+    pinnedModelIds: [...new Set(parseStringList(value.pinnedModelIds))],
     ...(typeof value.hasMyCredential === "boolean" ? { hasMyCredential: value.hasMyCredential } : {}),
+    ...(value.credentialMode === "shared" || value.credentialMode === "per_member" ? { credentialMode: value.credentialMode } : {}),
+    ...(isRecord(value.access) ? { access: parseDenOrgLlmProviderAccess(value.access) } : {}),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);
@@ -2192,6 +2075,8 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
 
   return {
     id: value.id,
+    ...(value.credentialHealth === "unknown" || value.credentialHealth === "ready" || value.credentialHealth === "reconnect_required"
+      ? { credentialHealth: value.credentialHealth } : {}),
     name: value.name,
     url: value.url,
     authType: value.authType,
@@ -2405,7 +2290,6 @@ function parseExtensionResourceType(value: unknown): OpenWorkExtensionResourceTy
 
 function parseExtensionLocalCommandRef(value: unknown): OpenWorkExtensionResource["localCommandRef"] | undefined {
   switch (value) {
-    case "openwork.computerUseMcp":
     case "openwork.uiMcp":
       return value;
     default:
@@ -2729,6 +2613,15 @@ function getOrgPluginResolved(plugin: DenOrgPlugin, payload: unknown): DenOrgPlu
   return { plugin, memberships };
 }
 
+/**
+ * Den can add config object types (for example MCP Apps) before the desktop
+ * models them. Such rows are outside this app's inventory, so a completeness
+ * check must not count them; malformed rows of a known type still fail it.
+ */
+function hasModeledObjectType(value: unknown): boolean {
+  return !isRecord(value) || typeof value.objectType !== "string" || parsePluginConfigObjectType(value.objectType) !== null;
+}
+
 function getAssignedMarketplaceCapabilities(payload: unknown): DenAssignedMarketplaceCapability[] {
   if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
   return payload.items.flatMap((item) => {
@@ -2763,88 +2656,6 @@ function getMeLibraryPlugins(payload: unknown): DenMeLibraryPlugin[] {
       description: typeof item.description === "string" ? item.description : null,
     }];
   });
-}
-
-function getBillingPrice(value: unknown): DenBillingPrice | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  return {
-    amount: typeof value.amount === "number" ? value.amount : null,
-    currency: typeof value.currency === "string" ? value.currency : null,
-    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
-    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
-  };
-}
-
-function getBillingSubscription(value: unknown): DenBillingSubscription | null {
-  if (!isRecord(value) || typeof value.id !== "string") {
-    return null;
-  }
-
-  return {
-    id: value.id,
-    status: typeof value.status === "string" ? value.status : "unknown",
-    amount: typeof value.amount === "number" ? value.amount : null,
-    currency: typeof value.currency === "string" ? value.currency : null,
-    recurringInterval: typeof value.recurringInterval === "string" ? value.recurringInterval : null,
-    recurringIntervalCount: typeof value.recurringIntervalCount === "number" ? value.recurringIntervalCount : null,
-    currentPeriodStart: typeof value.currentPeriodStart === "string" ? value.currentPeriodStart : null,
-    currentPeriodEnd: typeof value.currentPeriodEnd === "string" ? value.currentPeriodEnd : null,
-    cancelAtPeriodEnd: value.cancelAtPeriodEnd === true,
-    canceledAt: typeof value.canceledAt === "string" ? value.canceledAt : null,
-    endedAt: typeof value.endedAt === "string" ? value.endedAt : null,
-  };
-}
-
-function getBillingInvoice(value: unknown): DenBillingInvoice | null {
-  if (!isRecord(value) || typeof value.id !== "string") {
-    return null;
-  }
-
-  return {
-    id: value.id,
-    createdAt: typeof value.createdAt === "string" ? value.createdAt : null,
-    status: typeof value.status === "string" ? value.status : "unknown",
-    totalAmount: typeof value.totalAmount === "number" ? value.totalAmount : null,
-    currency: typeof value.currency === "string" ? value.currency : null,
-    invoiceNumber: typeof value.invoiceNumber === "string" ? value.invoiceNumber : null,
-    invoiceUrl: typeof value.invoiceUrl === "string" ? value.invoiceUrl : null,
-  };
-}
-
-function getBillingSummary(payload: unknown): DenBillingSummary | null {
-  if (!isRecord(payload) || !isRecord(payload.billing)) {
-    return null;
-  }
-
-  const billing = payload.billing;
-  if (
-    typeof billing.featureGateEnabled !== "boolean" ||
-    typeof billing.hasActivePlan !== "boolean" ||
-    typeof billing.checkoutRequired !== "boolean"
-  ) {
-    return null;
-  }
-
-  return {
-    featureGateEnabled: billing.featureGateEnabled,
-    hasActivePlan: billing.hasActivePlan,
-    checkoutRequired: billing.checkoutRequired,
-    checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
-    portalUrl: typeof billing.portalUrl === "string" ? billing.portalUrl : null,
-    price: getBillingPrice(billing.price),
-    subscription: getBillingSubscription(billing.subscription),
-    invoices: Array.isArray(billing.invoices)
-      ? billing.invoices.flatMap((item) => {
-          const invoice = getBillingInvoice(item);
-          return invoice ? [invoice] : [];
-        })
-      : [],
-    productId: typeof billing.productId === "string" ? billing.productId : null,
-    benefitId: typeof billing.benefitId === "string" ? billing.benefitId : null,
-  };
 }
 
 export function parseDenOpenWorkWebAccess(payload: unknown): DenOpenWorkWebAccess | null {
@@ -3017,9 +2828,25 @@ async function ensureActiveOrganization(
   });
 }
 
-export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string | null; token?: string | null }) {
+export function createDenClient(options: {
+  baseUrl: string;
+  apiBaseUrl?: string | null;
+  token?: string | null;
+  /** Change detection must never interpret a partial/malformed inventory as removals. */
+  requireCompleteInventory?: boolean;
+}) {
   const baseUrls = resolveDenClientBaseUrls(options);
   const token = options.token?.trim() ?? null;
+
+  function verifyInventory(payload: unknown, key: string, parsedCount: number, accept?: (item: unknown) => boolean) {
+    if (!options.requireCompleteInventory) return;
+    const rows = isRecord(payload) ? payload[key] : null;
+    if (!Array.isArray(rows)
+      || rows.filter(accept ?? (() => true)).length !== parsedCount
+      || (isRecord(payload) && (payload.hasMore === true || payload.hasNextPage === true || Boolean(payload.nextCursor)))) {
+      throw new DenApiError(502, "incomplete_inventory", "The resource inventory could not be verified.");
+    }
+  }
 
   return {
     /** The resolved web base URL and API base URL. */
@@ -3040,18 +2867,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return { user: getUser(payload), token: getToken(payload) };
     },
 
-    /**
-     * @deprecated Desktop email/password signup is no longer supported directly.
-     * Open the Den browser signup flow with `buildDenAuthUrl(baseUrl, "sign-up")`
-     * so password-strength feedback and invite handling stay server-compatible.
-     */
-    async signUpEmail(_email: string, _password: string): Promise<DenAuthResult> {
-      throw new DenApiError(
-        410,
-        "desktop_signup_deprecated",
-        "Create your account in the browser to choose a secure password.",
-      );
-    },
 
     async signOut() {
       await requestJson<unknown>(baseUrls, "/api/auth/sign-out", {
@@ -3158,6 +2973,12 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "POST", token, organizationId: orgId, body: { bucketId: input.bucketId, reason },
       }));
     },
+    async listBuiltMcpApps(orgId: string): Promise<BuiltMcpAppCatalogEntry[]> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp-apps", {
+        method: "GET", token, organizationId: orgId,
+      });
+      return builtMcpAppCatalogSchema.parse(payload).apps;
+    },
     async listSavedApps(orgId: string) {
       const payload = await requestJson<unknown>(baseUrls, "/v1/apps", {
         method: "GET", token, organizationId: orgId,
@@ -3197,39 +3018,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       });
     },
 
-    /** Organization-managed dashboards granted to the signed-in member. */
-    async listGrantedDashboards(orgId: string): Promise<DenGrantedDashboard[]> {
-      const context = await requestJson<unknown>(baseUrls, "/v1/org", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      const capabilities = isRecord(context) && isRecord(context.capabilities)
-        ? context.capabilities
-        : null;
-      // Missing means unsupported. This makes a newer Desktop safe against a
-      // Den deployment that predates the managed-dashboard API.
-      if (capabilities?.orgManagedDashboards !== true) return [];
-
-      const payload = await requestJson<unknown>(baseUrls, "/v1/me/dashboards", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getGrantedDashboards(payload);
-    },
-
-    async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {
-      const params = new URLSearchParams();
-      params.set("limit", String(limit));
-      const payload = await requestJson<unknown>(baseUrls, `/v1/workers?${params.toString()}`, {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getWorkers(payload);
-    },
-
     async mintMcpToken(orgId: string): Promise<DenMcpToken> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
         method: "POST",
@@ -3242,20 +3030,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         throw new DenApiError(500, "invalid_mcp_token_payload", "MCP token response was missing required values.");
       }
       return minted;
-    },
-
-    async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
-      const payload = await requestJson<unknown>(baseUrls, `/v1/workers/${encodeURIComponent(workerId)}/tokens`, {
-        method: "POST",
-        token,
-        organizationId: orgId,
-        body: {},
-      });
-      const tokens = getWorkerTokens(payload);
-      if (!tokens) {
-        throw new DenApiError(500, "invalid_worker_token_payload", "Worker token response was missing token values.");
-      }
-      return tokens;
     },
 
     async getCloudInstance(orgId: string): Promise<DenCloudInstance> {
@@ -3348,7 +3122,9 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         token,
         organizationId: orgId,
       });
-      return getDenOrgLlmProviders(payload);
+      const providers = getDenOrgLlmProviders(payload);
+      verifyInventory(payload, "llmProviders", providers.length);
+      return providers;
     },
 
     async listOrgGatewayProviders(orgId: string): Promise<DenOrgGatewayProvider[]> {
@@ -3360,7 +3136,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         });
         return getDenOrgGatewayProviders(payload);
       } catch (error) {
-        if (error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
+        if (!options.requireCompleteInventory && error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
         throw error;
       }
     },
@@ -3389,6 +3165,25 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
     async getAutomationDesktopRunnerPresence(orgId: string): Promise<AutomationDesktopRunnerPresence | null> {
       try {
         return await requestJson<AutomationDesktopRunnerPresence>(baseUrls, "/v1/automation-runners/presence", {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          automationModelAttentionCapable: true,
+        });
+      } catch (error) {
+        if (error instanceof DenApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+
+    /**
+     * The member's desktops and whether Cloud can run their Automations. Null
+     * when this Den predates the route: where an Automation can run is then
+     * unknown, and the caller keeps its fixed placement.
+     */
+    async listAutomationRunners(orgId: string): Promise<AutomationExecutionTargetList | null> {
+      try {
+        return await requestJson<AutomationExecutionTargetList>(baseUrls, "/v1/automation-runners", {
           method: "GET",
           token,
           organizationId: orgId,
@@ -3484,11 +3279,18 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       );
     },
 
-    async runAutomationNow(orgId: string, automationId: string): Promise<AutomationRun> {
+    /** `executionTarget` runs this one occurrence there instead of on the Automation's own target. */
+    async runAutomationNow(orgId: string, automationId: string, options: RunAutomationNow = {}): Promise<AutomationRun> {
       const payload = await requestJson<{ run: AutomationRun }>(
         baseUrls,
         `/v1/automations/${encodeURIComponent(automationId)}/run`,
-        { method: "POST", token, organizationId: orgId, body: {}, automationModelAttentionCapable: true },
+        {
+          method: "POST",
+          token,
+          organizationId: orgId,
+          body: options.executionTarget ? { executionTarget: options.executionTarget } : {},
+          automationModelAttentionCapable: true,
+        },
       );
       return payload.run;
     },
@@ -3526,6 +3328,55 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return payload.run;
     },
 
+    /**
+     * Runs of every Automation the caller owns placed in [from, to) (epoch ms),
+     * one page at a time. A Den that predates the route answers 404.
+     */
+    async listAutomationRunsInRange(
+      orgId: string,
+      options: { from: number; to: number; cursor?: string; limit?: number },
+    ): Promise<AutomationRunRange> {
+      const params = new URLSearchParams({ from: String(options.from), to: String(options.to) });
+      if (options.cursor) params.set("cursor", options.cursor);
+      if (options.limit) params.set("limit", String(options.limit));
+      return requestJson<AutomationRunRange>(
+        baseUrls,
+        `/v1/automation-runs?${params.toString()}`,
+        { method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true },
+      );
+    },
+
+    /** Effective feature switches for the active organization (`GET /v1/org` `features`); missing keys are off. */
+    async getOrgFeatures(orgId: string): Promise<Record<string, boolean>> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
+      const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
+    },
+
+    /** Primary Google Calendar events overlapping [timeMin, timeMax) as the signed-in member. */
+    async listGoogleCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenGoogleCalendarEvent[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `${DEN_GOOGLE_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      const parsed = denGoogleCalendarEventsResponseSchema.safeParse(payload);
+      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Google Calendar returned an unexpected response.");
+      return parsed.data.events;
+    },
+
+    /** Outlook calendar instances (Graph calendarView) overlapping [timeMin, timeMax) as the signed-in member. */
+    async listMicrosoftCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenMicrosoftCalendarEvent[]> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `${DEN_MICROSOFT_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      const parsed = denMicrosoftCalendarEventsResponseSchema.safeParse(payload);
+      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Outlook returned an unexpected response.");
+      return parsed.data.events;
+    },
+
     async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -3549,7 +3400,9 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         `/v1/mcp-connections?scope=${scope}`,
         { method: "GET", token, organizationId: orgId },
       );
-      return getDenExternalMcpConnections(payload);
+      const connections = getDenExternalMcpConnections(payload);
+      verifyInventory(payload, "connections", connections.length);
+      return connections;
     },
 
     async listMcpConnectionPresets(orgId: string): Promise<DenExternalMcpPreset[]> {
@@ -3595,6 +3448,14 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       );
     },
 
+    async setMyMcpCredential(orgId: string, connectionId: string, apiKey: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/my-credential`,
+        { method: "PUT", token, organizationId: orgId, body: { apiKey } },
+      );
+    },
+
     async disconnectMyMcpConnectionAccount(orgId: string, connectionId: string): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
@@ -3618,7 +3479,9 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         "/v1/resources/marketplace-capabilities",
         { method: "GET", token, organizationId: orgId },
       );
-      return getAssignedMarketplaceCapabilities(payload);
+      const capabilities = getAssignedMarketplaceCapabilities(payload);
+      verifyInventory(payload, "items", capabilities.length, hasModeledObjectType);
+      return capabilities;
     },
 
     async listMeLibraryPlugins(orgId: string): Promise<DenMeLibraryPlugin[]> {
@@ -3627,7 +3490,9 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         "/v1/me/library",
         { method: "GET", token, organizationId: orgId },
       );
-      return getMeLibraryPlugins(payload);
+      const plugins = getMeLibraryPlugins(payload);
+      verifyInventory(payload, "items", plugins.length, (item) => isRecord(item) && item.type === "plugin");
+      return plugins;
     },
 
     async getOrgMarketplaceResolved(orgId: string, marketplaceId: string): Promise<DenOrgMarketplaceResolved> {
@@ -3640,6 +3505,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       if (!resolved) {
         throw new DenApiError(500, "invalid_marketplace_payload", "Marketplace response was missing plugin details.");
       }
+      verifyInventory(isRecord(payload) ? payload.item : null, "plugins", resolved.plugins.length);
       return resolved;
     },
 
@@ -3649,7 +3515,14 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         `/v1/plugins/${encodeURIComponent(plugin.id)}/resolved`,
         { method: "GET", token, organizationId: orgId },
       );
-      return getOrgPluginResolved(plugin, payload);
+      const resolved = getOrgPluginResolved(plugin, payload);
+      verifyInventory(
+        payload,
+        "items",
+        resolved.memberships.filter((item) => item.configObject).length,
+        (item) => !isRecord(item) || hasModeledObjectType(item.configObject),
+      );
+      return resolved;
     },
 
     async createOrgPlugin(
@@ -3795,44 +3668,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         `/v1/config-objects/${encodeURIComponent(configObjectId)}/versions`,
         { method: "POST", token, organizationId: orgId, body: { input } },
       );
-    },
-
-    async getBillingStatus(options: { includePortal?: boolean; includeInvoices?: boolean } = {}): Promise<DenBillingSummary> {
-      const params = new URLSearchParams();
-      if (options.includePortal === false) {
-        params.set("excludePortal", "1");
-      }
-      if (options.includeInvoices === false) {
-        params.set("excludeInvoices", "1");
-      }
-
-      const path = params.size > 0 ? `/v1/workers/billing?${params.toString()}` : "/v1/workers/billing";
-      const payload = await requestJson<unknown>(baseUrls, path, {
-        method: "GET",
-        token,
-      });
-      const summary = getBillingSummary(payload);
-      if (!summary) {
-        throw new DenApiError(500, "invalid_billing_payload", "Billing response was missing details.");
-      }
-      return summary;
-    },
-
-    async updateSubscriptionCancellation(cancelAtPeriodEnd: boolean): Promise<{ subscription: DenBillingSubscription | null; billing: DenBillingSummary }> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/workers/billing/subscription", {
-        method: "POST",
-        token,
-        body: { cancelAtPeriodEnd },
-      });
-      const billing = getBillingSummary(payload);
-      if (!billing) {
-        throw new DenApiError(500, "invalid_billing_payload", "Subscription update response was missing billing details.");
-      }
-
-      return {
-        subscription: isRecord(payload) ? getBillingSubscription(payload.subscription) : null,
-        billing,
-      };
     },
   };
 }

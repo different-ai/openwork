@@ -86,7 +86,7 @@ const test = spec.world(async seed => {
   return { den }
 }, { timeout: 1_200_000, resources: { surfaces: [], services: ["den", "mock"] } })
 
-test("an owner saves and reopens a snapshot app while unsafe external live data remains blocked (protocol-level)", async ({ world, evidence, step }) => {
+test("an owner saves and reopens a snapshot app, and external Workflows run live and unattended (protocol-level)", async ({ world, evidence, step }) => {
   const { den } = world
   const orgs = await denFetch(den.admin, "/v1/me/orgs", {
     headers: { authorization: `Bearer ${den.admin.token}` },
@@ -541,7 +541,7 @@ test("an owner saves and reopens a snapshot app while unsafe external live data 
 
   const externalSavedResponse = await saveWorkflow(den.admin, {
     name: `${scriptName} external`,
-    description: "Checks the unattended Cloud boundary for external MCP tools.",
+    description: "Runs external MCP tools on demand, live, and unattended.",
     code: externalCode,
     currentInput: { topic: externalMarker },
     inputSchema: externalInputSchema,
@@ -612,7 +612,7 @@ test("an owner saves and reopens a snapshot app while unsafe external live data 
   externalConfigObjectVersionId = String(editedCurrentVersion.id)
   evidence.recordAssertionEvidence(
     "A successful manual report can be saved and edited with an unclassified provider tool",
-    "Both initial save and a tested new version succeed without granting unattended execution.",
+    "Both initial save and a tested new version succeed.",
     externalSavedResponse.status === 201 && editedVersion.response.status === 201,
   )
 
@@ -627,9 +627,8 @@ test("an owner saves and reopens a snapshot app while unsafe external live data 
   const externalToolCallNames = records(externalManualSnapshot.toolCalls).map((call) => call.name)
   expect(externalToolCallNames).toEqual(["report_source.mock_batch", "report_source.mock_echo"])
 
-  await step("an unclassified external Workflow cannot expose live data or evade the boundary through snapshot mode", async () => {
-    const callsBeforePreview = await den.mocks.reports.toolCalls()
-    const appsBeforePreview = (await appRequest(den.admin, "/v1/apps")).body
+  await step("an external Workflow runs live: the preview reaches the provider instead of being blocked", async () => {
+    const beforeLivePreview = new Date().toISOString()
     const externalDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
       name: "save_artifact_view",
       arguments: {
@@ -637,27 +636,20 @@ test("an owner saves and reopens a snapshot app while unsafe external live data 
         reactSource: "export default function Report({ data }) { return <article><h1>Report</h1><pre>{JSON.stringify(data.briefing)}</pre></article> }",
       },
     })
-    expect(externalDraft.isError).toBe(true)
-    expect(externalDraft._meta).toBeUndefined()
-    expect(externalDraft.structuredContent).toBeUndefined()
-    const failureText = records(externalDraft.content).find(part => part.type === "text")?.text
-    if (typeof failureText !== "string") throw new Error("External app rejection has no explanation")
-    const failure = requireRecord(JSON.parse(failureText), "external live preview rejection")
-    expect(failure).toMatchObject({ error: "artifact_view_preview_unavailable", reason: "capability_unavailable", configObjectId: externalConfigObjectId })
-    expect(failure.detail).toBe("Live apps may only call current Den-authorized read-only capabilities.")
-    expect(failure.artifactViewId).toBeTypeOf("string")
-    expect(failure.viewRevisionId).toBeTypeOf("string")
-    expect(await den.mocks.reports.toolCalls()).toEqual(callsBeforePreview)
-    expect((await appRequest(den.admin, "/v1/apps")).body).toEqual(appsBeforePreview)
-    const blockedPreview = await appRequest(den.admin, `/v1/apps/${failure.artifactViewId}?revisionId=${failure.viewRevisionId}`)
-    expect(blockedPreview.response.status, blockedPreview.text).toBe(200)
-    expect(blockedPreview.body).toMatchObject({ onDashboard: false, html: null, payload: null,
-      runError: { error: "capability_unavailable", providerCallAttempted: false },
-    })
-    const forbiddenApp = await appRequest(colleague, `/v1/apps/${failure.artifactViewId}`)
-    expect(forbiddenApp.response.status).toBe(403)
-    expect(forbiddenApp.body).not.toHaveProperty("payload")
-    expect(forbiddenApp.body).not.toHaveProperty("view")
+    const liveCalls = await den.mocks.reports.toolCalls({ sinceIso: beforeLivePreview })
+    expect(liveCalls.map(call => call.name)).toEqual(["mock_batch", "mock_echo"])
+    const failureText = externalDraft.isError ? records(externalDraft.content).find(part => part.type === "text")?.text : undefined
+    if (typeof failureText === "string") {
+      expect(requireRecord(JSON.parse(failureText), "external live preview result").reason).not.toBe("capability_unavailable")
+    }
+    evidence.recordAssertionEvidence(
+      "A live external Workflow reaches its provider",
+      `Provider calls from the live preview: ${liveCalls.map(call => call.name).join(", ")}`,
+      liveCalls.length === 2,
+    )
+
+    const callsBeforeSnapshot = await den.mocks.reports.toolCalls()
+    const snapshotBefore = (await readWorkflowDetail(den.admin, externalConfigObjectId)).script.latestSuccessfulSnapshot
     const snapshotEscape = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
       name: "save_artifact_view",
       arguments: { configObjectId: externalConfigObjectId, dataMode: "snapshot", title: "Report snapshot", reactSource: initialDraftSource },
@@ -666,13 +658,13 @@ test("an owner saves and reopens a snapshot app while unsafe external live data 
     expect(JSON.stringify(snapshotEscape.content)).toContain("artifact_view_snapshot_personal_data_denied")
     expect(snapshotEscape._meta).toBeUndefined()
     expect(snapshotEscape.structuredContent).toBeUndefined()
-    expect(await den.mocks.reports.toolCalls()).toEqual(callsBeforePreview)
-    expect((await readWorkflowDetail(den.admin, externalConfigObjectId)).script.latestSuccessfulSnapshot).toEqual(externalManualDetail.script.latestSuccessfulSnapshot)
-    evidence.recordAssertionEvidence("Unsafe external app data is rejected before provider I/O", failureText, true)
+    expect(await den.mocks.reports.toolCalls()).toEqual(callsBeforeSnapshot)
+    expect((await readWorkflowDetail(den.admin, externalConfigObjectId)).script.latestSuccessfulSnapshot).toEqual(snapshotBefore)
+    evidence.recordAssertionEvidence("Personal external data still cannot be published as a shared snapshot", JSON.stringify(snapshotEscape.content), true)
   })
 
   const refreshMarker = `launch-refreshed-${stamp}`
-  await step("rejecting live app access still permits an explicit manual Workflow refresh", async () => {
+  await step("an explicit manual Workflow refresh still works", async () => {
     const beforeRefresh = new Date().toISOString()
     const refreshed = await runWorkflow(den.admin, externalConfigObjectId, {
       pluginId: externalPluginId, configObjectVersionId: externalConfigObjectVersionId,
@@ -764,35 +756,27 @@ test("an owner saves and reopens a snapshot app while unsafe external live data 
   expect(externalAutomation.status >= 200 && externalAutomation.status < 300, externalAutomation.text).toBe(true)
 
   const unattendedRunStartedAt = new Date().toISOString()
-  const failedRunResponse = await runAutomationNow(den.admin, automationId)
-  expect(failedRunResponse.status, failedRunResponse.text).toBe(202)
-  const queued = isRecord(failedRunResponse.body) ? requireRecord(failedRunResponse.body.run, "queued Automation run") : {}
-  const failedRunId = typeof queued.id === "string" ? queued.id : ""
-  expect(failedRunId).not.toBe("")
+  const unattendedRunResponse = await runAutomationNow(den.admin, automationId)
+  expect(unattendedRunResponse.status, unattendedRunResponse.text).toBe(202)
+  const queued = isRecord(unattendedRunResponse.body) ? requireRecord(unattendedRunResponse.body.run, "queued Automation run") : {}
+  const unattendedRunId = typeof queued.id === "string" ? queued.id : ""
+  expect(unattendedRunId).not.toBe("")
 
-  const failedReceipt = await eventually(async () => {
-    const response = await readAutomationRun(den.admin, failedRunId)
+  const unattendedReceipt = await eventually(async () => {
+    const response = await readAutomationRun(den.admin, unattendedRunId)
     expect(response.status >= 200 && response.status < 300, response.text).toBe(true)
-    return requireRecord(response.body, "failed Automation receipt")
+    return requireRecord(response.body, "external Automation receipt")
   }, (receipt) => isRecord(receipt.run)
-    && ["failed", "skipped", "cancelled"].includes(String(receipt.run.status)), "external-capability run to finish")
-  const failedReceiptRun = requireRecord(failedReceipt.run, "failed Automation run")
-  expect(failedReceiptRun.status).toBe("failed")
-  const failedRunError = requireRecord(failedReceiptRun.error, "failed Automation error")
-  expect(String(failedRunError.message ?? "")).toContain("must be read-only and explicitly approved")
+    && ["succeeded", "failed", "skipped", "cancelled"].includes(String(receipt.run.status)), "external-capability run to finish")
+  const unattendedRun = requireRecord(unattendedReceipt.run, "external Automation run")
+  expect(unattendedRun.status, JSON.stringify(unattendedRun.error ?? null)).toBe("succeeded")
 
-  const afterBoundaryRejection = await eventually(async () => {
-    const response = await readAutomation(den.admin, automationId)
-    expect(response.status >= 200 && response.status < 300, response.text).toBe(true)
-    return requireRecord(response.body, "Automation after unattended boundary rejection")
-  }, (detail) => isRecord(detail.automation) && detail.automation.state === "needs_attention", "Automation to need attention")
-  expect(JSON.stringify(afterBoundaryRejection)).toContain(scheduledMarker)
-
-  const unattendedExternalCalls = (await den.mocks.reports.toolCalls({ sinceIso: unattendedRunStartedAt })).length
-  expect(unattendedExternalCalls).toBe(0)
+  const unattendedExternalCalls = await den.mocks.reports.toolCalls({ sinceIso: unattendedRunStartedAt })
+  expect(unattendedExternalCalls.map(call => call.name)).toEqual(["mock_batch", "mock_echo"])
+  expect(unattendedExternalCalls.some(call => call.args.text === externalMarker)).toBe(true)
   evidence.recordAssertionEvidence(
-    "Unattended Cloud rejects external MCP capability access before provider I/O and preserves the last good result",
-    `Provider calls from the unattended run: ${unattendedExternalCalls}; the previous ${scheduledMarker} result remains durable.`,
-    unattendedExternalCalls === 0 && JSON.stringify(afterBoundaryRejection).includes(scheduledMarker),
+    "Unattended Cloud runs a Workflow that calls external MCP tools",
+    `Provider calls from the unattended run: ${unattendedExternalCalls.map(call => call.name).join(", ")}`,
+    unattendedRun.status === "succeeded" && unattendedExternalCalls.length === 2,
   )
 })

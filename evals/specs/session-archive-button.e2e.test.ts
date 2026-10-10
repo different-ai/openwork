@@ -443,10 +443,7 @@ test("archiving exits only the viewed conversation, and working sessions require
           until: value => value.elements.length === 1 && value.elements[0].rect.width > 0 && value.elements[0].rect.height > 0,
         });
       }
-      await probe.eventually(() => probe.dom(sideChatBadge), {
-        within: 15_000, label: "the main row retains the exact side-chat identity",
-        until: value => value.elements.length === 1 && value.elements[0].rect.width > 0,
-      });
+      expect((await probe.dom(sideChatBadge)).elements, "side chats are never listed in the sidebar").toHaveLength(0);
       expect(await probe.hash()).toBe(route(a2));
       await user.notSee({ testId: `sidebar-session-${b1.sessionId}` });
       const beforeMetadata = (await world.facts()).requests.filter(request => request.action === "metadata").length;

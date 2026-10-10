@@ -36,7 +36,8 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     }
   };
   const pick = async (kind: "Connector" | "Skill" | "Plugin") => {
-    await user.click({ text: new RegExp(`^${kind}$`) });
+    // The choice is a radio in the dialog; Library rows behind it also read "Connector" or "Skill" in their Kind lane.
+    await user.click({ role: "radio", label: new RegExp(`^${kind}(\\s|$)`) });
     await user.click({ role: "button", label: "Continue" });
   };
   const backToLibrary = async (name: string) => {
@@ -70,7 +71,8 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       within: 60_000, label: "Linear's row arrives from the organization", until: (chip) => chip === "Sign in",
     });
     const filters = await texts('[aria-label="Library filters"] button[aria-pressed]:not([aria-label])');
-    expect(filters).toEqual(["All", "Connectors", "Skills", "Plugins"]);
+    // "Needs sign-in" (#5568) carries its count, e.g. "Needs sign-in2".
+    expect(filters.map((label) => label.replace(/\d+$/, ""))).toEqual(["All", "Connectors", "Skills", "Plugins", "Needs sign-in"]);
     await user.notSee({ role: "tab", label: /Ready to use/ });
     const chip = async (name: string) => (await texts(`[data-library-row="${name}"] [data-library-status]`)).join("");
     const google = await chip("Google Workspace");
@@ -86,6 +88,27 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     expect(google).toBe("Sign in");
     expect(linear).toBe("Sign in");
     expect(wikiReady).toBe(true);
+  });
+
+  await step("after: Needs sign-in shows only the connectors waiting on you, and clicking it again shows everything", async () => {
+    const pill = '[data-testid="library-needs-sign-in-filter"]';
+    const label = (await texts(pill))[0] ?? "";
+    await user.click({ testId: "library-needs-sign-in-filter" });
+    const rows = async (name: string) => (await probe.dom(`[data-library-row="${name}"]`)).elements.length;
+    await probe.eventually(() => rows("Team wiki"), { within: 15_000, label: "Team wiki is filtered out", until: (count) => count === 0 });
+    const google = await rows("Google Workspace");
+    const linear = await rows("Linear");
+    await shot();
+    evidence.recordAssertionEvidence(
+      "Needs sign-in keeps only rows that ask for the member's sign-in",
+      `pill "${label}"; Google Workspace ${google}, Linear ${linear}, Team wiki 0`,
+      label.startsWith("Needs sign-in") && google === 1 && linear === 1,
+    );
+    expect(label).toMatch(/^Needs sign-in\s*\d+$/);
+    expect(google).toBe(1);
+    expect(linear).toBe(1);
+    await user.click({ testId: "library-needs-sign-in-filter" });
+    await probe.eventually(() => rows("Team wiki"), { within: 15_000, label: "Team wiki is back", until: (count) => count === 1 });
   });
 
   await step("opening Google Workspace says who can use it and whose account the AI uses", async () => {
@@ -301,7 +324,17 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       within: 60_000, label: "the plugin's own page", until: (headings) => headings.includes("Sales call prep"),
     });
     await user.notSee({ testId: "library-create-page" });
+    // The plugin lives in the organization; nothing is installed on this computer.
+    await user.see({ text: "Available from your organization" });
+    await user.notSee({ text: /^(Installed|Not installed)$/ });
+    await user.notSee({ role: "button", label: "Remove local copy" });
+    await shot();
     await backToLibrary("Sales call prep");
+    evidence.recordAssertionEvidence(
+      "The plugin page says where the plugin comes from, not that it is installed",
+      "Status reads \"Available from your organization\"; no \"Installed\" and no \"Remove local copy\" (no local copy exists)",
+      true,
+    );
     evidence.recordAssertionEvidence(
       "A plugin is made of the parts the member adds, on one page",
       `inside: ${parts.map((part) => part.split("\n")[0]).join(" / ")}; created "Sales call prep"`,
@@ -325,24 +358,6 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     expect(meta).toBe("3 · only you so far");
     expect(captions).toEqual(["Just me", "Just me", "Just me"]);
     await closeToasts();
-  });
-
-  await step("card view: every card is the same size, says what it is, and only asks for something when it needs you", async () => {
-    await user.click({ role: "button", label: "Card view" });
-    const cards = await probe.eventually(async () => (await probe.dom("button[data-library-row]")).elements, {
-      within: 10_000, label: "the Library shows cards", until: (elements) => elements.length >= 6 && elements.every((element) => element.rect.height > 80),
-    });
-    const heights = [...new Set(cards.map((card) => Math.round(card.rect.height)))];
-    const saysConnected = cards.filter((card) => card.text.includes("Connected")).length;
-    await shot();
-    evidence.recordAssertionEvidence(
-      "Cards share one height, name their kind, and carry no Connected chip",
-      `${cards.length} cards; heights ${heights.join(", ")}px; cards saying Connected: ${saysConnected}`,
-      heights.length === 1 && saysConnected === 0,
-    );
-    expect(heights).toHaveLength(1);
-    expect(saysConnected).toBe(0);
-    await user.click({ role: "button", label: "List view" });
   });
 
   // Lane 3 · Use

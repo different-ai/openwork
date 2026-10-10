@@ -1,12 +1,24 @@
 /** @jsxImportSource react */
-import { ArrowUp, FileText, GripVertical, ListPlus, LoaderCircle, X } from "lucide-react";
+import { ArrowUp, GripVertical, ListPlus, LoaderCircle, X } from "lucide-react";
 import { Fragment, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { t } from "@/i18n";
 import type { ComposerAttachment, ComposerDraft, ComposerPart } from "@/app/types";
-import { parseConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
-import { parseConnectorToken } from "@/react-app/domains/session/surface/composer/connector-token";
+import { AttachmentFileChip, ComposerBadgeChip, ComposerPillChip } from "@/components/chat/composer-pill";
+import {
+  agentBadge,
+  fileMentionBadge,
+  pastedTextBadge,
+  type ComposerBadge,
+} from "@/react-app/domains/session/surface/composer/composer-chips";
+import {
+  COMPOSER_DRAFT_TOKEN_RE,
+  composerPillFromPart,
+  parseComposerPillToken,
+  type ComposerPill,
+} from "@/react-app/domains/session/surface/composer/composer-pills";
+import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import type { QueuedComposerItem } from "@/react-app/domains/session/surface/composer-state-store";
 
 export type QueuedMessagesPanelProps = {
@@ -19,8 +31,6 @@ export type QueuedMessagesPanelProps = {
   sendingId?: string;
 };
 
-const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\])/;
-
 function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
 }
@@ -30,6 +40,27 @@ function pastedLines(parts: ComposerPart[], label: string) {
     if (part.type === "paste" && part.label === label) return part.lines;
   }
   return 1;
+}
+
+function mentionPill(parts: ComposerPart[], segment: string): ComposerPill | null {
+  if (!segment.startsWith("@")) return null;
+  const value = decodeComposerMentionValue(segment.slice(1));
+  for (const part of parts) {
+    if (part.type === "computer" && part.target === value) {
+      return composerPillFromPart(part);
+    }
+  }
+  return null;
+}
+
+function mentionBadge(parts: ComposerPart[], segment: string): ComposerBadge | null {
+  if (!segment.startsWith("@")) return null;
+  const value = decodeComposerMentionValue(segment.slice(1));
+  for (const part of parts) {
+    if (part.type === "agent" && part.name === value) return agentBadge(part.name);
+    if (part.type === "file" && part.path === value) return fileMentionBadge(part.path);
+  }
+  return null;
 }
 
 function QueuedDraftContent(props: { draft: ComposerDraft }) {
@@ -47,7 +78,7 @@ function QueuedDraftContent(props: { draft: ComposerDraft }) {
 
   const nodes: ReactNode[] = [];
   let offset = 0;
-  for (const segment of text.split(TOKEN_RE)) {
+  for (const segment of text.split(COMPOSER_DRAFT_TOKEN_RE)) {
     if (!segment) continue;
     const key = `${offset}:${segment}`;
     offset += segment.length;
@@ -64,45 +95,19 @@ function QueuedDraftContent(props: { draft: ComposerDraft }) {
     const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
     if (pasteMatch?.[1]) {
       const lines = pastedLines(props.draft.parts, pasteMatch[1]);
-      nodes.push(
-        <span
-          key={key}
-          className="mx-0.5 inline-flex items-center rounded-full border border-amber-6/35 bg-amber-3/15 px-2.5 py-1 text-xs font-medium text-amber-11 align-middle"
-          title={`Pasted text · ${pasteMatch[1]}`}
-        >
-          {`Pasted · ${lines} line${lines === 1 ? "" : "s"}`}
-        </span>,
-      );
+      nodes.push(<ComposerBadgeChip key={key} badge={{ ...pastedTextBadge(lines), disclosure: false }} />);
       continue;
     }
 
-    const connectSkill = parseConnectSkillToken(segment);
-    const skillMatch = segment.match(/^\[skill (.+)\]$/);
-    const skillName = connectSkill?.slug ?? skillMatch?.[1];
-    if (skillName) {
-      nodes.push(
-        <span
-          key={key}
-          className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle"
-          title={`Skill: ${connectSkill?.name ?? skillName}`}
-        >
-          {`/${skillName}`}
-        </span>,
-      );
+    const pill = parseComposerPillToken(segment) ?? mentionPill(props.draft.parts, segment);
+    if (pill) {
+      nodes.push(<ComposerPillChip key={key} pill={pill} />);
       continue;
     }
 
-    const connectorName = parseConnectorToken(segment);
-    if (connectorName) {
-      nodes.push(
-        <span
-          key={key}
-          className="mx-0.5 inline-flex items-center rounded-full border border-blue-6/35 bg-blue-3/20 px-2.5 py-1 text-xs font-medium text-blue-11 align-middle"
-          title={`Connector: ${connectorName}`}
-        >
-          {connectorName}
-        </span>,
-      );
+    const mention = mentionBadge(props.draft.parts, segment);
+    if (mention) {
+      nodes.push(<ComposerBadgeChip key={key} badge={mention} />);
       continue;
     }
 
@@ -134,13 +139,12 @@ function QueuedAttachmentChip(props: { attachment: ComposerAttachment }) {
   }
 
   return (
-    <span
-      className="mx-0.5 inline-flex h-10 max-w-[140px] items-center gap-1.5 rounded-xl border border-border/70 bg-muted/40 px-2 align-middle"
-      title={props.attachment.name}
-    >
-      <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="truncate text-[11px] font-medium text-foreground">{props.attachment.name}</span>
-    </span>
+    <AttachmentFileChip
+      filename={props.attachment.name}
+      mime={props.attachment.mimeType}
+      bytes={props.attachment.size}
+      className="mx-0.5"
+    />
   );
 }
 

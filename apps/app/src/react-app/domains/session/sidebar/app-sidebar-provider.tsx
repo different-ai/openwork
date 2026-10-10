@@ -27,11 +27,7 @@ export type SidebarContextValue = {
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
-  onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
-  onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
-  onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   expandWorkspace: (workspaceId: string) => void;
   toggleWorkspaceExpanded: (workspaceId: string) => void;

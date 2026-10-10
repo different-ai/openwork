@@ -8,6 +8,7 @@ import type {
   AutomationRunEventType,
   AutomationSchedule,
   AutomationUsage,
+  DesktopRunnerInventory,
 } from "@openwork/types/automations"
 import { compatJsonColumn, denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn, timestamps } from "../columns"
 
@@ -86,6 +87,9 @@ export const AutomationRunnerTable = mysqlTable(
     platform: mysqlEnum("platform", ["darwin", "win32", "linux"]).notNull(),
     concurrency: int("concurrency").notNull(),
     last_seen_at: timestamp("last_seen_at", { fsp: 3 }).notNull(),
+    /** Latest computer, workspace and model report; null until the desktop sends one. */
+    inventory: compatJsonColumn<DesktopRunnerInventory>("inventory"),
+    inventory_updated_at: timestamp("inventory_updated_at", { fsp: 3 }),
     ...timestamps,
   },
   (table) => [

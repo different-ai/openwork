@@ -208,6 +208,120 @@ test("trace details redact identities and credentials in persisted and rendered 
   }
 });
 
+const domStyle = {
+  colorScheme: "dark",
+  borderTopWidth: "1px",
+  borderBottomWidth: "0px",
+  borderTopLeftRadius: "12px",
+};
+const domElement = {
+  tag: "header",
+  text: "Workspace",
+  focused: false,
+  rect: { left: 0, right: 640, top: 0, bottom: 48, width: 640, height: 48 },
+  style: domStyle,
+};
+
+function inspectionSurface(name: string) {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const response: { snapshot: unknown } = {
+    snapshot: { viewportWidth: 640, documentWidth: 640, elements: [domElement] },
+  };
+  const surface: Surface = {
+    handle: { ...fakeSurface.handle, name },
+    client: {
+      async send(method, params = {}) {
+        calls.push({ method, params });
+        if (method === "Runtime.evaluate") return { result: { objectId: `${name}-global` } };
+        if (method === "Runtime.callFunctionOn") return { result: { value: response.snapshot } };
+        return {};
+      },
+      close() {},
+    },
+  };
+  return { surface, calls, response };
+}
+
+const inspectionTrace: TraceEntry[] = [];
+const inspectionTest = spec.world(async () => {
+  const primary = inspectionSurface("primary-app");
+  const bound = inspectionSurface("bound-app");
+  inspectionTrace.length = 0;
+  return { app: primary.surface, primary, bound };
+}, {
+  adapters: { observe: { trace: (entry) => inspectionTrace.push(entry) } },
+});
+
+inspectionTest("resizeViewport forwards desktop metrics and traces the selected user surface", async ({ world, user }) => {
+  const narrow = { width: 640, height: 480, deviceScaleFactor: 2 };
+  const wide = { width: 1280, height: 800, deviceScaleFactor: 1 };
+  const restored = { width: 1024, height: 768, deviceScaleFactor: 1.5 };
+  await user.resizeViewport(narrow);
+  await user.on(world.bound.surface).resizeViewport(wide);
+  await user.resizeViewport(restored);
+
+  expect(world.primary.calls).toEqual([
+    { method: "Emulation.setDeviceMetricsOverride", params: { ...narrow, mobile: false } },
+    { method: "Emulation.setDeviceMetricsOverride", params: { ...restored, mobile: false } },
+  ]);
+  expect(world.bound.calls).toEqual([
+    { method: "Emulation.setDeviceMetricsOverride", params: { ...wide, mobile: false } },
+  ]);
+  expect(inspectionTrace).toMatchObject([
+    { seq: 1, stage: "body", channel: "user", verb: "resizeViewport", surface: "primary-app", ok: true },
+    { seq: 2, stage: "body", channel: "user", verb: "resizeViewport", surface: "bound-app", ok: true },
+    { seq: 3, stage: "body", channel: "user", verb: "resizeViewport", surface: "primary-app", ok: true },
+  ]);
+});
+
+inspectionTest("probe.dom preserves computed styles and read-only provenance on its bound surface", async ({ world, probe }) => {
+  const snapshot = await probe.on(world.bound.surface).dom("header");
+
+  expect(snapshot).toEqual({ viewportWidth: 640, documentWidth: 640, elements: [domElement] });
+  expect(snapshot.elements[0]?.style).toEqual(domStyle);
+  expect(world.primary.calls).toEqual([]);
+  expect(world.bound.calls.map(({ method }) => method)).toEqual([
+    "Runtime.evaluate", "Runtime.callFunctionOn",
+  ]);
+  expect(world.bound.calls).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      method: "Runtime.callFunctionOn",
+      params: expect.objectContaining({ arguments: [{ value: "header" }] }),
+    }),
+  ]));
+  expect(inspectionTrace).toMatchObject([
+    { stage: "body", channel: "probe", verb: "dom", surface: "bound-app", ok: true },
+  ]);
+});
+
+const invalidDomStyles: Array<{ name: string; style: unknown }> = [
+  { name: "absent style", style: undefined },
+  { name: "null style", style: null },
+  { name: "string style", style: "dark" },
+];
+for (const field of Object.keys(domStyle)) {
+  invalidDomStyles.push(
+    { name: `absent ${field}`, style: Object.fromEntries(Object.entries(domStyle).filter(([key]) => key !== field)) },
+    { name: `non-string ${field}`, style: { ...domStyle, [field]: 1 } },
+  );
+}
+for (const { name, style } of invalidDomStyles) {
+  inspectionTest(`probe.dom rejects ${name}`, async ({ world, probe }) => {
+    const { style: _style, ...element } = domElement;
+    world.primary.response.snapshot = {
+      viewportWidth: 640,
+      documentWidth: 640,
+      elements: [{ ...element, ...(style === undefined ? {} : { style }) }],
+    };
+
+    await expect(probe.dom("header")).rejects.toThrow("DOM inspection returned an invalid snapshot.");
+    expect(inspectionTrace).toMatchObject([
+      { stage: "body", channel: "probe", verb: "dom", surface: "primary-app", ok: false },
+    ]);
+    expect(world.bound.calls).toEqual([]);
+  });
+}
+
 let skippedWorldRuns = 0;
 const skippedWorldTest = spec.world(async () => {
   skippedWorldRuns += 1;

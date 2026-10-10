@@ -20,8 +20,6 @@ on:
       - apps/server/**
       - packages/docs/**
       - packages/enterprise-mcp-client/**
-      - packages/handsfree/**
-      - packages/computer-use/**
       - packages/install-config/**
       - packages/paths/**
       - packages/types/**

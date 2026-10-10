@@ -11,7 +11,10 @@ import {
   isKnownTelemetryEventType,
   isKnownTelemetrySource,
   normalizeTelemetrySource,
-  readWindowMetrics,
+  queryWindowMetrics,
+  selectModelDimensionUsage,
+  selectWeeklyActiveMembers,
+  selectWeeklyActivity,
   sessionDimensionKey,
   telemetryAdoptionResponseSchema,
   telemetryAnalyticsQuerySchema,
@@ -19,12 +22,8 @@ import {
   telemetryDimensionListResponseSchema,
   telemetryDimensionsQuerySchema,
   telemetryIngestBatchSchema,
-  telemetryWindowConditions,
-  weekIndexExpression,
-  windowMetricsSelection,
   type DimensionFilter,
   type TelemetryDimensionInput,
-  type TelemetryOrgId,
 } from "@openwork-ee/telemetry"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -32,7 +31,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
-import { jsonValidator, orgMemberRoute, orgRoleRoute, queryValidator } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, orgPermissionRoute, queryValidator } from "../../middleware/index.js"
 import { enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import type { UserOrganizationsContext, OrganizationContextVariables } from "../../middleware/index.js"
@@ -48,14 +47,6 @@ const telemetryDimensionListDocumentSchema = telemetryDimensionListResponseSchem
     lastSeenAt: z.string().datetime(),
   })),
 }).meta({ ref: "TelemetryDimensionListResponse" })
-
-async function queryWindowMetrics(orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null) {
-  const rows = await db
-    .select(windowMetricsSelection())
-    .from(TelemetryEventTable)
-    .where(and(...telemetryWindowConditions(orgId, since, filter)))
-  return readWindowMetrics(rows[0])
-}
 
 export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVariables }>(app: Hono<T>) {
   // ── POST /v1/telemetry/ingest ─────────────────────────────────────────────
@@ -138,18 +129,22 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "List telemetry dimension values",
-      description: "Returns unique analytics dimension values for the active organization, such as project labels for the project selector.",
+      description: "Returns unique analytics dimension values for the active organization, such as project labels for the project selector. Workspace owners and admins on an Enterprise plan only, like the analytics they filter.",
       responses: {
         200: jsonResponse("Telemetry dimensions returned.", telemetryDimensionListDocumentSchema),
         400: jsonResponse("Invalid dimension query.", invalidRequestSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
+        402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
-    orgMemberRoute(),
+    // Organization-wide usage aggregates: the same admin and Enterprise gate as /v1/telemetry/analytics.
+    orgPermissionRoute("usage_analytics.view"),
     queryValidator(telemetryDimensionsQuerySchema),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       if (!orgId) return c.json({ items: [] })
+      const entitlement = checkEntitlement(c.get("organizationContext")?.organization.metadata ?? null, "analytics")
+      if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
 
       const query = c.req.valid("query")
       const rows = await db
@@ -189,24 +184,28 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "Get adoption metrics",
-      description: "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.",
+      description: "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend. Workspace owners and admins on an Enterprise plan only.",
       responses: {
         200: jsonResponse("Adoption metrics returned.", telemetryAdoptionResponseSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
+        402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
-    orgMemberRoute({ useUserOrganizations: true }),
+    // Organization-wide activity: the same admin and Enterprise gate as /v1/telemetry/analytics.
+    // Den web's overview falls back to /v1/org for member and invite counts.
+    orgPermissionRoute("usage_analytics.view"),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       if (!orgId) {
         return c.json({ members: 0, pendingInvites: 0, activeMembers7d: 0, activeMembers30d: 0, weeklyTrend: [] })
       }
+      const entitlement = checkEntitlement(c.get("organizationContext")?.organization.metadata ?? null, "analytics")
+      if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
 
       const now = Date.now()
       const sevenDaysAgo = new Date(now - 7 * DAY_MS)
       const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
       const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
-      const weekIndex = weekIndexExpression(trendStart)
 
       const [memberRows, inviteRows, active7d, active30d, weeklyRows] = await Promise.all([
         db
@@ -217,17 +216,9 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .select({ count: sql<number>`count(*)` })
           .from(InvitationTable)
           .where(and(eq(InvitationTable.organizationId, orgId), eq(InvitationTable.status, "pending"))),
-        queryWindowMetrics(orgId, sevenDaysAgo, null),
-        queryWindowMetrics(orgId, thirtyDaysAgo, null),
-        db
-          .select({
-            week: weekIndex,
-            count: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
-          })
-          .from(TelemetryEventTable)
-          .where(and(...telemetryWindowConditions(orgId, trendStart, null)))
-          .groupBy(weekIndex)
-          .orderBy(weekIndex),
+        queryWindowMetrics(db, orgId, sevenDaysAgo, null),
+        queryWindowMetrics(db, orgId, thirtyDaysAgo, null),
+        selectWeeklyActiveMembers(db, orgId, trendStart),
       ])
 
       const weeklyTrend = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {
@@ -259,7 +250,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("usage_analytics.view"),
     queryValidator(telemetryAnalyticsQuerySchema),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
@@ -298,7 +289,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const sevenDaysAgo = new Date(now - 7 * DAY_MS)
       const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
       const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
-      const weekIndex = weekIndexExpression(trendStart)
 
       const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows] = await Promise.all([
         db
@@ -309,43 +299,10 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .select({ count: sql<number>`count(*)` })
           .from(InvitationTable)
           .where(and(eq(InvitationTable.organizationId, orgId), eq(InvitationTable.status, "pending"))),
-        queryWindowMetrics(orgId, sevenDaysAgo, dimensionFilter),
-        queryWindowMetrics(orgId, thirtyDaysAgo, dimensionFilter),
-        db
-          .select({
-            week: weekIndex,
-            activeMembers: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
-            sessions: sql<number>`count(distinct ${TelemetryEventTable.session_id})`,
-            tasksCompleted: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.completed'), 0)`,
-            tasksFailed: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.failed'), 0)`,
-          })
-          .from(TelemetryEventTable)
-          .where(and(...telemetryWindowConditions(orgId, trendStart, dimensionFilter)))
-          .groupBy(weekIndex)
-          .orderBy(weekIndex),
-        db
-          .select({
-            type: TelemetrySessionDimensionTable.dimension_type,
-            value: TelemetrySessionDimensionTable.dimension_value,
-            label: sql<string>`max(${TelemetrySessionDimensionTable.dimension_label})`,
-            sessions: sql<number>`count(distinct ${TelemetrySessionDimensionTable.session_id})`,
-          })
-          .from(TelemetrySessionDimensionTable)
-          .innerJoin(TelemetryEventTable, and(
-            eq(TelemetryEventTable.org_id, TelemetrySessionDimensionTable.org_id),
-            eq(TelemetryEventTable.session_id, TelemetrySessionDimensionTable.session_id),
-            sql`coalesce(${TelemetryEventTable.source}, 'unknown') = ${TelemetrySessionDimensionTable.source}`,
-          ))
-          .where(and(
-            eq(TelemetrySessionDimensionTable.org_id, orgId),
-            sql`${TelemetrySessionDimensionTable.dimension_type} in ('model', 'model_selection')`,
-            ...telemetryWindowConditions(orgId, thirtyDaysAgo, dimensionFilter),
-          ))
-          .groupBy(
-            TelemetrySessionDimensionTable.dimension_type,
-            TelemetrySessionDimensionTable.dimension_value,
-          )
-          .orderBy(desc(sql`count(distinct ${TelemetrySessionDimensionTable.session_id})`)),
+        queryWindowMetrics(db, orgId, sevenDaysAgo, dimensionFilter),
+        queryWindowMetrics(db, orgId, thirtyDaysAgo, dimensionFilter),
+        selectWeeklyActivity(db, orgId, trendStart, dimensionFilter),
+        selectModelDimensionUsage(db, orgId, thirtyDaysAgo, dimensionFilter),
       ])
 
       const weekly = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {

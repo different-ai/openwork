@@ -1,0 +1,40 @@
+{
+  "name": "@openwork-ee/headless-runner",
+  "private": true,
+  "type": "module",
+  "description": "Cheap headless agent sessions: OpenWork AI Gateway for the model, OpenWork MCP for tools, a small scratch filesystem, and optional kept files and a computer per conversation.",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx watch src/server.ts",
+    "build": "pnpm --filter \"@openwork-ee/headless-runner^...\" --if-present run build && tsc -p tsconfig.json --noEmit && esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.js --external:@hono/node-server --external:@modelcontextprotocol/client --external:hono --external:zod --external:@openwork-ee/headless-computer --external:@vercel/blob",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
+    "test:computer-config": "tsx --test scripts/computer-config.test.ts",
+    "test:sql-store": "tsx --test scripts/sql-store.test.ts",
+    "worker:types": "wrangler types",
+    "worker:typecheck": "wrangler types && tsc -p tsconfig.worker.json --noEmit",
+    "worker:e2e": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts",
+    "worker:e2e:celld": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts --celld",
+    "test:conversation": "tsx --test scripts/conversation.test.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.0.12",
+    "@modelcontextprotocol/client": "^2.2.0",
+    "@openwork-ee/headless-computer": "workspace:*",
+    "@openwork/workbook": "workspace:*",
+    "@vercel/blob": "^2.8.0",
+    "aws4fetch": "1.0.20",
+    "hono": "4.13.9",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "0.25.12",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4",
+    "wrangler": "4.142.0"
+  }
+}

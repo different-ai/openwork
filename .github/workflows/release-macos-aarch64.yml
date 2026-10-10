@@ -105,7 +105,7 @@ jobs:
       draft: ${{ steps.resolve.outputs.draft }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       notarize: ${{ steps.resolve.outputs.notarize }}
-      build_electron: ${{ steps.resolve.outputs.build_electron }}
+      build_electron: ${{ steps.freeze.outputs.build_electron }}
       sign_windows: ${{ steps.resolve.outputs.sign_windows }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
       publish_daytona_snapshot: ${{ steps.resolve.outputs.publish_daytona_snapshot }}
@@ -372,6 +372,31 @@ jobs:
             --title "${{ steps.resolve.outputs.release_name }}" \
             --notes-file "$BODY_FILE" \
             --draft $PRERELEASE_FLAG
+
+      # A published release's desktop assets are immutable. Rebuilding them
+      # re-signs every installer, and the build legs upload with --clobber
+      # while the updater manifests are only rewritten if the whole run
+      # reaches publish-release. A recovery run that fails in between leaves
+      # latest*.yml describing bytes that no longer exist, and every
+      # auto-update fails with "sha512 checksum mismatch" (v0.18.52).
+      # Recovery runs on a published release therefore replay only the
+      # non-desktop channels; ship desktop fixes as the next patch.
+      - name: Freeze desktop assets on published releases
+        id: freeze
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.resolve.outputs.release_tag }}
+          BUILD_ELECTRON: ${{ steps.resolve.outputs.build_electron }}
+        run: |
+          set -euo pipefail
+          build_electron="$BUILD_ELECTRON"
+          is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
+          if [ "$build_electron" = "true" ] && [ "$is_draft" != "true" ]; then
+            echo "::warning::$RELEASE_TAG is already published; skipping desktop builds so its installers and updater manifests stay consistent. Cut the next patch to ship new desktop bytes."
+            build_electron="false"
+          fi
+          echo "build_electron=$build_electron" >> "$GITHUB_OUTPUT"
 
   resolve-benchmark:
     name: Resolve Benchmark Metadata

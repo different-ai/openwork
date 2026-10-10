@@ -105,11 +105,12 @@ const PROBE_EXPRESSION = browserScript((value) => {
   // policy hides every tab but Cloud; the /extensions route renders the Library.
   const settingsSurface = /\/workspace\/[^/?#]+\/(settings|extensions)/.test(route)
     && (text.includes("Back to app") || text.includes("Library") || text.includes("Extensions") || text.includes("Preferences") || text.includes("Permissions"));
+  const activitySurface = Boolean(document.querySelector("[data-activity-page] button"));
   const surface = welcome
     ? "welcome"
-    : (taskUi || settingsSurface) && workspaceId && !needsWorkspace
+    : (taskUi || settingsSurface || activitySurface) && workspaceId && !needsWorkspace
       ? "workspace"
-      : taskUi || needsWorkspace
+      : taskUi || needsWorkspace || activitySurface
         ? "no-workspace"
         : null;
   return {

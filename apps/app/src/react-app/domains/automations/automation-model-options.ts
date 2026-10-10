@@ -3,75 +3,45 @@ import { getModelBehaviorSummary } from "@/app/lib/model-behavior"
 import type { ModelOption, ProviderListItem } from "@/app/types"
 import type { AutomationModel } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
-import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
+import {
+  automationModelOptions as sharedAutomationModelOptions,
+  findAutomationModelOption,
+  type AutomationModelOption,
+} from "@openwork/types/automation-models"
 
 /** providerId → modelId → the local runtime's model record. */
 export type AutomationProviderCatalog = Record<string, Record<string, ProviderListItem["models"][string]>>
 
-export type AutomationModelOption = {
-  providerId: string
-  modelId: string
-  providerName: string
-  modelName: string
-  accessKind: "free" | "openwork_managed" | "authorized_custom"
-}
+export type { AutomationModelOption }
 
 export type ResolvedProposalModel = {
   model: AutomationModel
-  resolution: "exact" | "mapped" | "default" | "fallback"
+  resolution: "exact" | "mapped" | "default" | "unavailable"
 }
 
-const freeStarterModel: AutomationModelOption = {
-  ...AUTOMATION_FREE_MODEL,
-  accessKind: "free",
-}
-
-function openWorkManagedModels(provider: DenOrgLlmProvider): AutomationModelOption[] {
-  return Object.entries(INFERENCE_MODEL_ALIASES)
-    .filter(([, model]) => model.enabled)
-    .map(([modelId, model]) => ({
-      providerId: "openwork",
-      modelId,
-      providerName: provider.name,
-      modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
-      accessKind: "openwork_managed" as const,
-    }))
-}
-
-function authorizedProviderModels(provider: DenOrgLlmProvider): AutomationModelOption[] {
-  return provider.models.map((model) => ({
-    providerId: provider.id,
-    modelId: model.id,
-    providerName: provider.name,
-    modelName: model.name,
-    accessKind: "authorized_custom" as const,
-  }))
+export type AutomationModelAvailability = {
+  includeFreeStarter?: boolean
+  includeCloudDefault?: boolean
+  /** The executing desktop workspace's runtime catalog; when given, only models it can run are offered. */
+  catalog?: AutomationProviderCatalog
 }
 
 /**
- * Den's usable-provider response is already scoped to the active member. Keep
- * the submitted value normalized to the same IDs the server revalidates:
- * `opencode`, `openwork`, or the concrete `lpr_*` provider record.
+ * Den's usable-provider response is already scoped to the active member; the shared helper keeps the submitted
+ * value normalized to the IDs the server revalidates.
  */
 export function automationModelOptions(
   providers: readonly DenOrgLlmProvider[],
-  options: { includeFreeStarter?: boolean } = {},
+  options: AutomationModelAvailability = {},
 ): AutomationModelOption[] {
-  const managed = providers.flatMap((provider) => provider.source === "openwork"
-    ? openWorkManagedModels(provider)
-    : authorizedProviderModels(provider))
-
-  return [
-    ...(options.includeFreeStarter === false ? [] : [freeStarterModel]),
-    ...managed,
-  ].sort((left, right) => {
-    const kindOrder = ["free", "openwork_managed", "authorized_custom"]
-    return kindOrder.indexOf(left.accessKind) - kindOrder.indexOf(right.accessKind)
-      || left.providerName.localeCompare(right.providerName)
-      || left.modelName.localeCompare(right.modelName)
-  })
+  const { catalog, ...shared } = options
+  return sharedAutomationModelOptions(providers, shared)
+    .filter((model) => catalog === undefined || Boolean(catalog[model.providerId]?.[model.modelId]))
 }
 
+export { findAutomationModelOption }
+
+/** A runtime's connected providers as an Automation catalog: providerId → modelId → model record. */
 export function automationProviderCatalog(
   providers: readonly ProviderListItem[] | undefined,
 ): AutomationProviderCatalog {
@@ -80,34 +50,32 @@ export function automationProviderCatalog(
   return catalog
 }
 
-export function findAutomationModelOption(
-  options: readonly AutomationModelOption[],
-  model: Pick<AutomationModel, "providerId" | "modelId">,
-) {
-  return options.find((option) =>
-    option.providerId === model.providerId && option.modelId === model.modelId) ?? null
-}
-
 export function resolveProposalModel(
   proposed: AutomationModel | undefined,
   providers: readonly DenOrgLlmProvider[],
+  availability: AutomationModelAvailability = {},
 ): ResolvedProposalModel {
   const freeModel: AutomationModel = {
     providerId: AUTOMATION_FREE_MODEL.providerId,
     modelId: AUTOMATION_FREE_MODEL.modelId,
     variant: null,
   }
-  if (!proposed) return { model: freeModel, resolution: "default" }
+  const options = automationModelOptions(providers, availability)
+  if (!proposed) return {
+    model: freeModel,
+    resolution: findAutomationModelOption(options, freeModel) ? "default" : "unavailable",
+  }
 
-  if (findAutomationModelOption(automationModelOptions(providers), proposed)) {
+  if (findAutomationModelOption(options, proposed)) {
     return { model: proposed, resolution: "exact" }
   }
 
-  const provider = providers.find((candidate) =>
+  const matches = providers.filter((candidate) =>
     candidate.source !== "openwork"
     && candidate.providerId === proposed.providerId
     && candidate.models.some((model) => model.id === proposed.modelId))
-  if (provider) {
+  const provider = matches.length === 1 ? matches[0] : undefined
+  if (provider && findAutomationModelOption(options, { providerId: provider.id, modelId: proposed.modelId })) {
     return {
       model: {
         providerId: provider.id,
@@ -118,7 +86,7 @@ export function resolveProposalModel(
     }
   }
 
-  return { model: freeModel, resolution: "fallback" }
+  return { model: proposed, resolution: "unavailable" }
 }
 
 /**
@@ -141,8 +109,7 @@ export function describeAutomationModel(
  * and the same reasoning levels as a chat.
  *
  * Reasoning variants are a property of the desktop runtime that will execute
- * the run, so they come from the local provider catalog. A model Den authorizes
- * but the local runtime does not know still lists — without variants.
+ * the run, so they come from the local provider catalog.
  */
 export function automationPickerOptions(input: {
   options: readonly AutomationModelOption[]

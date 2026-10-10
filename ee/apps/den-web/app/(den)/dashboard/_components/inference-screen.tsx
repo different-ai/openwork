@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { LockKeyhole } from "lucide-react";
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DenButton } from "../../_components/ui/button";
 import { DenPageHeader } from "../../_components/ui/page-header";
@@ -111,20 +112,24 @@ export function InferenceScreen({ embedded = false }: { embedded?: boolean }) {
   const access = getOrgAccessFlags(
     dashboard.orgContext?.currentMember.role ?? "member",
     dashboard.orgContext?.currentMember.isOwner ?? false,
-    dashboard.orgContext?.roles,
+    dashboard.orgContext?.currentMember.permissions,
   );
-  const redirect = !access.isAdmin ? "/dashboard"
-    : runtimeConfig.orgMode === "single_org" ? getCustomLlmProvidersRoute(dashboard.orgSlug)
-    : null;
+  const locked = !checking && !access.canViewModelsSettings;
+  const redirect = !locked && runtimeConfig.orgMode === "single_org" ? getCustomLlmProvidersRoute(dashboard.orgSlug) : null;
 
   useEffect(() => {
     if (!checking && !dashboard.orgError && redirect) router.replace(redirect);
   }, [checking, dashboard.orgError, redirect, router]);
 
   if (dashboard.orgError && !checking) return <DenNotice tone="error" message={dashboard.orgError} />;
+  if (locked) {
+    return <div data-testid="models-access-state" data-access-state="denied">
+      <DenNotice tone="neutral" icon={LockKeyhole} message="Viewing OpenWork Models needs the “View OpenWork Models settings” permission. Ask an organization owner or admin for access." />
+    </div>;
+  }
   if (checking || redirect) {
-    return <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500" data-testid="models-access-state" data-access-state={checking ? "checking" : "denied"}>
-      {checking ? "Checking workspace access..." : "Redirecting to your dashboard..."}
+    return <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500" data-testid="models-access-state" data-access-state={checking ? "checking" : "redirecting"}>
+      {checking ? "Checking workspace access..." : "Redirecting to your providers..."}
     </div>;
   }
 
@@ -144,9 +149,11 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canManageModels = access.isAdmin;
+  // Subscribing starts a billing checkout; enabling changes the inference setting.
+  const canSubscribe = access.canManageBilling;
+  const canToggleModels = access.canManageModelsSettings;
   const activeOrgSlug = activeOrg?.slug ?? null;
 
   async function loadStatus() {
@@ -177,8 +184,8 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   // instead of bouncing the user to the billing page. Billing stays the
   // status/portal view.
   async function startSubscribeCheckout() {
-    if (!canManageModels) {
-      setError("Only workspace admins can start OpenWork Models checkout.");
+    if (!canSubscribe) {
+      setError("Starting OpenWork Models checkout needs the “Manage billing” permission.");
       return;
     }
 
@@ -207,13 +214,13 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   }
 
   async function toggleEnabled() {
-    if (!canManageModels) {
-      setError("Only workspace admins can manage OpenWork Models.");
-      return;
-    }
     if (!status) return;
     if (status.enabled || !status.subscribed) {
       router.push(getBillingRoute(activeOrg?.slug));
+      return;
+    }
+    if (!canToggleModels) {
+      setError("Turning OpenWork Models on needs the “Manage OpenWork Models” permission.");
       return;
     }
     setError(null);
@@ -258,8 +265,13 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
 
   const description = "Reliable, hand-picked models for knowledge work. No API keys to manage.";
   const caption = `$10 / user / month · ${memberCaption}`;
+  const actionLockReason = !subscribed
+    ? (canSubscribe ? null : "Subscribing needs the “Manage billing” permission.")
+    : enabled
+      ? (access.canViewBilling ? null : "Managing the subscription needs the “View billing” permission.")
+      : (canToggleModels ? null : "Turning OpenWork Models on needs the “Manage OpenWork Models” permission.");
   const action = <DenButton type="button" onClick={subscribed ? toggleEnabled : () => void startSubscribeCheckout()}
-    loading={loading || saving || subscribeBusy} disabled={!canManageModels} variant={enabled ? "secondary" : "primary"}>
+    loading={loading || saving || subscribeBusy} disabled={actionLockReason !== null} variant={enabled ? "secondary" : "primary"}>
     {actionLabel}
   </DenButton>;
 
@@ -272,10 +284,11 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
 
       {error ? <DenNotice message={error} tone="error" /> : null}
 
-      {canManageModels ? null : (
+      {actionLockReason === null ? null : (
         <DenNotice
-          tone="info"
-          message="Only workspace admins can subscribe or enable OpenWork Models. Ask an owner, super-admin, or admin for this workspace."
+          tone="neutral"
+          icon={LockKeyhole}
+          message={`${actionLockReason} Ask an organization owner or admin for access.`}
         />
       )}
 

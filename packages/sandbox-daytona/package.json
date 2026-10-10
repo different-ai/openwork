@@ -1,0 +1,33 @@
+{
+  "name": "@openwork/sandbox-daytona",
+  "private": true,
+  "type": "module",
+  "description": "Daytona sandbox adapter: compute, process execution, files and optional memory-preserving pause.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test:live": "tsx --test --test-concurrency=1 src/live.test.ts",
+    "test": "tsx --test src/unit.test.ts"
+  },
+  "dependencies": {
+    "@daytonaio/sdk": "^0.201.0",
+    "@openwork/sandbox": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4",
+    "tsx": "^4.23.1"
+  },
+  "license": "MIT"
+}

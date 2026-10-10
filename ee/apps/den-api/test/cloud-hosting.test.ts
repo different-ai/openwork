@@ -1,12 +1,13 @@
-import { describe, expect, test } from "bun:test"
-import { cloudHostingAvailable } from "../src/capability-sources/cloud-hosting.js"
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import { cloudHostingAvailable } from "../src/capability-sources/cloud-hosting.ts"
 
-describe("cloudHostingAvailable", () => {
-  test("offers Cloud on hosted multi-org deployments without a per-organization flag", () => {
-    expect(cloudHostingAvailable({ orgMode: "multi_org" })).toBe(true)
-  })
+test("multi-org deployments always host Cloud", () => {
+  assert.equal(cloudHostingAvailable({ orgMode: "multi_org", openworkWebEnabled: false }), true)
+  assert.equal(cloudHostingAvailable({ orgMode: "multi_org", openworkWebEnabled: true }), true)
+})
 
-  test("never offers Cloud on single-org (self-hosted) deployments", () => {
-    expect(cloudHostingAvailable({ orgMode: "single_org" })).toBe(false)
-  })
+test("single-org installs host Cloud only when OpenWork Web is on", () => {
+  assert.equal(cloudHostingAvailable({ orgMode: "single_org", openworkWebEnabled: false }), false)
+  assert.equal(cloudHostingAvailable({ orgMode: "single_org", openworkWebEnabled: true }), true)
 })

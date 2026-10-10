@@ -1,0 +1,153 @@
+name: Deploy runner to celld
+
+# The production headless runner runs on a celld fleet (Render service headless-cells, bucket openwork-celld/fleet).
+# celld nodes don't build from the repo: a new runner exists only after `celld deploy` writes it to the bucket. This
+# workflow does that on every dev push that changes the runner or a package bundled into it, so the runner never
+# falls behind Workbot and den-api (which Render deploys from the same push).
+#
+# Each run first deploys the bundle to a throwaway bucket prefix, starts a local node on it and runs a real turn;
+# only then does it deploy to the fleet and wait until every node has adopted the new version. See
+# ee/apps/headless-runner/OWNER-CELLS.md.
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "ee/apps/headless-runner/**"
+      - "ee/packages/headless-protocol/**"
+      - "ee/packages/headless-computer/**"
+      - "packages/sandbox-daytona/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/celld-runner-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: celld-runner-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy runner to celld
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: celld-production
+    timeout-minutes: 30
+
+    env:
+      CELLD_VERSION: v0.6.2
+      AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+      AWS_REGION: auto
+      S3_ENDPOINT: https://5abbcca46f2a1399566cab3a8f8bd2c6.r2.cloudflarestorage.com
+      FLEET_BUCKET: s3://openwork-celld/fleet
+      PREFLIGHT_BUCKET: s3://openwork-celld/ci/${{ github.run_id }}-${{ github.run_attempt }}
+      RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_OWNER_ID: tea-cspud29u0jms7384itk0
+      RENDER_SERVICE_ID: srv-db3upfjbc2fs73c1ii70
+
+    steps:
+      - name: Verify secrets are configured
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY RUNNER_VARS RENDER_API_KEY; do
+            [ -z "${!name}" ] && missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing celld-production secrets:$missing (CELLD_R2_ACCESS_KEY_ID, CELLD_R2_SECRET_ACCESS_KEY, CELLD_RUNNER_VARS, RENDER_API_KEY)."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install and build the runner's packages
+        run: |
+          pnpm install --filter "@openwork-ee/headless-runner..." --frozen-lockfile
+          pnpm --filter "@openwork-ee/headless-runner^..." --if-present run build
+
+      - name: Install celld
+        run: |
+          set -euo pipefail
+          curl -fsSL https://celld.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/celld" --version
+
+      # CELLD_RUNNER_VARS is one JSON object of the runner's HEADLESS_* settings (secrets included). Mask every value:
+      # GitHub masks the whole secret, not the values inside it.
+      - name: Bundle the runner
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$RUNNER_VARS" > "$RUNNER_TEMP/vars.json"
+          jq -r '.[]' "$RUNNER_TEMP/vars.json" | while IFS= read -r value; do [ -n "$value" ] && echo "::add-mask::$value"; done
+          cd ee/apps/headless-runner
+          pnpm exec tsx scripts/celld-bundle.ts "$RUNNER_TEMP/celld" "$RUNNER_TEMP/vars.json"
+          echo "CELLD_ESBUILD=$PWD/node_modules/.bin/esbuild" >> "$GITHUB_ENV"
+
+      - name: Preflight on a throwaway prefix
+        run: |
+          set -euo pipefail
+          celld deploy "$RUNNER_TEMP/celld/wrangler.json" --bucket "$PREFLIGHT_BUCKET"
+          CELLD_WATCH="$RUNNER_TEMP/watch" celld --bucket "$PREFLIGHT_BUCKET" --listen 127.0.0.1:18080 > "$RUNNER_TEMP/node.log" 2>&1 &
+          for _ in $(seq 1 90); do curl -sf http://127.0.0.1:18080/health > /dev/null && break; sleep 1; done
+          cd ee/apps/headless-runner
+          SMOKE_BASE=http://127.0.0.1:18080 HEADLESS_API_TOKEN="$(jq -r .HEADLESS_API_TOKEN "$RUNNER_TEMP/vars.json")" pnpm exec tsx scripts/celld-smoke.ts
+
+      - name: Preflight node log
+        if: failure()
+        run: grep -v -E "log_ship_loop|node_lease_attempt|celld::memory" "$RUNNER_TEMP/node.log" | tail -80 || true
+
+      - name: Deploy to the fleet
+        id: fleet
+        run: |
+          set -euo pipefail
+          live="$(aws s3 cp "$FLEET_BUCKET/deploy/current.json" - --endpoint-url "$S3_ENDPOINT" --region auto 2>/dev/null | jq -r '.version // empty' || true)"
+          version="$(celld deploy "$RUNNER_TEMP/celld/wrangler.json" --bucket "$FLEET_BUCKET" --json | jq -r '.version')"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then echo "::error::celld deploy reported no version"; exit 1; fi
+          # The version is a content hash: an unchanged bundle redeploys the live version, which nodes don't re-adopt.
+          echo "unchanged=$([ "$version" = "$live" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Deployed $version (was ${live:-none})"
+
+      # Nodes poll the pointer every 30 seconds. Every running instance must report adopting this version.
+      - name: Wait for every node to adopt it
+        if: steps.fleet.outputs.unchanged != 'true'
+        env:
+          VERSION: ${{ steps.fleet.outputs.version }}
+        run: |
+          set -euo pipefail
+          started="$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+          instances="$(curl -sf -H "Authorization: Bearer $RENDER_API_KEY" "https://api.render.com/v1/services/$RENDER_SERVICE_ID" | jq -r '.serviceDetails.numInstances')"
+          for _ in $(seq 1 30); do
+            adopted="$(curl -sf -G -H "Authorization: Bearer $RENDER_API_KEY" https://api.render.com/v1/logs \
+              --data-urlencode "ownerId=$RENDER_OWNER_ID" --data-urlencode "resource=$RENDER_SERVICE_ID" \
+              --data-urlencode "text=deployment_adopted" --data-urlencode "startTime=$started" --data-urlencode "limit=100" \
+              | jq --arg v "$VERSION" '[.logs[] | select(.message | contains("version=" + $v)) | (.labels[] | select(.name == "instance") | .value)] | unique | length')"
+            echo "adopted on $adopted of $instances nodes"
+            [ "$adopted" -ge "$instances" ] && exit 0
+            sleep 10
+          done
+          echo "::error::Not every node adopted $VERSION within 5 minutes; check the headless-cells logs."
+          exit 1
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/celld" "$RUNNER_TEMP/vars.json" "$RUNNER_TEMP/watch"
+          aws s3 rm --recursive "$PREFLIGHT_BUCKET/" --endpoint-url "$S3_ENDPOINT" --region auto --only-show-errors || true

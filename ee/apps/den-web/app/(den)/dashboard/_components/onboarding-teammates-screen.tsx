@@ -36,7 +36,7 @@ export function OnboardingTeammatesScreen() {
   }
   return <TeammatesForm key={`${orgId}:${user.id}`} orgId={orgId} orgSlug={orgSlug}
     organizationName={orgContext.organization.name} selfEmail={user.email} selfName={user.name}
-    canInvite={getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner).canInviteMembers} />;
+    canInvite={getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canInviteMembers} />;
 }
 
 function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, canInvite }: {

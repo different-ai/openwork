@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, CreditCard, RefreshCw } from "lucide-react";
-import { DenButton, buttonVariants } from "../../_components/ui/button";
+import { DenButton } from "../../_components/ui/button";
 import { DenActionList, DenActionRow } from "../../_components/ui/action-row";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenCard } from "../../_components/ui/card";
@@ -13,7 +13,7 @@ import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenUsageMeter } from "../../_components/ui/usage-meter";
 import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getInferenceRoute, getMembersRoute, getOrgAccessFlags, getWebRoute } from "../../_lib/den-org";
+import { getInferenceRoute, getMembersRoute, getOrgAccessFlags, getWebRoute, permissionLockReason } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
@@ -57,14 +57,6 @@ type StripeSeatBilling = {
     quantity: number;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
-  } | null;
-};
-
-type PolarBilling = {
-  hasActivePlan: boolean;
-  portalUrl: string | null;
-  subscription: {
-    status: string;
   } | null;
 };
 
@@ -144,23 +136,6 @@ function BillingStat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-function parsePolarBilling(payload: unknown): PolarBilling | null {
-  if (!payload || typeof payload !== "object" || !("billing" in payload)) return null;
-  const billing = (payload as { billing?: unknown }).billing;
-  if (!billing || typeof billing !== "object" || !("polar" in billing)) return null;
-  const polar = (billing as { polar?: unknown }).polar;
-  if (!polar || typeof polar !== "object") return null;
-  const value = polar as Partial<PolarBilling>;
-  return {
-    hasActivePlan: value.hasActivePlan === true,
-    portalUrl: typeof value.portalUrl === "string" ? value.portalUrl : null,
-    subscription: value.subscription && typeof value.subscription === "object"
-      ? {
-          status: typeof value.subscription.status === "string" ? value.subscription.status : "active",
-        }
-      : null,
-  };
-}
 
 export function BillingDashboardScreen() {
   const router = useRouter();
@@ -169,7 +144,6 @@ export function BillingDashboardScreen() {
   const activeOrgId = orgContext?.organization.id ?? null;
   const [stripeBillingValue, setStripeBillingValue] = useState<StripeBilling | null>(null);
   const [stripeBillingOrgId, setStripeBillingOrgId] = useState<string | null>(null);
-  const [polarBilling, setPolarBilling] = useState<PolarBilling | null>(null);
   const [stripeBusy, setStripeBusy] = useState(false);
   const [stripeActionBusy, setStripeActionBusy] = useState<"seat-checkout" | "portal" | null>(null);
   const [stripeError, setStripeError] = useState<string | null>(null);
@@ -182,9 +156,14 @@ export function BillingDashboardScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canManageBillingSettings = access.canManageSettings;
+  const canManageBillingSettings = access.canManageBilling;
+  const canOpenPortal = access.canOpenBillingPortal;
+  const billingLockNotice = [
+    canManageBillingSettings ? null : `Starting a subscription is locked. ${permissionLockReason("billing.manage")}`,
+    canOpenPortal ? null : `Payment details, invoices and cancelling are locked. ${permissionLockReason("billing_portal.use")}`,
+  ].filter((line): line is string => line !== null).join(" ");
 
   async function refreshStripeBilling(quiet = false) {
     const expectedOrgId = activeOrgId;
@@ -205,7 +184,6 @@ export function BillingDashboardScreen() {
       if (currentOrgIdRef.current !== expectedOrgId || billingRequestIdRef.current !== requestId) return null;
       setStripeBillingValue(parsed);
       setStripeBillingOrgId(expectedOrgId);
-      setPolarBilling(parsePolarBilling(payload));
       return parsed;
     } catch (error) {
       if (!quiet && currentOrgIdRef.current === expectedOrgId && billingRequestIdRef.current === requestId) {
@@ -277,7 +255,7 @@ export function BillingDashboardScreen() {
 
   async function startSeatCheckout() {
     if (!canManageBillingSettings) {
-      setStripeError("Admins can start seat checkout from Members. Owners and super-admins manage Billing settings here.");
+      setStripeError(permissionLockReason("billing.manage"));
       return;
     }
 
@@ -303,8 +281,8 @@ export function BillingDashboardScreen() {
   }
 
   async function openStripePortal() {
-    if (!canManageBillingSettings) {
-      setStripeError("Only workspace owners and super-admins can open billing portals from Settings.");
+    if (!canOpenPortal) {
+      setStripeError(permissionLockReason("billing_portal.use"));
       return;
     }
 
@@ -325,7 +303,6 @@ export function BillingDashboardScreen() {
     }
   }
 
-  const showPolar = polarBilling?.hasActivePlan === true && Boolean(polarBilling.portalUrl);
   const stripePrice = stripeBilling ? formatMoneyMinor(stripeBilling.unitAmount, stripeBilling.currency) : null;
   const seatBilling = stripeBilling?.seats;
   const webBilling = stripeBilling?.web ?? null;
@@ -395,13 +372,9 @@ export function BillingDashboardScreen() {
         <DenNotice message={stripeError} className="mb-6" />
       ) : null}
 
-      {canManageBillingSettings ? null : (
-        <DenNotice
-          tone="warning"
-          className="mb-6"
-          message="Admins can view Billing settings here. Owners and super-admins can open billing portals or start Settings checkouts."
-        />
-      )}
+      {billingLockNotice ? (
+        <DenNotice tone="neutral" className="mb-6" message={billingLockNotice} />
+      ) : null}
 
       {stripeReturnChecking ? (
         <DenNotice
@@ -428,25 +401,6 @@ export function BillingDashboardScreen() {
         </DenCard>
       ) : (
         <>
-      {showPolar ? (
-        <section className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
-          <div className="mb-6 flex items-start justify-between gap-4">
-            <div>
-              <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-gray-400">Polar</p>
-              <h2 className="text-[18px] font-medium text-gray-950">Cloud worker plan</h2>
-              <p className="mt-2 text-[14px] text-gray-500">
-                Your existing Polar subscription is {formatSubscriptionStatus(polarBilling?.subscription?.status ?? "active").toLowerCase()}.
-              </p>
-            </div>
-            {canManageBillingSettings && polarBilling?.portalUrl ? (
-              <a href={polarBilling.portalUrl} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary" })}>
-                Open Polar portal
-              </a>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
       <DenCard className="mb-6 !p-0" data-testid="billing-summary-card">
         <DenSectionHeader
           className="p-6 pb-4"
@@ -669,7 +623,7 @@ export function BillingDashboardScreen() {
                     action={
                       <DenButton
                         variant={webPaymentFailed ? "primary" : "secondary"}
-                        disabled={!canManageBillingSettings}
+                        disabled={!canOpenPortal}
                         loading={stripeActionBusy === "portal"}
                         onClick={openStripePortal}
                       >
@@ -750,7 +704,7 @@ export function BillingDashboardScreen() {
             <DenActionRow
               description={`Opens Stripe. Change your card, download invoices, or cancel seat billing. You keep the free ${freeSeatCount} seats either way.`}
               action={
-                <DenButton variant="secondary" disabled={!canManageBillingSettings} loading={stripeActionBusy === "portal"} onClick={openStripePortal}>
+                <DenButton variant="secondary" disabled={!canOpenPortal} loading={stripeActionBusy === "portal"} onClick={openStripePortal}>
                   Manage subscription
                 </DenButton>
               }
@@ -825,7 +779,7 @@ export function BillingDashboardScreen() {
                 <DenButton
                   variant={aiPaymentFailed ? "primary" : "secondary"}
                  
-                  disabled={!canManageBillingSettings}
+                  disabled={!canOpenPortal}
                   loading={stripeActionBusy === "portal"}
                   onClick={openStripePortal}
                 >

@@ -12,7 +12,35 @@ const html = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "
   .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const duration = (value) => value === null ? "unavailable" : `${(value / 1000).toFixed(1)}s`;
 
-// Display data only. No GitHub writes, merge decisions, or comment history.
+// Security findings from this run's analysis, even when the review stopped
+// early (for example, files skipped over the size limits). Null when the
+// analysis isn't this run's, or its findings are malformed.
+function securityFindingsOf(report, raw) {
+  if (report.incomplete_reasons.includes("missing-or-invalid-analysis")) return null;
+  const findings = raw?.skills?.find?.((skill) => skill?.name === "diff-security-review")?.findings;
+  const valid = Array.isArray(findings) && findings.every((finding) =>
+    finding && SEVERITIES.includes(finding.severity) && typeof finding.title === "string" && typeof finding.description === "string");
+  return valid ? findings : null;
+}
+
+// Files Warden left out because of a size limit, across both skills. Ignored
+// paths (lockfiles, generated files) are skipped on purpose and not counted.
+export function limitSkips(raw) {
+  const byFile = new Map();
+  for (const skill of Array.isArray(raw?.skills) ? raw.skills : []) {
+    for (const file of Array.isArray(skill?.skippedFiles) ? skill.skippedFiles : []) {
+      if (typeof file?.filename === "string" && typeof file.reason === "string" && file.reason.startsWith("limit:")) {
+        byFile.set(file.filename, file.reason);
+      }
+    }
+  }
+  const reasons = {};
+  for (const reason of byFile.values()) reasons[reason] = (reasons[reason] ?? 0) + 1;
+  return { count: byFile.size, reasons };
+}
+
+// Display data only. No GitHub writes; warden-clearance.mjs decides approval
+// from this receipt and comments on the PR with the security findings file.
 export function buildReport(raw, metadata, now = Date.now()) {
   const identityMatches = raw?.version === "1" && raw.event === "pull_request" &&
     raw.repository?.fullName === metadata.repository && raw.pullRequest?.number === metadata.pr &&
@@ -24,6 +52,9 @@ export function buildReport(raw, metadata, now = Date.now()) {
   if (metadata.outcome !== "success") reasons.push("analysis-did-not-succeed");
   if (reports.length !== SKILLS.length || reports.some((report) => !SKILLS.includes(report?.name)) ||
       triggers.length !== SKILLS.length) reasons.push("unexpected-skill-coverage");
+  // Warden lists files it left out over the size limits but doesn't fail the
+  // review for them. A PR with unreviewed files is never complete.
+  if (identityMatches && limitSkips(raw).count) reasons.push("files-over-size-limits");
 
   const skills = SKILLS.map((name) => {
     const matches = reports.filter((report) => report?.name === name);
@@ -87,7 +118,7 @@ export function renderSummary(report, raw) {
     ? `${report.findings_count} finding(s)` : "incomplete";
   const lines = [
     `Warden security: **${label}** · ${duration(report.timing.analysis_ms)} analysis · ${duration(report.timing.review_to_summary_ms)} through summary.`,
-    "", "Merge approval stays with the OpenWork admin team.", "",
+    "", "Warden Clearance approves when this review is complete with no high or medium security findings and no confidentiality findings.", "",
     "<details><summary>Review details and timing</summary>", "",
     "| Review | Result | Findings | Duration |", "| --- | --- | --- | --- |",
     ...report.skills.map((skill) => `| ${skill.name} | ${skill.status} | ${skill.findings_count ?? "unknown"} | ${duration(skill.duration_ms)} |`),
@@ -97,9 +128,14 @@ export function renderSummary(report, raw) {
   // Never repeat confidentiality text or paths in a public summary or artifact.
   const privacy = report.skills.find((skill) => skill.name === "confidentiality-review");
   if (privacy.findings_count) lines.push("", "Confidentiality finding(s): review the added diff for outside identities; details are omitted here.");
+  const skipped = limitSkips(raw);
+  if (skipped.count) {
+    lines.push("", `Skipped ${skipped.count} file(s) over Warden's size limits (${Object.entries(skipped.reasons).map(([reason, n]) => `${reason} ${n}`).join(", ")}). Split the PR to review them.`);
+  }
   const security = report.skills.find((skill) => skill.name === "diff-security-review");
-  if (security.status === "complete") {
-    const findings = raw.skills.find((skill) => skill.name === security.name).findings;
+  const findings = securityFindingsOf(report, raw);
+  if (findings) {
+    if ((security.status !== "complete" || skipped.count) && findings.length) lines.push("", "Findings from the part of the PR that was reviewed (the review is incomplete):");
     for (const finding of findings.slice(0, 20)) {
       lines.push("", `<strong>${html(finding.severity)}: ${html(finding.title.slice(0, 300))}</strong>`,
         `<pre>${html(finding.description.slice(0, 4000))}</pre>`);
@@ -111,6 +147,38 @@ export function renderSummary(report, raw) {
   }
   lines.push("", "</details>", "");
   return lines.join("\n");
+}
+
+// Security findings for the Warden Clearance PR comment, bound to this run.
+// Confidentiality findings are never included: their text may name the very
+// outside identity the rule protects. Written even when the review stopped
+// early, marked `complete: false`, so authors see what was found; clearance
+// still never approves an incomplete review. Null when the analysis isn't
+// this run's.
+export function securityFindings(report, raw) {
+  const security = report.skills.find((skill) => skill.name === "diff-security-review");
+  const findings = securityFindingsOf(report, raw);
+  if (!findings) return null;
+  return {
+    // Complete only if the security skill finished and no file was skipped.
+    complete: security.status === "complete" && !report.incomplete_reasons.includes("files-over-size-limits"),
+    skipped: limitSkips(raw),
+    schema_version: 1,
+    repository: report.repository,
+    pr: report.pr,
+    head_sha: report.head_sha,
+    run_id: report.run_id,
+    run_attempt: report.run_attempt,
+    total: findings.length,
+    findings: findings.slice(0, 20).map((finding) => ({
+      severity: finding.severity,
+      title: finding.title.slice(0, 300),
+      description: finding.description.slice(0, 2000),
+      path: typeof finding.location?.path === "string" ? finding.location.path.slice(0, 240) : null,
+      line: Number.isSafeInteger(finding.location?.startLine) && finding.location.startLine > 0
+        ? finding.location.startLine : null,
+    })),
+  };
 }
 
 export async function main(env = process.env) {
@@ -129,6 +197,8 @@ export async function main(env = process.env) {
     analysisStarted: Number(env.ANALYSIS_STARTED),
   });
   await writeFile(env.REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  const findings = env.FINDINGS_REPORT_PATH ? securityFindings(report, raw) : null;
+  if (findings) await writeFile(env.FINDINGS_REPORT_PATH, `${JSON.stringify(findings, null, 2)}\n`);
   await appendFile(env.GITHUB_STEP_SUMMARY, renderSummary(report, raw));
   // Findings remain visible in the summary. Operational failure is explicit.
   if (!report.review_complete) process.exitCode = 1;

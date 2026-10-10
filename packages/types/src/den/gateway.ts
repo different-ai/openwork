@@ -1,4 +1,5 @@
 import type {
+  GatewayAwsSsoSettings,
   InferenceProviderCredentialKind,
   InferenceProviderCredentialMode,
   InferenceProviderCredentialStatus,
@@ -19,6 +20,8 @@ export {
   INFERENCE_USAGE_SOURCES as GATEWAY_USAGE_SOURCES,
   inferenceApiKeyMapSecretSchema as gatewayApiKeyMapSecretSchema,
   inferenceAwsKeysSecretSchema as gatewayAwsKeysSecretSchema,
+  inferenceAwsSsoSecretSchema as gatewayAwsSsoSecretSchema,
+  gatewayAwsSsoSettingsSchema,
   inferenceGcpServiceAccountSecretSchema as gatewayGcpServiceAccountSecretSchema,
   inferenceOauthTokenSecretSchema as gatewayOauthTokenSecretSchema,
   parseInferenceProviderSecret as parseGatewayProviderSecret,
@@ -31,6 +34,7 @@ export type {
   InferenceProviderSecret as GatewayProviderSecret,
   InferenceApiKeyMapSecret as GatewayApiKeyMapSecret,
   InferenceAwsKeysSecret as GatewayAwsKeysSecret,
+  InferenceAwsSsoSecret as GatewayAwsSsoSecret,
   InferenceGcpServiceAccountSecret as GatewayGcpServiceAccountSecret,
   InferenceOauthTokenSecret as GatewayOauthTokenSecret,
   InferenceRequestOutcome as GatewayRequestOutcome,
@@ -78,6 +82,10 @@ export interface GatewayCredentialSetWrite {
   /** Omit to retain; empty string explicitly clears OAuth client configuration. */
   oauthClientId?: string;
   oauthClientSecret?: string;
+  /** Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Omit to retain; empty string clears. */
+  oauthTenantId?: string;
+  /** Amazon Bedrock member sets: the IAM Identity Center instance, account and permission set. Omit to retain; null clears. */
+  awsSso?: GatewayAwsSsoSettings | null;
   status?: GatewayResourceStatus;
 }
 
@@ -94,6 +102,8 @@ export interface GatewayCredentialSet {
   credentialStatus: GatewayCredentialStatus;
   oauthClientId?: string | null;
   hasOauthClientSecret?: boolean;
+  oauthTenantId?: string | null;
+  awsSso?: GatewayAwsSsoSettings | null;
 }
 
 export interface GatewayAccessGrantWrite {
@@ -181,6 +191,8 @@ export interface GatewayProviderSummary {
   credentialStatus: GatewayCredentialStatus;
   authUrl: string | null;
   status: GatewayResourceStatus;
+  /** Stored provider creation time; optional for compatibility with older servers. */
+  createdAt?: string;
   updatedAt: string;
   providerConfig: Record<string, unknown>;
   /** Universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Never grants group membership. */
@@ -188,6 +200,7 @@ export interface GatewayProviderSummary {
   /** Display when catalog refresh is unavailable or compatibility excludes catalog models. */
   catalogWarning?: string;
   models: GatewayUsableModel[];
+  pinnedModelIds: string[];
   authorizationRequests: GatewayAuthorizationRequest[];
   migration?: GatewayProviderMigration;
   /** Legacy management hints. Never flatten these back into matrix writes. */
@@ -196,10 +209,62 @@ export interface GatewayProviderSummary {
   oauthClientId?: string | null;
   oauthCallbackUrl?: string;
   hasOauthClientSecret?: boolean;
+  /** Per-person credential rows; only for callers who hold Manage Gateway providers. */
   credentials?: GatewayProviderCredentialSummary[];
+  /** Credential counts by status, returned instead of `credentials` to callers who may only view providers. */
+  credentialCounts?: GatewayProviderCredentialCounts;
   /** Only the caller's ow_gw_ key, in provider-scoped env slots. */
   apiKey?: string;
   apiKeys?: Record<string, string>;
+}
+
+/**
+ * LiteLLM provider state for management views. `org` uses one organization
+ * key and OpenWork spend tracking; `member` uses each person's own LiteLLM
+ * key, so LiteLLM owns budgets and OpenWork does not price or limit usage.
+ */
+export type GatewayLiteLlmAttentionReason = "not_in_litellm" | "no_key_to_mirror" | "no_models" | "error";
+
+export interface GatewayLiteLlmStatus {
+  mode: InferenceProviderCredentialMode;
+  /** member mode: each person pastes their key, or OpenWork creates it. */
+  keySource: "personal" | "issued" | null;
+  /** issued: one key per LiteLLM team, or a copy of each person's existing key. */
+  issueStrategy: "per_team" | "mirror" | null;
+  /** issued + mirror: fall back to per-team keys, or report people with no key to copy. */
+  mirrorFallback: "per_team" | "error" | null;
+  /** issued: people with at least one key OpenWork created. */
+  issuedMemberCount: number;
+  /** issued: people OpenWork could not create keys for (first 50 in attention). */
+  attentionCount: number;
+  attention: Array<{ memberId: string; name: string | null; email: string | null; reason: GatewayLiteLlmAttentionReason }>;
+  /** LiteLLM proxy root, never a key. */
+  baseUrl: string | null;
+  spendTracking: boolean;
+  /** Organization key (org mode) or admin key (member mode) is stored. */
+  hasSyncKey: boolean;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  modelCount: number;
+  teamCount: number;
+  connectedMemberCount: number;
+}
+
+export interface GatewayLiteLlmSyncResult {
+  modelCount: number;
+  groupCount: number;
+  teamCount: number;
+  members: { matched: number; rejected: number; unavailable: number; removed: number };
+  warnings: string[];
+  /** issued mode: keys OpenWork created or refreshed in this sync. */
+  issued?: { people: number; keys: number; notInLiteLlm: number; noKeyToMirror: number; noModels: number; errors: number; removed: number };
+}
+
+export interface GatewayProviderCredentialCounts {
+  total: number;
+  active: number;
+  revoked: number;
+  refreshFailed: number;
 }
 
 export interface GatewayProviderDetails extends GatewayProviderSummary {
@@ -207,6 +272,7 @@ export interface GatewayProviderDetails extends GatewayProviderSummary {
   modelGroups: GatewayModelGroup[];
   credentialSets: GatewayCredentialSet[];
   accessGrants: GatewayAccessGrant[];
+  litellm?: GatewayLiteLlmStatus;
 }
 
 export interface GatewayProviderListResponse {

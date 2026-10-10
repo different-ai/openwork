@@ -47,7 +47,6 @@ export type LocalPreferences = {
    */
   releaseChannel: ReleaseChannel;
   featureFlags: {
-    microsandboxCreateSandbox: boolean;
     workspaceRunMode: boolean;
   };
   /**
@@ -90,7 +89,7 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true, workspaceRunMode: false },
+  featureFlags: { workspaceRunMode: false },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,

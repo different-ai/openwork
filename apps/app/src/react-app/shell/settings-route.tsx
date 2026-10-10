@@ -1,4 +1,6 @@
 /** @jsxImportSource react */
+import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
+import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router";
@@ -21,11 +23,11 @@ import {
   type OpenworkServerCapabilities,
   type OpenworkServerClient,
   type OpenworkWorkspaceInfo,
+  type DesktopFreePreferences,
 } from "@/app/lib/openwork-server";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
 import {
   collectAgentContextDiagnosticObservations,
-  isAgentContextDiagnosticsWorkspaceAllowed,
   resolveOrganizationConnectionsProbe,
 } from "@/app/lib/agent-context-diagnostics";
 import {
@@ -41,7 +43,6 @@ import type {
   WorkspaceDisplay,
   WorkspaceSessionGroup,
 } from "@/app/types";
-import { getWorkspaceTaskLoadErrorDisplay } from "@/app/utils";
 import { currentLocale, t, setLocale, type Language } from "@/i18n";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
 import { GatewayModelAccessProvider } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
@@ -49,7 +50,6 @@ import {
   type RouteWorkspace,
   type RouteSession,
   describeRouteError,
-  downloadWorkspaceJson,
   getSessionStatus,
   isActiveSessionStatus,
   listRouteSessions,
@@ -58,7 +58,6 @@ import {
   orderRouteWorkspaces,
   readRouteSessionsWithRetry,
   toSessionGroups,
-  workspaceExportFilename,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import {
@@ -81,12 +80,12 @@ import {
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
-import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
+import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
+import { keylessProviderIds } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
 import { OllamaConfig } from "@/react-app/domains/settings/ollama-config";
-import "@/react-app/domains/settings/computer-use-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
@@ -94,11 +93,11 @@ import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
-import { BrowserLoginsPanel } from "../domains/browser-logins/browser-logins-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
+import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboard-shortcuts-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
   connectPluginsForComposer,
@@ -106,6 +105,7 @@ import {
   type ConnectCapabilityInventory,
 } from "@/react-app/domains/session/surface/connect-capability-inventory";
 import {
+  CLOUD_INVENTORY_CHANGED_EVENT,
   loadConnectCapabilities,
   readCachedConnectCapabilities,
 } from "@/react-app/domains/connections/cloud-inventory-cache";
@@ -137,7 +137,6 @@ import {
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
-  desktopBridge,
   readDesktopDistributionInfo,
   type WorkspaceInfo,
   type WorkspaceList,
@@ -154,10 +153,6 @@ import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-noti
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
   hasOpenWorkModelsAvailable,
-  hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
-  isOpenWorkModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
   shouldShowOpenWorkModelsSyncing,
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import {
@@ -169,16 +164,7 @@ import {
   resolveProviderDisplayName,
   safeStringify,
 } from "@/app/utils";
-import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
-import { ShareWorkspaceModal } from "@/react-app/domains/workspace/share-workspace-modal";
-import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
-import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
-import {
-  diagnoseRemoteWorkspaceTaskLoadFailure,
-  getRemoteWorkspaceConnectionKey,
-  testRemoteWorkspaceConnection,
-} from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
 import type { ModelRef } from "@/app/types";
 import { workspaceSwatchColor } from "@/react-app/domains/session/sidebar/utils";
@@ -193,6 +179,7 @@ import { abortSessionSafe, listCommands } from "@/app/lib/opencode-session";
 import { notifyAlert } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
 import { CommandPalette, type PaletteItem } from "./command-palette";
+import { applyDefaultModelPreference } from "./command-palette-models";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
@@ -215,10 +202,10 @@ import {
 } from "@/react-app/infra/workspace-server-client";
 import { resolveEngineRootEndpoint } from "@/app/lib/workspace-endpoint";
 import {
-  buildLocalProviderConfig,
-  OPENAI_IMAGE_EXTENSION_ID,
-  OPENAI_IMAGE_MODEL,
+  buildLocalProviderInstallPatch,
+  buildLocalProviderSyncPatch,
   type LocalProviderInstallInput,
+  type LocalProviderSyncInput,
 } from "@/react-app/domains/settings/openai-image-extension";
 import {
   libraryAgentsFromOpencode,
@@ -254,14 +241,6 @@ function isOpenWorkCloudProvider(provider: {
   return [provider.providerId, provider.source, provider.sourceProviderId].some(
     (value) => value?.trim().toLowerCase() === "openwork",
   );
-}
-
-function normalizeComputerUsePermissions(value: unknown) {
-  if (typeof value !== "object" || value === null) return null;
-  return {
-    accessibility: "accessibility" in value && value.accessibility === true,
-    screenRecording: "screenRecording" in value && value.screenRecording === true,
-  };
 }
 
 function reconcileSelectedWorkspaceId(
@@ -318,6 +297,7 @@ export function parseSettingsPath(pathname: string): {
     case "preferences":
     case "permissions":
     case "appearance":
+    case "shortcuts":
     case "environment":
     case "updates":
     case "debug":
@@ -542,8 +522,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const refreshMcpServersRef = useRef<(() => void | Promise<void>) | null>(null);
   const notifyMcpReloadingRef = useRef<(() => void) | null>(null);
   const pollMcpServersAfterReloadRef = useRef<(() => void | Promise<void>) | null>(null);
-  const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
-  const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
@@ -562,27 +540,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode);
   const [hideTitlebar, setHideTitlebar] = useState(() => readStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, false));
   const [configActionStatus, setConfigActionStatus] = useState<string | null>(null);
+  const [enablingProviderId, setEnablingProviderId] = useState<string | null>(null);
   const [permissionsRefreshToken, setPermissionsRefreshToken] = useState(0);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
   const [resetConfigBusy, setResetConfigBusy] = useState(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
-  const [exportWorkspaceBusy, setExportWorkspaceBusy] = useState(false);
   const [autoCompactContext, setAutoCompactContext] = useState(true);
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
   const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
   const [localProviderBusy, setLocalProviderBusy] = useState(false);
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
-  const [imageExtensionBusy, setImageExtensionBusy] = useState(false);
-  const [imageExtensionStatus, setImageExtensionStatus] = useState<string | null>(null);
-  const [imageExtensionError, setImageExtensionError] = useState<string | null>(null);
-  const [computerUsePermissions, setComputerUsePermissions] = useState<{ accessibility: boolean; screenRecording: boolean } | null>(null);
   const [extensionStateVersion, setExtensionStateVersion] = useState(0);
-  const [imageGenerationBusy, setImageGenerationBusy] = useState(false);
-  const [imageGenerationStatus, setImageGenerationStatus] = useState<string | null>(null);
-  const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
   const [userEnvKeys, setUserEnvKeys] = useState<string[]>([]);
   const [cloudMcpHealthResult, setCloudMcpHealthResult] = useState<{
     workspaceId: string;
@@ -605,7 +576,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     providerBaseUrl: "",
     selectedWorkspaceId: "",
     selectedWorkspaceRoot: "",
-    selectedWorkspaceType: "local" as "local" | "remote",
+    selectedWorkspaceType: "local" as const,
     runtimeWorkspaceId: null as string | null,
     openworkServerClient: null as OpenworkServerClient | null,
     selectedWorkspaceOpenworkClient: null as OpenworkServerClient | null,
@@ -623,20 +594,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? (selectedWorkspaceId ? null : workspaces[0] ?? null),
     [selectedWorkspaceId, workspaces],
   );
-  const workspaceConnectionStateById = useMemo(() => {
-    const next: Record<string, WorkspaceConnectionState> = { ...workspaceConnectionOverrides };
-    for (const workspace of workspaces) {
-      if (workspace.workspaceType !== "remote") continue;
-      const error = errorsByWorkspaceId[workspace.id]?.trim();
-      if (!error || next[workspace.id]?.status === "connecting") continue;
-      next[workspace.id] ??= {
-        status: "error",
-        message: getWorkspaceTaskLoadErrorDisplay(workspace, error).message || error,
-        checkedAt: null,
-      };
-    }
-    return next;
-  }, [errorsByWorkspaceId, workspaceConnectionOverrides, workspaces]);
+  const workspaceConnectionStateById: Record<string, WorkspaceConnectionState> = workspaceConnectionOverrides;
   const selectedWorkspaceRoot = selectedWorkspace?.path?.trim() || "";
   const selectedWorkspaceDisplay = useMemo<WorkspaceDisplay>(
     () =>
@@ -648,7 +606,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             preset: "starter",
             workspaceType: selectedWorkspace.workspaceType ?? "local",
             displayName: selectedWorkspace.displayNameResolved,
-            openworkWorkspaceName: selectedWorkspace.openworkWorkspaceName,
           }
         : emptyWorkspaceDisplay,
     [emptyWorkspaceDisplay, selectedWorkspace],
@@ -728,8 +685,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       createOpenworkServerStore({
         startupPreference: () => {
           // In desktop mode, loopback URLs are ephemeral local runtime details.
-          // Only non-loopback stored URLs indicate an explicit remote/manual
-          // server connection preference.
+          // Only non-loopback stored URLs indicate an explicit manual server
+          // connection preference.
           if (!isDesktopRuntime()) return "server";
           const stored = readOpenworkServerSettings();
           const storedUrl = stored.urlOverride?.trim() ?? "";
@@ -738,21 +695,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         documentVisible: () => typeof document === "undefined" || document.visibilityState === "visible",
         developerMode: () => routeStateRef.current.developerMode,
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
-        activeClient: () => routeStateRef.current.activeClient,
-        selectedWorkspaceDisplay: () => routeStateRef.current.selectedWorkspaceDisplay,
-        restartLocalServer: async () => {
-          if (!isDesktopRuntime()) return false;
-          try {
-            await openworkServerRestart({
-              remoteAccessEnabled:
-                readOpenworkServerSettings().remoteAccessEnabled === true,
-            });
-            return true;
-          } catch {
-            return false;
-          }
-        },
-        createRemoteWorkspaceFlow: async () => false,
       }),
     [],
   );
@@ -1017,6 +959,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     void refreshConnectCapabilities({ force: true });
   }, [refreshConnectCapabilities]);
+  // Deleting or restoring a Library plugin can retire the connections it owns;
+  // re-read them so a deleted plugin's connector does not linger as its own row.
+  const refreshOrgMcpConnections = orgMcpConnections.refresh;
+  useEffect(() => {
+    const refresh = () => {
+      void refreshConnectCapabilities({ force: true });
+      void refreshOrgMcpConnections();
+    };
+    window.addEventListener(CLOUD_INVENTORY_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(CLOUD_INVENTORY_CHANGED_EVENT, refresh);
+  }, [refreshConnectCapabilities, refreshOrgMcpConnections]);
 
   const hasOpenWorkCloudProvider = useMemo(
     () =>
@@ -1024,8 +977,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isOpenWorkCloudProvider),
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
   );
-  const [openWorkModelsPromoHidden, setOpenWorkModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
   // Entitled = Den/import says OpenWork Models is included. Available = local
   // engine actually exposes selectable openwork models.
   const openWorkModelsEntitled = cloudSession.isSignedIn && hasOpenWorkCloudProvider;
@@ -1039,38 +990,58 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     workspaceReady: Boolean(selectedWorkspaceId && activeClient),
     reloadPending: providerAuthSnapshot.cloudProviderServerSync?.reloadPending === true,
   });
-  const showOpenWorkModelsSubscribe =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    !openWorkModelsPromoHidden;
-  const showOpenWorkModelsConnect =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    openWorkModelsPromoHidden;
-
+  const openProvidersInDen = useCallback(() => {
+    platform.openLink(new URL("/dashboard/gateway-providers", cloudSession.baseUrl).href);
+  }, [cloudSession.baseUrl, platform]);
+  const autoClient = isDesktopRuntime() && openworkServerSnapshot.openworkServerClient && isLoopbackOpenworkServerUrl(openworkServerSnapshot.openworkServerClient.baseUrl) ? openworkServerSnapshot.openworkServerClient : null;
+  const [autoPreferences, setAutoPreferences] = useState<DesktopFreePreferences | null>(null);
+  // Until an operator switches free Auto on, Settings shows no OpenWork Models row for it.
+  // Settings has no workspace context: read status from the same local client as preferences.
+  const { query: autoAccessQuery } = useAutoAccess(Boolean(autoPreferences), {
+    openworkServerClient: autoClient, workspaceId: selectedWorkspaceId ?? "",
+  });
+  const autoSwitchedOff = (autoAccessQuery.isPending && autoAccessQuery.fetchStatus !== "idle") || freeAutoSwitchedOff(autoAccessQuery.data);
+  const visibleAutoPreferences = autoSwitchedOff ? null : autoPreferences;
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [autoError, setAutoError] = useState<string | null>(null);
+  const autoGeneration = useRef(0);
   useEffect(() => {
-    const handlePromoChanged = () => setOpenWorkModelsPromoHidden(isOpenWorkModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
-
-  const dismissOpenWorkModelsPromo = useCallback(() => {
-    hideOpenWorkModelsPromo();
-    setOpenWorkModelsPromoHidden(true);
-  }, []);
-
-  const subscribeToOpenWorkModels = useCallback(() => {
-    providerAuthStore.closeProviderAuthModal();
-    const accountPath = selectedWorkspaceId
-      ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account")
-      : "/settings/cloud-account";
-    navigate(accountPath);
-    window.setTimeout(() => {
-      platform.openLink(getDenInferenceUrl(cloudSession.baseUrl));
-    }, 0);
-  }, [cloudSession.baseUrl, navigate, platform, providerAuthStore, selectedWorkspaceId]);
+    const generation = ++autoGeneration.current;
+    setAutoPreferences(null);
+    setAutoBusy(false);
+    setAutoError(null);
+    if (autoClient) void autoClient.desktopFreePreferences().then((value) => {
+      if (generation === autoGeneration.current) setAutoPreferences(value);
+    }).catch(() => {
+      if (generation === autoGeneration.current) setAutoError("Could not verify Auto on this device. Reopen settings to retry.");
+    });
+    return () => { autoGeneration.current++; };
+  }, [autoClient]);
+  const setAutoEnabled = useCallback(async (enabled: boolean) => {
+    if (!autoClient || autoBusy) return;
+    const generation = autoGeneration.current;
+    setAutoBusy(true);
+    setAutoError(null);
+    try {
+      const value = await autoClient.setDesktopFreeEnabled(enabled);
+      if (generation !== autoGeneration.current) return;
+      setAutoPreferences(value);
+      setDisabledProviders((current) => [...current.filter((id) => id !== "openwork-free"), ...(value.enabled ? [] : ["openwork-free"])]);
+      await providerAuthStore.refreshProviders({ force: true });
+      if (generation === autoGeneration.current && value.refresh === "deferred") setAutoError("Preference saved. Models will refresh when the current work finishes.");
+    } catch {
+      if (generation !== autoGeneration.current) return;
+      setAutoPreferences(null);
+      setAutoError("Could not verify the change to Auto. Check its state before retrying.");
+      try { const value = await autoClient.desktopFreePreferences(); if (generation === autoGeneration.current) setAutoPreferences(value); } catch {}
+    } finally {
+      if (generation === autoGeneration.current) setAutoBusy(false);
+    }
+  }, [autoClient, autoBusy, providerAuthStore]);
+  const organizationProviderIds = useMemo(() => new Set([
+    ...Object.values(providerAuthSnapshot.importedCloudProviders).map((provider) => provider.sourceProviderId),
+    ...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.providerId),
+  ]), [providerAuthSnapshot.importedCloudProviders, providerAuthSnapshot.cloudOrgProviders]);
 
   const handleOpenProviderAuth = useCallback(() => {
     if (providerAuthStore.isProviderAddRestricted()) {
@@ -1095,16 +1066,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         console.warn("[desktop-app-restrictions] failed to sync Zen restriction", error);
       });
   }, [activeClient, checkDesktopRestriction, providerAuthStore, selectedWorkspaceId, selectedWorkspaceRoot]);
-
-  const shareWorkspaceState = useShareWorkspaceState({
-    workspaces,
-    openworkServerHostInfo: openworkServerSnapshot.openworkServerHostInfo,
-    openworkServerSettings: openworkServerSnapshot.openworkServerSettings,
-    engineInfo: null,
-    exportWorkspaceBusy,
-    openLink: (url) => platform.openLink(url),
-    workspaceLabel,
-  });
 
   const debugViewProps = useDebugViewModel({
     developerMode,
@@ -1202,7 +1163,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     onLoadError: handleModelPickerLoadError,
     pendingProviders: gatewayConnectProviders,
     disabledProviders,
+    gatewayProviderIds,
     cloudProvidersEnabled: cloudSession.isSignedIn,
+    importedProviders: providerAuthSnapshot.importedCloudProviders,
   });
   const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
     const provider = local.prefs.defaultModel?.providerID.trim() ?? "";
@@ -1258,21 +1221,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, []);
 
   useEffect(() => {
-    if (!isDesktopRuntime() || !isMacPlatform()) return;
-    let cancelled = false;
-    void desktopBridge.checkComputerUsePermissions()
-      .then((result) => {
-        if (cancelled) return;
-        const permissions = normalizeComputerUsePermissions(result);
-        if (permissions) setComputerUsePermissions(permissions);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!openworkClient) {
       setUserEnvKeys([]);
       return;
@@ -1284,89 +1232,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return () => { cancelled = true; };
   }, [openworkClient]);
 
-  const installOpenAiImageExtension = useCallback(async (apiKey: string) => {
-    const resolvedApiKey = apiKey.trim();
-    if (!openworkClient) {
-      setImageExtensionError("OpenWork server is not connected.");
-      return;
-    }
-    if (!resolvedApiKey) {
-      setImageExtensionError("OpenAI API key is required.");
-      return;
-    }
-
-    setImageExtensionBusy(true);
-    setImageExtensionStatus(null);
-    setImageExtensionError(null);
-    try {
-      await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
-      setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
-      setImageExtensionStatus("Saved OPENAI_API_KEY. Agents can use OpenWork extension actions for image generation.");
-    } catch (error) {
-      setImageExtensionError(describeRouteError(error));
-    } finally {
-      setImageExtensionBusy(false);
-    }
-  }, [openworkClient]);
-
-  const generateOpenAiTestImage = useCallback(async (input: { apiKey: string; prompt: string }) => {
+  /** Writes a local provider patch, reloads the engine, and reports the outcome in the provider's settings. */
+  const applyLocalProviderPatch = useCallback(async (
+    patch: Parameters<OpenworkServerClient["patchConfig"]>[1],
+    done: { status: string; defaultModel?: { providerID: string; modelID: string } },
+  ) => {
     const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
-    const apiKey = input.apiKey.trim();
-    const prompt = input.prompt.trim();
-    if (!client || !workspaceId) {
-      setImageGenerationError("OpenWork server is not connected for this workspace.");
-      return;
-    }
-    if (!apiKey) {
-      setImageGenerationError("OpenAI API key is required.");
-      return;
-    }
-    if (!prompt) {
-      setImageGenerationError("Prompt is required.");
-      return;
-    }
-
-    setImageGenerationBusy(true);
-    setImageGenerationStatus(null);
-    setImageGenerationError(null);
-    try {
-      if (openworkClient) {
-        await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: apiKey }]);
-        setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
-      }
-      const response = await client.callExtensionAction({
-        extensionId: OPENAI_IMAGE_EXTENSION_ID,
-        action: "image_generate",
-        args: { prompt },
-        context: { directory: selectedWorkspaceRoot || undefined },
-      });
-      if (!response.ok) {
-        setImageGenerationError(response.message);
-        return;
-      }
-      const result = response.result;
-      const path = typeof result === "object" && result !== null && "path" in result && typeof result.path === "string"
-        ? result.path
-        : "an artifact";
-      setImageGenerationStatus(`Generated ${path} with ${OPENAI_IMAGE_MODEL}.`);
-    } catch (error) {
-      setImageGenerationError(describeRouteError(error));
-    } finally {
-      setImageGenerationBusy(false);
-    }
-  }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
-
-  const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
-    const workspaceId = runtimeWorkspaceId?.trim() ?? "";
-    const modelId = input.modelId.trim();
     if (!client || !workspaceId) {
       setLocalProviderError("OpenWork server is not connected for this workspace.");
-      return;
-    }
-    if (!modelId) {
-      setLocalProviderError("Model ID is required.");
       return;
     }
 
@@ -1374,19 +1248,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setLocalProviderStatus(null);
     setLocalProviderError(null);
     try {
-      await client.patchConfig(workspaceId, {
-        opencode: {
-          provider: {
-            [input.providerId]: buildLocalProviderConfig({ ...input, modelId }),
-          },
-        },
-      });
-      if (input.setDefault) {
-        local.setPrefs((previous) => ({
-          ...previous,
-          defaultModel: { providerID: input.providerId, modelID: modelId },
-          modelVariant: null,
-        }));
+      await client.patchConfig(workspaceId, patch);
+      const defaultModel = done.defaultModel;
+      if (defaultModel) {
+        local.setPrefs((previous) => ({ ...previous, defaultModel, modelVariant: null }));
       }
       reloadCoordinator.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
       try {
@@ -1400,13 +1265,36 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       } catch {
         // ignore browser event dispatch failures
       }
-      setLocalProviderStatus(`Added ${input.name} with ${modelId}.`);
+      setLocalProviderStatus(done.status);
     } catch (error) {
       setLocalProviderError(describeRouteError(error));
     } finally {
       setLocalProviderBusy(false);
     }
   }, [local, openworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+
+  const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
+    const modelId = input.modelId.trim();
+    if (!modelId) {
+      setLocalProviderError("Model ID is required.");
+      return;
+    }
+    await applyLocalProviderPatch(buildLocalProviderInstallPatch({ ...input, modelId }), {
+      status: `Added ${input.name} with ${modelId}.`,
+      ...(input.setDefault ? { defaultModel: { providerID: input.providerId, modelID: modelId } } : {}),
+    });
+  }, [applyLocalProviderPatch]);
+
+  const syncLocalProvider = useCallback(async (input: LocalProviderSyncInput) => {
+    if (input.models.length === 0) {
+      setLocalProviderError(`${input.name} has no models to sync.`);
+      return;
+    }
+    const count = input.models.length;
+    await applyLocalProviderPatch(buildLocalProviderSyncPatch(input), {
+      status: `Synced ${count} model${count === 1 ? "" : "s"} from ${input.name}.`,
+    });
+  }, [applyLocalProviderPatch]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
@@ -1517,7 +1405,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           if (!endpoint) {
             return { workspaceId: workspace.id, sessions: [], error: null as string | null };
           }
-          if (!endpoint.isRemote && !serverWorkspaceIds.has(workspace.id)) {
+          if (!serverWorkspaceIds.has(workspace.id)) {
             return { workspaceId: workspace.id, sessions: [], error: null as string | null };
           }
           try {
@@ -1526,7 +1414,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               retryDelaysMs: [250, 750, 1_500],
             });
             const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-            const items = workspaceRoot && !endpoint.isRemote
+            const items = workspaceRoot
               ? response.filter((session) =>
                   normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
                 )
@@ -1539,15 +1427,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             };
           } catch (error) {
             const fallback = error instanceof Error ? error.message : t("app.unknown_error");
-            if (workspace.workspaceType === "remote") {
-              const connectionState = await diagnoseRemoteWorkspaceTaskLoadFailure(workspace, fallback);
-              return {
-                workspaceId: workspace.id,
-                sessions: [],
-                error: connectionState.message ?? "Remote worker connection failed.",
-                connectionState,
-              };
-            }
             return {
               workspaceId: workspace.id,
               sessions: [],
@@ -1646,7 +1525,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return reloadCoordinator.registerWorkspaceReloadControls({
       workspaceId: selectedWorkspace?.id || selectedWorkspaceId || "",
       applyLiveChanges: async () => {
-        if (selectedWorkspace?.workspaceType === "remote") return false;
         const status = await openworkClient?.getEngineV2PreviewStatus();
         if (!status?.enabled || !status.chatRouting) return false;
         await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
@@ -1705,84 +1583,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return changed ? next : current;
     });
   }, [workspaces]);
-
-  const handleRemoteWorkspaceConnectionSaved = useCallback(
-    async (workspaceId: string) => {
-      delete remoteWorkspaceCheckRunRef.current[workspaceId];
-      setWorkspaceConnectionOverrides((current) => {
-        const next = { ...current };
-        delete next[workspaceId];
-        return next;
-      });
-      setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
-      await refreshRouteState();
-    },
-    [refreshRouteState],
-  );
-
-  const remoteWorkspaceConnectionEditor = useRemoteWorkspaceConnectionEditor({
-    workspaces,
-    client: openworkClient,
-    onSaved: handleRemoteWorkspaceConnectionSaved,
-  });
-
-  const runRemoteWorkspaceConnectionCheck = useCallback(
-    async (workspaceId: string, mode: "test" | "recover") => {
-      const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
-      if (!workspace || workspace.workspaceType !== "remote") return false;
-      const connectionKey = getRemoteWorkspaceConnectionKey(workspace);
-      remoteWorkspaceCheckRunCounterRef.current += 1;
-      const runId = String(remoteWorkspaceCheckRunCounterRef.current);
-      remoteWorkspaceCheckRunRef.current[workspaceId] = runId;
-
-      setWorkspaceConnectionOverrides((current) => ({
-        ...current,
-        [workspaceId]: {
-          status: "connecting",
-          message: t("config.testing_connection"),
-          checkedAt: null,
-        },
-      }));
-
-      const result = await testRemoteWorkspaceConnection(workspace);
-      const currentWorkspace = workspacesRef.current.find((item) => item.id === workspaceId);
-      if (
-        remoteWorkspaceCheckRunRef.current[workspaceId] !== runId ||
-        !currentWorkspace ||
-        getRemoteWorkspaceConnectionKey(currentWorkspace) !== connectionKey
-      ) {
-        if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
-          delete remoteWorkspaceCheckRunRef.current[workspaceId];
-        }
-        return false;
-      }
-      setWorkspaceConnectionOverrides((current) => ({
-        ...current,
-        [workspaceId]: result.state,
-      }));
-
-      if (!result.ok) {
-        setErrorsByWorkspaceId((current) => ({
-          ...current,
-          [workspaceId]: result.state.message ?? "Remote worker connection failed.",
-        }));
-        if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
-          delete remoteWorkspaceCheckRunRef.current[workspaceId];
-        }
-        return false;
-      }
-
-      setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
-      if (mode === "recover") {
-        await refreshRouteState();
-      }
-      if (remoteWorkspaceCheckRunRef.current[workspaceId] === runId) {
-        delete remoteWorkspaceCheckRunRef.current[workspaceId];
-      }
-      return true;
-    },
-    [refreshRouteState],
-  );
 
   useEffect(() => {
     if (openworkClient) {
@@ -1968,12 +1768,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     color: workspaceSwatchColor(workspace.id),
   }));
   const selectedWorkspaceColor = workspaceSwatchColor(selectedWorkspaceId);
-  const workspaceType = selectedWorkspace?.workspaceType ?? "local";
-  const isRemoteWorkspace = workspaceType === "remote";
-  const canWriteWorkspacePlugins =
-    !isRemoteWorkspace || openworkServerSnapshot.openworkServerCanWritePlugins;
-  const pluginsAccessHint =
-    isRemoteWorkspace && !canWriteWorkspacePlugins ? t("app.plugins_hint_readonly") : null;
   const defaultModelLabel = local.prefs.defaultModel
     ? (() => {
         const provider = providers.find((item) => item.id === local.prefs.defaultModel?.providerID);
@@ -2008,6 +1802,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }]
       : [],
   );
+  // Disconnect hides built-in/config providers through disabled_providers, and
+  // the engine then omits them everywhere. List them so they can come back.
+  const hiddenProviders = [...new Set(disabledProviders.map((id) => id.trim()).filter(Boolean))].flatMap((id) =>
+    isDesktopProviderBlocked({ providerId: id, checkRestriction: checkDesktopRestriction })
+      ? []
+      : [{ id, name: providers.find((provider) => provider.id === id)?.name ?? PROVIDER_LABELS[id.toLowerCase()] ?? id }],
+  );
   const openworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "openwork-cloud",
   )?.config.url ?? null;
@@ -2017,22 +1818,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const mcpConfigured = new Set(connectionsSnapshot.mcpServers.map((s) => s.name));
     const connectedProviders = new Set(providerConnectedIds);
     const configuredEnvKeys = new Set(userEnvKeys);
-    const loadedPlugins = new Set<string>();
-    // Browser plugin detection: check if any configured plugin matches the chrome-devtools name.
-    // For now, treat it as loaded if the plugin is in the MCP/plugin list — this will
-    // be refined when we add a real plugin-loaded signal from the engine.
-    const browserPluginConfigured = connectionsSnapshot.mcpServers.some(
-      (s) => s.name === "opencode-chrome-devtools" || s.config.command?.some((c: string) => c.includes("chrome-devtools")),
-    );
-    if (browserPluginConfigured) loadedPlugins.add("opencode-chrome-devtools");
 
     return {
       mcpStatuses: connectionsSnapshot.mcpStatuses,
       mcpConfigured,
-      loadedPlugins,
       connectedProviders,
       configuredEnvKeys,
-      permissions: computerUsePermissions ?? undefined,
       // Toggle state reader for extensions with defaultEnabled / explicit toggle.
       isToggleEnabled: (ref: string) => {
         const catalog = connectionsStore.quickConnect;
@@ -2040,16 +1831,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return match ? isOpenWorkExtensionEnabled(match) : false;
       },
     };
-  }, [computerUsePermissions, connectionsSnapshot, extensionStateVersion, providerConnectedIds, userEnvKeys]);
+  }, [connectionsSnapshot, extensionStateVersion, providerConnectedIds, userEnvKeys]);
   const allowManageExtensions = !checkDesktopRestriction({ restriction: "allowManageExtensions" });
   const builtInExtensionsDisabled = checkDesktopRestriction({ restriction: "allowBuiltInExtensions" });
   const restartExtensionLocalServer = useCallback(async () => {
     if (!isDesktopRuntime()) return false;
     try {
-      await openworkServerRestart({
-        remoteAccessEnabled:
-          readOpenworkServerSettings().remoteAccessEnabled === true,
-      });
+      await openworkServerRestart();
       await openworkServerStore.reconnectOpenworkServer();
       await refreshRouteState();
       return true;
@@ -2061,30 +1849,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
     hostOpenworkServerClient: openworkClient,
     enablementContext,
-    mcpServers: connectionsSnapshot.mcpServers,
-    mcpConnectingName: connectionsSnapshot.mcpConnectingName,
-    onComputerUsePermissionsChange: setComputerUsePermissions,
     restartLocalServer: restartExtensionLocalServer,
-    connectMcp: async (entry) => {
-      const result = await connectionsStore.connectMcp(entry);
-      if (!result.ok) throw new Error(result.error);
-    },
-    refreshMcpServers: () => connectionsStore.refreshMcpServers(),
-    providers,
-    providerConnectedIds,
-    userEnvKeys,
-    imageExtension: {
-      busy: imageExtensionBusy || imageGenerationBusy,
-      status: imageExtensionStatus ?? imageGenerationStatus,
-      error: imageExtensionError ?? imageGenerationError,
-      onInstall: installOpenAiImageExtension,
-      onTestGenerate: generateOpenAiTestImage,
-    },
     localProvider: {
       busy: localProviderBusy,
       status: localProviderStatus,
       error: localProviderError,
       onInstall: installLocalProvider,
+      onSync: syncLocalProvider,
     },
   });
   const extensionCatalogPlatform = resolveOpenWorkExtensionCatalogPlatform(platform.platform, platform.os);
@@ -2145,24 +1916,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     error: orgMcpConnections.error,
   });
   const diagnosticsClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
-  const diagnosticsWorkspaceAllowed = isAgentContextDiagnosticsWorkspaceAllowed(selectedWorkspace);
   const diagnosticsAvailable = Boolean(
     diagnosticsClient
     && runtimeWorkspaceId?.trim()
-    && diagnosticsWorkspaceAllowed,
+    && selectedWorkspace,
   );
-  const diagnosticsUnavailableReason = selectedWorkspace?.workspaceType === "remote"
-    && selectedWorkspace.remoteType !== "openwork"
-    ? "direct-remote-opencode" as const
-    : null;
-  const diagnosticsWorkspaceType = selectedWorkspace?.workspaceType === "remote"
-    ? selectedWorkspace.remoteType ?? "legacy-opencode"
-    : "local";
   const diagnosticsScopeKey = useMemo(() => createOpaqueDiagnosticsScopeKey({
     client: diagnosticsClient,
     workspaceCredential: selectedWorkspaceEndpoint?.token ?? token,
     workspaceId: runtimeWorkspaceId?.trim() ?? "",
-    workspaceType: diagnosticsWorkspaceType,
+    workspaceType: "local",
     denBaseUrl: cloudSession.baseUrl,
     denCredential: cloudSession.authToken,
     denSignedIn: cloudSession.isSignedIn,
@@ -2175,7 +1938,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     cloudSession.isSignedIn,
     cloudSession.user?.id,
     diagnosticsClient,
-    diagnosticsWorkspaceType,
     runtimeWorkspaceId,
     selectedWorkspaceEndpoint?.token,
     token,
@@ -2187,14 +1949,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       !client
       || !workspaceId
       || !selectedWorkspace
-      || !isAgentContextDiagnosticsWorkspaceAllowed(selectedWorkspace)
     ) {
       throw new Error("Agent diagnostics require a connected workspace.");
     }
     const observations = await collectAgentContextDiagnosticObservations({
       organizationConnections: orgMcpConnections.connections,
       organizationConnectionsProbe,
-      workspaceType: selectedWorkspace.workspaceType,
     });
     return client.runAgentContextDiagnostics(workspaceId, observations);
   }, [
@@ -2240,7 +2000,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const workspacePaths = Array.from(
       new Set(
         workspaces.flatMap((workspace) => {
-          const path = workspace.workspaceType !== "remote" ? workspace.path?.trim() ?? "" : "";
+          const path = workspace.path?.trim() ?? "";
           return path ? [path] : [];
         }),
       ),
@@ -2253,7 +2013,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       preferSidecar: true,
       runtime: "direct",
       workspacePaths,
-      openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
       // The user env file is read when the local server process spawns, so a
       // healthy engine must be replaced, not reused, for new values to apply.
       forceRestart: true,
@@ -2319,23 +2078,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (!path || !isDesktopRuntime()) return;
     await revealDesktopItemInDir(path).catch(() => undefined);
   }, [workspaces]);
-
-  const handleExportWorkspaceConfig = useCallback(async (workspaceId: string) => {
-    const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
-    if (!workspace) return;
-    const endpoint = workspaceServerClientResolver(workspace);
-    if (endpoint) {
-      setExportWorkspaceBusy(true);
-      try {
-        const payload = await endpoint.client.exportWorkspace(endpoint.workspaceId);
-        downloadWorkspaceJson(workspaceExportFilename(workspace), payload);
-      } finally {
-        setExportWorkspaceBusy(false);
-      }
-      return;
-    }
-    throw new Error("OpenWork server is unavailable. Reconnect the server before exporting workspace config.");
-  }, [workspaceServerClientResolver, workspaces]);
 
   const handleForgetWorkspace = useCallback(async (workspaceId: string) => {
     if (typeof window !== "undefined") {
@@ -2416,7 +2158,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               openworkServerCapabilities={routeOpenworkCapabilities}
               runtimeWorkspaceId={runtimeWorkspaceId}
               selectedWorkspaceRoot={selectedWorkspaceRoot}
-              activeWorkspaceType={workspaceType}
               onConfigUpdated={() => {
                 setConfigActionStatus(t("settings.config_updated"));
                 setPermissionsRefreshToken((token) => token + 1);
@@ -2424,7 +2165,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 void connectionsStore.refreshMcpServers();
               }}
             />
-            <BrowserLoginsPanel />
           </SettingsStack>
         );
       case "ai":
@@ -2452,7 +2192,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             canDisconnectProvider={(provider) =>
               provider.id.trim().toLowerCase() === "opencode" || provider.source !== "env"
             }
+            disabledProviders={activeClient ? hiddenProviders : []}
+            enablingProviderId={enablingProviderId}
+            onEnableProvider={async (providerId) => {
+              setEnablingProviderId(providerId);
+              try {
+                const message = await providerAuthStore.enableProvider(providerId);
+                if (message.trim()) setConfigActionStatus(message);
+              } catch {
+                // The store publishes the error as providerAuthError.
+              } finally {
+                setEnablingProviderId(null);
+              }
+            }}
             canAddProviders={!providerAuthStore.isProviderAddRestricted()}
+            signedIn={cloudSession.isSignedIn}
             organizationName={cloudSession.activeOrgName}
             cloudProviderIds={new Set([
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
@@ -2461,21 +2215,29 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             gatewayProviderIds={gatewayProviderIds}
             gatewayConnectProviders={gatewayConnectProviders}
             connectingGatewayProviderId={connectingGatewayProviderId}
-            onOpenModelConnections={cloudSession.isSignedIn ? () => { void platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString()); } : undefined}
             onCancelGatewayConnect={() => {
               gatewayConnectAbort.current?.abort();
               setConnectingGatewayProviderId(null);
               toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
             }}
             onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
-            showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
-            showOpenWorkModelsConnect={showOpenWorkModelsConnect}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
-            onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
-            onDismissOpenWorkModels={dismissOpenWorkModelsPromo}
+            autoPreferences={visibleAutoPreferences}
+            autoSwitchedOff={autoSwitchedOff}
+            autoBusy={autoBusy}
+            autoError={autoError}
+            onSetAutoEnabled={autoClient ? setAutoEnabled : undefined}
+            organizationProviderIds={organizationProviderIds}
+            onOpenDen={openProvidersInDen}
             cloudProvidersView={
               <CloudProvidersView
+                key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id ?? "signed-out"}`}
                 embedded
+                onOpenDen={openProvidersInDen}
+                onOpenModelConnections={() => { void platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString()); }}
+                gatewayConnectProviders={gatewayConnectProviders}
+                connectingGatewayProviderId={connectingGatewayProviderId}
+                onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
                 checkDesktopAppRestriction={checkDesktopRestriction}
                 cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
                 connectCloudProvider={providerAuthStore.connectCloudProvider}
@@ -2501,6 +2263,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             status={localProviderStatus}
             error={localProviderError}
             onInstall={installLocalProvider}
+            onSync={syncLocalProvider}
           />
         );
       case "preferences":
@@ -2534,10 +2297,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             busy={busy}
             hideDescription={props.standaloneExtensions !== true}
             selectedWorkspaceRoot={selectedWorkspaceRoot}
-            isRemoteWorkspace={isRemoteWorkspace}
-            canEditPlugins={canWriteWorkspacePlugins && allowManageExtensions}
-            canUseGlobalScope={!isRemoteWorkspace}
-            accessHint={allowManageExtensions ? pluginsAccessHint : desktopRestrictionNotice("allowManageExtensions")}
+            canEditPlugins={allowManageExtensions}
+            canUseGlobalScope
+            accessHint={allowManageExtensions ? null : desktopRestrictionNotice("allowManageExtensions")}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
             initialSection={route.extensionsSection}
@@ -2568,8 +2330,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 onOpenCloudAccount={() => navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account") : "/settings/cloud-account")}
                 busy={busy}
                 selectedWorkspaceRoot={selectedWorkspaceRoot}
-                isRemoteWorkspace={isRemoteWorkspace}
-                mcpServers={connectionsSnapshot.mcpServers}
+                    mcpServers={connectionsSnapshot.mcpServers}
                 mcpStatus={connectionsSnapshot.mcpStatus}
                 mcpLastUpdatedAt={connectionsSnapshot.mcpLastUpdatedAt}
                 mcpStatuses={connectionsSnapshot.mcpStatuses}
@@ -2610,14 +2371,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 orgMcpError={orgMcpConnections.error}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
+                hasLocalPluginCopy={(pluginId) => Boolean(extensionsSnapshot.importedCloudPlugins[pluginId])}
                 orgMcpConnectingId={orgMcpConnections.connectingId}
                 connectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
                 reconnectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId, { forceFreshAuthorization: true }); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={readLibrarySkill}
-                previewClaudePlugin={(url) => extensionsStore.previewClaudePlugin(url)}
-                installClaudePlugin={(url) => extensionsStore.installClaudePlugin(url)}
                 createLibraryItem={(kind, input) => extensionsStore.createLibraryItem(kind, input)}
                 onLibraryListsRefresh={loadLibraryLists}
                 initialFilter={initialFilter}
@@ -2683,19 +2443,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }}
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
-              getEngineV2PreviewStatus={async () => {
-                if (!openworkClient) throw new Error("OpenWork server is not connected.");
-                return openworkClient.getEngineV2PreviewStatus();
-              }}
-              setEngineV2PreviewEnabled={async (enabled) => {
-                if (!openworkClient) throw new Error("OpenWork server is not connected.");
-                return openworkClient.setEngineV2PreviewEnabled(enabled);
-              }}
-              setEngineV2PreviewChatRouting={async (enabled) => {
-                if (!openworkClient) throw new Error("OpenWork server is not connected.");
-                return openworkClient.setEngineV2PreviewChatRouting(enabled);
-              }}
               organizationServer={denSession}
+              engineClient={openworkClient}
             />
             {platform.capabilities.localRuntimeControl ? (
               <RecoveryView
@@ -2733,6 +2482,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             toggleHideTitlebar={() => setHideTitlebar((current) => !current)}
           />
         );
+      case "shortcuts":
+        return (
+          <KeyboardShortcutsView
+            client={opencodeClient}
+            baseUrl={opencodeBaseUrl}
+            directory={selectedWorkspaceRoot}
+            onOpenProviders={() => navigateSettingsPath("ai")}
+          />
+        );
       case "updates":
         return (
           <UpdatesView
@@ -2763,8 +2521,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <EnvironmentView
             client={openworkServerSnapshot.openworkServerClient}
-            isRemoteWorkspace={isRemoteWorkspace}
-            onApplyChanges={isDesktopRuntime() && !isRemoteWorkspace ? handleApplyEnvironmentChanges : undefined}
+            onApplyChanges={isDesktopRuntime() ? handleApplyEnvironmentChanges : undefined}
             applyBlocked={activeReloadBlockingSessions.length > 0}
             applyBlockedReason={
               activeReloadBlockingSessions.length > 0
@@ -2788,7 +2545,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             agentContextDiagnostics={{
               scopeKey: diagnosticsScopeKey,
               available: diagnosticsAvailable,
-              unavailableReason: diagnosticsUnavailableReason,
               onRun: runAgentContextDiagnostics,
             }}
           />
@@ -2833,6 +2589,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       )}
 
       <CommandPalette
+        engineClient={openworkClient}
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         developerMode={developerMode}
@@ -2865,6 +2622,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           modelPicker.setRecentProviderIds(new Set());
           window.requestAnimationFrame(() => modelPicker.setOpen(true));
         }}
+        modelOptions={modelPicker.actionOptions}
+        selectedModel={local.prefs.defaultModel ?? undefined}
+        selectedModelBehavior={local.prefs.modelVariant ?? null}
+        onSelectModel={(next, behavior) => local.setPrefs((prev) => applyDefaultModelPreference(prev, next, behavior))}
         sessions={paletteSessionOptions}
         extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
       />
@@ -2875,7 +2636,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         submitting={providerAuthSnapshot.providerAuthBusy}
         error={providerAuthSnapshot.providerAuthError}
         preferredProviderId={providerAuthSnapshot.providerAuthPreferredProviderId}
-        workerType={providerAuthSnapshot.providerAuthWorkerType}
         // Hide any provider the org blocks at the desktop layer so users
         // can't connect a forbidden one (dev #1505). Same helper covers
         // opencode-provider gating via the `allowZenModel` restriction.
@@ -2890,6 +2650,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }),
         )}
         connectedProviderIds={providerConnectedIds}
+        keylessProviderIds={keylessProviderIds(providers)}
         gatewayProviderIds={gatewayProviderIds}
         authMethods={Object.fromEntries(
           Object.entries(providerAuthSnapshot.providerAuthMethods).filter(
@@ -2904,8 +2665,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
-        onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
+        openWorkModelsState={visibleAutoPreferences ? !visibleAutoPreferences.enabled ? "off" : visibleAutoPreferences.available ? "included" : "unavailable" : undefined}
+        organizationName={cloudSession.activeOrgName}
+        organizationProviderIds={organizationProviderIds}
+        organizationProviderCount={cloudSession.isSignedIn ? new Set([...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.id), ...Object.keys(providerAuthSnapshot.importedCloudProviders), ...gatewayConnectProviders.map((provider) => provider.cloudProviderId)]).size : undefined}
+        onOpenDen={cloudSession.isSignedIn ? openProvidersInDen : undefined}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
       />
       <RenameWorkspaceModal
@@ -2921,43 +2685,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSave={() => void handleSaveRenameWorkspace()}
         onTitleChange={setRenameWorkspaceTitle}
       />
-      {shareWorkspaceState.shareWorkspaceOpen ? (
-        <ShareWorkspaceModal
-          open
-          onClose={shareWorkspaceState.closeShareWorkspace}
-          workspaceName={shareWorkspaceState.shareWorkspaceName}
-          workspaceDetail={shareWorkspaceState.shareWorkspaceDetail}
-          fields={shareWorkspaceState.shareFields}
-          note={shareWorkspaceState.shareNote}
-          onExportConfig={
-            shareWorkspaceState.exportDisabledReason === null
-              ? () => {
-                  const id = shareWorkspaceState.shareWorkspaceId;
-                  if (!id) return;
-                  void handleExportWorkspaceConfig(id);
-                }
-              : undefined
-          }
-          exportDisabledReason={shareWorkspaceState.exportDisabledReason}
-        />
-      ) : null}
-      <CreateRemoteWorkspaceModal
-        open={remoteWorkspaceConnectionEditor.workspace !== null}
-        onClose={remoteWorkspaceConnectionEditor.close}
-        onConfirm={(input) => void remoteWorkspaceConnectionEditor.save(input)}
-        initialValues={remoteWorkspaceConnectionEditor.initialValues}
-        submitting={remoteWorkspaceConnectionEditor.busy}
-        error={remoteWorkspaceConnectionEditor.error}
-        title={t("dashboard.edit_remote_workspace_title")}
-        subtitle={t("dashboard.edit_remote_workspace_subtitle")}
-        confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
-      />
       <ConnectionsModals
         client={activeClient}
         projectDir={selectedWorkspaceRoot}
         reloadBlocked={activeReloadBlockingSessions.length > 0}
         activeSessions={activeReloadBlockingSessions}
-        isRemoteWorkspace={selectedWorkspace?.workspaceType === "remote"}
         onForceStopSession={async (sessionId) => {
           if (!activeClient) return;
           await abortSessionSafe(activeClient, sessionId, undefined, {
@@ -2978,7 +2710,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       />
       <ModelPickerModal
         open={modelPicker.open}
-        options={modelPicker.displayOptions}
+        options={modelPicker.options}
+        knownOptions={modelPicker.knownOptions}
         disabledProviders={disabledProviders}
         gatewayProviderIds={gatewayProviderIds}
         gatewayConnectProviders={gatewayConnectProviders}
@@ -2991,17 +2724,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           local.prefs.defaultModel ?? { providerID: "", modelID: "" }
         }
         onSelect={(next: ModelRef) => {
-          local.setPrefs((prev) => ({
-            ...prev,
-            defaultModel: next,
-            modelVariant: prev.defaultModel?.providerID === next.providerID && prev.defaultModel.modelID === next.modelID
-              ? prev.modelVariant
-              : null,
-          }));
+          local.setPrefs((prev) => applyDefaultModelPreference(prev, next));
           modelPicker.setOpen(false);
         }}
         onBehaviorChange={(_model, value) => local.setPrefs((previous) => ({ ...previous, modelVariant: value }))}
-        onOpenSettings={() => {}}
+        catalogState={modelPicker.catalogState}
+        onRefreshOrganizationModels={async () => { await providerAuthStore.refreshCloudOrgProviders({ force: true }); }}
+        onOpenSettings={() => { modelPicker.setOpen(false); navigateSettingsPath("ai"); }}
+        onOpenProviderSettings={() => navigateSettingsPath("ai")}
         onClose={() => modelPicker.setOpen(false)}
       />
     </GatewayModelAccessProvider>

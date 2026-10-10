@@ -559,14 +559,6 @@ linkTest("a member opens transcript links in their saved destination and can ove
     const closed = await menuOpen(false);
     expect(closed.last).toMatchObject({ selectedId: id });
   };
-  // The one-time login sync offer squeezes the narrow browser panel; clear it so
-  // screenshots show the tab strip and address bar instead of wrapped banner text.
-  const dismissLoginSyncOffer = async () => {
-    if ((await probe.dom('[data-testid="login-sync-not-now"]')).elements.length === 0) return;
-    await user.click({ role: "button", label: "Not now" });
-    await user.notSee({ role: "button", label: "Set up sync" });
-  };
-
   await step("the first left-click has Don't ask again checked and Escape opens nothing", async () => {
     await user.click(link);
     await user.see(chooser);
@@ -720,7 +712,6 @@ linkTest("a member opens transcript links in their saved destination and can ove
       `OpenWork tabs ${browserBefore.tabs.length} → ${state.tabs.length}; new tab URL ${openedTab?.url} belongs to "${world.reading.title}"; external browser opens: 0; askBeforeOpeningLinks remains true`,
       true,
     );
-    await dismissLoginSyncOffer();
     await user.screenshot();
     if (!state.activeTabId) throw new Error("The manual link did not select a tab.");
     return state.activeTabId;
@@ -859,7 +850,6 @@ linkTest("a member opens transcript links in their saved destination and can ove
       `OpenWork tabs ${before.tabs.length} → ${after.tabs.length}; new tab URL ${added?.url} belongs to "${world.reading.title}"; external browser opens still ${opens.length}; saved default still ${String(saved)}`,
       true,
     );
-    await dismissLoginSyncOffer();
     await user.screenshot();
   });
 

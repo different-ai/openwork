@@ -1,13 +1,16 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isSamePathname } from "../_lib/client-route";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 import { OnboardingTexture } from "./onboarding-texture";
+import { McpAppFact, McpStoryTiles, mcpStoryCopy } from "../../mcp/mcp-story";
+import { useMcpClient } from "../../mcp/use-mcp-client";
 import { SetupFrame } from "./setup-frame";
+import { SetupFacts, SetupPanelBody } from "./setup-frame-parts";
 import { TemporaryAuthNotice } from "./temporary-auth-notice";
 
 function SessionStatusPanel({ mode }: { mode: "checking" | "redirecting" }) {
@@ -45,7 +48,7 @@ function SessionStatusPanel({ mode }: { mode: "checking" | "redirecting" }) {
   );
 }
 
-export function AuthScreen() {
+export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const routingRef = useRef(false);
@@ -75,6 +78,10 @@ export function AuthScreen() {
       });
   }, [hasResolvedSession, pathname, resolveUserLandingRoute, router]);
 
+  if (agentSignIn) {
+    return <AgentSignInScreen status={!runtimeConfigLoaded || !sessionHydrated ? "checking" : hasResolvedSession ? "redirecting" : null} />;
+  }
+
   return (
     <SetupFrame
       step="account"
@@ -94,6 +101,46 @@ export function AuthScreen() {
               <AuthPanel bare emailFirstFlow />
             </div>
           )}
+        </div>
+      </div>
+    </SetupFrame>
+  );
+}
+
+/**
+ * Sign-up while an agent waits (A7): the story names the app that asked, and
+ * the panel keeps "Signing in for" above the sign-in so the person never
+ * loses track of why they are here.
+ */
+function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | null }) {
+  const [oauthQuery, setOauthQuery] = useState("");
+  useEffect(() => {
+    setOauthQuery(window.location.search.replace(/^\?/, ""));
+  }, []);
+  const client = useMcpClient(oauthQuery);
+  const story = mcpStoryCopy(client);
+  return (
+    <SetupFrame
+      title={story.title}
+      description={story.description}
+      aside={<McpStoryTiles client={client} workspaceName={null} />}
+      panelVisual={<OnboardingTexture />}
+    >
+      <div data-testid="auth-landing-frame">
+        <div data-testid="auth-landing-form">
+          <SetupPanelBody>
+            <SetupFacts rows={[{ label: "Signing in for", value: <McpAppFact client={client} /> }]} />
+            {status ? (
+              <SessionStatusPanel mode={status} />
+            ) : (
+              <AuthPanel
+                bare
+                emailFirstFlow
+                socialFirst
+                emailStepContent={{ title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }}
+              />
+            )}
+          </SetupPanelBody>
         </div>
       </div>
     </SetupFrame>

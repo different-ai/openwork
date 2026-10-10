@@ -1,75 +1,138 @@
 ---
 title: "Desktop policies"
-description: "Use OpenWork Cloud to control desktop app capabilities for members and teams."
+description: "Choose what the OpenWork desktop app lets members and teams do, from OpenWork Cloud."
+keywords: ["desktop policy", "desktop policies", "team access", "app permissions", "restricted mode", "approved websites", "block websites", "block commands", "lock down desktop app", "custom providers", "enterprise controls"]
 ---
 
-Desktop policies let organization owners and admins manage what the OpenWork desktop app allows after a member signs in to Cloud. Policies can apply to the whole organization through the default policy, or to specific members and teams through assigned policies. Policies can also provide [team prompt cards](/cloud/share-with-your-team/team-prompt-cards). The desktop app caches the effective policy, applies it on reload, and refreshes it when the active Cloud organization changes, the Cloud account changes, or the hourly desktop-config refresh runs.
+Desktop policies are rules you set in OpenWork Cloud for the OpenWork desktop app. They apply to members after they sign in to your organization. You can set a default for everyone, give specific members or teams their own policy, and choose what each team can do from the team's **Access** tab.
+
+<Warning>
+**Most desktop policy controls are paused while they are redesigned.** You can still create and save policies and team access settings in Cloud, but the desktop app doesn't apply most of them yet.
+
+The desktop app applies these today:
+
+- **Model access**: whether members can add their own AI providers. Set it in **AI Gateway › AI Providers › Who can use models**. Choose **Only models you provide** to limit members to your organization's models. The **Custom providers** switch in a policy and **Add AI providers** on a team's **Access** tab also affect model access.
+- **Organization prompt suggestions**: see [Team prompt cards](/cloud/share-with-your-team/team-prompt-cards).
+- **Required sign-in**: this depends on how your organization's desktop app is installed, not on a policy.
+- **Allowed Desktop Versions**: set it in **Settings › General**.
+
+Everything else is saved but not applied. This includes the other switches (including **Welcome Page**), **Restricted** mode, computer-command rules, approved websites and other browsing limits, and blocking uploads and form submissions. Don't rely on these to block anything today.
+</Warning>
+
+## Who can manage policies
+
+- The owner can create, edit, and delete policies, and change team access. Enterprise organizations can give this to admins or a team with Permissions.
+- Admins can view policies and team access, but can't change them.
+- Desktop policy management is part of the Enterprise plan.
 
 ## What policies control
 
-Current desktop policy keys map to concrete product capabilities:
+Each switch in the policy editor is designed to control one part of the desktop app. Apart from **Custom providers**, they don't take effect yet.
 
-- `Custom providers`: allow or block locally added model providers that were not deployed through OpenWork Cloud.
-- `Enable OpenCode Zen Models`: allow or block built-in OpenCode models.
-- `Multiple workspaces`: allow or block creating or configuring more than one local workspace.
-- `Control Settings`: allow or block desktop settings. When blocked, the desktop app hides every settings page except the Cloud account page, and hides the settings shortcuts in the command palette and account menu. Members can still see their account, switch organizations, and log out.
-- `Manage Extensions`: allow or block installing and managing local extensions and MCP servers. When blocked, the Library hides the workspace MCP and GitHub import flows and marks third-party directory entries as `Disabled by organization`; organization-approved skills, connections, and built-in OpenWork extensions still work.
-- `Built-in Extensions`: allow or block OpenWork-provided built-in extensions, including browser, image, and local-provider extensions.
-- `Alpha updates`: allow or block opting into experimental Alpha desktop updates.
-- `Welcome Page`: show or hide the getting-started page for new users.
+- **Custom providers**: adding and using models your organization didn't set up in OpenWork Cloud.
+- **Enable OpenCode Zen Models**: using the built-in models from OpenCode.
+- **Multiple workspaces**: creating more than one workspace on a computer.
+- **Control Settings**: opening and changing the desktop app's settings.
+- **Manage Extensions**: installing local extensions, skills, and MCP servers.
+- **Built-in Extensions**: using OpenWork's built-in extensions, such as the browser, image, and local-provider extensions.
+- **Alpha updates**: choosing to get experimental Alpha updates.
+- **Welcome Page**: showing the Getting Started page to new users.
 
-Legacy desktop policies combine grants from the default policy and every assigned policy: any grant can allow a capability. Explicit Team Access blocks are applied afterward and take precedence over those grants. Restrict members by turning capabilities off in the default policy, then grant more to specific members or teams with assigned policies.
+The **Commands & browser** section will control:
 
-## Approved websites
+- **Run OS commands** and **Blocked command patterns**: whether the agent can run commands on the computer, or which commands it can't run.
+- **Restrict browsing to approved sites** and **Approved websites**: which websites the built-in browser can open.
+- **Block browser uploads and form submissions**: stopping the built-in browser from sending files or form data.
 
-Limit the built-in browser without turning off all built-in extensions:
-
-1. Open **Members > Teams > your team > Access** and expand **Browse websites**.
-2. Set **Website access** to **Approved sites only**, enter a complete site address, and choose **Add site** for each website.
-3. Choose **Review changes**, then **Save permissions**.
-
-In the general **Desktop policies** editor, the same setting is **Restrict browsing to approved sites** under **Commands & browser**, with one address per line.
-
-Approved websites are exact HTTP or HTTPS origins: the scheme, hostname, and port together. For example, `https://portal.example.com` permits pages on that origin, but not `http://portal.example.com`, `https://portal.example.com:8443`, or `https://docs.portal.example.com`. Default ports normalize to the same origin, so `https://portal.example.com:443` is equivalent to `https://portal.example.com`.
-
-- Add up to 100 complete site addresses per policy, without paths, sign-in credentials, queries, or fragments.
-- Add subdomains, sign-in sites, and resource sites separately. Wildcards do not grant access to subdomains.
-- Rules cover browser requests, including navigation, redirects, frames, and resources such as scripts and images. A resource from an unapproved origin is blocked even when the page itself is approved.
-- **Blocked**, or an empty approved-site list, denies all websites. Removing the final site does not turn restrictions off.
-- **All websites** removes this policy's approved-site restriction. It does not override restrictions from another applicable policy or the **Built-in Extensions** control.
-
-Unlike legacy boolean grants, approved-site restrictions **intersect** across the default policy and all matching member, team, and role policies. A site must appear in every applicable restricted list. A targeted policy can restrict browsing even when the default policy allows all websites. Policies without an approved-site list impose no additional origin restriction.
-
-The policy document stores these settings in `execution.browserOrigins`: an omitted field adds no origin restriction, while `[]` denies every website. The local policy service verifies managed browser requests independently of the desktop's cached display settings. If managed policy cannot be verified, requests are blocked; signing out does not clear retained managed restrictions into unrestricted browsing. This does not prevent genuinely unmanaged local use.
-
-Once approved-site policy has reached the managed engine, generated permissions block that engine's built-in `websearch` and `webfetch` tools. Changes can wait for an engine refresh; this is not a fresh Den check before every tool call and does not filter third-party MCP search or fetch traffic. **Upload files & submit forms** is a separate built-in-browser restriction: it blocks WebSocket connections, requests with upload data, and methods other than `GET`, `HEAD`, and `OPTIONS`. GET-based forms and other read URLs can still send data to approved sites. These controls are not device-wide data-loss prevention: allowed computer commands and third-party connections can use other network transports. Block computer commands too when members must not use that route.
-
-## Restricted mode
-
-Every policy has a mode selector at the top of its editor:
-
-- `Custom` lets you choose each capability.
-- `Restricted` gives members a vanilla OpenWork: they can chat and use organization-approved skills, but cannot change desktop settings, add providers or use models outside the organization, add workspaces, use built-in extensions, install extensions or MCP servers, or opt into Alpha updates. The locked capabilities stay off until you switch the policy back to `Custom`. The `Welcome Page` preference stays editable in both modes.
-
-Because the effective policy is a union of grants, apply `Restricted` to the default policy to lock members down. A targeted policy in `Restricted` mode grants nothing on its own.
+When a member matches more than one policy, switches combine: a switch is on if any matching policy turns it on. A **Blocked** choice on a team's **Access** tab wins over any policy that allows the same thing.
 
 ## Configure a policy
 
 1. Open [app.openworklabs.com](https://app.openworklabs.com/) and choose your organization.
-2. Go to `Desktop policies`.
-3. Create a new policy or edit the default policy.
-4. Pick `Restricted`, or stay in `Custom` and turn capabilities on or off.
-5. Assign the policy to members or teams when it should not apply to everyone.
-6. Save the policy, then have members reload, refresh their Cloud account, switch the active organization, or wait for the hourly desktop-config refresh.
+2. Go to **Manage › Desktop policies**.
+3. Click **New policy**, or click **Edit** on an existing policy. The policy marked **Default** applies to everyone.
+4. Enter a **Policy name** and a **Priority**. When more than one policy matches a member, the higher priority decides which prompt suggestions they see.
+5. Under **Policy mode**, choose **Custom** or **Restricted**.
+6. Turn switches on or off, and fill in **Commands & browser** if you need it.
+7. To show your own suggested prompts, turn on **Organization prompt suggestions**. See [Team prompt cards](/cloud/share-with-your-team/team-prompt-cards).
+8. Under **Members** and **Teams**, choose who the policy applies to.
+9. Click **Create policy**, or **Save changes** for an existing policy.
 
-The desktop app explains blocked capabilities as organization-controlled. For example, a built-in extension disabled by policy is hidden from the normal catalog and can appear in hidden views with a `Disabled by organization` explanation, and the account page lists effective capabilities in its **App permissions** tab.
+A few things to know:
+
+- You can't rename the default policy or give it a priority. It always applies to everyone.
+- To pause a policy without deleting it, open it and click **Disable**. Click **Enable** to turn it back on.
+- To remove a policy, click **Delete** next to it in the list. You can't delete the default policy.
+- Policies created from a team's **Access** tab show **Team access** in the list. Click **View team access** to change them on the team's page.
+
+## Restricted mode
+
+**Restricted** turns off every switch except **Welcome Page** and locks them until you switch back to **Custom**. It is designed to give members a simple OpenWork: they can chat and use organization-approved skills, but can't change settings, add providers, add workspaces, or install extensions.
+
+Because switches combine across policies, **Restricted** only locks members down when you apply it to the default policy. A targeted policy in **Restricted** mode doesn't take anything away from other policies.
+
+Today, the only part of **Restricted** that takes effect is that it turns off **Custom providers**.
+
+## Approved websites
+
+Approved websites are designed to limit the built-in browser to sites you choose. This control is paused and doesn't block anything yet.
+
+To set approved websites for a team:
+
+1. Go to **Members › Teams**, open the team, and choose the **Access** tab.
+2. Expand **Browse websites**.
+3. Set **Website access** to **Approved sites only**.
+4. Enter a full website address, such as `https://portal.example.com`, and click **Add site**. Repeat for each site.
+5. Click **Review changes**, then **Save permissions**.
+
+In the policy editor, turn on **Restrict browsing to approved sites** under **Commands & browser**, then enter one address per line in **Approved websites**.
+
+Keep these rules in mind:
+
+- Enter whole websites only, with no page paths.
+- Add subdomains and sign-in sites separately. `https://portal.example.com` doesn't include `https://docs.portal.example.com`.
+- You can add up to 100 sites.
+- **Blocked**, or an empty list, blocks all browsing.
+
+<Note>
+**Approved web origins** in **Settings › General** is a different feature. It lets websites you approve use a member's OpenWork sign-in. It doesn't limit which sites members can browse.
+</Note>
 
 ## Team access
 
-Open **Members → your team → Access** to choose **Locked** or **Custom** and save permissions. Owners and super-admins can change these controls; other administrators can review them.
+Each team has an **Access** tab where you choose what its members can do. To open it, go to **Members › Teams**, open the team, and choose **Access**. Under **What this team can do**, set each option to **Allowed** or **Blocked**:
 
-Locked blocks app customization, including adding tools and MCP servers, changing settings, adding providers and workspaces, using built-in extensions and OpenCode models, and opting into experimental updates. Members can still chat and use available connections. Existing installed tools are not removed, Cloud authoring still follows member roles, and this does not suspend accounts.
+- **Browse websites**: **Website access** (**All websites**, **Approved sites only**, or **Blocked**) and **Upload files & submit forms**.
+- **Run computer commands**: **Computer commands**. To block only some commands, open **Advanced: block specific commands**.
+- **Tools & connections**: **Add local tools, skills & MCP servers** and **Use built-in extensions**.
+- **AI setup**: **Add AI providers** and **Use OpenCode models**.
+- **Settings, workspaces & updates**: **Create more workspaces**, **Change app settings**, and **Try experimental updates**.
 
-Custom lets you block individual app capabilities. Switching to Locked and back preserves the Custom choices. A block applies even when the default policy or another team grants that capability. Allowing a capability does not override another restriction. Existing policies without explicit access limits retain their grant behavior.
+Click **Preview member experience** to see a summary of what members of the team will be able to do. When you're done, click **Review changes**, check the list, and click **Save permissions**.
 
-Open **Account → App permissions** in the desktop app to see which capabilities are Allowed or Blocked and how to request changes from your administrator. These permissions are read-only in the desktop app. The Library explains how to ask an administrator for an MCP server when local tool management is blocked. Updates arrive when the app refreshes, including on reload or its periodic configuration refresh.
+Allowing something here doesn't override a block from another team or from your organization. Of these options, only **Add AI providers** takes effect today, as part of model access.
+
+Members can see their permissions in the desktop app under **Settings › Account › App permissions**. The list is read-only. It shows what the app applies right now, so paused controls show as **Allowed**.
+
+The **Plugins & connections** list lower on the same tab shows which plugins and connections the team can use. That list is separate from desktop policies and works today.
+
+<Accordion title="Technical details">
+**Enforcement switch.** Enforcement is controlled by `DESKTOP_POLICY_ENFORCEMENT_ENABLED` in `packages/types/src/den/desktop-policies.ts`, currently `false`. Den still stores and resolves every policy. Before the desktop app uses the config, `desktopCapabilityConfig()` removes `execution` and every policy key except `allowCustomProviders` and `showWelcomePage`. Prompt suggestions and `allowedDesktopVersions` pass through. The desktop app does not currently read `showWelcomePage`. Model access never blocks startup, sign-in, or chat: the app uses the last known setting, and allows providers when no setting is known.
+
+**Model access storage.** **Only models you provide** is stored as `allowCustomProviders: false` in the default desktop policy. **Admins may still add their own keys on their device** is stored as a policy for the admin role.
+
+**How switches combine.** If an organization has no policies, every switch is on. Otherwise every switch starts off, and any `true` in the default policy or a matching member, team, or role policy turns it on. Explicit `false` values from a team's access settings (`access.capabilities`) are applied afterward and win.
+
+**Commands and browsing.** Stored under `execution` in the policy document:
+
+- `commands` is `allow` or `deny`. Any matching policy with `deny` blocks commands.
+- `blockedCommands` are patterns that use `*` for any text. Patterns from all matching policies are added together, up to 100 per policy.
+- `browserOrigins`: if the field is left out, there is no website restriction. An empty list (`[]`) blocks every website. Lists intersect across the default policy and all matching member, team, and role policies, so a site must appear in every list that exists.
+- `blockBrowserUploads`: any matching policy with `true` turns it on.
+
+**Approved website format.** Each entry is an exact HTTP or HTTPS origin: scheme, hostname, and port. Default ports normalize, so `https://portal.example.com:443` equals `https://portal.example.com`. `http://portal.example.com` and `https://portal.example.com:8443` are different origins. Paths, credentials, queries, and fragments are rejected. Wildcards are not supported.
+
+**Designed behavior when enforcement resumes.** Website rules cover every built-in browser request, including navigation, redirects, frames, scripts, and images. A resource from an unapproved origin is blocked even on an approved page. While approved sites are set, the engine's built-in `websearch` and `webfetch` tools are denied; third-party MCP search or fetch tools are not filtered. **Block browser uploads and form submissions** blocks WebSocket (`ws:`/`wss:`) connections, requests with upload data, and methods other than `GET`, `HEAD`, and `OPTIONS`. GET-based forms can still send data to approved sites. None of these controls are device-wide data-loss prevention: allowed computer commands and third-party connections can use other network routes.
+
+**Refresh.** The desktop app caches the last config it received and applies it on launch. It fetches a fresh config when the member signs in, when the Cloud account or active organization changes, and every hour.
+</Accordion>

@@ -51,17 +51,6 @@ export async function browserWebMcpWorld(seed: Seed) {
   } catch (error) { await stack.disposeAsync(); throw error; }
 }
 
-export async function browserConsentSummaryWorld(seed: Seed) {
-  const world = await browserWebMcpWorld(seed);
-  try {
-    await selectModel(world.app, "fixture", { provider: "Browser fixture" });
-    return world;
-  } catch (error) {
-    await world[Symbol.asyncDispose]();
-    throw error;
-  }
-}
-
 /** Mid-flow fixture update uses the body's Seed and preserves every unrelated policy field. */
 export async function setBrowserPolicy(seed: Seed, app: Surface, den: Den, origins: string[] | null, blockBrowserUploads = false) {
   const listed = await seed.api(den.admin, "/v1/desktop-policies");

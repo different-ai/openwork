@@ -20,6 +20,12 @@ export function validateReport(report) {
 
 const excludedLine = report => report.excluded.length ? `\n${report.excluded.length} skipped (prerequisites unmet): ${report.excluded.map(entry => `${escape(entry.name)} — needs: ${escape(entry.reason)}`).join('; ')}` : '';
 
+const titles = {
+  'Build and core checks': 'Full regression — component checks',
+  'Freestyle world check': 'Nightly core journey and world check',
+  'Den DB Migrate': 'Production Den DB migrations (Den DB Migrate)',
+};
+
 export function notification(previous, run, report, teamId = '') {
   const sequence = [run.run_number, run.run_attempt];
   if (previous && (previous.sequence[0] > sequence[0] || (previous.sequence[0] === sequence[0] && previous.sequence[1] >= sequence[1]))) return { state: previous, message: null };
@@ -34,7 +40,7 @@ export function notification(previous, run, report, teamId = '') {
   const newlyExcluded = previous ? report.excluded.filter(entry => !(previous.excluded ?? []).includes(entry.spec) && !reclassified.includes(entry)) : [];
   const state = { sequence, failures, excluded, thread: bad.length ? previous?.thread : undefined };
   if (bad.length === 0 && !previous?.failures.length && newlyExcluded.length === 0) return { state, message: null };
-  const title = run.name === 'Product journeys' ? 'Full regression — user journeys' : run.name === 'Build and core checks' ? 'Full regression — component checks' : 'Test reliability';
+  const title = titles[run.name] ?? run.name;
   const mention = bad.length && newFailures && /^[A-Z0-9]+$/.test(teamId) ? `<!subteam^${teamId}> ` : '';
   const summary = bad.length ? `${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested · ${report.excluded.length} skipped (prerequisites unmet)`
     : reclassified.length ? `Executed checks passed — not a recovery: ${reclassified.length} previously failing journey(s) reclassified: prerequisite unsatisfied`
@@ -84,19 +90,15 @@ async function main() {
   const { workflow_run: run } = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const repo = process.env.GITHUB_REPOSITORY;
   if (run.event !== 'schedule') throw new Error('Only scheduled runs may notify the team');
-  const artifacts = api(`repos/${repo}/actions/runs/${run.id}/artifacts?per_page=100`).artifacts;
   let report;
-  if (run.name === 'Product journeys' && artifacts.some(artifact => artifact.name === 'journey-report' && !artifact.expired)) {
-    gh('run', 'download', String(run.id), '--repo', repo, '--name', 'journey-report', '--dir', 'incoming-report');
-    report = validateReport(JSON.parse(await readFile('incoming-report/journey-report.json', 'utf8')));
-  } else {
+  {
     const pages = gh('api', '--paginate', '--slurp', `repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     const jobs = JSON.parse(pages).flatMap(page => page.jobs);
     const entries = jobs.filter(job => job.conclusion !== 'skipped').map(job => ({
       spec: job.name, name: job.name, critical: false,
       status: job.conclusion === 'success' ? 'passed' : job.conclusion === 'failure' ? 'failed' : 'not tested',
     }));
-    if (!entries.length || run.name === 'Product journeys') entries.push({ spec: 'missing-coverage', name: 'Journey report unavailable — coverage could not be verified', critical: false, status: 'not tested' });
+    if (!entries.length) entries.push({ spec: 'missing-coverage', name: 'Journey report unavailable — coverage could not be verified', critical: false, status: 'not tested' });
     report = validateReport({ entries });
   }
   // Missing reports, upload failures and aggregate failures cannot send a recovery.

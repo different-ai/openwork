@@ -1,0 +1,48 @@
+---
+title: "OpenWork in Slack"
+sidebarTitle: "Overview"
+description: "Mention @openwork in a Slack channel or DM it to work with your own OpenWork connections and permissions. Private alpha for approved organizations."
+keywords: ["slack", "@openwork", "slack bot", "slack app", "slack assistant", "slack agent", "mention", "dm", "private alpha"]
+---
+
+<Note>
+**Private alpha.** OpenWork in Slack must be enabled for your organization by a platform administrator. This guide is public; it does not grant alpha access. Contact [the OpenWork team](mailto:team@openworklabs.com) to request access. Slack's agent features must also be available in your workspace.
+</Note>
+
+Mention `@openwork` in a channel or DM it to work with your own OpenWork connections and permissions. Each member connects their own Slack account. Installing the bot once does not sign everyone in.
+
+## Who does what
+
+| Who | What | Guide |
+| --- | --- | --- |
+| Slack and OpenWork administrator | Merge the manifest into the existing Slack app, install the bot, choose reply mode and channels. Once per workspace. | [Set up the Slack app](/slack/set-up-the-slack-app) |
+| Every member | Connect your own Slack account once, then DM or mention `@openwork`. | [Connect your account](/slack/connect-your-account) |
+| Anyone | Fix a bot that is missing, silent, or never finishes. | [Troubleshooting](/slack/troubleshooting) |
+
+## Ask your agent to set it up
+
+Give an agent with browser or computer access this prompt:
+
+```text
+Set up OpenWork in Slack for my organization, using:
+https://openworklabs.com/.well-known/agent-skills/set-up-openwork-slack/SKILL.md
+
+Use our existing Slack app and Slack connector. Preserve existing user
+OAuth scopes, redirect URLs, and MCP settings. Check private-alpha access
+before making changes. Enable private replies. Ask me whether to limit
+channels or allow all channels. Handle the configuration and verification
+with my existing access, and bring me in for any required authorization.
+Keep secrets out of chat and files. Test a real bot answer and report
+what passed and anything still blocked.
+```
+
+The agent can inspect the setup, merge the manifest, verify event delivery, configure replies and channel limits, and test the bot. A Slack administrator authorizes installation; every member authorizes their own account. Your agent's tool permissions still apply.
+
+## How replies and permissions work
+
+- The person who mentions or DMs `@openwork` is the only actor. The assistant uses that member's own Slack and connected-service access, not a shared account.
+- Two members in the same Slack thread get separate OpenWork sessions.
+- DMs and private rollout replies stay in the invoking member's DM. Channel replies are visible to the channel when private replies are off.
+- If the assistant needs a permission decision, continue in OpenWork Web. Slack does not approve it for you.
+
+This assistant builds on the [Slack MCP connection](/cloud/share-with-your-team/shared-mcp-connections#slack). Set that up first if your organization does not have one yet.

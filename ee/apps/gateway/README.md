@@ -90,6 +90,27 @@ before running the new runtime. Do not deploy it against the old table names.
   original inference-key store. Gateway `/api/v1/providers/:ipr/*` only accepts
   canonical `ow_gw_` keys with active same-organization membership. Neither key
   type authenticates the other route; Gateway does not require a Models tier.
+  The shared paths are `GET /api/v1/models` and `POST /api/v1/{messages,
+  chat/completions,responses}`: an `ow_gw_` key there is handled by Gateway, and
+  every other key stays on the Models handler.
+- Provider-less invocation: `POST /api/v1/messages`, `/api/v1/chat/completions`
+  and `/api/v1/responses` take a `gwm_` alias as `model` and route to the
+  provider that owns its model, within the caller's organization. That lookup
+  only picks the route; the request then runs the same provider handler as
+  `/api/v1/providers/:ipr/*`, including grant selection, credentials and usage.
+  Raw model ids are rejected (they can be ambiguous across providers), an alias
+  no provider in the organization owns is 404 `model_not_found`, and a model
+  whose provider speaks another protocol (for example an OpenAI model on
+  `/messages`) is 400 `unsupported_model_endpoint`. Path-addressed protocols
+  (Google `generateContent`, Bedrock Converse) still need the provider path.
+- `GET /api/v1/models` with a Gateway key is a local, non-cacheable OpenAI
+  `{object: "list", data}` of every model the member's grants allow across all
+  active providers in their organization. Entries carry `id` (the `gwm_` alias),
+  `object: "model"`, `created` (Unix seconds the model was added), `owned_by`
+  (provider type), `name`, and `openwork.{provider_id, provider_name,
+  upstream_model_id}`. No grants is an empty list, not an error. Call a listed
+  model through the provider-less endpoints below, or through
+  `/api/v1/providers/{openwork.provider_id}/*`.
 - Requests resolve configured provider model rows and active group/set grants.
   Explicit aliases constrain candidates before member > team > organization
   priority. Equal-priority different sets return HTTP 409 with the shared

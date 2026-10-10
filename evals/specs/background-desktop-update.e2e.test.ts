@@ -6,7 +6,7 @@ import { restartUpdateTaskWorld } from "../worlds/chat.ts";
 const test = spec.world(backgroundUpdateWorld);
 const policyTest = spec.world(savedUpdatePolicyWorld);
 
-policyTest("a saved version policy stays in Den while desktop enforcement is suspended", async ({ world, user, probe, step, evidence }) => {
+policyTest("a downloaded update is not installed once the organization revokes its version", async ({ world, user, probe, step, evidence }) => {
   const readyText = "Ready to install: v9.9.9";
   const blockedText = "OpenWork 9.9.9 is available, but this installation is not eligible for it yet.";
   const downloaded = (count: number) => (value: unknown) =>
@@ -27,36 +27,40 @@ policyTest("a saved version policy stays in Den while desktop enforcement is sus
     await user.screenshot();
   });
 
-  // #5131 deliberately suspended desktop enforcement. The saved policy remains
-  // authoritative in Den; the desktop must not rewrite it or enforce it locally.
-  await step("when the saved policy excludes the update, the desktop remains ready", async () => {
+  // The allowed-versions list is an organization setting, not a suspended
+  // desktop policy: revoking the version must block the staged install.
+  await step("when the organization revokes that version, the restart does not install it", async () => {
     await world.allowVersions(["0.18.0"]);
     const policy = await probe.api(world.den.admin, "/v1/me/desktop-config");
     expect(policy.response.status).toBe(200);
     expect(policy.body).toMatchObject({ allowedDesktopVersions: ["0.18.0"] });
-    await user.see({ text: readyText });
-    await user.notSee({ text: blockedText });
-    await user.see({ role: "button", text: "Install & restart" });
-    expect(await world.snapshot()).toMatchObject({ downloads: 1, installs: 0, installEnabled: true });
-    evidence.recordAssertionEvidence("Den retains the excluded version policy while desktop enforcement is suspended", JSON.stringify(policy.body), true);
+    await user.click("Restart to update");
+    await user.see({ text: "Restart OpenWork?" });
+    await user.click("Restart & update");
+    await user.see({ text: blockedText }, { timeoutMs: 30_000 });
+    await user.notSee({ text: readyText });
+    await user.notSee({ text: "Restart to update" });
+    // Settings keeps the install button in place but disables it while blocked.
+    const blocked = await world.snapshot();
+    expect(blocked).toMatchObject({ downloads: 1, installs: 0, installEnabled: false });
+    evidence.recordAssertionEvidence("A revoked version is not installed after the restart confirmation", JSON.stringify({ blocked, savedPolicy: policy.body }), true);
     await user.screenshot();
   });
 
-  await step("after confirmation, the desktop requests installation once and leaves the saved policy intact", async () => {
-    await user.click("Restart to update");
-    await user.see({ text: "Restart OpenWork?" });
-    expect(await world.snapshot()).toMatchObject({ installs: 0 });
-    await user.click("Restart & update");
+  await step("when the organization approves it again, the update installs", async () => {
+    await world.allowVersions(["9.9.9"]);
+    await user.click({ role: "button", text: "Check now" });
+    await probe.eventually(world.snapshot, { within: 30_000, label: "the re-approved version downloads again", until: downloaded(2) });
+    await user.see({ text: readyText });
+    await user.notSee({ text: blockedText });
+    await user.click({ role: "button", text: "Install & restart" });
     await probe.eventually(world.snapshot, {
-      within: 10_000, label: "the explicit confirmation invokes the installer",
-      until: (value) => value.installs === 1,
+      within: 10_000, label: "install proceeds while the version stays allowed",
+      until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "installs") === 1,
     });
     const installed = await world.snapshot();
-    expect(installed).toMatchObject({ downloads: 1, installs: 1 });
-    const policy = await probe.api(world.den.admin, "/v1/me/desktop-config");
-    expect(policy.response.status).toBe(200);
-    expect(policy.body).toMatchObject({ allowedDesktopVersions: ["0.18.0"] });
-    evidence.recordAssertionEvidence("One fake installer call does not mutate the organization's saved policy", JSON.stringify({ installed, savedPolicy: policy.body }), true);
+    expect(installed).toMatchObject({ downloads: 2, installs: 1 });
+    evidence.recordAssertionEvidence("The re-approved version installs once", JSON.stringify(installed), true);
     await user.screenshot();
   });
 });
@@ -112,13 +116,23 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.notSee({ text: "Ready when you are." });
   await world.openSettings();
   await user.see({ text: "Restart to update" });
+  // Re-enabling automatic checks after the interval looks for a newer release
+  // than the ready one; the feed has none, so nothing downloads again.
   await user.click({ role: "switch", label: "Check automatically" });
-  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: true, checks: 6, downloads: 3 });
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "an automatic check while ready finds nothing newer",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 7,
+  });
+  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: true, checks: 7, downloads: 3 });
   await world.openWorkspace();
   await world.returnToApp();
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "returning after the interval checks again while ready",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 8,
+  });
   await user.see({ text: "Restart to update" });
   const ready = await world.snapshot();
-  expect(ready).toMatchObject({ checks: 6, downloads: 3, installs: 0, installAttempts: 0, updateInTitlebar: true, updateInSidebar: false });
+  expect(ready).toMatchObject({ checks: 8, downloads: 3, installs: 0, installAttempts: 0, updateInTitlebar: true, updateInSidebar: false });
   evidence.recordAssertionEvidence("Manual download retries reach one ready update with automatic checks enabled again", JSON.stringify(ready), true);
   await user.looks([
     "A compact neutral Restart to update button sits in the titlebar with the app's other controls",
@@ -170,10 +184,11 @@ test("updates download outside Settings and offer a persistent, optional restart
     await world.returnToApp();
     await world.openSettings();
     await user.see({ text: "Couldn't install the update" });
-    expect(await world.snapshot()).toMatchObject({ checks: index + 6, downloads: index + 3, installAttempts: index + 1, installs: 0 });
+    // Each restart looks for a newer release once before installing; Check now adds one more.
+    expect(await world.snapshot()).toMatchObject({ checks: index * 2 + 9, downloads: index + 3, installAttempts: index + 1, installs: 0 });
     if (index === 0) {
       await user.click({ role: "switch", label: "Check automatically" });
-      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 6, downloads: 3 });
+      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 9, downloads: 3 });
     }
     await user.click({ role: "button", text: "Check now" });
     await probe.eventually(world.snapshot, {

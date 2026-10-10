@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  evalUpdaterFeedUrl,
   preventPendingUpdaterInstall,
   registerUpdaterIpc,
   staleUpdaterStatePaths,
@@ -1040,6 +1041,51 @@ describe("macOS native staging", () => {
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("evalUpdaterFeedUrl", () => {
+  it("honours only a plain-HTTP loopback feed", () => {
+    assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: " http://127.0.0.1:4567/feed/ " }), "http://127.0.0.1:4567/feed");
+    assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: "http://localhost:4567" }), "http://localhost:4567");
+    assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: "http://[::1]:4567" }), "http://[::1]:4567");
+  });
+
+  it("ignores remote, credentialed, non-HTTP, and malformed feeds", () => {
+    for (const value of [
+      undefined,
+      "",
+      "https://127.0.0.1:4567",
+      "http://example.com/feed",
+      "http://127.0.0.1.example.com/feed",
+      "http://user:pass@127.0.0.1:4567",
+      "file:///tmp/feed",
+      "not a url",
+    ]) {
+      assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: value }), null, String(value));
+    }
+  });
+
+  it("points the untargeted feed at the loopback feed", async () => {
+    const handlers = new Map();
+    const userData = await mkdtemp(path.join(os.tmpdir(), "openwork-eval-feed-"));
+    const previous = process.env.OPENWORK_EVAL_UPDATE_FEED_URL;
+    process.env.OPENWORK_EVAL_UPDATE_FEED_URL = "http://127.0.0.1:4567";
+    try {
+      registerUpdaterIpc({
+        app: { isPackaged: false, getVersion: () => desktopVersion, getPath: () => userData },
+        ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+        getMainWindow: () => null,
+        manifestChannel: "enterprise",
+      });
+      assert.equal((await handlers.get("openwork:updater:getChannel")()).feedUrl, "http://127.0.0.1:4567");
+      // A version-targeted check still resolves to the fixed GitHub release.
+      assert.equal(targetedStableUpdaterFeed("0.17.22", "0.17.23"), "https://github.com/different-ai/openwork/releases/download/v0.17.23");
+    } finally {
+      if (previous === undefined) delete process.env.OPENWORK_EVAL_UPDATE_FEED_URL;
+      else process.env.OPENWORK_EVAL_UPDATE_FEED_URL = previous;
+      await rm(userData, { recursive: true, force: true });
     }
   });
 });

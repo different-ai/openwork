@@ -13,6 +13,7 @@ import { GatewayWhoCanUseModels } from "./gateway-who-can-use-models";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import { describeGatewayAccess, type DenInferenceProvider } from "./inference-provider-request";
 import { getProviderDocUrl, getProviderIconSlug } from "./llm-provider-data";
+import { LITELLM_DOC_URL, liteLlmAccessGroupId } from "./litellm-provider-data";
 
 const ROW = "flex items-center gap-4 px-4 py-3";
 
@@ -24,16 +25,23 @@ function modelsLabel(provider: DenInferenceProvider) {
 
 function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
   const { orgContext } = useOrgDashboard();
-  const audience = describeGatewayAccess(provider, {
+  // LiteLLM per-person keys add automatic member grants; only the access group says who may use it.
+  const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : null;
+  const audience = describeGatewayAccess(accessGroupId ? { ...provider, accessGrants: (provider.accessGrants ?? []).filter((grant) => grant.modelGroupId === accessGroupId) } : provider, {
     organization: null,
     teamName: (teamId) => orgContext?.teams.find((team) => team.id === teamId)?.name,
     memberName: (memberId) => orgContext?.members.find((member) => member.id === memberId)?.user.name,
   });
   const nobody = audience === "No one has access yet";
-  const ready = provider.status === "active" && provider.credentialStatus === "ready" && !nobody;
+  const litellm = provider.litellm;
+  // Per-person LiteLLM keys are ready once the admin key syncs; each person adds their own key.
+  const keyReady = litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready") : provider.credentialStatus === "ready";
+  const ready = provider.status === "active" && keyReady && !litellm?.lastSyncError && !nobody;
   const status = provider.status === "disabled"
     ? { label: "Off", dot: "bg-gray-300", text: "text-gray-500" }
-    : provider.credentialStatus !== "ready"
+    : litellm?.lastSyncError
+      ? { label: "Sync failed", dot: "bg-amber-500", text: "text-amber-700" }
+      : !keyReady
       ? { label: "Add a key", dot: "bg-amber-500", text: "text-amber-700" }
       : nobody
         ? { label: "Give access", dot: "bg-amber-500", text: "text-amber-700" }
@@ -43,7 +51,7 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
       <DenBrandMark
         name={provider.providerId}
         simpleIconSlug={getProviderIconSlug(provider.providerId)}
-        serviceUrl={getProviderDocUrl(provider.providerConfig)}
+        serviceUrl={litellm ? LITELLM_DOC_URL : getProviderDocUrl(provider.providerConfig)}
         className="h-8 w-8 shrink-0 rounded-[8px]"
         imageClassName="h-4 w-4"
       />

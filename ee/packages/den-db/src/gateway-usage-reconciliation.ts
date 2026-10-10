@@ -170,7 +170,7 @@ async function reconcileOne(
   input: GatewayUsageReconciliationInput,
   entry: GatewayUsageReconciliationEntry,
 ): Promise<{ status: Status; proof?: Awaited<ReturnType<typeof counterProof>>[] }> {
-  await activeUsageMember(tx, input.actor, true, input.apply === true)
+  await activeUsageMember(tx, input.actor, true)
   const validated = await validatedRow(tx, input, entry, input.apply === true)
   if (!validated) return { status: "missing" }
   const { row, scope, snapshot } = validated

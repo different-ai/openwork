@@ -1,0 +1,79 @@
+---
+title: "Use OpenWork in OpenCode"
+sidebarTitle: "OpenCode plugin"
+description: "Install the opencode-openwork plugin in OpenCode 2 and sign in once to get your organization's AI Gateway models and OpenWork MCP connections on every start, without the desktop app."
+---
+
+The OpenWork plugin for OpenCode 2 brings your organization's AI Gateway models and OpenWork MCP into a plain OpenCode install. You sign in once; OpenCode loads them every time it starts.
+
+<Steps>
+<Step title="Install the plugin">
+
+```sh
+opencode plugin add opencode-openwork
+```
+
+</Step>
+<Step title="Sign in">
+
+```sh
+opencode auth login openwork
+```
+
+Choose **Browser**. Sign in to OpenWork, pick your organization and approve. OpenCode finishes signing in on its own.
+
+On SSH or a machine without a browser, use `opencode auth login openwork --method code`, open the link on any device and confirm the code.
+
+</Step>
+<Step title="Check what you got">
+
+```sh
+opencode models | grep ipr_
+opencode mcp list
+```
+
+Your AI Gateway models are listed as `ipr_…/gwm_…`. `openwork-cloud` gives the agent your organization's skills, plugins and connections. Connections your admin made available in other apps appear as `openwork-direct-<name>-<id>`.
+
+</Step>
+</Steps>
+
+<AccordionGroup>
+  <Accordion title="Sign out or switch organizations">
+
+```sh
+opencode auth logout openwork
+opencode auth login openwork
+```
+
+Signing out also ends the OpenWork session and removes the models and MCP servers the plugin added. Pick the other organization on the approval page when you sign in again.
+
+  </Accordion>
+  <Accordion title="Self-hosted or enterprise OpenWork">
+
+Point the plugin at your OpenWork API in `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "plugins": [
+    { "package": "opencode-openwork", "options": { "apiBaseUrl": "https://api.openwork.example.com" } }
+  ]
+}
+```
+
+  </Accordion>
+  <Accordion title="Only models, or only MCP">
+
+Set `"providers": false` or `"mcp": false` in the plugin options.
+
+  </Accordion>
+  <Accordion title="No AI Gateway models listed">
+
+The plugin shows the AI Gateway providers your organization grants you. Ask an admin to check **AI Gateway** in OpenWork Cloud. Models the catalog marks as deprecated are hidden.
+
+  </Accordion>
+  <Accordion title="Only MCP, without the plugin">
+
+Add OpenWork MCP to OpenCode directly: [Connect OpenCode](/model-context-protocol/opencode).
+
+  </Accordion>
+</AccordionGroup>

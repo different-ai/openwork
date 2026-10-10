@@ -66,7 +66,15 @@ try {
       // composites the tint outside the page, so a raw capture has alpha-0
       // pixels there). Paint the light vibrancy tone at the html level so the
       // capture reads like the real focused window.
-      if (surface.handle.kind === "electron") await paintBackdrop(surface, "#232326");
+      if (surface.handle.kind === "electron") {
+        // The backdrop tone is the dark vibrancy tint, so pin the renderer to
+        // the dark scheme; otherwise a light-mode host yields a light page
+        // beside an unreadable dark sidebar.
+        await surface.client.send("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+        await paintBackdrop(surface, "#232326");
+      }
       await freezeMotion(surface);
       const png = await captureUntil(surface, shot.gate);
       const outPath = resolve(REPO_ROOT, shot.out);

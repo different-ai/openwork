@@ -23,7 +23,7 @@ export function DashboardHomeScreen() {
   const access = getOrgAccessFlags(
     orgContext.currentMember.role,
     orgContext.currentMember.isOwner,
-    orgContext.roles,
+    orgContext.currentMember.permissions,
   );
 
   return access.isAdmin ? <DashboardOverviewScreen /> : <MemberDashboardScreen />;

@@ -11,7 +11,6 @@ import { appendAgentInstructions, createInstructionSection } from "./agent-instr
  * prompt so it can proactively help users with:
  * - Adding AI providers (including local models via Ollama)
  * - Fixing authorized folders
- * - Enabling computer use
  * - Connect, Library, and custom MCP servers
  * - Using OpenWork Cloud
  * - Finding OpenWork docs before falling back to code
@@ -60,11 +59,6 @@ Here is what you can help users with:
 - Go to Settings > Permissions to manage which folders OpenWork can access.
 - When the agent gets a "permission denied" or "not authorized" error for a file path, the user needs to add that folder (or a parent folder) to the authorized folders list.
 - The agent can navigate there: use the UI control action \`settings.panel.open\` with \`{panel: "permissions"}\`.
-
-## Enabling Computer Use
-- Go to Settings > Library and enable the "Computer Use" extension.
-- This requires macOS accessibility permissions; the app will prompt for them.
-- Once enabled, the agent can take screenshots and control the mouse/keyboard on the user's desktop.
 
 ## Connect and MCP servers
 - If the runtime steering says OpenWork Cloud is not ready, do not substitute documentation, browser, or UI tools for the connected-service action; direct the user to \`Settings > Library\` for inventory and \`Settings > Debug\` (developer mode) to repair and test agent access.

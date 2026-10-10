@@ -1,5 +1,6 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
+import { beginUserOrganizationsAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId } from "../api-keys.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
@@ -99,5 +100,18 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   c.set("userOrganizations", scopedOrgs)
   c.set("activeOrganizationId", activeOrganizationId)
   c.set("activeOrganizationSlug", activeOrganizationSlug)
+  // The active organization is one of the caller's verified memberships: the
+  // handler acts on it, so it is the audit tenant (durable intent before next()).
+  const activeMembership = activeOrganizationId ? scopedOrgs.find((org) => org.id === activeOrganizationId) : undefined
+  if (activeMembership) {
+    const auditBlocked = await beginUserOrganizationsAuditRequest(c, {
+      organizationId: activeMembership.id,
+      userId: normalizeDenTypeId("user", user.id),
+      memberId: activeMembership.membershipId,
+    })
+    if (auditBlocked) {
+      return auditBlocked as never
+    }
+  }
   await next()
 }
