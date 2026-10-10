@@ -14,6 +14,15 @@ import { browserScriptValue, runBrowserHost } from "../packages/env/src/browser-
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
+/**
+ * documentElement.clientWidth at an emulated viewport: equal to the width with overlay scrollbars (macOS), and
+ * up to one classic vertical scrollbar narrower (Linux/Windows CI) when the page scrolls. Check page overflow
+ * against this measured client width, not the emulated width.
+ */
+export function isEmulatedClientWidth(clientWidth: number, width: number): boolean {
+  return clientWidth <= width && clientWidth >= width - 20;
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

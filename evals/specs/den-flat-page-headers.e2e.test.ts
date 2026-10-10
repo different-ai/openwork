@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { denFlatPageHeaders, isRecord, type HeaderMeasurements } from "../worlds/den-flat-page-headers.ts";
+import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 const test = spec.world(denFlatPageHeaders, {
   timeout: 600_000,
@@ -37,8 +38,8 @@ function readableFlatHeading(measured: HeaderMeasurements, title: string, width:
   expect(measured.heading.left).toBeGreaterThanOrEqual(0);
   expect(measured.heading.right).toBeLessThanOrEqual(width);
   expect(measured.heading.scrollWidth).toBeLessThanOrEqual(measured.heading.clientWidth);
-  expect(measured.widths.viewport).toBe(width);
-  expect(measured.widths.document).toBeLessThanOrEqual(width);
+  expect(isEmulatedClientWidth(measured.widths.viewport, width)).toBe(true);
+  expect(measured.widths.document).toBeLessThanOrEqual(measured.widths.viewport);
   expect(measured.widths.main.scroll).toBeLessThanOrEqual(measured.widths.main.client);
   expect(measured.widths.shell.scroll).toBeLessThanOrEqual(measured.widths.shell.client);
 }

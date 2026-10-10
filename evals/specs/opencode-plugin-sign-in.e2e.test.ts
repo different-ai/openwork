@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { opencodePluginSignIn } from "../worlds/opencode-plugin-sign-in.ts";
+import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 const test = spec.world(opencodePluginSignIn, {
   timeout: 900_000,
@@ -55,7 +56,7 @@ test("a person signs OpenCode in from the browser despite one rate-limited token
     await person.see({ role: "button", label: "Sign in OpenWork - OpenCode Plugin" });
     await person.see({ role: "button", label: "Deny" });
     const heading = await world.approvalHeading();
-    expect(heading.viewportWidth).toBe(1280);
+    expect(isEmulatedClientWidth(heading.viewportWidth, 1280)).toBe(true);
     expect(heading.viewportHeight).toBe(900);
     expect(heading.text).toBe("Approve this sign-in");
     expect(heading.fontSize).toBeGreaterThan(0);
@@ -85,7 +86,7 @@ test("a person signs OpenCode in from the browser despite one rate-limited token
     await person.see({ role: "heading", label: "Approve this sign-in" });
     const heading = await world.approvalHeading();
     const layout = await page.dom('[data-testid="setup-frame"] h1, [data-testid="device-approval"] h2, [data-testid="device-consent-line"], [data-testid="device-approval"] button');
-    expect(heading.viewportWidth).toBe(390);
+    expect(isEmulatedClientWidth(heading.viewportWidth, 390)).toBe(true);
     expect(heading.viewportHeight).toBe(844);
     expect(heading.text).toBe("Approve this sign-in");
     expect(heading.fontSize).toBeGreaterThan(0);
@@ -97,7 +98,7 @@ test("a person signs OpenCode in from the browser despite one rate-limited token
     for (const element of layout.elements) {
       expect(element.rect.width).toBeGreaterThan(0);
       expect(element.rect.left).toBeGreaterThanOrEqual(0);
-      expect(element.rect.right).toBeLessThanOrEqual(390);
+      expect(element.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
       expect(element.rect.top).toBeGreaterThanOrEqual(0);
       expect(element.rect.bottom).toBeLessThanOrEqual(844);
     }

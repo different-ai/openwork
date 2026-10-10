@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { libraryUsage } from "../worlds/library-usage.ts";
+import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 const test = spec.world(libraryUsage, {
   timeout: 600_000,
@@ -176,8 +177,8 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     const visible = (await page.dom('[data-testid="library-usage-row"]')).elements;
     const headers = (await page.dom('[data-testid="library-usage-columns"] > span')).elements.map((entry) => entry.text);
     const frames = (await page.dom('body, [data-testid="library-usage"], [data-testid="library-usage-toolbar"], [data-testid="library-usage-filters"], [data-testid="library-usage-table"]')).elements;
-    const fits = frames.every((entry) => entry.rect.left >= 0 && entry.rect.right <= 390);
-    const ok = layout.viewportWidth === 390 && layout.documentWidth <= 390 && layout.bodyScrollWidth <= layout.bodyWidth
+    const fits = frames.every((entry) => entry.rect.left >= 0 && entry.rect.right <= layout.viewportWidth);
+    const ok = isEmulatedClientWidth(layout.viewportWidth, 390) && layout.documentWidth <= layout.viewportWidth && layout.bodyScrollWidth <= layout.bodyWidth
       && layout.table !== null && layout.table.width > 0 && layout.table.scrollWidth > layout.table.width
       && layout.table.overflowX === "auto" && fits && visible.length === 2;
     evidence.recordAssertionEvidence("phone-width scrolling stays inside the comparison table", `Viewport ${layout.viewportWidth}px; document ${layout.documentWidth}px; body ${layout.bodyScrollWidth}/${layout.bodyWidth}px; table ${layout.table?.scrollWidth ?? 0}/${layout.table?.width ?? 0}px (${layout.table?.overflowX ?? "missing"}); ${visible.length} real connector rows; columns ${headers.join(", ")}; page frames fit: ${fits}`, ok);

@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { permissionsUiWorld } from "../worlds/permissions-ui.ts";
+import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 // Den Web Settings › Permissions (docs/permissions/overview.md, section 12):
 // the owner sees it locked while the feature is off, then gives a team its own
@@ -90,7 +91,7 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await owner.see({ role: "textbox", label: "Filter permissions" });
     const controls = await ownerProbe.dom('[data-testid="permission-row"] [role="switch"]');
     const before = await world.typography();
-    const fits = controls.viewportWidth === 390 && controls.documentWidth <= controls.viewportWidth
+    const fits = isEmulatedClientWidth(controls.viewportWidth, 390) && controls.documentWidth <= controls.viewportWidth
       && before.bodyWidth <= before.viewportWidth && controls.elements.length > 0
       && controls.elements.every((element) => element.rect.left >= 0 && element.rect.right <= controls.viewportWidth && element.rect.width > 0)
       && before.permissionHeadings.length === 1 && before.permissionHeadings.every((heading) => heading.fontSize <= 20)
@@ -246,7 +247,7 @@ test("an owner gives the Support team its own permissions, and only Support memb
     await owner.see({ role: "button", label: "Add member" });
     const controls = await ownerProbe.dom('[data-testid="member-row"] button[aria-label^="Open actions"]');
     const typography = await world.typography();
-    const fits = controls.viewportWidth === 390 && controls.documentWidth <= controls.viewportWidth && typography.bodyWidth <= typography.viewportWidth
+    const fits = isEmulatedClientWidth(controls.viewportWidth, 390) && controls.documentWidth <= controls.viewportWidth && typography.bodyWidth <= typography.viewportWidth
       && controls.elements.length === 2 && controls.elements.every((element) => element.rect.left >= 0 && element.rect.right <= controls.viewportWidth && element.rect.width > 0)
       && typography.memberHeaders.length === 1 && typography.memberHeaders.every((header) => header.fontSize === 12 && header.textTransform === "none" && header.contrast >= 4.5);
     expect(fits).toBe(true);

@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { eventually, spec } from "@openwork/testkit";
 import { managedDeploymentListSchema } from "@openwork/types/den/managed-deployments";
 import { managedDeployments } from "../worlds/managed-deployments.ts";
+import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 // No paid infrastructure is launched here. This proves the real Den screens,
 // records, approval handoff and access boundaries. The AWS installer and health
@@ -238,7 +239,7 @@ test("an owner prepares AWS installs without claiming they are running and can c
     const names = (await page.dom('[data-deployment-name]')).elements;
     const [heading] = (await page.dom('[data-testid="managed-deployment-detail"] h2')).elements;
     const [detailStatus] = (await page.dom('[data-testid="managed-deployment-status"]')).elements;
-    expect(layout.viewportWidth).toBe(320);
+    expect(isEmulatedClientWidth(layout.viewportWidth, 320)).toBe(true);
     expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
     expect(layout.elements).toHaveLength(3);
     expect(statuses).toHaveLength(3);
@@ -271,7 +272,7 @@ test("an owner prepares AWS installs without claiming they are running and can c
     const { setup } = await world.deploymentTextReadability();
     const deployment = (await deployments()).find((item) => item.name === stagingName);
     if (!deployment) throw new Error("The staging deployment is missing while reading setup directions.");
-    expect(layout.viewportWidth).toBe(320);
+    expect(isEmulatedClientWidth(layout.viewportWidth, 320)).toBe(true);
     expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
     expect(layout.elements).toHaveLength(1);
     expect(setup?.disclosed).toBe(true);
@@ -282,7 +283,7 @@ test("an owner prepares AWS installs without claiming they are running and can c
     expect(directions.text).toContain("AWS Secrets Manager secret, field DEN_INITIAL_ADMIN_BOOTSTRAP_CODE.");
     expect(directions.text).toContain("OpenWork never receives it.");
     expect(directions.rect.left).toBeGreaterThanOrEqual(0);
-    expect(directions.rect.right).toBeLessThanOrEqual(320);
+    expect(directions.rect.right).toBeLessThanOrEqual(layout.viewportWidth);
     expect(directions.rect.top).toBeGreaterThanOrEqual(0);
     expect(directions.rect.bottom).toBeLessThanOrEqual(1000);
     evidence.recordAssertionEvidence("the setup address and secret-field directions are fully visible", `At ${layout.viewportWidth}px, the complete ${deployment.webUrl}/setup address, AWS Secrets Manager field DEN_INITIAL_ADMIN_BOOTSTRAP_CODE and OpenWork never receives it statement wrap as one text node. The paragraph is fully on screen (${directions.rect.top.toFixed(1)}–${directions.rect.bottom.toFixed(1)}px), and document width is ${layout.documentWidth}px with no sideways overflow.`, true);
