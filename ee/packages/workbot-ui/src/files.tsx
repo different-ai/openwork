@@ -239,16 +239,26 @@ export function UploadTray({ uploads, onRemove, onRetry }: { uploads: Upload[]; 
 export function AttachButton({ enabled, onFiles }: { enabled: boolean; onFiles: (files: FileList) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [showLock, setShowLock] = useState(false);
+  // A press (mouse click or touch tap) pins the explanation: on touch, the emulated hover and focus changes that
+  // follow a tap would otherwise close it before it can be read. Only Escape or a press elsewhere dismisses it.
+  const pinned = useRef(false);
   if (!enabled) {
     return (
-      <Tooltip.Root open={showLock} onOpenChange={setShowLock}>
+      <Tooltip.Root
+        open={showLock}
+        onOpenChange={(open, details) => {
+          if (!open && pinned.current && (details.reason === "trigger-hover" || details.reason === "trigger-focus")) return;
+          if (!open) pinned.current = false;
+          setShowLock(open);
+        }}
+      >
         <Tooltip.Trigger
           type="button"
           aria-disabled="true"
           aria-label="Attach files. Files aren't set up on this server; your admin can turn them on."
           delay={0}
           closeOnClick={false}
-          onClick={() => setShowLock(true)}
+          onClick={() => { pinned.current = true; setShowLock(true); }}
           className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           <Paperclip size={18} strokeWidth={1.75} aria-hidden />

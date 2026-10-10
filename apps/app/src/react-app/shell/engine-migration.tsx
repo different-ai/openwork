@@ -529,10 +529,11 @@ function MigrationFloatingRegion(props: PropsWithChildren) {
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, []);
+  // Above page chrome (z-40) but below dialogs, menus and the command palette (z-50), which must cover this optional notice.
   return (
     <div
       ref={regionRef}
-      className="pointer-events-none fixed inset-x-0 top-[calc(max(var(--window-titlebar-height),var(--engine-migration-chrome-bottom,0px))+var(--spacing)*3)] z-[100] flex justify-center px-4"
+      className="pointer-events-none fixed inset-x-0 top-[calc(max(var(--window-titlebar-height),var(--engine-migration-chrome-bottom,0px))+var(--spacing)*3)] z-[45] flex justify-center px-4"
     >
       {props.children}
     </div>
