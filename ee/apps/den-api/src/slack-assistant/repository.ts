@@ -23,6 +23,7 @@ import {
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../orgs.js"
 import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
+import { CLAIMABLE_STATUSES, THREAD_ACTIVE_STATUSES } from "./statuses.js"
 
 export type InstallationRow = typeof Installation.$inferSelect
 export type EventRow = typeof Event.$inferSelect
@@ -269,6 +270,7 @@ export async function enqueueSlackEvent(installation: InstallationRow, eventId: 
   })
 }
 
+
 export async function claimSlackEvent(): Promise<EventRow | null> {
   return db.transaction(async (tx) => {
     const now = new Date()
@@ -277,7 +279,7 @@ export async function claimSlackEvent(): Promise<EventRow | null> {
       .from(Event)
       .where(
         and(
-          inArray(Event.status, ["pending", "running"]),
+          inArray(Event.status, CLAIMABLE_STATUSES),
           lte(Event.availableAt, now),
           or(isNull(Event.leaseUntil), lte(Event.leaseUntil, now)),
         ),
@@ -333,7 +335,7 @@ export async function lockSlackThread(event: EventRow, actor: SlackActor) {
             eq(Event.slackUserId, event.slackUserId),
             eq(Event.channelId, event.channelId),
             eq(Event.threadTs, event.threadTs),
-            inArray(Event.status, ["pending", "running"]),
+            inArray(Event.status, THREAD_ACTIVE_STATUSES),
             eq(Event.cancelled, false),
             or(lt(Event.createdAt, event.createdAt), and(eq(Event.createdAt, event.createdAt), lt(Event.id, event.id))),
           ),
@@ -367,7 +369,7 @@ export async function cancelSlackThread(installation: InstallationRow, event: Sl
       and(
         eq(Event.connectionId, installation.connectionId),
         eq(Event.slackUserId, event.user),
-        inArray(Event.status, ["pending", "running"]),
+        inArray(Event.status, THREAD_ACTIVE_STATUSES),
       ),
     )
   const matches = candidates.filter((candidate) => {
@@ -394,7 +396,7 @@ export async function revokeSlackInstallation(connectionId: DenTypeId<"externalM
   await db
     .update(Event)
     .set({ cancelled: true, availableAt: new Date() })
-    .where(and(eq(Event.connectionId, connectionId), inArray(Event.status, ["pending", "running", "awaiting_link"])))
+    .where(and(eq(Event.connectionId, connectionId), inArray(Event.status, ["pending", "running", "watching", "awaiting_link"])))
 }
 
 function updatedRows(result: unknown): number {
@@ -475,7 +477,10 @@ export async function admitSlackRun(event: EventRow, installation: InstallationR
           eq(Event.connectionId, event.connectionId),
           eq(Event.slackUserId, event.slackUserId),
           gt(Event.createdAt, new Date(Date.now() - 86_400_000)),
-          or(eq(Event.status, "running"), and(inArray(Event.status, ["done", "failed"]), isNotNull(Event.checkpoint))),
+          or(
+            inArray(Event.status, ["running", "watching"]),
+            and(inArray(Event.status, ["done", "failed"]), isNotNull(Event.checkpoint)),
+          ),
         ),
       )
     if ((row?.total ?? 0) >= installation.dailyLimit) return false
@@ -544,7 +549,7 @@ export async function slackAssistantMetrics(connectionId: DenTypeId<"externalMcp
   return {
     completed,
     failed: rows.filter((r) => r.status === "failed").length,
-    active: rows.filter((r) => r.status === "running").length,
+    active: rows.filter((r) => r.status === "running" || r.status === "watching").length,
     awaitingConnection: rows.filter((r) => r.status === "awaiting_link").length,
     helpful: rows.filter((r) => r.status === "feedback_positive").length,
     needsWork: rows.filter((r) => r.status === "feedback_negative").length,

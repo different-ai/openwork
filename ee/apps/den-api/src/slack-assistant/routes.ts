@@ -40,6 +40,7 @@ import { publicRequestUrl } from "../request-url.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   BOT_SCOPES,
+  REQUIRED_BOT_SCOPES,
   isInvocation,
   scopeKey,
   slackEnvelopeSchema,
@@ -393,7 +394,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           scope: z.string(),
         })
         .safeParse(await response.json())
-      if (!result.success || BOT_SCOPES.some((scope) => !result.data.scope.split(",").includes(scope)))
+      if (!result.success || REQUIRED_BOT_SCOPES.some((scope) => !result.data.scope.split(",").includes(scope)))
         return c.text("Slack did not grant the required bot permissions. Check the app manifest and reinstall.", 400)
       const token = result.data
       if (installation.teamId && installation.teamId !== token.team.id)

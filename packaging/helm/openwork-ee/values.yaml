@@ -37,6 +37,7 @@ config:
     auditLogs: ""             # default off · Organization admins can read and configure audit logs. Capture still needs an audit entitlement.
     orgManagedDashboards: ""  # default off · Organization admins publish dashboards to members in Den and the desktop app.
     slackAssistant: ""        # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
+    slackWorkbotReplies: ""   # default off · OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done.
     headlessAutomations: ""   # default off · Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.
     workbot: ""               # default off · Members can use Workbot. Needs the deployment's Workbot app.
     automationCalendar: ""    # default off · Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.

@@ -130,6 +130,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  slackWorkbotReplies: {
+    label: "Slack: replies like Workbot",
+    description: "OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   headlessAutomations: {
     label: "Cloud Automations: headless runtime",
     description: "Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.",

@@ -38,8 +38,10 @@ platform capability are rechecked while processing each turn.
 
 - HTTPS Events API ingress verifies the timestamp and HMAC over the original
   bytes, checks app/team identity, persists an encrypted event, and acknowledges.
-- At most eight events are processed per worker tick. Database leases and thread
-  locks coordinate multiple API processes. Set `DEN_SLACK_ASSISTANT_WORKER_ENABLED`
+- Each worker tick claims up to eight due events and starts them without waiting
+  for the ones still running (at most 32 per process), so a reply that streams
+  for a while never holds up another mention. Database leases (two minutes,
+  renewed while an event works) and thread locks coordinate multiple API processes. Set `DEN_SLACK_ASSISTANT_WORKER_ENABLED`
   to `false` on API-only nodes. Worker nodes need the same database/encryption key.
 - Empty runner sessions are persisted before sending a prompt. A stable `msg_`
   ID lets the runner deduplicate a retried send. Only assistant messages
@@ -65,6 +67,8 @@ platform capability are rechecked while processing each turn.
   and notes stream live, and tasks then post one line after four minutes
   saying they will report back, an hourly "Still working on it" line, and the
   final answer alone as a new reply that mentions the member.
+- With `slackWorkbotReplies` on (a feature, off by default; decided per message
+  when it starts, see below), replies work like Workbot's.
 - Tasks have no time limit and end with their answer, Stop, a failure, or the
   runner's stuck check. The runner
   pauses a long turn every 50 minutes and the read resumes it with a fresh MCP token.
@@ -78,6 +82,41 @@ platform capability are rechecked while processing each turn.
   Pending connect requests expire after fifteen minutes, app context after thirty
   minutes, and unused install OAuth state after ten minutes. Native sessions keep
   their existing retention policy. Deleting a connector removes its Slack data.
+
+## Replies like Workbot (`slackWorkbotReplies`)
+
+- The runner session carries Slack's instructions (all the safety rules above,
+  plus how to talk: one short sentence before looking things up, plain coworker
+  language, short replies, emoji reactions, background tasks), with `reactions`
+  and `tasks` on. They are refreshed with `PUT /v1/sessions/:id` before every
+  message, so older threads get them too, and never change between messages, so
+  the provider's prompt cache keeps hitting. Each message sends only its JSON
+  envelope (who asked, audience, the request, untrusted thread context, files).
+  With the feature off the session is reset to no instructions, reactions or
+  tasks, and the instructions travel in each message as before.
+- Text streams into the reply as the model writes it: the worker listens to the
+  runner's live events (`live.ts`), appends at most once a second, and re-reads
+  the stored transcript when the runner says it changed. What was posted is
+  always a prefix of what the turn stores; a step the model rewrote after a
+  retry continues from the paragraph where the two differ once the turn ends.
+  Text streams whatever "Show progress while working" says; that setting still
+  decides whether step lines and the "Still working" line show. Each call streams
+  for at most 20 seconds, then hands the event back; the event stream stays open
+  on that process for the next window, so nothing is missed between windows.
+  Long tasks still go quiet after four minutes, and streams still rotate.
+- A reaction (`react` tool) is added to the person's message with the bot token
+  (needs `reactions:write`; reinstall the app from the updated manifest). Only a
+  small set of emoji map to Slack names; others are skipped. Any Slack error is
+  logged and ignored. A turn whose whole reply is a reaction posts no text. A
+  reply kept private (`--private`, private rollout) doesn't react in the channel.
+- A turn that started background tasks ends its reply, frees the thread, and the
+  event becomes `watching`: polled every 10 seconds, interrupted tasks and
+  reports resumed with a fresh token, and each task's report posted once as a
+  new reply mentioning the member, where the answer went. A watching event never
+  makes newer messages wait, isn't stopped by Stop, and isn't pruned; it ends
+  when every task reported or was stopped, after a day, or quietly when the
+  feature, the assistant, the runner or the member's access is gone (the report
+  stays in the conversation).
 
 ## Work handed to the desktop
 
@@ -114,18 +153,15 @@ on until the sandbox quality and disclosure checks below pass.
 
 ```sh
 pnpm --filter @openwork-ee/den-api test
-# Use a prepared, isolated database whose name ends in _test.
-DEN_SLACK_TEST_DATABASE_URL=mysql://.../openwork_slack_test \
-  pnpm --filter @openwork-ee/den-api test:slack:db
 pnpm --filter @openwork-ee/den-web typecheck
 pnpm sdk:check
 ```
 
-The tests cover signed ingress, altered/stale requests, bot filtering, all access
-gates, OAuth replay, actor isolation, lease recovery, native turn deduplication,
-current-turn reads, Stop, approval handoff, feedback ownership, streamed chunk
-recovery, and connector deletion. DB journeys use real MySQL with mocked Slack and
-runtime services; the native client test uses a local HTTP witness server.
+`test/slack-assistant-*.test.ts` cover the run loop with fake Slack and runner
+(lost sessions, live text, reactions, watching, the worker loop), and one test
+runs a Slack message through the real headless runner app with a scripted model:
+session instructions, live text events, a reaction, a background task and its
+report.
 
 Before production rollout, verify with a real Slack sandbox and Daytona runtime:
 
