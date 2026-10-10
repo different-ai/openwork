@@ -21,10 +21,8 @@ import {
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
-import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
 import { listTeamsForMember } from "../orgs.js"
 import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
-import { slackRuntimeForOrganization, type SlackRuntime } from "./headless.js"
 
 export type InstallationRow = typeof Installation.$inferSelect
 export type EventRow = typeof Event.$inferSelect
@@ -34,9 +32,6 @@ export async function getInstallation(connectionId: DenTypeId<"externalMcpConnec
 }
 export async function slackAssistantEnabledForInstallation(installation: InstallationRow) {
   return organizationFeatureEnabled(installation.organizationId, "slackAssistant")
-}
-export async function slackRuntimeForInstallation(installation: InstallationRow): Promise<SlackRuntime> {
-  return slackRuntimeForOrganization(await getOrganizationFeatures(installation.organizationId))
 }
 export function isSlackConnection(connection: ExternalMcpConnectionRow) {
   return (
@@ -193,16 +188,13 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     .limit(1)
   const member = members[0]
   if (!member?.userId) return null
-  const [organizations, teams, account, access, features] = await Promise.all([
+  const [organizations, teams, account, features] = await Promise.all([
     db.select().from(OrganizationTable).where(eq(OrganizationTable.id, installation.organizationId)).limit(1),
     listTeamsForMember({ organizationId: installation.organizationId, memberId: member.id }),
     readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId: member.id }),
-    getOpenWorkWebRuntimeAccess(installation.organizationId),
     getOrganizationFeatures(installation.organizationId),
   ])
   const organization = organizations[0]
-  // The headless runner needs no per-member OpenWork Web computer.
-  const runtime = slackRuntimeForOrganization(features)
   const granted = await memberCanUseExternalMcpConnection({
     connectionId: connection.id,
     orgMembershipId: member.id,
@@ -215,7 +207,6 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
       enabled: installation.enabled,
       individualAccounts: true,
       mcpEnabled: features.mcpConnections,
-      webAccess: runtime === "headless" || access.hasAccess,
       activeMember: true,
       granted,
       connected: account.current && Boolean(account.value?.accessToken),
@@ -230,7 +221,6 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     organizationId: organization.id,
     connection,
     userToken: account.value.accessToken,
-    runtime,
   }
 }
 export type SlackActor = NonNullable<Awaited<ReturnType<typeof resolveSlackActor>>>
@@ -359,8 +349,12 @@ export async function releaseSlackThread(event: EventRow) {
   await renewSlackLease(event)
   await db.update(Thread).set({ activeEventId: null }).where(eq(Thread.activeEventId, event.id))
 }
-export async function saveSlackSession(threadId: string, sessionId: string, workspaceId: string) {
-  await db.update(Thread).set({ sessionId, workspaceId }).where(eq(Thread.id, threadId))
+export async function saveSlackSession(threadId: string, sessionId: string) {
+  await db.update(Thread).set({ sessionId, workspaceId: "headless" }).where(eq(Thread.id, threadId))
+}
+/** The thread's runner session is gone: its next message starts a fresh one. */
+export async function clearSlackSession(threadId: string) {
+  await db.update(Thread).set({ sessionId: null, workspaceId: null }).where(eq(Thread.id, threadId))
 }
 export async function cancelSlackThread(installation: InstallationRow, event: SlackEvent) {
   if (!event.user || !event.channel || !event.thread_ts) return

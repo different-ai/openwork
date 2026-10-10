@@ -1,10 +1,8 @@
-import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
-import type { FeatureMap } from "../features.js"
-import { stepLabel } from "../headless-runner/client.js"
 import {
   createHeadlessRunnerClient,
   defaultHeadlessRunnerDeps,
   headlessRunnerConfig,
+  stepLabel,
   TERMINAL_TURN_STATUSES,
   type HeadlessRunnerActor,
   type HeadlessRunnerDeps,
@@ -12,30 +10,20 @@ import {
 } from "../headless-runner/client.js"
 
 /**
- * Slack runs for organizations with `slackAssistantHeadless` go to the shared
- * headless runner (ee/apps/headless-runner) instead of each member's OpenWork
- * Web computer. This adapter speaks the same create/send/read/stop contract
- * the Slack run loop already uses, so run.ts stays runtime-agnostic.
+ * Slack runs go to the shared headless runner (ee/apps/headless-runner). This adapter gives the Slack run loop
+ * (run.ts) the few calls it needs: create a session, send a turn, read it, stop it.
  *
- * Runs have no time limit. Each MCP token still lives at most 60 minutes: the
- * runner pauses a long turn between steps every 50 minutes, and the read below
- * resumes it at once with a freshly minted token.
+ * Runs have no time limit. Each MCP token still lives at most 60 minutes: the runner pauses a long turn between
+ * steps every 50 minutes, and the read below resumes it at once with a freshly minted token.
  */
 
-export { headlessRunnerConfig }
+export { headlessRunnerConfig, stepLabel }
 export type HeadlessDeps = HeadlessRunnerDeps
 
-export type SlackRuntime = "headless" | "web"
-
-/** An organization uses the headless runner only when it is switched on for it and the deployment has one. */
-export function slackRuntimeForOrganization(
-  features: Pick<FeatureMap, "slackAssistantHeadless">,
-  env: Record<string, string | undefined> = process.env,
-): SlackRuntime {
-  return features.slackAssistantHeadless && headlessRunnerConfig(env) !== null ? "headless" : "web"
+/** Slack answers only on a deployment with a headless runner (a self-hosted install may not have one). */
+export function slackRunnerAvailable(env: Record<string, string | undefined> = process.env) {
+  return headlessRunnerConfig(env) !== null
 }
-
-export { stepLabel }
 
 /**
  * Slack runs remember which run each minted token belongs to, so work the run
@@ -65,111 +53,131 @@ export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRun
  */
 export const SLACK_REPEAT_LIMITS: RunnerRepeatLimits = { maxWaitingMs: 10 * 60_000, maxIdenticalFailures: 3 }
 
-/** Runner unavailable or overloaded: the Slack run loop retries these. */
-const retryable = (error: string) => ({ error, retryable: true, retryAfterMs: 5_000 })
-
 /** The models the runner's Gateway route can serve, for the admin's model picker. Null when unavailable. */
 export async function listHeadlessModels(suppliedDeps: HeadlessDeps | null = defaultHeadlessRunnerDeps()) {
   if (!suppliedDeps) return null
   return createHeadlessRunnerClient(suppliedDeps).listModels()
 }
 
-async function send(
-  client: ReturnType<typeof createHeadlessRunnerClient>,
-  actor: HeadlessRunnerActor,
-  sessionId: string,
-  messageId: string,
-  prompt: string,
-  model?: string,
-) {
-  // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
-  const sent = await client.sendTurn(actor, { sessionId, messageId, prompt, ...(model ? { model } : {}) })
-  if (sent.ok) return {}
-  if (sent.status === 404) return { error: "unknown_session", retryable: false }
-  return retryable(`headless_send_${sent.status}`)
+/**
+ * A call the run loop could not complete. `retryable` failures (runner unavailable or overloaded) are tried again;
+ * `unknown_session` means the thread's saved session is gone from the runner.
+ */
+export type RunnerFailure = { ok: false; error: string; retryable: boolean; retryAfterMs?: number }
+export type RunnerOutcome<T> = ({ ok: true } & T) | RunnerFailure
+
+/** One step of the turn, with a readable label for Slack's task timeline. */
+export type SlackRunStep = { id: string; label: string; status: "running" | "completed" | "error" }
+
+export type SlackRunSnapshot = {
+  /** idle: the turn ended (completed, failed or stopped). */
+  status: "busy" | "idle"
+  /** Everything the turn wrote, its notes and answer joined. */
+  finalAssistantText: string
+  /** The turn's last message alone: the answer a long, quiet run posts. */
+  lastAssistantText: string
+  terminalError?: { code: string }
+  steps: SlackRunStep[]
 }
 
-export async function headlessRemoteCall(
+export type SlackRunner = {
+  create(input: { title: string }): Promise<RunnerOutcome<{ sessionId: string }>>
+  send(input: { sessionId: string; messageId: string; prompt: string; model?: string }): Promise<RunnerOutcome<object>>
+  read(input: { sessionId: string; messageId: string }): Promise<RunnerOutcome<{ snapshot: SlackRunSnapshot }>>
+  stop(input: { sessionId: string; messageId: string }): Promise<void>
+}
+
+/** Runner unavailable or overloaded: the Slack run loop retries these. */
+const retryable = (error: string): RunnerFailure => ({ ok: false, error, retryable: true, retryAfterMs: 5_000 })
+const unknownSession: RunnerFailure = { ok: false, error: "unknown_session", retryable: false }
+
+export function createSlackRunner(
   actor: HeadlessRunnerActor,
-  action: RemoteSessionAction,
-  body: Record<string, unknown>,
   suppliedDeps: HeadlessDeps | null = slackHeadlessDeps(),
-): Promise<Record<string, unknown>> {
-  if (!suppliedDeps) return { error: "headless_runner_not_configured", retryable: false }
+): SlackRunner {
+  if (!suppliedDeps) {
+    const missing: RunnerFailure = { ok: false, error: "headless_runner_not_configured", retryable: false }
+    return {
+      create: async () => missing,
+      send: async () => missing,
+      read: async () => missing,
+      stop: async () => {},
+    }
+  }
   const client = createHeadlessRunnerClient(suppliedDeps)
-  const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
-  const messageId = typeof body.messageId === "string" ? body.messageId : ""
 
-  if (action === "create") {
-    const created = await client.createSession({
-      title: typeof body.title === "string" ? body.title : undefined,
-      repeats: SLACK_REPEAT_LIMITS,
+  const send = async (input: { sessionId: string; messageId: string; prompt: string; model?: string }): Promise<RunnerOutcome<object>> => {
+    // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
+    const sent = await client.sendTurn(actor, {
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      prompt: input.prompt,
+      ...(input.model ? { model: input.model } : {}),
     })
-    if (!created.ok) return retryable(`headless_create_${created.status}`)
-    return { sessionId: created.value.id, workspaceId: "headless" }
+    if (sent.ok) return { ok: true }
+    if (sent.status === 404) return unknownSession
+    return retryable(`headless_send_${sent.status}`)
   }
 
-  if (action === "send") {
-    return send(
-      client,
-      actor,
-      sessionId,
-      messageId,
-      typeof body.prompt === "string" ? body.prompt : "",
-      typeof body.model === "string" ? body.model : undefined,
-    )
-  }
-
-  if (action === "stop") {
-    const stopped = await client.abort(sessionId, messageId || undefined)
-    return stopped.reached ? { accepted: true } : { stopped: false }
-  }
-
-  // read: map the runner transcript onto the snapshot shape run.ts consumes. This polls every second for the
-  // whole run, so tool outputs (up to 50k characters each) stay on the runner; only their outcome is needed.
-  const read = await client.readSession(sessionId, { messageId, limit: 500, outputs: "none" })
-  if (!read.ok && read.status === 404) return { error: "unknown_session", retryable: false }
-  if (!read.ok) return retryable(`headless_read_${read.status}`)
-  const snapshot = read.value
-  const turn = snapshot.turns.find((entry) => entry.messageId === messageId)
-
-  // A runner restart or a credential refresh interrupts a turn; re-sending the same messageId resumes it.
-  if (turn?.status === "interrupted") {
-    const resumed = await send(client, actor, sessionId, messageId, "resume")
-    if ("error" in resumed) return resumed
-  }
-
-  const messages = snapshot.messages
-  const results = new Map(
-    messages.flatMap((message) => (message.role === "tool" ? [[message.callId, message.isError] as const] : [])),
-  )
-  const terminal = turn !== undefined && TERMINAL_TURN_STATUSES.has(turn.status)
-  const failed = turn?.status === "failed"
-  let finalAssistantText = snapshot.finalAssistantText
-  if (terminal && !failed && !finalAssistantText) finalAssistantText = "Done."
-  // The turn's last message, without the progress notes before it: the answer a long, quiet run posts.
-  const lastAssistantText =
-    messages.flatMap((message) => (message.role === "assistant" && message.text.trim() ? [message.text] : [])).at(-1) ?? ""
   return {
-    status: terminal ? "idle" : "busy",
-    title: null,
-    messageCount: messages.length,
-    finalAssistantText,
-    lastAssistantText: lastAssistantText || finalAssistantText,
-    ...(failed ? { terminalError: { code: turn.error ?? "headless_run_failed" } } : {}),
-    messages: messages.map((message) => ({
-      role: message.role,
-      toolCalls:
-        message.role === "assistant"
-          ? message.toolCalls.map((tool) => {
-              const outcome = results.get(tool.id)
-              return {
-                id: tool.id,
-                name: stepLabel(tool.name, tool.input),
-                status: outcome === undefined ? "running" : outcome ? "error" : "completed",
-              }
-            })
-          : [],
-    })),
+    async create(input) {
+      const created = await client.createSession({ title: input.title, repeats: SLACK_REPEAT_LIMITS })
+      if (!created.ok) return retryable(`headless_create_${created.status}`)
+      return { ok: true, sessionId: created.value.id }
+    },
+
+    send,
+
+    async stop(input) {
+      await client.abort(input.sessionId, input.messageId || undefined)
+    },
+
+    // Maps the runner transcript onto what the run loop shows. This polls every second for the whole run, so tool
+    // outputs (up to 50k characters each) stay on the runner; only their outcome is needed.
+    async read(input) {
+      const read = await client.readSession(input.sessionId, { messageId: input.messageId, limit: 500, outputs: "none" })
+      if (!read.ok && read.status === 404) return unknownSession
+      if (!read.ok) return retryable(`headless_read_${read.status}`)
+      const snapshot = read.value
+      const turn = snapshot.turns.find((entry) => entry.messageId === input.messageId)
+
+      // A runner restart or a credential refresh interrupts a turn; re-sending the same messageId resumes it.
+      if (turn?.status === "interrupted") {
+        const resumed = await send({ sessionId: input.sessionId, messageId: input.messageId, prompt: "resume" })
+        if (!resumed.ok) return resumed
+      }
+
+      const messages = snapshot.messages
+      const results = new Map(
+        messages.flatMap((message) => (message.role === "tool" ? [[message.callId, message.isError] as const] : [])),
+      )
+      const terminal = turn !== undefined && TERMINAL_TURN_STATUSES.has(turn.status)
+      const failed = turn?.status === "failed"
+      let finalAssistantText = snapshot.finalAssistantText
+      if (terminal && !failed && !finalAssistantText) finalAssistantText = "Done."
+      const lastAssistantText =
+        messages.flatMap((message) => (message.role === "assistant" && message.text.trim() ? [message.text] : [])).at(-1) ?? ""
+      return {
+        ok: true,
+        snapshot: {
+          status: terminal ? "idle" : "busy",
+          finalAssistantText,
+          lastAssistantText: lastAssistantText || finalAssistantText,
+          ...(failed ? { terminalError: { code: turn.error ?? "headless_run_failed" } } : {}),
+          steps: messages.flatMap((message) =>
+            message.role === "assistant"
+              ? message.toolCalls.map((tool): SlackRunStep => {
+                  const outcome = results.get(tool.id)
+                  return {
+                    id: tool.id,
+                    label: stepLabel(tool.name, tool.input),
+                    status: outcome === undefined ? "running" : outcome ? "error" : "completed",
+                  }
+                })
+              : [],
+          ),
+        },
+      }
+    },
   }
 }

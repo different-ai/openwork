@@ -130,13 +130,6 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  slackAssistantHeadless: {
-    label: "Slack Assistant: headless runtime",
-    description: "Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner.",
-    since: "2026-10",
-    deployments: everywhere,
-    default: false,
-  },
   headlessAutomations: {
     label: "Cloud Automations: headless runtime",
     description: "Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it.",

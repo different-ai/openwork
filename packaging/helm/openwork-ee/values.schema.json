@@ -128,16 +128,6 @@
               ],
               "description": "Slack Assistant: Answers Slack mentions and DMs for the organization after the Slack connector is set up. Renders DEN_FEATURE_SLACK_ASSISTANT."
             },
-            "slackAssistantHeadless": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Slack Assistant: headless runtime: Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. Renders DEN_FEATURE_SLACK_ASSISTANT_HEADLESS."
-            },
             "headlessAutomations": {
               "enum": [
                 "",

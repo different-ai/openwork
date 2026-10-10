@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
+import type { RunnerFailure, SlackRunner, SlackRunStep } from "./headless.js"
 import { scopeKey, SlackApiError, type SlackCall } from "./protocol.js"
 export const checkpointSchema = z.object({
   phase: z.enum(["create", "send", "read", "finish"]).default("create"),
@@ -7,7 +7,7 @@ export const checkpointSchema = z.object({
   threadTs: z.string().optional(),
   streamTs: z.string().optional(),
   sessionId: z.string().optional(),
-  workspaceId: z.string().optional(),
+  /** Kept until the run ends, so a run whose runner session vanished can start again in a fresh one. */
   prompt: z.string().optional(),
   sentText: z.string().default(""),
   steps: z.record(z.string(), z.string()).default({}),
@@ -18,9 +18,7 @@ export const checkpointSchema = z.object({
   streamStartedAt: z.number().optional(),
   recipientUserId: z.string().optional(),
   recipientTeamId: z.string().optional(),
-  wakeShown: z.boolean().default(false),
   finalStatus: z.enum(["active", "suspended"]).default("active"),
-  titleSynced: z.boolean().default(false),
   startedAt: z.number().optional(),
   stillWorkingShown: z.boolean().default(false),
   /** A long task stopped streaming progress; it posts hourly check-ins and its final answer instead. */
@@ -30,34 +28,10 @@ export const checkpointSchema = z.object({
   queuedNoticeShown: z.boolean().default(false),
   /** Streams live progress. Off: Slack's working status shows until the answer. Set per task when it starts. */
   live: z.boolean().default(true),
+  /** Times the thread's runner session was found missing and replaced; once at most per message. */
+  sessionResets: z.number().default(0),
 })
-type Checkpoint = z.infer<typeof checkpointSchema>
-const readSchema = z.object({
-  status: z.string(),
-  title: z.string().nullable().optional(),
-  messageCount: z.number(),
-  finalAssistantText: z.string(),
-  /** The last assistant message alone; runtimes without it fall back to finalAssistantText. */
-  lastAssistantText: z.string().optional(),
-  terminalError: z.unknown().optional(),
-  messages: z.array(
-    z.object({
-      role: z.string(),
-      toolCalls: z.array(z.object({ id: z.string(), name: z.string(), status: z.string().nullable() })),
-    }),
-  ),
-})
-export type RemoteCall = (
-  action: RemoteSessionAction,
-  body: Record<string, unknown>,
-) => Promise<Record<string, unknown>>
-export function webLink(sessionId: string) {
-  const url = new URL(
-    `/session/${encodeURIComponent(sessionId)}`,
-    process.env.DEN_WEB_OPENWORK_WEB_URL ?? "https://web.openworklabs.com",
-  )
-  return url.toString()
-}
+export type Checkpoint = z.infer<typeof checkpointSchema>
 
 /** Runs longer than this get a separate "done" reply, because updating a streamed message does not notify anyone. */
 export const DONE_PING_AFTER_MS = 60_000
@@ -88,16 +62,8 @@ export function formatElapsed(ms: number) {
 }
 
 /** What the thread is told when a task ends without an answer. */
-function failureText(webHandoff: boolean, sessionId: string | undefined, terminalError: unknown) {
-  return webHandoff
-    ? `This task needs attention. [Open in OpenWork Web](${webLink(sessionId ?? "")}).`
-    : headlessFailureText(terminalError)
-}
-
-/** What the thread is told when a headless task ends without an answer. */
-function headlessFailureText(terminalError: unknown) {
-  const code = z.object({ code: z.string() }).catch({ code: "" }).parse(terminalError).code
-  return code === "stuck_repeating"
+function failureText(terminalError: { code: string }) {
+  return terminalError.code === "stuck_repeating"
     ? "I got stuck repeating the same step, so I stopped. Try again, or ask in a different way."
     : "This task couldn't finish. Try again, or ask in a different way."
 }
@@ -255,78 +221,54 @@ async function appendText(
 }
 export async function advanceSlackRun(input: {
   checkpoint: Checkpoint
-  remote: RemoteCall
+  runner: SlackRunner
   slack: SlackCall
   messageId: string
-  saveSession: (sessionId: string, workspaceId: string) => Promise<void>
+  saveSession: (sessionId: string) => Promise<void>
+  /** Forgets the thread's runner session, so the next message in the thread starts a fresh one. */
+  clearSession: () => Promise<void>
   title: string
-  needsAttention?: (sessionId: string) => Promise<boolean>
   persist?: (checkpoint: Checkpoint) => Promise<void>
-  /** False for the headless runner: there is no OpenWork Web session to hand off to. */
-  webHandoff?: boolean
-  /** Gateway model alias for the headless runner, chosen by the workspace admin. */
+  /** Gateway model alias for the runner, chosen by the workspace admin. */
   model?: string
-  /** Long tasks stop streaming progress after this long (the headless runtime); unset streams the whole run. */
+  /** Long tasks stop streaming progress after this long. */
   quietAfterMs?: number
   now?: () => number
 }): Promise<{ checkpoint: Checkpoint; delayMs: number; done?: boolean }> {
   const cp = input.checkpoint
-  const webHandoff = input.webHandoff !== false
   const now = input.now ?? Date.now
+  const quietAfterMs = input.quietAfterMs ?? LONG_TASK_QUIET_AFTER_MS
   if (cp.phase === "create") {
     if (!cp.sessionId) {
-      // Persist the empty native session before submitting any user instruction.
-      const result = await input.remote("create", { title: input.title, target: "cloud" })
-      if (result.error) return retryProvisioning(result, cp, input.slack, now)
-      const created = z.object({ sessionId: z.string(), workspaceId: z.string() }).parse(result)
-      await input.saveSession(created.sessionId, created.workspaceId)
+      // Persist the empty session before submitting any user instruction.
+      const created = await input.runner.create({ title: input.title })
+      if (!created.ok) return retryLater(created, cp)
+      await input.saveSession(created.sessionId)
       cp.sessionId = created.sessionId
-      cp.workspaceId = created.workspaceId
     }
     cp.phase = "send"
     return { checkpoint: cp, delayMs: 0 }
   }
   if (cp.phase === "send") {
-    const result = await input.remote("send", {
-      sessionId: cp.sessionId,
-      prompt: cp.prompt,
+    const sent = await input.runner.send({
+      sessionId: cp.sessionId ?? "",
+      prompt: cp.prompt ?? "",
       messageId: input.messageId,
       ...(input.model ? { model: input.model } : {}),
     })
-    if (result.error) return retryProvisioning(result, cp, input.slack, now)
+    if (!sent.ok) return sent.error === "unknown_session" ? startInFreshSession(input, cp) : retryLater(sent, cp)
     cp.phase = "read"
-    cp.prompt = undefined
     return { checkpoint: cp, delayMs: 1_000 }
   }
   if (cp.phase === "read") {
-    if (cp.sessionId && (await input.needsAttention?.(cp.sessionId))) {
-      await appendText(
-        input.slack,
-        cp,
-        `\n\nI need your input or approval. [Open in OpenWork Web](${webLink(cp.sessionId)}).`,
-        now,
-      )
-      cp.finalStatus = "suspended"
-      cp.phase = "finish"
-      return { checkpoint: cp, delayMs: 0 }
-    }
-    const result = await input.remote("read", { sessionId: cp.sessionId, messageId: input.messageId, limit: 100 })
-    if (result.error) return retryProvisioning(result, cp, input.slack, now)
-    const snapshot = readSchema.parse(result)
-    if (!cp.titleSynced && snapshot.title) {
-      await input.slack("agents.sessions.rename", {
-        channel_id: cp.channel,
-        thread_ts: cp.threadTs,
-        title: snapshot.title.slice(0, 200),
-      })
-      cp.titleSynced = true
-      await input.persist?.(cp)
-    }
+    const read = await input.runner.read({ sessionId: cp.sessionId ?? "", messageId: input.messageId })
+    if (!read.ok) return read.error === "unknown_session" ? startInFreshSession(input, cp) : retryLater(read, cp)
+    const snapshot = read.snapshot
     const finished = snapshot.status === "idle" && Boolean(snapshot.finalAssistantText)
     if (!cp.live) {
       // Quiet: Slack's working status (with its Stop button) shows until the answer, which arrives on its own.
       if (snapshot.terminalError) {
-        await appendText(input.slack, cp, failureText(webHandoff, cp.sessionId, snapshot.terminalError), now)
+        await appendText(input.slack, cp, failureText(snapshot.terminalError), now)
         cp.finalStatus = "suspended"
         cp.phase = "finish"
       } else if (finished) {
@@ -342,7 +284,7 @@ export async function advanceSlackRun(input: {
     }
     if (cp.quiet) {
       if (snapshot.terminalError) {
-        await appendText(input.slack, cp, headlessFailureText(snapshot.terminalError), now)
+        await appendText(input.slack, cp, failureText(snapshot.terminalError), now)
         cp.finalStatus = "suspended"
         cp.phase = "finish"
       } else if (finished) {
@@ -363,13 +305,7 @@ export async function advanceSlackRun(input: {
       }
       return { checkpoint: cp, delayMs: cp.phase === "finish" ? 0 : QUIET_POLL_MS }
     }
-    if (
-      !snapshot.terminalError &&
-      !finished &&
-      input.quietAfterMs !== undefined &&
-      cp.startedAt !== undefined &&
-      now() - cp.startedAt >= input.quietAfterMs
-    ) {
+    if (!snapshot.terminalError && !finished && cp.startedAt !== undefined && now() - cp.startedAt >= quietAfterMs) {
       // Before sending anything else, so the live reply never needs a second message. The Slack session stays in
       // progress so Stop stays available; the answer comes later as a new reply.
       await closeStream(input.slack, cp, "processing", { chunks: [{ type: "markdown_text", text: `\n\n${LONG_TASK_LINE}` }] })
@@ -389,37 +325,7 @@ export async function advanceSlackRun(input: {
         cp.firstTextAt ??= now()
         await input.persist?.(cp)
       })
-    const updates = new Map<
-      string,
-      {
-        type: "task_update"
-        id: string
-        title: string
-        status: "complete" | "error" | "in_progress"
-        rawStatus: string
-      }
-    >()
-    for (const message of snapshot.messages)
-      for (const tool of message.toolCalls) {
-        if (cp.steps[tool.id] === (tool.status ?? "pending")) continue
-        const status = tool.status === "completed" ? "complete" : tool.status === "error" ? "error" : "in_progress"
-        updates.set(tool.id, {
-          type: "task_update",
-          id: scopeKey(tool.id),
-          // The headless runtime reports readable step labels; OpenCode tool ids stay generic.
-          title: tool.name.includes(" ") ? tool.name : "Working with your connections",
-          status,
-          rawStatus: tool.status ?? "pending",
-        })
-      }
-    const entries = [...updates.entries()]
-    for (let offset = 0; offset < entries.length; offset += 20) {
-      const batch = entries.slice(offset, offset + 20)
-      const chunks = batch.map(([, { rawStatus, ...chunk }]) => chunk)
-      await sendChunks(input.slack, cp, chunks, now)
-      for (const [id, update] of batch) cp.steps[id] = update.rawStatus
-      await input.persist?.(cp)
-    }
+    await sendStepUpdates(input.slack, cp, snapshot.steps, now, input.persist)
     const noAnswerYet = !cp.sentText && !snapshot.finalAssistantText
     if (noAnswerYet && !cp.stillWorkingShown && cp.startedAt !== undefined && now() - cp.startedAt > STILL_WORKING_AFTER_MS) {
       await appendText(input.slack, cp, STILL_WORKING_LINE, now)
@@ -427,22 +333,16 @@ export async function advanceSlackRun(input: {
       await input.persist?.(cp)
     }
     if (snapshot.terminalError) {
-      await appendText(
-        input.slack,
-        cp,
-        `\n\n${failureText(webHandoff, cp.sessionId, snapshot.terminalError)}`,
-        now,
-      )
+      await appendText(input.slack, cp, `\n\n${failureText(snapshot.terminalError)}`, now)
       cp.finalStatus = "suspended"
       cp.phase = "finish"
     } else if (finished) cp.phase = "finish"
     return { checkpoint: cp, delayMs: 1_000 }
   }
   cp.completedAt ??= now()
+  // The run is over; the prompt is only needed to start it again.
+  cp.prompt = undefined
   await stopSlackStream(input.slack, cp, {
-    ...(webHandoff
-      ? { chunks: [{ type: "markdown_text", text: `\n\n[Open in OpenWork Web](${webLink(cp.sessionId ?? "")})` }] }
-      : {}),
     blocks: [
       {
         type: "context_actions",
@@ -474,21 +374,64 @@ export async function advanceSlackRun(input: {
   }
   return { checkpoint: cp, delayMs: 0, done: true }
 }
+
+/** Task steps not yet shown (or whose status changed) go to Slack's task timeline, 20 per chunk batch. */
+async function sendStepUpdates(
+  slack: SlackCall,
+  cp: Checkpoint,
+  steps: SlackRunStep[],
+  now: () => number,
+  persist?: (checkpoint: Checkpoint) => Promise<void>,
+) {
+  const updates = new Map<string, { chunk: Chunk; rawStatus: string }>()
+  for (const step of steps) {
+    if (cp.steps[step.id] === step.status) continue
+    updates.set(step.id, {
+      chunk: {
+        type: "task_update",
+        id: scopeKey(step.id),
+        title: step.label.includes(" ") ? step.label : "Working with your connections",
+        status: step.status === "completed" ? "complete" : step.status === "error" ? "error" : "in_progress",
+      },
+      rawStatus: step.status,
+    })
+  }
+  const entries = [...updates.entries()]
+  for (let offset = 0; offset < entries.length; offset += 20) {
+    const batch = entries.slice(offset, offset + 20)
+    await sendChunks(slack, cp, batch.map(([, update]) => update.chunk), now)
+    for (const [id, update] of batch) cp.steps[id] = update.rawStatus
+    await persist?.(cp)
+  }
+}
+
 export class RemoteSessionUnavailableError extends Error {
   constructor() {
     super("remote_session_unavailable")
   }
 }
-function retryProvisioning(result: Record<string, unknown>, cp: Checkpoint, slack: SlackCall, now: () => number) {
-  return (async () => {
-    if (result.retryable !== true) throw new RemoteSessionUnavailableError()
-    if (!cp.wakeShown && String(result.error).startsWith("cloud_runtime_")) {
-      await appendText(slack, cp, "Waking your workspace…\n\n", now)
-      cp.wakeShown = true
-    }
-    return {
-      checkpoint: cp,
-      delayMs: typeof result.retryAfterMs === "number" ? Math.max(1_000, Math.min(60_000, result.retryAfterMs)) : 5_000,
-    }
-  })()
+
+/** Retries a runner call that may work later; anything else ends the run. */
+function retryLater(result: RunnerFailure, cp: Checkpoint) {
+  if (!result.retryable) throw new RemoteSessionUnavailableError()
+  return {
+    checkpoint: cp,
+    delayMs: typeof result.retryAfterMs === "number" ? Math.max(1_000, Math.min(60_000, result.retryAfterMs)) : 5_000,
+  }
+}
+
+/**
+ * The thread's saved runner session no longer exists (the runner lost it, or the thread was started on an earlier
+ * runtime). Forget it and run this same message again in a fresh session, once; the answer starts over.
+ */
+async function startInFreshSession(input: { clearSession: () => Promise<void>; persist?: (checkpoint: Checkpoint) => Promise<void> }, cp: Checkpoint) {
+  if (cp.sessionResets >= 1 || !cp.prompt) throw new RemoteSessionUnavailableError()
+  cp.sessionResets += 1
+  await input.clearSession()
+  cp.sessionId = undefined
+  cp.phase = "create"
+  cp.sentText = ""
+  cp.steps = {}
+  await input.persist?.(cp)
+  return { checkpoint: cp, delayMs: 0 }
 }

@@ -851,7 +851,6 @@
               "auditLogs",
               "orgManagedDashboards",
               "slackAssistant",
-              "slackAssistantHeadless",
               "headlessAutomations",
               "workbot",
               "automationCalendar",
@@ -1070,9 +1069,6 @@
                     "slackAssistant": {
                       "type": "boolean"
                     },
-                    "slackAssistantHeadless": {
-                      "type": "boolean"
-                    },
                     "headlessAutomations": {
                       "type": "boolean"
                     },
@@ -1125,7 +1121,6 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
@@ -1759,62 +1754,6 @@
                         "overrideApplies"
                       ]
                     },
-                    "slackAssistantHeadless": {
-                      "type": "object",
-                      "properties": {
-                        "enabled": {
-                          "type": "boolean"
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "unavailable",
-                            "killed",
-                            "lock",
-                            "override",
-                            "everyone"
-                          ]
-                        },
-                        "everyone": {
-                          "type": "boolean"
-                        },
-                        "killed": {
-                          "type": "boolean"
-                        },
-                        "lock": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "override": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "overrideApplies": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "enabled",
-                        "source",
-                        "everyone",
-                        "killed",
-                        "lock",
-                        "override",
-                        "overrideApplies"
-                      ]
-                    },
                     "headlessAutomations": {
                       "type": "object",
                       "properties": {
@@ -2444,7 +2383,6 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
@@ -2862,9 +2800,6 @@
                     "slackAssistant": {
                       "type": "boolean"
                     },
-                    "slackAssistantHeadless": {
-                      "type": "boolean"
-                    },
                     "headlessAutomations": {
                       "type": "boolean"
                     },
@@ -2917,7 +2852,6 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
@@ -3551,62 +3485,6 @@
                         "overrideApplies"
                       ]
                     },
-                    "slackAssistantHeadless": {
-                      "type": "object",
-                      "properties": {
-                        "enabled": {
-                          "type": "boolean"
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "unavailable",
-                            "killed",
-                            "lock",
-                            "override",
-                            "everyone"
-                          ]
-                        },
-                        "everyone": {
-                          "type": "boolean"
-                        },
-                        "killed": {
-                          "type": "boolean"
-                        },
-                        "lock": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "override": {
-                          "anyOf": [
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "overrideApplies": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "enabled",
-                        "source",
-                        "everyone",
-                        "killed",
-                        "lock",
-                        "override",
-                        "overrideApplies"
-                      ]
-                    },
                     "headlessAutomations": {
                       "type": "object",
                       "properties": {
@@ -4236,7 +4114,6 @@
                     "auditLogs",
                     "orgManagedDashboards",
                     "slackAssistant",
-                    "slackAssistantHeadless",
                     "headlessAutomations",
                     "workbot",
                     "automationCalendar",
@@ -9641,7 +9518,6 @@
               "auditLogs",
               "orgManagedDashboards",
               "slackAssistant",
-              "slackAssistantHeadless",
               "headlessAutomations",
               "workbot",
               "automationCalendar",
@@ -26143,9 +26019,6 @@
                         "slackAssistant": {
                           "type": "boolean"
                         },
-                        "slackAssistantHeadless": {
-                          "type": "boolean"
-                        },
                         "headlessAutomations": {
                           "type": "boolean"
                         },
@@ -26198,7 +26071,6 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
@@ -26832,62 +26704,6 @@
                             "overrideApplies"
                           ]
                         },
-                        "slackAssistantHeadless": {
-                          "type": "object",
-                          "properties": {
-                            "enabled": {
-                              "type": "boolean"
-                            },
-                            "source": {
-                              "type": "string",
-                              "enum": [
-                                "unavailable",
-                                "killed",
-                                "lock",
-                                "override",
-                                "everyone"
-                              ]
-                            },
-                            "everyone": {
-                              "type": "boolean"
-                            },
-                            "killed": {
-                              "type": "boolean"
-                            },
-                            "lock": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "override": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "overrideApplies": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "enabled",
-                            "source",
-                            "everyone",
-                            "killed",
-                            "lock",
-                            "override",
-                            "overrideApplies"
-                          ]
-                        },
                         "headlessAutomations": {
                           "type": "object",
                           "properties": {
@@ -27517,7 +27333,6 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
@@ -27680,9 +27495,6 @@
                         "slackAssistant": {
                           "type": "boolean"
                         },
-                        "slackAssistantHeadless": {
-                          "type": "boolean"
-                        },
                         "headlessAutomations": {
                           "type": "boolean"
                         },
@@ -27735,7 +27547,6 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
@@ -28369,62 +28180,6 @@
                             "overrideApplies"
                           ]
                         },
-                        "slackAssistantHeadless": {
-                          "type": "object",
-                          "properties": {
-                            "enabled": {
-                              "type": "boolean"
-                            },
-                            "source": {
-                              "type": "string",
-                              "enum": [
-                                "unavailable",
-                                "killed",
-                                "lock",
-                                "override",
-                                "everyone"
-                              ]
-                            },
-                            "everyone": {
-                              "type": "boolean"
-                            },
-                            "killed": {
-                              "type": "boolean"
-                            },
-                            "lock": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "override": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ]
-                            },
-                            "overrideApplies": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "enabled",
-                            "source",
-                            "everyone",
-                            "killed",
-                            "lock",
-                            "override",
-                            "overrideApplies"
-                          ]
-                        },
                         "headlessAutomations": {
                           "type": "object",
                           "properties": {
@@ -29054,7 +28809,6 @@
                         "auditLogs",
                         "orgManagedDashboards",
                         "slackAssistant",
-                        "slackAssistantHeadless",
                         "headlessAutomations",
                         "workbot",
                         "automationCalendar",
@@ -91736,8 +91490,9 @@
                     "eligible": {
                       "type": "boolean"
                     },
-                    "webAccess": {
-                      "type": "boolean"
+                    "runnerAvailable": {
+                      "type": "boolean",
+                      "description": "Whether this deployment has the headless runner Slack replies run on. Without it the assistant can't be enabled."
                     },
                     "channelIds": {
                       "type": "array",
@@ -91762,7 +91517,7 @@
                           "type": "null"
                         }
                       ],
-                      "description": "Model chosen for headless runs, or null for the runner default."
+                      "description": "Model chosen for Slack runs, or null for the runner default."
                     },
                     "defaultModel": {
                       "anyOf": [
@@ -91773,7 +91528,7 @@
                           "type": "null"
                         }
                       ],
-                      "description": "The headless runner's default model, when this workspace uses it."
+                      "description": "The headless runner's default model, when the runner is available."
                     },
                     "progressUpdates": {
                       "type": "boolean",
@@ -91796,7 +91551,7 @@
                           "name"
                         ]
                       },
-                      "description": "Models the headless runner can use; empty when the workspace doesn't use the headless runner."
+                      "description": "Models the headless runner can use; empty when the runner is unavailable."
                     },
                     "metrics": {
                       "type": "object",
@@ -91885,7 +91640,7 @@
                     "rolloutEnabled",
                     "hasSigningSecret",
                     "eligible",
-                    "webAccess",
+                    "runnerAvailable",
                     "channelIds",
                     "shadowMode",
                     "dailyLimit",
@@ -91920,7 +91675,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -91966,7 +91721,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -92022,7 +91777,7 @@
           "Authentication"
         ],
         "summary": "Configure Slack assistant installation",
-        "description": "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires the Manage connections permission, a browser session and recent verification.",
+        "description": "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and the deployment's headless runner. Requires the Manage connections permission, a browser session and recent verification.",
         "responses": {
           "200": {
             "description": "Slack assistant settings saved.",
@@ -92054,7 +91809,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -92100,7 +91855,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -92276,7 +92031,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {
@@ -92322,7 +92077,7 @@
                             "setup_required",
                             "browser_session_required",
                             "slack_assistant_not_enabled",
-                            "openwork_web_access_required"
+                            "slack_runner_unavailable"
                           ]
                         },
                         "message": {

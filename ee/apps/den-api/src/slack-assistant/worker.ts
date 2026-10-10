@@ -1,23 +1,20 @@
-import { organizeSlackSession, renameSlackSession, slackSessionNeedsAttention } from "./runtime.js"
 import {
   checkpointSchema,
   advanceSlackRun,
   stopSlackStream,
   RemoteSessionUnavailableError,
-  LONG_TASK_QUIET_AFTER_MS,
   QUEUED_LINE,
+  type Checkpoint,
 } from "./run.js"
 import { z } from "zod"
 import { appLogger } from "../observability/logger.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
-import { executeRemoteSessionCapability, type RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
-import { buildSlackPrompt, SlackApiError, slackClient, slackEventSchema } from "./protocol.js"
-import { headlessRemoteCall } from "./headless.js"
+import { buildSlackPrompt, isInvocation, SlackApiError, slackClient, slackEventSchema, type SlackCall } from "./protocol.js"
+import { createSlackRunner, slackRunnerAvailable, type SlackRunner } from "./headless.js"
 import {
   slackAssistantEnabledForInstallation,
   admitSlackRun,
   latestSlackContext,
-  findSlackThread,
   removeSlackIdentities,
   persistSlackCheckpoint,
   cancelSlackThread,
@@ -28,65 +25,79 @@ import {
   releaseSlackThread,
   resolveSlackActor,
   linkConnectedSlackMembers,
-  slackRuntimeForInstallation,
   revokeSlackInstallation,
   saveSlackSession,
+  clearSlackSession,
   type EventRow,
   type SlackActor,
 } from "./repository.js"
 import { pruneSlackEvents, renewSlackLease, SlackLeaseLostError } from "./repository.js"
 
-/** OpenWork Web runs stop after 15 minutes; headless runs have no time limit and end with Stop or their answer. */
-const WEB_RUN_MAX_MS = 15 * 60_000
-
-async function remoteCall(actor: SlackActor, action: RemoteSessionAction, body: Record<string, unknown>) {
-  if (actor.runtime === "headless") return headlessRemoteCall(actor, action, body)
-  const result = await executeRemoteSessionCapability({
-    action,
-    body,
-    organizationId: actor.organizationId,
-    userId: actor.userId,
-    hasWriteScope: true,
-  })
-  return result.structuredContent ?? {}
+type WorkerDeps = {
+  slack: typeof slackClient
+  runner: (actor: SlackActor) => SlackRunner
 }
 
-const defaultWorkerDeps = {
+const defaultWorkerDeps: WorkerDeps = {
   slack: slackClient,
-  remote: remoteCall,
-  // Session groups, pending approvals and renames live in OpenWork Web; headless runs have none.
-  organize: async (actor: SlackActor, sessionId: string) => {
-    if (actor.runtime !== "headless") await organizeSlackSession(actor, sessionId)
-  },
-  needsAttention: async (actor: SlackActor, sessionId: string) =>
-    actor.runtime === "headless" ? false : slackSessionNeedsAttention(actor, sessionId),
-  rename: async (actor: SlackActor, sessionId: string, title: string) => {
-    if (actor.runtime !== "headless") await renameSlackSession(actor, sessionId, title)
-  },
+  runner: (actor) => createSlackRunner(actor),
 }
-export async function processSlackEvent(event: EventRow, suppliedDeps = defaultWorkerDeps) {
+
+/** Every runner call first renews the event's lease, so a slow runner never lets another worker take the event. */
+function leasedRunner(runner: SlackRunner, event: EventRow): SlackRunner {
+  return {
+    create: async (input) => {
+      await renewSlackLease(event)
+      return runner.create(input)
+    },
+    send: async (input) => {
+      await renewSlackLease(event)
+      return runner.send(input)
+    },
+    read: async (input) => {
+      await renewSlackLease(event)
+      return runner.read(input)
+    },
+    stop: async (input) => {
+      await renewSlackLease(event)
+      return runner.stop(input)
+    },
+  }
+}
+
+/** Slack replies need the deployment's headless runner. Without one, say so to the person who asked, once. */
+async function answerWithoutRunner(event: EventRow, slack: SlackCall, invocation: boolean, cp: Checkpoint) {
+  if (cp.channel) {
+    // The runner went away mid-run: close the reply instead of leaving Slack's working status on.
+    try {
+      await stopSlackStream(slack, { ...cp, finalStatus: "suspended" }, { chunks: [{ type: "markdown_text", text: "\n\nThis task stopped." }] })
+    } catch {
+      /* Slack may already have closed it. */
+    }
+  } else if (invocation && event.status === "pending") {
+    try {
+      await slack("chat.postEphemeral", {
+        channel: event.channelId,
+        user: event.slackUserId,
+        thread_ts: event.threadTs,
+        text: "OpenWork can't answer in Slack on this deployment yet: it needs the OpenWork cloud runner. Ask your OpenWork admin to set it up.",
+      })
+    } catch {
+      /* The bot may not be in the channel; nothing else to tell. */
+    }
+  }
+  await releaseSlackThread(event)
+  return checkpointEvent(event, { status: "done" })
+}
+
+export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDeps = defaultWorkerDeps) {
   await renewSlackLease(event)
-  const deps: typeof defaultWorkerDeps = {
+  const deps: WorkerDeps = {
     slack: (token) => async (method, body) => {
       await renewSlackLease(event)
       return suppliedDeps.slack(token)(method, body)
     },
-    remote: async (actor, action, body) => {
-      await renewSlackLease(event)
-      return suppliedDeps.remote(actor, action, body)
-    },
-    organize: async (actor, session) => {
-      await renewSlackLease(event)
-      return suppliedDeps.organize(actor, session)
-    },
-    needsAttention: async (actor, session) => {
-      await renewSlackLease(event)
-      return suppliedDeps.needsAttention(actor, session)
-    },
-    rename: async (actor, session, title) => {
-      await renewSlackLease(event)
-      return suppliedDeps.rename(actor, session, title)
-    },
+    runner: (actor) => leasedRunner(suppliedDeps.runner(actor), event),
   }
   const installation = await getInstallation(event.connectionId)
   const payload = slackEventSchema.parse(JSON.parse(event.payload))
@@ -149,7 +160,9 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     return checkpointEvent(event, { status: "done" })
   }
   if (payload.type === "app_context_changed") return checkpointEvent(event, { status: "context" })
+  if (payload.type === "agent_session_title_changed") return checkpointEvent(event, { status: "done" })
   const cp = checkpointSchema.parse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
+  if (!slackRunnerAvailable()) return answerWithoutRunner(event, slack, isInvocation(payload), cp)
   let actor = await resolveSlackActor(installation, event.slackUserId)
   // Members who connected Slack before the assistant existed are linked from their token, not asked to reconnect.
   if (!actor && event.status !== "running" && installation.enabled && (await linkConnectedSlackMembers(installation, deps.slack)) > 0)
@@ -170,22 +183,17 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
       await releaseSlackThread(event)
       return checkpointEvent(event, { status: "done" })
     }
-    const headless = (await slackRuntimeForInstallation(installation)) === "headless"
     await slack("chat.postEphemeral", {
       channel: event.channelId,
       user: event.slackUserId,
       thread_ts: event.threadTs,
-      text: headless
-        ? "I work as you in OpenWork. Connect once to get started."
-        : "I run on your own OpenWork workspace. Connect once to get started.",
+      text: "I work as you in OpenWork. Connect once to get started.",
       blocks: [
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: headless
-              ? "I work as you, with the apps and skills you have in OpenWork. Connect your Slack account once to continue. Your workspace must give you access to this connection."
-              : "I run on your own OpenWork workspace. Connect your Slack account to continue. Your workspace must grant access to this connection and OpenWork Web.",
+            text: "I work as you, with the apps and skills you have in OpenWork. Connect your Slack account once to continue. Your workspace must give you access to this connection.",
           },
         },
         {
@@ -203,11 +211,6 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     })
     return checkpointEvent(event, { status: "awaiting_link" })
   }
-  if (payload.type === "agent_session_title_changed") {
-    const existing = await findSlackThread(event, actor)
-    if (existing?.sessionId && payload.title) await deps.rename(actor, existing.sessionId, payload.title)
-    return checkpointEvent(event, { status: "done" })
-  }
   const { thread, busy } = await lockSlackThread(event, actor)
   if (!thread) {
     // An earlier task of this member holds the thread; this message runs right after it. Say so once.
@@ -221,16 +224,11 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     }
     return checkpointEvent(event, {}, 2_000)
   }
-  const headless = actor.runtime === "headless"
-  if (event.cancelled || (!headless && Date.now() - event.createdAt.getTime() > WEB_RUN_MAX_MS)) {
-    if (cp.sessionId && cp.phase !== "create")
-      await deps.remote(actor, "stop", { sessionId: cp.sessionId, messageId: `msg_${event.id}` })
+  const runner = deps.runner(actor)
+  if (event.cancelled) {
+    if (cp.sessionId && cp.phase !== "create") await runner.stop({ sessionId: cp.sessionId, messageId: `msg_${event.id}` })
     if (cp.channel)
-      await stopSlackStream(
-        slack,
-        { ...cp, finalStatus: "suspended" },
-        { chunks: [{ type: "markdown_text", text: headless ? "\n\nStopped." : "\n\nStopped. Open OpenWork Web to continue." }] },
-      )
+      await stopSlackStream(slack, { ...cp, finalStatus: "suspended" }, { chunks: [{ type: "markdown_text", text: "\n\nStopped." }] })
     await releaseSlackThread(event)
     return checkpointEvent(event, { status: "done" })
   }
@@ -239,9 +237,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
       await slack("chat.postEphemeral", {
         channel: event.channelId,
         user: event.slackUserId,
-        text: headless
-          ? "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please try again later."
-          : "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please use OpenWork Web or try again later.",
+        text: "OpenWork Slack has paused new requests because of a usage limit or repeated service failures. Please try again later.",
       })
       await releaseSlackThread(event)
       return checkpointEvent(event, { status: "done" })
@@ -299,31 +295,28 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
       botUserId: installation.botUserId ?? "",
       context,
       privateReply: cp.privateReply,
-      webHandoff: !headless,
     })
     cp.sessionId = thread.sessionId ?? undefined
-    cp.workspaceId = thread.workspaceId ?? undefined
     await checkpointEvent(event, { status: "running", checkpoint: JSON.stringify(cp) })
     return
   }
   cp.sessionId ??= thread.sessionId ?? undefined
-  cp.workspaceId ??= thread.workspaceId ?? undefined
   const result = await advanceSlackRun({
     checkpoint: cp,
     slack,
-    remote: (action, body) => deps.remote(actor, action, body),
+    runner,
     messageId: `msg_${event.id}`,
-    saveSession: async (sessionId, workspaceId) => {
+    saveSession: async (sessionId) => {
       await renewSlackLease(event)
-      await saveSlackSession(thread.id, sessionId, workspaceId)
-      await deps.organize(actor, sessionId)
+      await saveSlackSession(thread.id, sessionId)
     },
-    needsAttention: (sessionId) => deps.needsAttention(actor, sessionId),
+    clearSession: async () => {
+      await renewSlackLease(event)
+      await clearSlackSession(thread.id)
+    },
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
-    webHandoff: !headless,
-    model: headless ? (installation.model ?? undefined) : undefined,
-    quietAfterMs: headless ? LONG_TASK_QUIET_AFTER_MS : undefined,
+    model: installation.model ?? undefined,
   })
   if (result.done) await releaseSlackThread(event)
   await checkpointEvent(
@@ -372,7 +365,7 @@ export async function handleSlackEventFailure(event: EventRow, error: unknown, d
     const actor = await resolveSlackActor(installation, event.slackUserId)
     if (actor && cp.sessionId) {
       try {
-        await deps.remote(actor, "stop", { sessionId: cp.sessionId, messageId: `msg_${event.id}` })
+        await deps.runner(actor).stop({ sessionId: cp.sessionId, messageId: `msg_${event.id}` })
       } catch {
         /* Runtime may be unreachable. */
       }
@@ -386,10 +379,7 @@ export async function handleSlackEventFailure(event: EventRow, error: unknown, d
             chunks: [
               {
                 type: "markdown_text",
-                text:
-                  actor?.runtime === "headless"
-                    ? "\n\nThis task stopped. Try again in a moment."
-                    : "\n\nThis task stopped. Open OpenWork Web to continue.",
+                text: "\n\nThis task stopped. Try again in a moment.",
               },
             ],
           },

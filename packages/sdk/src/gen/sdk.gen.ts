@@ -15002,7 +15002,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Configure Slack assistant installation
    *
-   * Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires the Manage connections permission, a browser session and recent verification.
+   * Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and the deployment's headless runner. Requires the Manage connections permission, a browser session and recent verification.
    */
   public putV1McpConnectionsByConnectionIdSlackAssistant<ThrowOnError extends boolean = false>(
     parameters: {

@@ -340,7 +340,6 @@ OpenWork Cloud. Don't change it on a customer install.
 | `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
 | `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |
 | `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
-| `slackAssistantHeadless` | `DEN_FEATURE_SLACK_ASSISTANT_HEADLESS` | default off | Answers Slack on the shared headless runner instead of each member's OpenWork Web computer. Needs the deployment's headless runner. |
 | `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
 | `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
 | `automationCalendar` | `DEN_FEATURE_AUTOMATION_CALENDAR` | default off | Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. |
