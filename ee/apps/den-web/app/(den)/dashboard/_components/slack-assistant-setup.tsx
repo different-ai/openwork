@@ -229,7 +229,9 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
           ) : data.models.length > 0 ? (
             <label className="block text-sm">
               Model
+              {/* Name the control explicitly; the implicit label would also read out the selected model. */}
               <select
+                aria-label="Model"
                 value={data.model ?? ""}
                 disabled={busy || !data.hasSigningSecret}
                 onChange={(e) => void save(data.enabled, { model: e.target.value || null })}
