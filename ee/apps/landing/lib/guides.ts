@@ -29,6 +29,8 @@ export type GuideTable = {
 export type GuideSection = {
   id: string;
   heading: string;
+  /** Short status label shown next to the heading, e.g. "In preview". */
+  badge?: string;
   paragraphs?: string[];
   bullets?: string[];
   steps?: GuideStep[];
@@ -47,6 +49,10 @@ export type Guide = {
   heading: string;
   /** Short, quotable answer shown under the heading. */
   answer: string;
+  /** ISO date of the last factual review. Shown on the page and in Article JSON-LD. */
+  updated: string;
+  /** Concrete, verifiable facts (numbers, names, limits). Answer engines cite specifics. */
+  keyFacts: string[];
   sections: GuideSection[];
   cards: CompareCard[];
   faq: FaqEntry[];
@@ -68,6 +74,13 @@ export const guides: Guide[] = [
     heading: "How does OpenWork work with OpenCode?",
     answer:
       "OpenWork runs on OpenCode, the open-source coding agent. The desktop app gives anyone a point-and-click OpenCode, and the opencode-openwork plugin brings your organization's models, skills, and connections into OpenCode in a terminal.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "Engine: OpenCode, on macOS, Windows, and Linux",
+      "Plugin: opencode-openwork, for OpenCode 2",
+      "Refreshes models and connections every 5 minutes",
+      "License: open source, free desktop app"
+    ],
     sections: [
       {
         id: "built-on-opencode",
@@ -189,6 +202,13 @@ export const guides: Guide[] = [
     heading: "Can you use OpenWork with Claude Code, Codex, or Cursor?",
     answer:
       "Yes. Add one MCP server URL to Claude Code, Codex, Cursor, Claude Desktop, VS Code, Gemini CLI, or ChatGPT, and the agent gets your organization's OpenWork skills, plugins, and connections, with the same access rules. AI Gateway models for these tools are in progress.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "MCP URL: https://api.openworklabs.com/mcp/agent",
+      "Sign-in: OAuth in the browser, per organization",
+      "Setup guides for 10 MCP clients",
+      "First 5 OpenWork Cloud seats free"
+    ],
     sections: [
       {
         id: "one-url",
@@ -303,6 +323,13 @@ export const guides: Guide[] = [
     heading: "How does OpenWork work with Ollama?",
     answer:
       "OpenWork has a built-in Ollama screen. Start Ollama, open Settings › Ollama in OpenWork, pick or pull a model, and click Add to workspace. No API key and no account, and your prompts and files stay on your computer.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "Ollama address: http://localhost:11434",
+      "LM Studio address: http://localhost:1234/v1",
+      "No API key or account needed",
+      "$0 OpenWork cost for local models"
+    ],
     sections: [
       {
         id: "setup",
@@ -414,6 +441,13 @@ export const guides: Guide[] = [
     heading: "Engineers and business teams use different AI tools. How do you keep one security policy?",
     answer:
       "Let each team keep its tools and share one control layer. Business teams use the OpenWork app; engineers use OpenCode, Claude Code, Codex, or Cursor. All of them sign in to the same OpenWork organization and get the same models, connections, access rules, and audit log.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "One organization for every tool",
+      "SSO with Okta, Microsoft Entra ID, or Google Workspace",
+      "Same models, connections, and audit log",
+      "Rules per organization or per team"
+    ],
     sections: [
       {
         id: "problem",
@@ -501,6 +535,13 @@ export const guides: Guide[] = [
     heading: "What do policies and controls mean in OpenWork?",
     answer:
       "Policies are rules admins set once in OpenWork Cloud that every member's agent follows: who can sign in, which models they can use and how much they can spend, which commands, websites, skills, and connections agents may use, and which app versions are allowed. They apply to everyone or per team.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "9 control areas, set in one dashboard",
+      "Rules per organization, team, or person",
+      "Agent rules: Allow, Block, or Ask first",
+      "Audit log never stores prompts or secrets"
+    ],
     sections: [
       {
         id: "layers",
@@ -604,6 +645,138 @@ export const guides: Guide[] = [
     }
   },
   {
+    slug: "control-ai-costs",
+    label: "Keep AI costs under control",
+    title: "How to keep AI agent costs under control",
+    description:
+      "Set daily, weekly, or monthly spend limits per team or person, see who spends what, and route each prompt to the right model with OpenWork Auto routing (preview).",
+    heading: "How do you keep AI agent costs under control?",
+    answer:
+      "Put every model behind one gateway, give each team or person a daily, weekly, or monthly spend limit, and send each prompt to the cheapest model that can handle it. OpenWork does all three, and its Auto routing, now in preview, picks the model from instructions you write in plain English.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "Spend limits per day, week, or month, in USD",
+      "Limits for everyone, a team, or one person",
+      "Usage by model, team, or person for the last 31 days",
+      "Auto routing: 2 to 12 plain-English categories (preview)"
+    ],
+    sections: [
+      {
+        id: "why",
+        heading: "Why AI agent costs get out of hand",
+        paragraphs: [
+          "Agents use far more tokens than chat. One task can read dozens of files, call tools, and retry, and every step is billed. When people pay with personal keys, the company can't see the total until the invoices arrive.",
+          "Most of the waste comes from three places: no limits, no visibility, and using a frontier model for questions a small model could answer."
+        ]
+      },
+      {
+        id: "limits",
+        heading: "Set spend limits",
+        paragraphs: [
+          "In the AI Gateway, open Limits and choose who a limit applies to: everyone in the organization (including people who join later), a team, or one person. Turn on any mix of a daily, weekly, and monthly amount. Whichever runs out first applies."
+        ],
+        table: {
+          caption: "What happens when someone reaches a spend limit",
+          columns: ["Choice", "What happens"],
+          rows: [
+            ["Pause their models", "Requests stop until the limit resets or an admin gives more."],
+            ["Only warn", "Requests keep working and the limit shows as over."],
+            ["Let them ask for 25% more", "The person can request more, and admins approve or deny it in Limits."]
+          ]
+        },
+        bullets: [
+          "In the desktop app, the chat says which limit was reached and when it resets.",
+          "Members see what's left in the account menu and in Settings › Usage."
+        ]
+      },
+      {
+        id: "visibility",
+        heading: "See who spends what",
+        bullets: [
+          "The AI Gateway overview shows who spends the most and which models people use.",
+          "Usage charts show tokens or cost for the last 31 days, grouped by model, team, or person.",
+          "Each person's page shows what they can use, their limit, and their recent spend.",
+          "Costs come from token counts and published model prices, including cached input and reasoning tokens."
+        ]
+      },
+      {
+        id: "auto-routing",
+        heading: "Auto routing: the right model for each prompt",
+        badge: "In preview",
+        paragraphs: [
+          "Auto routing reads each new prompt and sends it to the model you chose for that kind of work. You describe the categories in plain English, pick a model for each, and choose a fallback. No rules engine and no code.",
+          "Use it to save money and to keep sensitive work private: everyday questions go to a fast, low-cost model, hard problems go to a frontier model, and prompts about customer data, contracts, or health records go to a model running on your own infrastructure."
+        ],
+        table: {
+          caption: "Example Auto routing setup",
+          columns: ["Category you write", "Model it goes to"],
+          rows: [
+            ["Quick questions, rewrites, and summaries", "A low-cost open model, such as GLM 5.2"],
+            ["Debugging, analysis, and multi-step planning", "A frontier model"],
+            ["Anything with customer records, contracts, or personal data", "A private model on your own servers or cloud account"],
+            ["Fallback", "Your default model"]
+          ]
+        },
+        bullets: [
+          "Add 2 to 12 categories per router.",
+          "Set a minimum confidence: if the router isn't sure, the prompt goes to the fallback.",
+          "Routing picks a model; it doesn't grant access. To guarantee a team only ever uses private models, also limit which models that team can use."
+        ]
+      },
+      {
+        id: "cheaper-models",
+        heading: "Use cheaper models where they're good enough",
+        bullets: [
+          "OpenWork Models gives your team hand-picked open models, such as GLM, Kimi, and DeepSeek, for $10 per user per month, with no API keys to manage.",
+          "Local models through Ollama or LM Studio cost nothing per token.",
+          "Grant expensive models only to the teams that need them, and turn on Only models you provide so nobody adds a personal key.",
+          "Already run LiteLLM? Connect it to OpenWork and keep its budgets."
+        ]
+      }
+    ],
+    cards: [
+      { icon: "route", title: "Spend limits and model access", link: { label: "AI Gateway", href: "/docs/ai-gateway/overview" } },
+      { icon: "library", title: "How token costs are counted", link: { label: "Token costs", href: "/docs/ai-gateway/token-costs" } },
+      { icon: "cpu", title: "Run models for free on your computer", link: { label: "OpenWork with Ollama", href: "/guides/ollama" } },
+      { icon: "key", title: "Every control admins have", link: { label: "Policies and controls", href: "/guides/ai-policies-and-controls" } }
+    ],
+    faq: [
+      {
+        question: "Can I set a monthly AI budget per team?",
+        answer: "Yes. In the AI Gateway, add a spend limit for a team with a monthly amount. You can also add daily or weekly amounts; whichever runs out first applies."
+      },
+      {
+        question: "What happens when someone hits their limit?",
+        answer: "You choose: pause their models, only warn, or let them ask for 25% more for an admin to approve."
+      },
+      {
+        question: "What is OpenWork Auto routing?",
+        answer:
+          "A preview feature that sends each prompt to the model you picked for that kind of work, based on categories you describe in plain English, with a fallback when it isn't sure."
+      },
+      {
+        question: "Can Auto routing send sensitive prompts to a private model?",
+        answer:
+          "Yes. Describe sensitive work as a category, such as customer data or contracts, and point it at a model on your own infrastructure. Pair it with model access rules for a hard guarantee."
+      },
+      {
+        question: "How does the router decide?",
+        answer:
+          "It reads the newest message, compares it with your category descriptions, and picks the closest match. Below the minimum confidence, it uses your fallback."
+      },
+      {
+        question: "Are the cost numbers exact?",
+        answer: "They're close estimates from token counts and published prices. Your provider's invoice is the final number."
+      }
+    ],
+    cta: {
+      heading: "Know what AI costs before the invoice.",
+      sub: "Limits, usage, and the right model for every prompt.",
+      primary: { label: "Get started free", href: "https://app.openworklabs.com?mode=sign-up" },
+      secondary: { label: "AI Gateway docs", href: "/docs/ai-gateway/overview" }
+    }
+  },
+  {
     slug: "prevent-shadow-ai",
     label: "Prevent shadow AI",
     title: "How to prevent shadow AI at work",
@@ -612,6 +785,13 @@ export const guides: Guide[] = [
     heading: "How do you prevent shadow AI?",
     answer:
       "Give people an approved AI tool that's better than the one they'd sneak in, then make it the only path to company data. With OpenWork: a free desktop app with any model, company models through one gateway, SSO, blocks on personal keys and unapproved extensions, and an audit log.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "7 steps, from approved app to audit",
+      "50+ model providers to approve from",
+      "Provider keys never reach laptops",
+      "Self-hosting free up to 5 users"
+    ],
     sections: [
       {
         id: "what",
@@ -741,9 +921,8 @@ function tableMarkdown(table: GuideTable): string {
 }
 
 function sectionMarkdown(section: GuideSection): string {
-  const parts: string[] = [`## ${section.heading}`];
+  const parts: string[] = [`## ${section.heading}${section.badge ? ` (${section.badge})` : ""}`];
   for (const paragraph of section.paragraphs ?? []) parts.push(paragraph);
-  if (section.bullets) parts.push(section.bullets.map((bullet) => `- ${bullet}`).join("\n"));
   if (section.steps) {
     parts.push(
       section.steps
@@ -755,6 +934,7 @@ function sectionMarkdown(section: GuideSection): string {
     );
   }
   if (section.table) parts.push(tableMarkdown(section.table));
+  if (section.bullets) parts.push(section.bullets.map((bullet) => `- ${bullet}`).join("\n"));
   return parts.join("\n\n");
 }
 
@@ -762,6 +942,10 @@ export function guideMarkdown(guide: Guide): string {
   return `# ${guide.heading}
 
 > ${guide.answer}
+
+Updated ${guide.updated}
+
+${guide.keyFacts.map((fact) => `- ${fact}`).join("\n")}
 
 ${guide.sections.map(sectionMarkdown).join("\n\n")}
 

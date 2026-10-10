@@ -4,9 +4,18 @@ import { GUIDES_PATH, guidePath, guides } from "../lib/guides";
 import { LandingFaq } from "./landing-faq";
 import { CompareCards, CompareSection } from "./lp-compare";
 import { LpCta } from "./lp-cta";
-import { LpArrowLink } from "./lp-primitives";
+import { LpAlphaBadge, LpArrowLink } from "./lp-primitives";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
+
+function formatDate(iso: string): string {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC"
+  });
+}
 
 function CodeBlock({ code }: { code: string }) {
   return (
@@ -24,14 +33,6 @@ function SectionBody({ section }: { section: GuideSection }) {
           {paragraph}
         </p>
       ))}
-
-      {section.bullets ? (
-        <ul className="flex max-w-[720px] list-disc flex-col gap-2 pl-5">
-          {section.bullets.map((bullet) => (
-            <li key={bullet}>{bullet}</li>
-          ))}
-        </ul>
-      ) : null}
 
       {section.steps ? (
         <ol className="flex flex-col gap-6">
@@ -94,6 +95,14 @@ function SectionBody({ section }: { section: GuideSection }) {
           </table>
         </div>
       ) : null}
+
+      {section.bullets ? (
+        <ul className="flex max-w-[720px] list-disc flex-col gap-2 pl-5">
+          {section.bullets.map((bullet) => (
+            <li key={bullet}>{bullet}</li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -128,10 +137,25 @@ export function GuidePage({ guide, stars }: { guide: Guide; stars: string }) {
             {guide.heading}
           </h1>
           <p className="mt-6 max-w-[720px] text-[18px] leading-[29px] text-[var(--lp-body)]">{guide.answer}</p>
+          <p className="mt-4 text-[13px] text-[var(--lp-muted)]">
+            Updated <time dateTime={guide.updated}>{formatDate(guide.updated)}</time>
+          </p>
+          <ul aria-label="Key facts" className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {guide.keyFacts.map((fact) => (
+              <li key={fact} className="rounded-[16px] bg-[var(--lp-tonal)] px-5 py-4 text-[14.5px] leading-[22px] text-[var(--lp-ink)]">
+                {fact}
+              </li>
+            ))}
+          </ul>
         </header>
 
         {guide.sections.map((section) => (
           <CompareSection key={section.id} id={section.id} heading={section.heading}>
+            {section.badge ? (
+              <div className="-mt-6 mb-6">
+                <LpAlphaBadge>{section.badge}</LpAlphaBadge>
+              </div>
+            ) : null}
             <SectionBody section={section} />
           </CompareSection>
         ))}

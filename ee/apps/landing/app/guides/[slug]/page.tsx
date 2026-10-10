@@ -41,6 +41,9 @@ export default async function Guide({ params }: Props) {
     abstract: guide.answer,
     url,
     mainEntityOfPage: url,
+    datePublished: guide.updated,
+    dateModified: guide.updated,
+    author: { "@type": "Organization", name: "OpenWork", url: SITE_URL },
     about: { "@type": "SoftwareApplication", name: "OpenWork", url: SITE_URL },
     publisher: { "@type": "Organization", name: "OpenWork", url: SITE_URL }
   };
