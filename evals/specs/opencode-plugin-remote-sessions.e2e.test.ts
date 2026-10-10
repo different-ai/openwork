@@ -30,7 +30,8 @@ test("an opted-in OpenCode member offloads an empty native session, recovers a l
       expect(provenance.sandboxId).toBeTruthy();
       expect(provenance.sandboxId).toBe(world.web.handle.sandboxId);
       expect(provenance.platform).toBe("linux-x64");
-      expect(world.nativeWorkspaceDirectory).toMatch(/^\/workspace\/\.openwork-daytona\/native-opencode-/);
+      expect(world.nativeWorkspaceDirectory).toMatch(/^\/tmp\/openwork-eval-native-opencode-/);
+      expect(world.nativeWorkspaceDirectory.startsWith("/workspace/")).toBe(false);
     }
     const server = object(await world.native("/api/info"));
     expect(server.version).toBe("2.0.26");
