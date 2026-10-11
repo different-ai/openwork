@@ -27,6 +27,8 @@ export type WorkbotHost = {
   connectionsHref?: string | null
   /** The person can start side chats next to their main chat (the workbotSideChats feature). Off when unset. */
   sideChats?: boolean
+  /** Calendar and task presentation polish, resolved by Den's feature registry. Older hosts keep it off. */
+  calendarPolish?: boolean
 }
 
 let current: WorkbotHost | null = null

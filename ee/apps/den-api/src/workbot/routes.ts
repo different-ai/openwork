@@ -44,6 +44,7 @@ const sessionSchema = z.object({
   calendar: z.boolean().optional(),
   /** The person can start side chats next to their main chat (the workbotSideChats feature). */
   sideChats: z.boolean(),
+  calendarPolish: z.boolean().optional(),
   /**
    * The model Workbot's turns run on: the organization's default model (the workbotDefaultModel feature). Null, and
    * omitted by older Dens, means the headless runner's default.
@@ -169,6 +170,7 @@ const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH";
   { method: "GET", path: /^\/v1\/capabilities\/(google-workspace|microsoft-365)\/calendar-events$/, write: false },
   // The models the member may pick, trimmed below to names and IDs.
   { method: "GET", path: /^\/v1\/llm-providers$/, write: false },
+  { method: "GET", path: /^\/v1\/org\/workbot-settings$/, write: false },
   { method: "POST", path: new RegExp(`^/v1/automations/${ID}/(activate|deactivate|run)$`), write: true },
   // Creating from the Calendar: always a Cloud Automation (Workbot has no desktop), validated by the route itself.
   { method: "POST", path: /^\/v1\/cloud-automations$/, write: true },
@@ -235,6 +237,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         canSchedule,
         calendar: features.workbot && features.workbotCalendar,
         sideChats: features.workbot && features.workbotSideChats,
+        calendarPolish: features.workbot && features.calendarPolish,
         model,
       })
     },
@@ -287,7 +290,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "Workbot's Calendar: the member's Automations, runs and calendar meetings",
       description:
-        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, GET /v1/llm-providers (names and model IDs only), POST /v1/automations/{id}/{activate|deactivate|run}, POST /v1/cloud-automations and a PATCH /v1/automations/{id} limited to name, schedule, instructions and model. Refused while Workbot or its Calendar is off.",
+        "For the Workbot app only. Forwards an allowlisted Den route, as the member behind the Workbot token: GET /v1/automations, GET /v1/automation-runs, GET /v1/automations/{id}/runs, GET /v1/automation-runs/{id}, GET /v1/capabilities/{google-workspace|microsoft-365}/calendar-events, GET /v1/llm-providers (names and model IDs only), GET /v1/org/workbot-settings (subject to the destination's feature and permission guards), POST /v1/automations/{id}/{activate|deactivate|run}, POST /v1/cloud-automations and a PATCH /v1/automations/{id} limited to name, schedule, instructions and model. Refused while Workbot or its Calendar is off.",
       responses: {
         200: jsonResponse("The forwarded route's answer.", z.unknown()),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),

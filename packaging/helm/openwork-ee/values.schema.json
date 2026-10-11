@@ -188,6 +188,16 @@
               ],
               "description": "Workbot: Members can use Workbot. Needs the deployment's Workbot app. Renders DEN_FEATURE_WORKBOT."
             },
+            "calendarPolish": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Calendar and Workbot polish: Members recognize their organization's default model and meeting providers, and can run stopped Workbot tasks again. Renders DEN_FEATURE_CALENDAR_POLISH."
+            },
             "automationCalendar": {
               "enum": [
                 "",

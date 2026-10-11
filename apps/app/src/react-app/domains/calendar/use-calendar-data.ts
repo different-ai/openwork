@@ -30,14 +30,28 @@ export function useAutomationRunsInRange(
 }
 
 /** Whether the organization turned the Calendar on (`automationCalendar` in `/v1/org` features). */
-export function useCalendarFeature(context: AutomationsDenContext) {
+export function useCalendarFeature(context: AutomationsDenContext, feature: "automationCalendar" | "calendarPolish" = "automationCalendar") {
   return useQuery({
     queryKey: ["den", "org-features", context.organizationId],
     queryFn: () => context.client!.getOrgFeatures(context.organizationId!),
     enabled: context.ready,
     staleTime: 5 * 60_000,
-    select: (features) => features.automationCalendar === true,
+    select: (features) => features[feature] === true,
   })
+}
+
+export function useCalendarDefaultModelName(context: AutomationsDenContext, enabled: boolean) {
+  return useQuery({
+    queryKey: ["den", "calendar-default-model", context.organizationId],
+    queryFn: () => context.client!.getWorkbotSettings(context.organizationId!),
+    enabled: context.ready && enabled,
+    retry: false,
+    staleTime: 5 * 60_000,
+    select: (settings) => {
+      const id = settings.modelAvailable ? settings.model ?? settings.defaultModel : settings.defaultModel;
+      return settings.models.find((model) => model.id === id)?.name ?? null;
+    },
+  });
 }
 
 export function useCalendarTransport(context: AutomationsDenContext): CalendarTransport | null {

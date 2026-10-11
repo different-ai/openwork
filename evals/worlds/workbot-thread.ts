@@ -2,7 +2,7 @@ import { createServer as viteServer } from "vite";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { chrome } from "@openwork/hosts";
-import { clickAt, evaluateOnSurface, setViewport, waitForLocated, type Surface } from "@openwork/cdp";
+import { addInitScript, clickAt, evaluateOnSurface, setViewport, waitForLocated, type Surface } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 
 type TaskStatus = "queued" | "working" | "paused" | "done" | "failed" | "stopped";
@@ -53,7 +53,7 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
   const streams = new Set<ServerResponse>();
   // Match the standalone host's real contracts: /me reports these features, the thread reports filesEnabled,
   // and /files reports { enabled, files }. Files are deliberately unavailable before any browser act.
-  const features = { calendar: false, canSchedule: false, sideChats: false };
+  const features = { calendar: false, canSchedule: false, sideChats: false, calendarPolish: false };
   const files = { enabled: false, files: [] };
   const writes: Array<{ method: string; path: string }> = [];
   const requests = { threadReads: 0, fileReads: 0, writes };
@@ -62,6 +62,7 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
   const task = (id: string, title: string): { id: string; title: string; status: TaskStatus; startedAt: number; finishedAt: number | null; update: string; updates: string[] } => ({ id, title, status: "working", startedAt: now, finishedAt: null, update: "Drafting", updates: ["Drafting"] });
   const tasks = [task("brief", "Launch brief"), task("notes", "Meeting notes")];
   tasks[1].status = "queued";
+  tasks[1].updates = ["Queued", "Drafting"];
   const turns = [{ id: "request", text: "Draft the brief and meeting notes.", sentAt: now, finishedAt: now, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "On it, drafting both now." }], modelSteps: 1, error: null, tasks }];
   let editAttempts = 0;
   const change = () => {
@@ -106,8 +107,16 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
             for await (const chunk of request) body += chunk.toString();
             const input: unknown = JSON.parse(body);
             if (typeof input !== "object" || input === null || !("id" in input) || typeof input.id !== "string" || !("text" in input) || typeof input.text !== "string") { response.writeHead(400).end("{}"); return; }
-            turns.push({ id: input.id, text: input.text, sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "Four." }], modelSteps: 1, error: null, tasks: [] });
+            turns.push({ id: input.id, text: input.text, sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: input.text === 'Try the "Meeting notes" background task again.' ? "I'm drafting the meeting notes again." : "Four." }], modelSteps: 1, error: null, tasks: input.text === 'Try the "Meeting notes" background task again.' ? [task(`notes-retry-${turns.length}`, "Meeting notes")] : [] });
             response.writeHead(201).end("{}"); change(); return;
+          }
+          const stoppedTask = path.match(/^\/v1\/workbot\/tasks\/([^/]+)\/stop$/);
+          if (stoppedTask && method === "POST") {
+            const item = turns.flatMap((turn) => turn.tasks).find((entry) => entry.id === stoppedTask[1]);
+            if (!item) { response.writeHead(404).end("{}"); return; }
+            item.status = "stopped";
+            item.finishedAt = Date.now();
+            response.end("{}"); change(); return;
           }
           // Edits fail, so the spec can see a failed edit come back with its reason.
           if (/^\/v1\/workbot\/messages\/[^/]+\/edit$/.test(path) && request.method === "POST") {
@@ -125,10 +134,20 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
     const url = `http://127.0.0.1:${address.port}`;
     // The spec proves hover-only Edit; a member on a desktop has a mouse even when the runner's headless Chrome finds none.
     const app = resources.use(await chrome({ name: "workbot-thread", host: place.host(), startUrl: "about:blank", headless: true, mouse: true }));
+    // Match Linux CI's persistent scrollbar gutter on macOS too: a 320px window has 305px of usable width.
+    resources.use(await addInitScript(app.client, () => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = "html { overflow-y: scroll; } ::-webkit-scrollbar { width: 15px; height: 15px; }";
+        document.head.append(style);
+      });
+    }));
     await setViewport(app, { width: 1440, height: 1000, deviceScaleFactor: 1 });
     const nativePickers = await observeFilePickers(app, resources);
     return {
       app, url,
+      setCalendarPolish: (enabled: boolean) => { features.calendarPolish = enabled; },
+      taskWitness: () => turns.flatMap((turn) => turn.tasks.map((task) => ({ id: task.id, status: task.status, request: turn.text }))),
       fileAccessWitness: () => ({ filesEnabled: files.enabled, threadReads: requests.threadReads,
         fileReads: requests.fileReads, fileWrites: requests.writes.filter((request) => request.path.startsWith("/v1/workbot/files")),
         allWrites: [...requests.writes], blockedPointerClicks, nativePickers: nativePickers() }),
@@ -154,7 +173,14 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
           const box = element.getBoundingClientRect();
           if (box.width === 0 || box.right <= limit) continue;
           if (Array.from(element.children).some((child) => child.getBoundingClientRect().right > limit)) continue;
-          found.push(`${element.tagName.toLowerCase()}.${(element.getAttribute("class") ?? "").split(/\s+/).slice(0, 4).join(".")}→${Math.round(box.right)}px`);
+          const chain: string[] = [];
+          let node: Element | null = element;
+          for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+            const rect = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            chain.push(`${node.tagName.toLowerCase()}.${(node.getAttribute("class") ?? "").split(/\s+/).slice(0, 4).join(".")} ${Math.round(rect.left)}–${Math.round(rect.right)}px width=${style.width} min=${style.minWidth} flex=${style.flex} display=${style.display}`);
+          }
+          found.push(chain.join("; "));
         }
         return found.slice(0, 6);
       }),

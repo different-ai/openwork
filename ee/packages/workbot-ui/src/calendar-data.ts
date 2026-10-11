@@ -23,6 +23,7 @@ import {
 } from "@openwork/types/automations";
 import { automationModelOptions } from "@openwork/types/automation-models";
 import { z } from "zod";
+import { workbotSettingsSchema } from "@openwork/types/den/workbot-settings";
 import { workbotHost } from "./host";
 
 /**
@@ -170,10 +171,23 @@ export function useAutomationModels(options: { includeCloudDefault: boolean }) {
     queryFn: () => calendarJson(providerNamesSchema, "/v1/llm-providers"),
     staleTime: 5 * 60_000,
   });
-  const models = useMemo(
-    () => automationModelOptions(query.data?.llmProviders ?? [], { includeFreeStarter: false, includeCloudDefault: options.includeCloudDefault }),
-    [options.includeCloudDefault, query.data],
-  );
+  const polish = workbotHost().calendarPolish === true;
+  const settings = useQuery({
+    queryKey: [...calendarKey, "organization-default-model"],
+    queryFn: () => calendarJson(workbotSettingsSchema, "/v1/org/workbot-settings"),
+    enabled: polish && options.includeCloudDefault,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const models = useMemo(() => {
+    const available = automationModelOptions(query.data?.llmProviders ?? [], { includeFreeStarter: false, includeCloudDefault: options.includeCloudDefault });
+    if (!polish) return available;
+    const resolvedId = settings.data?.modelAvailable ? settings.data.model ?? settings.data.defaultModel : settings.data?.defaultModel;
+    const resolvedName = settings.data?.models.find((model) => model.id === resolvedId)?.name;
+    return available.map((option) => option.accessKind === "cloud_default"
+      ? { ...option, modelName: resolvedName ? `Organization default (${resolvedName})` : "Organization default" }
+      : option);
+  }, [options.includeCloudDefault, query.data, polish, settings.data]);
   return { models, isLoading: query.isLoading, error: query.error };
 }
 

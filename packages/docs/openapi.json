@@ -857,6 +857,7 @@
               "slackWorkbotReplies",
               "headlessAutomations",
               "workbot",
+              "calendarPolish",
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
@@ -1092,6 +1093,9 @@
                     "workbot": {
                       "type": "boolean"
                     },
+                    "calendarPolish": {
+                      "type": "boolean"
+                    },
                     "automationCalendar": {
                       "type": "boolean"
                     },
@@ -1147,6 +1151,7 @@
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -2115,6 +2120,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "calendarPolish": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "automationCalendar": {
                       "type": "object",
                       "properties": {
@@ -2694,6 +2755,7 @@
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -3128,6 +3190,9 @@
                     "workbot": {
                       "type": "boolean"
                     },
+                    "calendarPolish": {
+                      "type": "boolean"
+                    },
                     "automationCalendar": {
                       "type": "boolean"
                     },
@@ -3183,6 +3248,7 @@
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -4151,6 +4217,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "calendarPolish": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "automationCalendar": {
                       "type": "object",
                       "properties": {
@@ -4730,6 +4852,7 @@
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -10175,6 +10298,7 @@
               "slackWorkbotReplies",
               "headlessAutomations",
               "workbot",
+              "calendarPolish",
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
@@ -24743,6 +24867,9 @@
           "sideChats": {
             "type": "boolean"
           },
+          "calendarPolish": {
+            "type": "boolean"
+          },
           "model": {
             "anyOf": [
               {
@@ -26812,6 +26939,9 @@
                         "workbot": {
                           "type": "boolean"
                         },
+                        "calendarPolish": {
+                          "type": "boolean"
+                        },
                         "automationCalendar": {
                           "type": "boolean"
                         },
@@ -26867,6 +26997,7 @@
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
@@ -27835,6 +27966,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "calendarPolish": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "automationCalendar": {
                           "type": "object",
                           "properties": {
@@ -28414,6 +28601,7 @@
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
@@ -28593,6 +28781,9 @@
                         "workbot": {
                           "type": "boolean"
                         },
+                        "calendarPolish": {
+                          "type": "boolean"
+                        },
                         "automationCalendar": {
                           "type": "boolean"
                         },
@@ -28648,6 +28839,7 @@
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
@@ -29616,6 +29808,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "calendarPolish": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "automationCalendar": {
                           "type": "object",
                           "properties": {
@@ -30195,6 +30443,7 @@
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",

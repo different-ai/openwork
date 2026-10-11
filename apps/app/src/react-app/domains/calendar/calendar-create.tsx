@@ -27,7 +27,8 @@ import {
   initialCanUse,
   type AutomationCanUse,
 } from "@/react-app/domains/automations/automation-editor"
-import { AutomationModelButton, AutomationModelSummary } from "@/react-app/domains/automations/automation-model-button"
+import { AutomationModelButton } from "@/react-app/domains/automations/automation-model-button"
+import { CalendarModelSummary } from "./calendar-model-summary"
 import { automationPickerOptions, type AutomationProviderCatalog } from "@/react-app/domains/automations/automation-model-options"
 import type { useAutomationEditorSetup } from "@/react-app/domains/automations/use-automation-editor-setup"
 import { describeAutomationError, useAutomationActions, type AutomationsDenContext } from "@/react-app/domains/automations/use-automations"
@@ -49,6 +50,8 @@ const CAN_USE_SHORT: Record<AutomationCanUse, string> = {
 export type CreateAnchor = { slot: CalendarSlot; x: number; y: number }
 
 export function CreateAutomationCard(props: {
+  polish?: boolean
+  organizationDefaultName?: string | null
   anchor: CreateAnchor
   context: AutomationsDenContext
   setup: ReturnType<typeof useAutomationEditorSetup>
@@ -203,7 +206,7 @@ export function CreateAutomationCard(props: {
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium">Model</span>
                   {usesCloudDefault && model ? (
-                    <div className="flex h-8 items-center rounded-md border border-border px-2 text-sm"><AutomationModelSummary model={model} options={[cloudDefaultModelOption]} size="sm" /></div>
+                    <div className="flex h-8 items-center rounded-md border border-border px-2 text-sm"><CalendarModelSummary model={model} options={[cloudDefaultModelOption]} polish={props.polish} organizationDefaultName={props.organizationDefaultName} /></div>
                   ) : model ? (
                     <AutomationModelButton model={model} options={modelOptions} size="sm" onClick={() => setPickerOpen(true)} />
                   ) : (

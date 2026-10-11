@@ -78,7 +78,9 @@ absence. Neither observation workaround weakens the actual UI claim.
 - A connector is not called `Ready` merely because it requires no sign-in:
   readiness needs an actual verified, retained health observation.
 - Stop is an intentional terminal outcome, not an error inviting an automatic
-  restart. Earlier work and the conversation remain available.
+  restart. Earlier work and the conversation remain available. With
+  `calendarPolish`, Run again explicitly creates a new task; the stopped task
+  stays stopped.
 - Synthetic fixture names are not outside identities. Technical audit data
   stays available behind explicit disclosures and requested change details.
 - Native-scroll edge clipping after a person's deliberate scroll is distinct

@@ -8,6 +8,7 @@ import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
 } from "@openwork/types/automations";
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { workbotSettingsSchema } from "@openwork/types/den/workbot-settings";
 import { parseDenMcpDiscovery, type DenMcpDiscovery } from "./den-mcp-discovery";
 import type {
   AutomationDetail,
@@ -3344,6 +3345,12 @@ export function createDenClient(options: {
         `/v1/automation-runs?${params.toString()}`,
         { method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true },
       );
+    },
+
+    /** The existing organization default-model settings, subject to Den's feature and permission guards. */
+    async getWorkbotSettings(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org/workbot-settings", { method: "GET", token, organizationId: orgId });
+      return workbotSettingsSchema.parse(payload);
     },
 
     /** Effective feature switches for the active organization (`GET /v1/org` `features`); missing keys are off. */
