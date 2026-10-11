@@ -95,6 +95,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  analyticsIntegrated: {
+    label: "Den: integrated analytics",
+    description: "Admins see analytics in the same style as Library and Connectors, with links to manage the items they use.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   dashboardActivity: {
     label: "Dashboard activity",
     description: "Organization admins see recent additions and skill updates on their dashboard instead of Quick add.",

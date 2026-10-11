@@ -2,6 +2,7 @@ import type { DenSession } from "@openwork/behaviors";
 import { evaluateOnSurface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import type { MockMcpTool } from "@openwork/labs";
+import { activityTransportFaults } from "./den-dashboard-activity-faults.ts";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
 import { isRecord, records } from "./den-dashboard-activity.ts";
 
@@ -14,7 +15,7 @@ function field(value: unknown, key: string): string {
 const skills = {
   draftReply: { plugin: "Support kit", name: "draft-reply", description: "Draft a reply to a customer ticket." },
   summarizeTicket: { plugin: "Support kit", name: "summarize-ticket", description: "Summarize a long ticket thread." },
-  quoteBuilder: { plugin: "Sales kit", name: "quote-builder", description: "Build a price quote from a request." },
+  quoteBuilder: { plugin: "GitHub", name: "quote-builder", description: "Build a price quote from a request." },
 } as const;
 type SkillKey = keyof typeof skills;
 
@@ -40,7 +41,13 @@ export async function libraryUsage(seed: Seed) {
     },
     mocks: { tracker: seed.mock({ allowUnauthenticatedMcp: true, tools: trackerTools }) },
   });
-  const orgId = await enableOrganizationCapabilities(seed, den.admin, { libraryUsage: true });
+  const orgId = await enableOrganizationCapabilities(seed, den.admin, { libraryUsage: true, denFlatPageHeaders: true });
+  const setAnalyticsIntegrated = async (enabled: boolean) => {
+    const result = await seed.api(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, {
+      method: "PUT", body: JSON.stringify({ capabilities: { analyticsIntegrated: enabled } }),
+    });
+    if (!result.response.ok) throw new Error(`Analytics presentation rollout: HTTP ${result.response.status}`);
+  };
   const api = async (path: string, init: RequestInit = {}) => {
     const result = await seed.api(den.admin, path, init);
     if (!result.response.ok) throw new Error(`Library usage arrangement ${path}: HTTP ${result.response.status}: ${result.text.slice(0, 300)}`);
@@ -48,7 +55,7 @@ export async function libraryUsage(seed: Seed) {
   };
 
   const capabilities = {} as Record<SkillKey, { capability: string; title: string }>;
-  for (const plugin of ["Support kit", "Sales kit"] as const) {
+  for (const plugin of ["Support kit", "GitHub"] as const) {
     const entries = Object.entries(skills).filter(([, skill]) => skill.plugin === plugin);
     const created = await api("/v1/plugins", {
       method: "POST",
@@ -71,7 +78,7 @@ export async function libraryUsage(seed: Seed) {
     }
   }
 
-  const connectors = { tracker: "Team tracker", wiki: "Old wiki" } as const;
+  const connectors = { tracker: "Team tracker", wiki: "Old wiki", github: "GitHub" } as const;
   const connectionIds = {} as Record<keyof typeof connectors, string>;
   for (const [key, name] of Object.entries(connectors) as [keyof typeof connectors, string][]) {
     const created = await api("/v1/mcp-connections", {
@@ -125,8 +132,11 @@ export async function libraryUsage(seed: Seed) {
   const viewport = { width: 1280, height: 1000 };
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/analytics", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: den.members.alice, startPath: "/dashboard", headless: true, viewport });
+  const faults = await activityTransportFaults(web, new URL(den.ref.webUrl).origin, "/api/browser/v1/library-usage/");
   return {
-    den, web, memberWeb, orgId, skills: capabilities, connectors, loadSkill, callConnector, baseUrl: den.ref.webUrl,
+    faults,
+    async [Symbol.asyncDispose]() { await faults[Symbol.asyncDispose](); },
+    den, web, memberWeb, orgId, skills: capabilities, connectors, loadSkill, callConnector, setAnalyticsIntegrated, baseUrl: den.ref.webUrl,
     // Read-only layout witness: probe.dom reports document width and rectangles,
     // but not body scrollWidth or whether sideways scrolling stays in the table.
     usageLayout: () => evaluateOnSurface(web, () => {

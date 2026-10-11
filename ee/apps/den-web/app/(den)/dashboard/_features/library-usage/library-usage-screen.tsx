@@ -10,10 +10,10 @@ import { DenNotice } from "../../../_components/ui/notice";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { getAddConnectorRoute, getMcpConnectionRoute, getNewPluginRoute, getPluginRoute, getPluginSkillRoute } from "../../../_lib/den-org";
-import { FilterInput, ItemRowsSkeleton } from "../../_components/item-list";
+import { FilterInput, ItemRow, ItemRowsSkeleton } from "../../_components/item-list";
 import { brandHintFor, LetterTile } from "../../_components/item-logo";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
-import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "../analytics/analytics-layout";
+import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analyticsPageClass, analyticsIntegratedPageClass, analyticsSurfaceClass, useAnalyticsIntegrated } from "../analytics/analytics-layout";
 import { StatCard } from "../analytics/stat-card";
 import {
   countingSinceLabel,
@@ -47,12 +47,27 @@ function itemHref(kind: LibraryUsageKind, row: LibraryUsageRow, orgSlug: string 
 
 function UsageRow({ kind, row, now, tracksFailures }: { kind: LibraryUsageKind; row: LibraryUsageRow; now: number; tracksFailures: boolean }) {
   const { activeOrg } = useOrgDashboard();
+  const integrated = useAnalyticsIntegrated();
   const href = itemHref(kind, row, activeOrg?.slug);
   const lastUsed = lastUsedLabel(row.lastUsedAt, now);
   const failed = failureLabel(row);
   // Usage has no provider ID or service URL: resolve only exact known names,
   // never infer a service from a custom MCP connector's name.
-  const brand = kind === "connectors" ? brandHintFor(row.name) : null;
+  const brand = kind === "connectors" || (integrated && kind === "plugins") ? brandHintFor(row.name) : null;
+  const logo = brand && (brand.simpleIconSlug || brand.serviceUrl)
+    ? <DenBrandMark name={row.name} {...brand} className="size-8 rounded-[7px]" imageClassName="size-[18px]" />
+    : <LetterTile name={row.name} />;
+  if (integrated) return <li data-testid="library-usage-row" data-item={row.name} data-analytics-row>
+    <div className={tracksFailures ? "max-w-[732px]" : "max-w-[644px]"}>
+      <ItemRow logo={logo} title={row.name} description={row.detail} href={href ?? undefined}
+        comparison={<span className={`grid shrink-0 gap-4 text-[13px] tabular-nums ${tracksFailures ? "grid-cols-[56px_56px_72px_104px]" : "grid-cols-[56px_56px_104px]"}`}>
+          <span data-item-uses className="text-[var(--dls-text-primary)]">{row.uses.toLocaleString()}</span>
+          <span>{row.people.toLocaleString()}</span>
+          {tracksFailures ? <span data-item-failures className={(row.failures ?? 0) > 0 ? "font-medium text-[var(--ow-danger)]" : undefined}>{failed}</span> : null}
+          {lastUsed && row.lastUsedAt ? <time dateTime={row.lastUsedAt} title={new Date(row.lastUsedAt).toLocaleString()}>{lastUsed}</time> : <span data-item-unused>Not used</span>}
+        </span>} />
+    </div>
+  </li>;
   const name = (
     <span className="flex min-w-0 items-center gap-3">
       {brand && (brand.simpleIconSlug || brand.serviceUrl)
@@ -106,6 +121,7 @@ export function LibraryUsageScreen() {
   const searchParams = useSearchParams();
   const { activeOrg } = useOrgDashboard();
   const available = useLibraryUsageAvailable();
+  const integrated = useAnalyticsIntegrated();
   const kind = parseLibraryUsageKind(searchParams.get("view"));
   const days = parseLibraryUsageWindow(searchParams.get("days"));
   const [filter, setFilter] = useState<LibraryUsageFilter>("all");
@@ -130,7 +146,7 @@ export function LibraryUsageScreen() {
   const nothingRecorded = report ? !report.trackingSince && report.items.every((row) => row.uses === 0) : false;
 
   return (
-    <div className={`${analyticsPageClass} min-w-0`} data-testid="library-usage">
+    <div className={`${integrated ? analyticsIntegratedPageClass : analyticsPageClass} min-w-0`} data-testid="library-usage">
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="library" title="Plugins & connectors"
         caption={since ? <span data-testid="library-usage-since">{since}</span> : undefined} />
 
@@ -160,7 +176,7 @@ export function LibraryUsageScreen() {
                   <StatCard icon={<Blocks className="text-[#6F3DFF]" />} tone="violet" title="In use" value={`${summary.used} of ${summary.total}`} />
                   <StatCard icon={<Zap className="text-[#1D63FF]" />} tone="blue" title="Uses" value={summary.uses.toLocaleString()} />
                   {tracksFailures ? <div role="group" aria-label="Failed uses" data-testid="library-usage-failed" data-state={hasFailures ? "attention" : "neutral"}>
-                    <StatCard icon={<TriangleAlert className={hasFailures ? "text-[var(--ow-danger)]" : "text-[var(--dls-text-secondary)]"} />} tone={hasFailures ? "amber" : "neutral"} title="Failed" value={(summary.failures ?? 0).toLocaleString()} sub={summary.uses > 0 ? `${Math.round(((summary.failures ?? 0) / summary.uses) * 100)}% of uses` : "Nothing has run yet"} />
+                    <StatCard attention={hasFailures} icon={<TriangleAlert className={hasFailures ? "text-[var(--ow-danger)]" : "text-[var(--dls-text-secondary)]"} />} tone={hasFailures ? "amber" : "neutral"} title="Failed" value={(summary.failures ?? 0).toLocaleString()} sub={summary.uses > 0 ? `${Math.round(((summary.failures ?? 0) / summary.uses) * 100)}% of uses` : "Nothing has run yet"} />
                   </div> : null}
                   <StatCard icon={<CircleOff className="text-[#B7791F]" />} tone="amber" title="Not used" value={`${summary.unused}`} />
                 </div>
@@ -174,7 +190,7 @@ export function LibraryUsageScreen() {
 
               <div className={`${analyticsSurfaceClass} min-w-0 overflow-x-auto`} data-testid="library-usage-table">
                 <div className={tracksFailures ? "min-w-[660px]" : "min-w-[580px]"}>
-                  <div className={`${columnsFor(tracksFailures)} py-2.5 text-[12px] text-[#637291]`} data-testid="library-usage-columns">
+                  <div className={integrated ? `grid items-center gap-4 px-5 py-2.5 text-xs text-[var(--dls-text-secondary)] ${tracksFailures ? "max-w-[732px] grid-cols-[minmax(0,1fr)_56px_56px_72px_104px]" : "max-w-[644px] grid-cols-[minmax(0,1fr)_56px_56px_104px]"}` : `${columnsFor(tracksFailures)} py-2.5 text-[12px] text-[#637291]`} data-testid="library-usage-columns">
                     <span>{copy.label.replace(/s$/, "")}</span><span>Uses</span><span>People</span>{tracksFailures ? <span>Failed</span> : null}<span>Last used</span>
                   </div>
                   {rows.length === 0

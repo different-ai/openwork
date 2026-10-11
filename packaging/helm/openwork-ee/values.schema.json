@@ -78,6 +78,16 @@
               ],
               "description": "Den: flat page headers: Members see compact, readable page headings in Den instead of decorative gradient banners. Renders DEN_FEATURE_DEN_FLAT_PAGE_HEADERS."
             },
+            "analyticsIntegrated": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Den: integrated analytics: Admins see analytics in the same style as Library and Connectors, with links to manage the items they use. Renders DEN_FEATURE_ANALYTICS_INTEGRATED."
+            },
             "dashboardActivity": {
               "enum": [
                 "",
