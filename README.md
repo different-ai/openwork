@@ -113,6 +113,8 @@ The fastest path from a fresh clone to a running dev build.
 
 ### First run
 
+> On Windows PowerShell, see [Windows contributor setup](./docs/windows-dev-setup.md) — the `dev` scripts need a manual launch sequence there.
+
 ```bash
 git clone https://github.com/different-ai/openwork.git
 cd openwork
