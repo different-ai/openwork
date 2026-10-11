@@ -581,7 +581,7 @@ export const guides: Guide[] = [
         heading: "Desktop agent permissions",
         badge: "Planned",
         paragraphs: [
-          "The proposed desktop agent permissions use OpenCode rules for commands, file edits, web access, and local skills and MCP servers. Publishing them as enforced requires the enforcement work in #5816 or the complete #5774–#5778 stack to land, ship, and pass a working-organization check.",
+          "Planned desktop agent permissions use OpenCode rules for commands, file edits, web access, and local skills and MCP servers. These controls are not available yet; existing gateway permissions do not enforce them on a computer.",
           "The agentPermissions feature must also be enabled for the organization. It can be disabled; no guide should promise unconditional or device-wide enforcement. The plain opencode-openwork plugin supplies models and connections, not desktop permission enforcement."
         ]
       }
@@ -646,7 +646,7 @@ export const guides: Guide[] = [
         badge: "Planned",
         paragraphs: [
           "The proposed rules cover commands, file edits, websites, web search, and local skills and MCP servers, with organization and team settings. Allow, Block, and Ask first describe the planned permission choices, not a control to rely on today.",
-          "Rollout prerequisite: #5816 or the complete #5774–#5778 enforcement stack must land and ship, and the relevant feature must be enabled. Confirm blocked, allowed, and approval-required actions in the actual desktop version before updating this guide. Turning the feature off can remove enforcement; saved rules alone are not proof."
+          "These controls are planned, not enforced today. Do not rely on saved desktop-policy settings to block actions: availability requires a supported desktop release and your organization having the feature enabled."
         ]
       },
       {
@@ -739,7 +739,7 @@ export const guides: Guide[] = [
           { title: "Give everyone an approved agent", body: "Offer OpenWork desktop for macOS, Windows, and Linux. Local files can be used in a workspace; prompts, selected content, and tool requests may still be sent to the configured provider or service." },
           { title: "Provide useful organization models", body: "Grant organization-managed gateway providers to the teams that need them. Gateway-held keys are separate from personal keys or providers configured outside that organization." },
           { title: "Use company sign-in", body: "Configure organization SSO and SCIM, and required desktop sign-in through the managed installation where appropriate. Organization revocation does not revoke independent provider sessions." },
-          { title: "Limit custom providers and plan local permissions", body: "Only models you provide is a current managed-desktop control. Local skill, MCP-server, command, and website rules are Planned, pending #5816 or #5774–#5778 and feature activation; paused extension settings do not block unapproved extensions today." },
+          { title: "Limit custom providers and plan local permissions", body: "Only models you provide is a current managed-desktop control. Local skill, MCP-server, command, and website rules are planned, not available yet; paused extension settings do not block unapproved extensions today." },
           { title: "Share approved skills and connections", body: "Publish useful organization resources and grant access to teams. Tool switches apply to gateway-routed calls, not independently configured services or local shell commands." },
           { title: "Cover engineers without overstating MCP", body: "OpenCode can use the opencode-openwork plugin for organization models and resources. Claude Code, Codex, and Cursor can connect resources through MCP, but AI Gateway inference integration is not available and their local permissions remain separate." },
           { title: "Review usage and gaps", body: "Use gateway usage, spend reporting, and admin audit events to review adoption. Combine them with client and service records: external connector side effects are not exhaustively logged by OpenWork." }
