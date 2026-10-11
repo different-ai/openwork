@@ -850,6 +850,7 @@
               "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
+              "auditLogsCompact",
               "orgManagedDashboards",
               "slackAssistant",
               "slackWorkbotReplies",
@@ -1069,6 +1070,9 @@
                     "auditLogs": {
                       "type": "boolean"
                     },
+                    "auditLogsCompact": {
+                      "type": "boolean"
+                    },
                     "orgManagedDashboards": {
                       "type": "boolean"
                     },
@@ -1132,6 +1136,7 @@
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
@@ -1713,6 +1718,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "auditLogsCompact": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "orgManagedDashboards": {
                       "type": "object",
                       "properties": {
@@ -2565,6 +2626,7 @@
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
@@ -2983,6 +3045,9 @@
                     "auditLogs": {
                       "type": "boolean"
                     },
+                    "auditLogsCompact": {
+                      "type": "boolean"
+                    },
                     "orgManagedDashboards": {
                       "type": "boolean"
                     },
@@ -3046,6 +3111,7 @@
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
@@ -3627,6 +3693,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "auditLogsCompact": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "orgManagedDashboards": {
                       "type": "object",
                       "properties": {
@@ -4479,6 +4601,7 @@
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
@@ -9922,6 +10045,7 @@
               "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
+              "auditLogsCompact",
               "orgManagedDashboards",
               "slackAssistant",
               "slackWorkbotReplies",
@@ -26543,6 +26667,9 @@
                         "auditLogs": {
                           "type": "boolean"
                         },
+                        "auditLogsCompact": {
+                          "type": "boolean"
+                        },
                         "orgManagedDashboards": {
                           "type": "boolean"
                         },
@@ -26606,6 +26733,7 @@
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",
@@ -27187,6 +27315,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "auditLogsCompact": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgManagedDashboards": {
                           "type": "object",
                           "properties": {
@@ -28039,6 +28223,7 @@
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",
@@ -28202,6 +28387,9 @@
                         "auditLogs": {
                           "type": "boolean"
                         },
+                        "auditLogsCompact": {
+                          "type": "boolean"
+                        },
                         "orgManagedDashboards": {
                           "type": "boolean"
                         },
@@ -28265,6 +28453,7 @@
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",
@@ -28846,6 +29035,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "auditLogsCompact": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgManagedDashboards": {
                           "type": "object",
                           "properties": {
@@ -29698,6 +29943,7 @@
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",

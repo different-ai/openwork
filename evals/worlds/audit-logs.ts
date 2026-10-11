@@ -173,5 +173,13 @@ export async function auditLogs(seed: Seed, { place }: { place: Place }) {
       };
     }));
   }
-  return { den, refreshAuditUsage, eventOptionLayout, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, reviewersTeamId, reviewersTeamName, viewport };
+  // Read-only color witness: a request with no final result must use the same
+  // neutral ink as a successful event, not the failure color. DOM text alone
+  // cannot prove this presentation boundary.
+  function outcomeColors() {
+    return evaluateOnSurface(web, () => Array.from(document.querySelectorAll("[data-audit-outcome]"))
+      .filter((element) => element.checkVisibility())
+      .map((element) => ({ outcome: element.getAttribute("data-audit-outcome"), color: getComputedStyle(element).color })));
+  }
+  return { den, refreshAuditUsage, eventOptionLayout, outcomeColors, web, memberWeb, unflaggedWeb, unflaggedOwner, unflaggedOrgId, teammate, teammateUserId, platformAdmin, orgId, providerId, originalCredential, replacementCredential, reviewersTeamId, reviewersTeamName, viewport };
 }

@@ -173,6 +173,7 @@ export type AdminFeature = {
     | "libraryUsage"
     | "modelsAnalytics"
     | "auditLogs"
+    | "auditLogsCompact"
     | "orgManagedDashboards"
     | "slackAssistant"
     | "slackWorkbotReplies"
@@ -236,6 +237,7 @@ export type AdminOrganizationsPageResponse = {
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      auditLogsCompact: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
       slackWorkbotReplies: boolean;
@@ -344,6 +346,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      auditLogsCompact: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -560,6 +571,7 @@ export type AdminOverviewResponse = {
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      auditLogsCompact: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
       slackWorkbotReplies: boolean;
@@ -668,6 +680,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      auditLogsCompact: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2093,6 +2114,7 @@ export type CapabilityDisabledError = {
     | "libraryUsage"
     | "modelsAnalytics"
     | "auditLogs"
+    | "auditLogsCompact"
     | "orgManagedDashboards"
     | "slackAssistant"
     | "slackWorkbotReplies"
@@ -6398,6 +6420,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      auditLogsCompact: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
       slackWorkbotReplies: boolean;
@@ -6506,6 +6529,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      auditLogsCompact: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6710,6 +6742,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      auditLogsCompact: boolean;
       orgManagedDashboards: boolean;
       slackAssistant: boolean;
       slackWorkbotReplies: boolean;
@@ -6818,6 +6851,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       auditLogs: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      auditLogsCompact: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

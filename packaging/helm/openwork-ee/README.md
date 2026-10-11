@@ -339,6 +339,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `libraryUsage` | `DEN_FEATURE_LIBRARY_USAGE` | default off | Organization admins see in Analytics how often each skill, plugin and connector is used, by how many people, which calls fail, and what nobody uses, so they can decide what to keep. |
 | `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
 | `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
+| `auditLogsCompact` | `DEN_FEATURE_AUDIT_LOGS_COMPACT` | default off | Organization admins read audit operations and capture settings in compact Den rows, with changes and technical details expanded on demand. |
 | `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |
 | `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
 | `slackWorkbotReplies` | `DEN_FEATURE_SLACK_WORKBOT_REPLIES` | default off | OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done. |

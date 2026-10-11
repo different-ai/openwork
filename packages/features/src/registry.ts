@@ -123,6 +123,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  auditLogsCompact: {
+    label: "Audit logs: compact Den rows",
+    description: "Organization admins read audit operations and capture settings in compact Den rows, with changes and technical details expanded on demand.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   orgManagedDashboards: {
     label: "Dashboards",
     description: "Organization admins publish dashboards to members in Den and the desktop app.",
