@@ -135,9 +135,10 @@ function switcherEvidence(measured: WorkspaceSwitcherMeasurements): string {
 switcherTest("an owner with many workspaces can switch workspaces on short and narrow screens without losing choices or permissions", async ({ world, user, probe, step, evidence }) => {
   const owner = user.on(world.web);
   const page = probe.on(world.web);
-  // Den mounts the desktop and mobile sidebar independently. The mobile trigger
-  // is the second DOM instance; the first remains hidden below the md breakpoint.
-  const mobileTrigger = { testId: "workspace-switcher-trigger", nth: 1 };
+  // Den retains the desktop trigger below the mobile breakpoint, but trusted
+  // target lookup indexes rendered matches. Choose the one visible trigger,
+  // not the second DOM node (which is not a second visible match).
+  const mobileTrigger = { testId: "workspace-switcher-trigger" };
   const captures: WorkspaceSwitcherMeasurements[] = [];
   const directory = async () => {
     const result = await probe.api(world.owner, "/v1/me/orgs");
@@ -301,7 +302,7 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
   });
 
   await step("an outside press closes workspace choices and create or join keeps its existing destination", async () => {
-    await owner.click({ role: "button", label: "Close menu", nth: 1 });
+    await owner.click({ role: "button", label: "Close menu" });
     await menuCloses("an outside press closes the workspace menu");
     await owner.notSee({ testId: "workspace-switcher-menu" });
     await owner.click({ role: "button", label: "Open menu" });
