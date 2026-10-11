@@ -122,6 +122,7 @@ function switcherReachable(measured: WorkspaceSwitcherMeasurements): boolean {
   return measured.visibleMenuCount === 1
     && measured.menu.left >= 0 && measured.menu.top >= 0
     && measured.menu.right <= measured.viewport.width && measured.menu.bottom <= measured.viewport.height
+    && measured.viewport.documentWidth <= measured.viewport.clientWidth
     && [measured.email, measured.search, measured.firstWorkspace, measured.showMore, measured.create, measured.signOut]
       .every((control) => control !== null && control.hitTest && !control.disabled);
 }
