@@ -107,7 +107,7 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
             for await (const chunk of request) body += chunk.toString();
             const input: unknown = JSON.parse(body);
             if (typeof input !== "object" || input === null || !("id" in input) || typeof input.id !== "string" || !("text" in input) || typeof input.text !== "string") { response.writeHead(400).end("{}"); return; }
-            turns.push({ id: input.id, text: input.text, sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "Four." }], modelSteps: 1, error: null, tasks: input.text === 'Try the "Meeting notes" background task again.' ? [task(`notes-retry-${turns.length}`, "Meeting notes")] : [] });
+            turns.push({ id: input.id, text: input.text, sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: input.text === 'Try the "Meeting notes" background task again.' ? "I'm drafting the meeting notes again." : "Four." }], modelSteps: 1, error: null, tasks: input.text === 'Try the "Meeting notes" background task again.' ? [task(`notes-retry-${turns.length}`, "Meeting notes")] : [] });
             response.writeHead(201).end("{}"); change(); return;
           }
           const stoppedTask = path.match(/^\/v1\/workbot\/tasks\/([^/]+)\/stop$/);
