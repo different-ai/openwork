@@ -122,6 +122,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   app.get("/v1/workbot/me", async (c) => {
     const { den: who } = c.get("member")
     return c.json({
+      userId: who.user.id,
+      organizationId: who.organization.id,
       name: who.user.name,
       email: who.user.email,
       organizationName: who.organization.name,

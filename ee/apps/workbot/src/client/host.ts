@@ -4,6 +4,8 @@ import { appIconCandidates } from "./app-icons"
 
 /** Who is signed in, from this site's own server (which asked Den). */
 export const meSchema = z.object({
+  userId: z.string().nullable().default(null),
+  organizationId: z.string().nullable().default(null),
   name: z.string().nullable(),
   email: z.string(),
   organizationName: z.string(),
@@ -65,5 +67,6 @@ export function createHost(me: Me): WorkbotHost {
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
     sideChats: me.sideChats,
     calendarPolish: me.calendarPolish,
+    identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }
 }
