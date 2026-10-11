@@ -141,7 +141,7 @@ import type { OrgRouteVariables } from "./shared.js"
 import { beginNativeProviderConnect } from "./oauth-providers.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { createExternalMcpLifecycleDeadline } from "../../capability-sources/external-mcp-client.js"
-import { readinessFingerprint, saveReadinessCheck, visibleReadiness } from "../../capability-sources/external-mcp-readiness.js"
+import { readinessFingerprint, rotateReadinessCredentialBinding, saveReadinessCheck, visibleReadiness } from "../../capability-sources/external-mcp-readiness.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
 const logger = appLogger.child({ component: "mcp_connections" })
@@ -1168,6 +1168,7 @@ async function toConnectionResponse(
   row: ExternalMcpConnectionRow,
   options: {
     callerOrgMembershipId: DenTypeId<"member">
+    readinessEnabled: boolean
     createdByName?: string | null
     includeAccess: boolean
     identityManagedBy: ConnectionRequiredBy[]
@@ -1280,7 +1281,7 @@ async function toConnectionResponse(
     credentialHealth: callerCredentialHealth?.status ?? "unknown",
     credentialHealthReason: callerCredentialHealth?.reason ?? null,
     credentialHealthCheckedAt: callerCredentialHealth?.checkedAt ?? null,
-    ...(row.kind === "external_mcp" && await organizationFeatureEnabled(row.organizationId, "connectorReadiness")
+    ...(row.kind === "external_mcp" && options.readinessEnabled
       ? { readiness: visibleReadiness(readinessCheck, fingerprint) } : {}),
     issuerReviewRequired,
     reconnectActionOwner,
@@ -1350,6 +1351,7 @@ export async function listMemberUsableConnectionFacts(input: {
   const connections = await Promise.all(rows.map((row) =>
     toConnectionResponse(row, {
       callerOrgMembershipId: member.id,
+      readinessEnabled: input.context.organizationContext.features.connectorReadiness,
       createdByName: resolveCreatorName(input.context.organizationContext, row.createdByOrgMembershipId),
       // The member who added a connection manages who can use it.
       includeAccess: row.createdByOrgMembershipId === member.id,
@@ -1598,6 +1600,9 @@ async function handleExternalMcpOAuthCallback(input: {
       referenceId: diagnostic.referenceId,
     }), 400)
   }
+  // Re-grants invalidate earlier checks even while the rollout is disabled.
+  // Ordinary SDK refresh writes never change this separate grant binding.
+  await rotateReadinessCredentialBinding(connection, statePayload.orgMembershipId)
   if (await organizationFeatureEnabled(connection.organizationId, "connectorReadiness")) {
     const refreshed = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
     if (refreshed) await checkConnectionReadiness(refreshed, statePayload.orgMembershipId, input.requestId)
@@ -1808,6 +1813,7 @@ async function createExternalConnectionResponse(
   }
   const response = await toConnectionResponse(refreshed ?? created, {
     callerOrgMembershipId: payload.currentMember.id,
+    readinessEnabled: payload.features.connectorReadiness,
     createdByName: resolveCreatorName(payload, (refreshed ?? created).createdByOrgMembershipId),
     includeAccess: true,
     requiredBy: [],
@@ -2052,6 +2058,7 @@ async function replaceExternalConnectionResponse(
   })
   const response = await toConnectionResponse(result.connection, {
     callerOrgMembershipId: payload.currentMember.id,
+    readinessEnabled: payload.features.connectorReadiness,
     createdByName: resolveCreatorName(payload, result.connection.createdByOrgMembershipId),
     includeAccess: true,
     requiredBy: provenance.requiredBy.get(result.connection.id) ?? [],
@@ -2395,6 +2402,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         const connections = await Promise.all(rows.map((row) =>
           toConnectionResponse(row, {
             callerOrgMembershipId: payload.currentMember.id,
+            readinessEnabled: payload.features.connectorReadiness,
             createdByName: resolveCreatorName(payload, row.createdByOrgMembershipId),
             includeAccess: true,
             requiredBy: provenance.requiredBy.get(row.id) ?? [],
@@ -2496,6 +2504,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         401: jsonResponse("Sign in required.", unauthorizedSchema),
         403: jsonResponse("Connection management permission required.", forbiddenSchema),
         404: jsonResponse("Unknown connection or feature disabled.", connectionNotFoundSchema),
+        409: jsonResponse("Sign in or finish setup before checking.", connectionNotReadySchema),
       },
     }),
     orgPermissionRoute("connections.manage"),
@@ -2509,6 +2518,8 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       })
       if (!connection) return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
       if (connection.kind !== "external_mcp") return c.json({ error: "invalid_request", message: "This connection does not support readiness checks." }, 400)
+      const credential = await resolveExternalMcpToolCredential(connection, payload.currentMember.id)
+      if (!credential.ok) return c.json({ error: "connection_not_ready", message: credential.message }, 409)
       return c.json({ readiness: await checkConnectionReadiness(connection, payload.currentMember.id, c.get("requestId")) })
     },
   )
@@ -2891,6 +2902,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         })
         const response = await toConnectionResponse(created, {
           callerOrgMembershipId: payload.currentMember.id,
+          readinessEnabled: payload.features.connectorReadiness,
           createdByName: resolveCreatorName(payload, created.createdByOrgMembershipId),
           includeAccess: true,
           requiredBy: [],
@@ -3134,6 +3146,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       })
       return c.json(await toConnectionResponse(connection, {
         callerOrgMembershipId: payload.currentMember.id,
+        readinessEnabled: payload.features.connectorReadiness,
         createdByName: resolveCreatorName(payload, connection.createdByOrgMembershipId),
         includeAccess: true,
         requiredBy: provenance.requiredBy.get(connection.id) ?? [],
@@ -3646,6 +3659,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       })
       return c.json(await toConnectionResponse(connection, {
         callerOrgMembershipId: payload.currentMember.id,
+        readinessEnabled: payload.features.connectorReadiness,
         createdByName: resolveCreatorName(payload, connection.createdByOrgMembershipId),
         includeAccess: true,
         requiredBy: provenance.requiredBy.get(connection.id) ?? [],

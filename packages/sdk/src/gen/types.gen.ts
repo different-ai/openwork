@@ -3705,6 +3705,11 @@ export type ExternalMcpConnectionToolPolicyInput = {
   disabledTools: Array<string>;
 };
 
+export type ExternalMcpConnectionNotReadyError = {
+  error: "connection_not_ready";
+  message: string;
+};
+
 export type ExternalMcpConnectionToolAnnotations = {
   title?: string;
   readOnlyHint?: boolean;
@@ -3729,11 +3734,6 @@ export type ExternalMcpConnectionTool = {
 export type ExternalMcpConnectionToolListResponse = {
   tools: Array<ExternalMcpConnectionTool>;
   policy: ExternalMcpConnectionToolPolicy;
-};
-
-export type ExternalMcpConnectionNotReadyError = {
-  error: "connection_not_ready";
-  message: string;
 };
 
 export type ExternalMcpDiagnostic = {
@@ -25147,6 +25147,10 @@ export type PostV1McpConnectionsByConnectionIdCheckErrors = {
    * Unknown connection or feature disabled.
    */
   404: ExternalMcpConnectionNotFoundError;
+  /**
+   * Sign in or finish setup before checking.
+   */
+  409: ExternalMcpConnectionNotReadyError;
 };
 
 export type PostV1McpConnectionsByConnectionIdCheckError =

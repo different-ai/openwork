@@ -1,7 +1,10 @@
-import { createHash } from "node:crypto"
+import { randomUUID } from "node:crypto"
+import { fingerprintReadinessIdentity } from "./external-mcp-readiness-identity.js"
+export { visibleReadiness } from "./external-mcp-readiness-identity.js"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { ConnectedAccountTable, ExternalMcpConnectionTable, type ExternalMcpReadinessCheck } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import { getConnectedAccount } from "./oauth-credentials.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
@@ -9,17 +12,23 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 // A successful probe of someone else's account never makes this member Ready.
 // Configuration/key changes invalidate the stored result without deleting history.
 export function readinessFingerprint(connection: ExternalMcpConnectionRow, account?: Awaited<ReturnType<typeof getConnectedAccount>>) {
-  return createHash("sha256").update(JSON.stringify([
-    connection.url, connection.authType, connection.credentialMode, connection.apiKeyAuthScheme,
-    connection.oauthConfiguration?.authorizationServerIssuer, connection.oauthConfiguration?.requestedScopes,
-    connection.oauthConfiguration?.callbackMode, connection.oauthIssuerReviewRequiredAt,
-    connection.credentialMode === "shared" ? [connection.apiKey, connection.accessToken] : account?.accessToken,
-  ])).digest("hex")
+  return fingerprintReadinessIdentity(connection, env.betterAuthSecret, account)
 }
 
-export function visibleReadiness(check: ExternalMcpReadinessCheck | null, fingerprint: string) {
-  if (!check || check.fingerprint !== fingerprint) return null
-  return { status: check.status, checkedAt: check.checkedAt, lastSuccessfulAt: check.lastSuccessfulAt, reason: check.reason }
+export async function rotateReadinessCredentialBinding(connection: ExternalMcpConnectionRow, memberId: DenTypeId<"member">) {
+  const changes = { readinessCredentialBinding: randomUUID(), readinessCheck: null }
+  if (connection.credentialMode === "per_member") {
+    await db.update(ConnectedAccountTable).set(changes).where(and(
+      eq(ConnectedAccountTable.organizationId, connection.organizationId),
+      eq(ConnectedAccountTable.providerId, connection.id),
+      eq(ConnectedAccountTable.orgMembershipId, memberId),
+    ))
+  } else {
+    await db.update(ExternalMcpConnectionTable).set(changes).where(and(
+      eq(ExternalMcpConnectionTable.organizationId, connection.organizationId),
+      eq(ExternalMcpConnectionTable.id, connection.id),
+    ))
+  }
 }
 
 export async function saveReadinessCheck(connection: ExternalMcpConnectionRow, memberId: DenTypeId<"member">, check: ExternalMcpReadinessCheck) {

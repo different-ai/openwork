@@ -16301,6 +16301,22 @@
           "disabledTools"
         ]
       },
+      "ExternalMcpConnectionNotReadyError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "connection_not_ready"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      },
       "ExternalMcpConnectionToolAnnotations": {
         "type": "object",
         "properties": {
@@ -16372,22 +16388,6 @@
         "required": [
           "tools",
           "policy"
-        ]
-      },
-      "ExternalMcpConnectionNotReadyError": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string",
-            "const": "connection_not_ready"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "error",
-          "message"
         ]
       },
       "ExternalMcpDiagnostic": {
@@ -81380,6 +81380,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ExternalMcpConnectionNotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Sign in or finish setup before checking.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalMcpConnectionNotReadyError"
                 }
               }
             }

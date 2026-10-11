@@ -153,7 +153,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
         className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ExtensionIcon name={name} taxonomy={taxonomy} iconSrc={resolvedIconSrc} connecting={connecting} />
-        <div className={props.stateLabel ? "flex min-w-0 flex-1 flex-col gap-0.5 lg:flex-none lg:w-[220px]" : `flex shrink-0 items-center gap-1.5 ${libraryRowLanes.name}`}>
+        <div className={props.stateLabel ? `flex min-w-0 flex-1 flex-col gap-0.5 lg:flex-none ${libraryRowLanes.name}` : `flex shrink-0 items-center gap-1.5 ${libraryRowLanes.name}`}>
           <h4 className="min-w-0 truncate text-[13px] font-medium text-dls-text group-hover:underline group-hover:decoration-dls-border group-hover:underline-offset-4">{name}</h4>
           {props.stateLabel ? <span className="truncate text-xs text-muted-foreground" data-library-state>{props.stateLabel}<span className="lg:hidden"> · {description}</span></span> : readyDot}
           {props.statusChip ? (
@@ -165,7 +165,9 @@ export function ExtensionCard(props: ExtensionCardProps) {
         <span data-library-kind className={`shrink-0 text-xs text-dls-secondary ${libraryRowLanes.kind}`}>{extensionTaxonomyLabel(taxonomy)}</span>
         {meta ? (
           <p data-library-caption className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>{meta}</p>
-        ) : props.stateLabel ? null : (
+        ) : props.stateLabel ? (
+          <span aria-hidden className={`hidden lg:block ${libraryRowLanes.from}`} />
+        ) : (
           // Nothing to say about the source: narrow rows fall back to what it
           // does, wide rows keep the empty lane so the next column stays aligned.
           <p className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>

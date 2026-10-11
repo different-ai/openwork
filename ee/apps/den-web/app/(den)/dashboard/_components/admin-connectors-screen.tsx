@@ -67,6 +67,7 @@ export function AdminConnectorsScreen() {
     <ItemPage testId="admin-connectors">
       <DenPageHeader
         title="Connectors"
+        className={all.some((connection) => connection.readiness !== undefined) ? "[&>div:first-child]:basis-full sm:[&>div:first-child]:basis-0" : undefined}
         description="Apps your organization's AI can use."
         action={empty ? undefined : (
           <LinkButton variant="primary" href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>
@@ -114,6 +115,7 @@ export function AdminConnectorsScreen() {
                       status={readinessState ?? status}
                       statusOnNarrow={readinessState !== null}
                       wideAction={readinessState !== null}
+                      wrapDescription={readinessState === "Couldn't verify"}
                       action={readinessState === "Couldn't verify" ? (
                         <DenButton size="xs" variant="secondary" disabled={!canCheck || checkConnection.isPending} title={!canCheck ? "An admin can check this connection." : undefined}
                           onClick={() => void checkConnection.mutateAsync(connection.id).catch(() => toast({ title: "Could not check this connection", description: "Try again." }))}>Check again</DenButton>

@@ -142,12 +142,14 @@ export function ItemRow({
   status,
   statusOnNarrow,
   wideAction,
+  wrapDescription,
   action,
   href,
   testId,
 }: {
   statusOnNarrow?: boolean;
   wideAction?: boolean;
+  wrapDescription?: boolean;
   logo?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
@@ -161,13 +163,13 @@ export function ItemRow({
       {logo ? <span className="flex shrink-0 items-center">{logo}</span> : null}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[14px] font-medium leading-5 text-gray-900">{title}</span>
-        {statusOnNarrow && status ? <span className="text-[12px] leading-4 text-muted-foreground sm:hidden">{status}</span> : null}
-        {description ? <span className="truncate text-[13px] leading-[18px] text-gray-500">{description}</span> : null}
+        {statusOnNarrow && status ? <span className="whitespace-nowrap text-[12px] leading-4 text-muted-foreground sm:hidden">{status}</span> : null}
+        {description ? <span className={wrapDescription ? "break-words text-[13px] leading-[18px] text-gray-500" : "truncate text-[13px] leading-[18px] text-gray-500"}>{description}</span> : null}
       </span>
     </>
   );
   return (
-    <div className="flex items-center gap-3.5 px-5 py-3" data-testid={testId}>
+    <div className={statusOnNarrow ? "flex items-center gap-2 px-3 py-3 sm:gap-3.5 sm:px-5" : "flex items-center gap-3.5 px-5 py-3"} data-testid={testId}>
       {href ? (
         <Link href={href} className="flex min-w-0 flex-1 items-center gap-3.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">
           {body}
