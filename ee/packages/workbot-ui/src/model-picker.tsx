@@ -33,7 +33,7 @@ function modelKey(option: AutomationModelOption) {
 export function ModelLogo({ option, size = 14 }: { option: Pick<AutomationModelOption, "providerId" | "providerName" | "logoProviderId" | "accessKind">; size?: number }) {
   return (
     <span className="grid shrink-0 place-items-center rounded-md bg-[var(--wb-surface)] text-[var(--wb-ink)] shadow-[0_0_0_1px_var(--wb-ring)]" style={{ width: size + 8, height: size + 8 }}>
-      {/* The cloud default is "whatever this organization's cloud runs": a cloud, not a vendor. */}
+      {/* The organization's choice uses OpenWork's mark, not the resolved model's vendor mark. */}
       {option.accessKind === "cloud_default"
         ? workbotHost().calendarPolish === true ? <OpenWorkMark width={size} height={size} /> : <Cloud size={size} strokeWidth={1.75} aria-hidden />
         : <ProviderIcon providerId={option.logoProviderId ?? option.providerId} providerName={option.providerName} size={size} />}
@@ -48,12 +48,14 @@ export function ModelSummary({ model, options }: { model: AutomationModel; optio
   return (
     <span className="flex min-w-0 items-center gap-2" data-automation-model={modelKey(option)}>
       <ModelLogo option={option} size={12} />
-      <span className="min-w-0 truncate">
-        <span className="font-medium text-[var(--wb-text)]">{option.modelName}</span>
-        {workbotHost().calendarPolish === true
-          ? option.accessKind === "cloud_default" ? null : <span className="text-[var(--wb-muted)]"> ({option.providerName})</span>
-          : <span className="text-[var(--wb-muted)]"> · {option.providerName}</span>}
-      </span>
+      {workbotHost().calendarPolish === true && option.accessKind === "cloud_default" ? (
+        <span className="min-w-0 truncate font-medium text-[var(--wb-text)]">{option.modelName}</span>
+      ) : (
+        <span className="min-w-0 truncate">
+          <span className="font-medium text-[var(--wb-text)]">{option.modelName}</span>
+          <span className="text-[var(--wb-muted)]">{workbotHost().calendarPolish === true ? ` (${option.providerName})` : ` · ${option.providerName}`}</span>
+        </span>
+      )}
     </span>
   );
 }

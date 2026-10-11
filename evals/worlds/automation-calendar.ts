@@ -86,7 +86,8 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
     den, desktop, recovery,
     async setCalendarPolish(enabled: boolean) {
       const updated = await denFetch(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, {
-        method: "PUT", body: JSON.stringify({ capabilities: { calendarPolish: enabled } }),
+        method: "PUT", headers: { authorization: `Bearer ${den.admin.token}` },
+        body: JSON.stringify({ capabilities: { calendarPolish: enabled } }),
       });
       if (!updated.response.ok) throw new Error(`Could not set Calendar polish: HTTP ${updated.response.status}`);
     },
