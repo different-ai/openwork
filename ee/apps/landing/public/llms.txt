@@ -47,10 +47,7 @@ One URL brings the user's organization skills, plugins, and connections into any
 - [How does OpenWork work with OpenCode?](https://openworklabs.com/guides/openwork-and-opencode) — built on OpenCode; the `opencode-openwork` plugin brings org models, skills, and connections into OpenCode 2
 - [Can you use OpenWork with Claude Code, Codex, or Cursor?](https://openworklabs.com/guides/claude-code-codex-cursor) — yes, through the OpenWork MCP URL; AI Gateway models for these clients are in progress
 - [How does OpenWork work with Ollama?](https://openworklabs.com/guides/ollama) — built-in Settings › Ollama screen, fully local
-- [One AI security policy for engineers and business teams](https://openworklabs.com/guides/engineers-and-business-teams)
-- [What do policies and controls mean in OpenWork?](https://openworklabs.com/guides/ai-policies-and-controls)
-- [How do you keep AI agent costs under control?](https://openworklabs.com/guides/control-ai-costs) — spend limits per team or person, usage by model/team/person, and Auto routing (in preview) that picks a model per prompt from plain-English categories, e.g. sensitive prompts to a private model
-- [How do you prevent shadow AI?](https://openworklabs.com/guides/prevent-shadow-ai)
+- [How do you keep AI agent costs under control?](https://openworklabs.com/guides/control-ai-costs) — spend allowances for priced organization-key providers and usage by model, team, or person
 - Every guide is also served as Markdown with `Accept: text/markdown`.
 
 ### Machine-readable resources

@@ -24,7 +24,7 @@ const home = `# OpenWork
 - **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 - **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
-- **Guides** — [OpenCode](https://openworklabs.com/guides/openwork-and-opencode), [Claude Code, Codex, Cursor](https://openworklabs.com/guides/claude-code-codex-cursor), [Ollama](https://openworklabs.com/guides/ollama), [engineers and business teams](https://openworklabs.com/guides/engineers-and-business-teams), [policies and controls](https://openworklabs.com/guides/ai-policies-and-controls), [AI cost control](https://openworklabs.com/guides/control-ai-costs), [prevent shadow AI](https://openworklabs.com/guides/prevent-shadow-ai)
+- **Guides** — [OpenCode](https://openworklabs.com/guides/openwork-and-opencode), [Claude Code, Codex, Cursor](https://openworklabs.com/guides/claude-code-codex-cursor), [Ollama](https://openworklabs.com/guides/ollama), [AI cost control](https://openworklabs.com/guides/control-ai-costs)
 - **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork); agents follow [migrate.md](https://openworklabs.com/migrate.md)
 
 ## How it compares

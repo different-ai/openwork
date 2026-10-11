@@ -93,7 +93,7 @@ export const guides: Guide[] = [
           "Same engine: OpenWork runs OpenCode under the hood on macOS, Windows, and Linux.",
           "Same files: SKILL.md skills, MCP servers, and opencode.json or opencode.jsonc config work in both.",
           "Same models: any of the 50+ providers OpenCode supports, including local models.",
-          "Same permissions: OpenWork's agent rules are OpenCode permission rules, so engineers already know how they work."
+          "Shared access: the plugin exposes only the organization models and connections granted to the signed-in member."
         ]
       },
       {
@@ -158,7 +158,7 @@ export const guides: Guide[] = [
     cards: [
       { icon: "library", title: "Install the OpenCode plugin", link: { label: "Plugin guide", href: "/docs/model-context-protocol/opencode-plugin" } },
       { icon: "route", title: "Only want MCP in OpenCode?", link: { label: "Connect OpenCode", href: "/docs/model-context-protocol/opencode" } },
-      { icon: "users", title: "Engineers and business teams on one policy", link: { label: "Read the guide", href: "/guides/engineers-and-business-teams" } },
+      { icon: "users", title: "Share approved models with engineers", link: { label: "AI Gateway", href: "/docs/ai-gateway/overview" } },
       { icon: "monitor", title: "Prefer a desktop app?", link: { label: "Download OpenWork", href: "/download" } }
     ],
     faq: [
@@ -410,7 +410,7 @@ export const guides: Guide[] = [
       },
       {
         question: "Does anything leave my computer with Ollama?",
-        answer: "Model requests go to Ollama on your computer. Only connectors and MCP servers you add talk to their own services."
+        answer: "Model inference goes to Ollama on your computer. Web tools, connectors, updates, and other enabled services can still make network requests; local inference is not a guarantee that the whole app is offline."
       },
       {
         question: "Which Ollama model should I use?",
@@ -433,232 +433,20 @@ export const guides: Guide[] = [
     }
   },
   {
-    slug: "engineers-and-business-teams",
-    label: "Engineers and business teams",
-    title: "One AI security policy for engineers and business teams",
-    description:
-      "Engineers use OpenCode, Claude Code, Codex, and Cursor. Business teams use the OpenWork app. OpenWork puts both under one set of models, connections, and rules.",
-    heading: "Engineers and business teams use different AI tools. How do you keep one security policy?",
-    answer:
-      "Let each team keep its tools and share one control layer. Business teams use the OpenWork app; engineers use OpenCode, Claude Code, Codex, or Cursor. All of them sign in to the same OpenWork organization and get the same models, connections, access rules, and audit log.",
-    updated: "2026-10-10",
-    keyFacts: [
-      "One organization for every tool",
-      "SSO with Okta, Microsoft Entra ID, or Google Workspace",
-      "Same models, connections, and audit log",
-      "Rules per organization or per team"
-    ],
-    sections: [
-      {
-        id: "problem",
-        heading: "Why one tool for everyone doesn't work",
-        paragraphs: [
-          "Engineers want a terminal agent they can script. Finance, legal, sales, and operations want a window, their files, and no setup. Forcing one tool on both groups means one of them quietly goes around it.",
-          "The fix is not one app. It's one place where security decides which models, data, and actions agents may use, and every tool follows it."
-        ]
-      },
-      {
-        id: "how",
-        heading: "How it works",
-        table: {
-          caption: "What business teams and engineers use, and what they share",
-          columns: ["", "Business teams", "Engineers"],
-          rows: [
-            ["App", "OpenWork desktop or OpenWork Web", "OpenCode, Claude Code, Codex, Cursor, VS Code"],
-            ["How it connects", "Joining a team? Sign in", "opencode-openwork plugin, or the OpenWork MCP URL"],
-            ["Sign-in", "Company SSO", "Same company SSO"],
-            ["Models", "AI Gateway models granted to their team", "Same AI Gateway models (OpenCode today, others in progress)"],
-            ["Skills and connections", "Granted to their team", "Same grants, through MCP"],
-            ["Tool settings", "Enforced on every call", "Enforced on every call"],
-            ["Audit and usage", "One organization log", "Same log"]
-          ]
-        }
-      },
-      {
-        id: "shared",
-        heading: "What stays the same across every tool",
-        bullets: [
-          "Identity: one organization, company SSO, and SCIM. Remove someone in your identity provider and they lose access everywhere.",
-          "Models: admins add providers once in the AI Gateway, grant them to teams, and set spend limits. Provider keys never reach laptops.",
-          "Data and actions: shared connections such as Google Workspace, Microsoft 365, and Slack are granted per team, and admins can switch individual tools off for everyone.",
-          "Skills: approved skills are published once and reach the OpenWork app and every MCP client.",
-          "Evidence: admin changes are written to the audit log, and usage is counted per person and per team."
-        ]
-      },
-      {
-        id: "opencode",
-        heading: "Why OpenCode makes this easier",
-        paragraphs: [
-          "The OpenWork app runs on OpenCode. Agent permissions in OpenWork, such as which commands can run, which websites agents can open, and which local skills and MCP servers are allowed, are OpenCode permission rules. Security writes one set of rules, and engineers can read them in the format they already use.",
-          "On business teams' computers, the OpenWork app enforces those rules, names the rule that blocked an action, and keeps them in force even if it can't reach OpenWork Cloud."
-        ]
-      }
-    ],
-    cards: [
-      { icon: "library", title: "Engineers: add OpenWork to OpenCode", link: { label: "OpenCode guide", href: "/guides/openwork-and-opencode" } },
-      { icon: "route", title: "Engineers: Claude Code, Codex, Cursor", link: { label: "MCP guide", href: "/guides/claude-code-codex-cursor" } },
-      { icon: "key", title: "What admins can control", link: { label: "Policies and controls", href: "/guides/ai-policies-and-controls" } },
-      { icon: "users", title: "Stop shadow AI", link: { label: "Read the guide", href: "/guides/prevent-shadow-ai" } }
-    ],
-    faq: [
-      {
-        question: "Do engineers have to switch to the OpenWork app?",
-        answer:
-          "No. Engineers keep OpenCode, Claude Code, Codex, or Cursor and connect them to the same OpenWork organization with the opencode-openwork plugin or the OpenWork MCP URL."
-      },
-      {
-        question: "Do business teams need a terminal?",
-        answer: "No. The OpenWork desktop app is point and click. Skills and connections shared by the company appear after sign-in."
-      },
-      {
-        question: "Where are policies set?",
-        answer: "In one OpenWork Cloud dashboard, for the whole organization or per team. Self-hosted OpenWork has the same dashboard."
-      },
-      {
-        question: "Can different teams get different rules?",
-        answer: "Yes. Models, connections, skills, and agent permissions can be granted per team, so contractors can get stricter rules than full-time staff."
-      }
-    ],
-    cta: {
-      heading: "Different tools. One policy.",
-      sub: "Give every team the agent it likes, under one set of rules.",
-      primary: { label: "Talk to us", href: "/enterprise#book" },
-      secondary: { label: "Get started free", href: "https://app.openworklabs.com?mode=sign-up" }
-    }
-  },
-  {
-    slug: "ai-policies-and-controls",
-    label: "AI policies and controls",
-    title: "AI policies and admin controls in OpenWork",
-    description:
-      "What OpenWork admins can control: sign-in, roles, models, spend, agent permissions, desktop policies, connections, and audit, for everyone or per team.",
-    heading: "What do policies and controls mean in OpenWork?",
-    answer:
-      "Policies are rules admins set once in OpenWork Cloud that every member's agent follows: who can sign in, which models they can use and how much they can spend, which commands, websites, skills, and connections agents may use, and which app versions are allowed. They apply to everyone or per team.",
-    updated: "2026-10-10",
-    keyFacts: [
-      "9 control areas, set in one dashboard",
-      "Rules per organization, team, or person",
-      "Agent rules: Allow, Block, or Ask first",
-      "Audit log never stores prompts or secrets"
-    ],
-    sections: [
-      {
-        id: "layers",
-        heading: "The controls, layer by layer",
-        table: {
-          caption: "OpenWork admin controls and what each one decides",
-          columns: ["Control", "What it decides", "Where admins set it"],
-          rows: [
-            ["Sign-in", "Company SSO (Okta, Microsoft Entra ID, Google Workspace), SCIM provisioning, allowed email domains, and required sign-in on managed computers", "SSO and SCIM settings"],
-            ["Roles", "Owner, Admin, or Member; admin teams synced from your identity provider; custom permission grants on Enterprise", "Members"],
-            ["Models", "Which providers and models each team or person can use, and whether people may add their own", "AI Gateway"],
-            ["Spend", "Daily, weekly, or monthly USD limits per team or person", "AI Gateway"],
-            ["Agent permissions", "Which commands agents can run, whether they can edit files, which websites they can open, web search, and which local skills and MCP servers are allowed. Each rule is Allow, Block, or Ask first", "Agent permissions"],
-            ["Desktop policies", "Extra workspaces, desktop settings, installing extensions, built-in extensions, and early-access updates", "Desktop policies"],
-            ["App versions", "Which OpenWork versions the desktop app may install", "General settings"],
-            ["Connections", "Who can use each shared connection, and which of its tools are switched off", "Connections"],
-            ["Audit", "A log of admin changes, plus usage per member and team, without prompts or secrets", "Audit logs, Analytics"]
-          ]
-        }
-      },
-      {
-        id: "agent-permissions",
-        heading: "Agent permissions: what agents may do on a computer",
-        paragraphs: [
-          "Agent permissions decide what an agent can do on a member's computer. Admins pick a rule for each kind of action, for everyone or per team, and can test a request against the rules before saving."
-        ],
-        bullets: [
-          "Commands: allow, block, or ask first, with patterns such as git * or rm *.",
-          "File edits: allow or block changes to files.",
-          "Websites: allow only listed sites, or block some, in agent web fetches and the built-in browser.",
-          "Local skills and MCP servers: allow only the ones your team approved. Skills and connections the organization shares always keep working.",
-          "When an action is blocked, the member sees which rule blocked it.",
-          "Rules stay in force if the computer can't reach OpenWork Cloud."
-        ]
-      },
-      {
-        id: "how-rules-combine",
-        heading: "How rules combine",
-        bullets: [
-          "Organization first: the organization's settings apply to everyone.",
-          "Teams on top: a team can have its own settings or inherit the organization's.",
-          "Strictest wins: if someone is on two teams, the stricter agent permission applies.",
-          "A team marked Blocked for a capability stays blocked, whatever other policies allow.",
-          "No policies means no restrictions, so small teams can start without setup."
-        ]
-      },
-      {
-        id: "where-enforced",
-        heading: "Where each control is enforced",
-        table: {
-          caption: "Where OpenWork enforces each type of control",
-          columns: ["Control", "OpenWork app", "OpenCode with the plugin", "Claude Code, Codex, Cursor (MCP)"],
-          rows: [
-            ["SSO and roles", "Yes", "Yes", "Yes"],
-            ["Model access and spend limits", "Yes", "Yes", "In progress"],
-            ["Skill and connection access", "Yes", "Yes", "Yes"],
-            ["Connection tool settings", "Yes", "Yes", "Yes"],
-            ["Agent permissions", "Yes", "Desktop app only today", "Use the client's own settings"],
-            ["Desktop policies and app versions", "Yes", "Not applicable", "Not applicable"]
-          ]
-        }
-      }
-    ],
-    cards: [
-      { icon: "key", title: "Desktop policies", link: { label: "Docs", href: "/docs/cloud/share-with-your-team/desktop-policies" } },
-      { icon: "users", title: "Members, roles, and permissions", link: { label: "Docs", href: "/docs/cloud/members-and-rbac" } },
-      { icon: "route", title: "AI Gateway access and limits", link: { label: "Docs", href: "/docs/ai-gateway/overview" } },
-      { icon: "cloud", title: "Security and operations", link: { label: "Docs", href: "/docs/cloud/security-and-operations" } }
-    ],
-    faq: [
-      {
-        question: "Can I stop people using their own API keys?",
-        answer: "Yes. Turn on Only models you provide in the AI Gateway. Members can then use only models the organization deployed."
-      },
-      {
-        question: "Can I block risky commands?",
-        answer: "Yes. Agent permissions let you block or require approval for commands by pattern, for everyone or per team."
-      },
-      {
-        question: "Can I limit which websites agents open?",
-        answer: "Yes. Allow or block sites for agent web fetches and the built-in browser."
-      },
-      {
-        question: "Can I pin the desktop app version?",
-        answer: "Yes. Owners choose which OpenWork versions the desktop app may install."
-      },
-      {
-        question: "Does the audit log store prompts?",
-        answer: "No. It records who changed what and when, never request bodies or secrets."
-      },
-      {
-        question: "Which plan includes policies?",
-        answer: "Desktop policies, agent permissions, SCIM, and the audit log are on Enterprise, cloud or self-hosted. SSO is on Team."
-      }
-    ],
-    cta: {
-      heading: "Set the rules once.",
-      sub: "Every agent, on every computer, follows them.",
-      primary: { label: "Talk to us", href: "/enterprise#book" },
-      secondary: { label: "Desktop policies docs", href: "/docs/cloud/share-with-your-team/desktop-policies" }
-    }
-  },
-  {
     slug: "control-ai-costs",
     label: "Keep AI costs under control",
     title: "How to keep AI agent costs under control",
     description:
-      "Set daily, weekly, or monthly spend limits per team or person, see who spends what, and route each prompt to the right model with OpenWork Auto routing (preview).",
+      "Set daily, weekly, or monthly AI spend limits, see usage by model, team, or person, and choose lower-cost models for routine work.",
     heading: "How do you keep AI agent costs under control?",
     answer:
-      "Put every model behind one gateway, give each team or person a daily, weekly, or monthly spend limit, and send each prompt to the cheapest model that can handle it. OpenWork does all three, and its Auto routing, now in preview, picks the model from instructions you write in plain English.",
+      "Use organization-managed provider keys, set daily, weekly, or monthly allowances, and review usage by model, team, or person. In OpenWork, use cheaper models for routine tasks and reserve frontier models for work that needs them.",
     updated: "2026-10-10",
     keyFacts: [
       "Spend limits per day, week, or month, in USD",
       "Limits for everyone, a team, or one person",
       "Usage by model, team, or person for the last 31 days",
-      "Auto routing: 2 to 12 plain-English categories (preview)"
+      "Pause, warn, or approve requests for 25% more"
     ],
     sections: [
       {
@@ -673,7 +461,7 @@ export const guides: Guide[] = [
         id: "limits",
         heading: "Set spend limits",
         paragraphs: [
-          "In the AI Gateway, open Limits and choose who a limit applies to: everyone in the organization (including people who join later), a team, or one person. Turn on any mix of a daily, weekly, and monthly amount. Whichever runs out first applies."
+          "Spend limits apply to priced organization-key providers; they do not cap every external bill or personal provider key. In the AI Gateway, open Limits and choose who a limit applies to: everyone in the organization (including people who join later), a team, or one person. Turn on any mix of a daily, weekly, and monthly amount. Whichever runs out first applies."
         ],
         table: {
           caption: "What happens when someone reaches a spend limit",
@@ -700,30 +488,6 @@ export const guides: Guide[] = [
         ]
       },
       {
-        id: "auto-routing",
-        heading: "Auto routing: the right model for each prompt",
-        badge: "In preview",
-        paragraphs: [
-          "Auto routing reads each new prompt and sends it to the model you chose for that kind of work. You describe the categories in plain English, pick a model for each, and choose a fallback. No rules engine and no code.",
-          "Use it to save money and to keep sensitive work private: everyday questions go to a fast, low-cost model, hard problems go to a frontier model, and prompts about customer data, contracts, or health records go to a model running on your own infrastructure."
-        ],
-        table: {
-          caption: "Example Auto routing setup",
-          columns: ["Category you write", "Model it goes to"],
-          rows: [
-            ["Quick questions, rewrites, and summaries", "A low-cost open model, such as GLM 5.2"],
-            ["Debugging, analysis, and multi-step planning", "A frontier model"],
-            ["Anything with customer records, contracts, or personal data", "A private model on your own servers or cloud account"],
-            ["Fallback", "Your default model"]
-          ]
-        },
-        bullets: [
-          "Add 2 to 12 categories per router.",
-          "Set a minimum confidence: if the router isn't sure, the prompt goes to the fallback.",
-          "Routing picks a model; it doesn't grant access. To guarantee a team only ever uses private models, also limit which models that team can use."
-        ]
-      },
-      {
         id: "cheaper-models",
         heading: "Use cheaper models where they're good enough",
         bullets: [
@@ -738,7 +502,7 @@ export const guides: Guide[] = [
       { icon: "route", title: "Spend limits and model access", link: { label: "AI Gateway", href: "/docs/ai-gateway/overview" } },
       { icon: "library", title: "How token costs are counted", link: { label: "Token costs", href: "/docs/ai-gateway/token-costs" } },
       { icon: "cpu", title: "Run models for free on your computer", link: { label: "OpenWork with Ollama", href: "/guides/ollama" } },
-      { icon: "key", title: "Every control admins have", link: { label: "Policies and controls", href: "/guides/ai-policies-and-controls" } }
+      { icon: "key", title: "How gateway limits work", link: { label: "Request flow", href: "/docs/ai-gateway/how-requests-flow" } }
     ],
     faq: [
       {
@@ -750,155 +514,18 @@ export const guides: Guide[] = [
         answer: "You choose: pause their models, only warn, or let them ask for 25% more for an admin to approve."
       },
       {
-        question: "What is OpenWork Auto routing?",
-        answer:
-          "A preview feature that sends each prompt to the model you picked for that kind of work, based on categories you describe in plain English, with a fallback when it isn't sure."
-      },
-      {
-        question: "Can Auto routing send sensitive prompts to a private model?",
-        answer:
-          "Yes. Describe sensitive work as a category, such as customer data or contracts, and point it at a model on your own infrastructure. Pair it with model access rules for a hard guarantee."
-      },
-      {
-        question: "How does the router decide?",
-        answer:
-          "It reads the newest message, compares it with your category descriptions, and picks the closest match. Below the minimum confidence, it uses your fallback."
-      },
-      {
         question: "Are the cost numbers exact?",
         answer: "They're close estimates from token counts and published prices. Your provider's invoice is the final number."
       }
     ],
     cta: {
       heading: "Know what AI costs before the invoice.",
-      sub: "Limits, usage, and the right model for every prompt.",
+      sub: "Spend allowances and usage reporting for organization-managed providers.",
       primary: { label: "Get started free", href: "https://app.openworklabs.com?mode=sign-up" },
       secondary: { label: "AI Gateway docs", href: "/docs/ai-gateway/overview" }
     }
   },
-  {
-    slug: "prevent-shadow-ai",
-    label: "Prevent shadow AI",
-    title: "How to prevent shadow AI at work",
-    description:
-      "Shadow AI is staff using unapproved AI tools and personal accounts. Prevent it by giving people a better approved tool, central models, SSO, and enforced policies.",
-    heading: "How do you prevent shadow AI?",
-    answer:
-      "Give people an approved AI tool that's better than the one they'd sneak in, then make it the only path to company data. With OpenWork: a free desktop app with any model, company models through one gateway, SSO, blocks on personal keys and unapproved extensions, and an audit log.",
-    updated: "2026-10-10",
-    keyFacts: [
-      "7 steps, from approved app to audit",
-      "50+ model providers to approve from",
-      "Provider keys never reach laptops",
-      "Self-hosting free up to 5 users"
-    ],
-    sections: [
-      {
-        id: "what",
-        heading: "What is shadow AI?",
-        paragraphs: [
-          "Shadow AI is when people use AI tools their company hasn't approved: a personal ChatGPT account, a free browser extension, an unvetted MCP server, or an API key on a personal card. Company data ends up in places security can't see.",
-          "People rarely do it to break rules. They do it because the approved tool is missing, slow, or limited to one model, and they have work to finish."
-        ]
-      },
-      {
-        id: "why-bans-fail",
-        heading: "Why banning AI doesn't work",
-        bullets: [
-          "Blocking chatgpt.com moves the problem to phones and personal laptops.",
-          "A single-vendor tool pushes people elsewhere when they need another model.",
-          "Engineers and business teams need different tools, so one mandated app leaves someone out.",
-          "Without usage data, you can't tell whether the approved tool is being used at all."
-        ]
-      },
-      {
-        id: "steps",
-        heading: "Seven steps to stop shadow AI with OpenWork",
-        steps: [
-          {
-            title: "Give everyone an approved agent",
-            body: "Roll out the free OpenWork desktop app for macOS, Windows, and Linux. It works on people's own files, so they don't need to upload them to a personal account."
-          },
-          {
-            title: "Provide the models people want",
-            body: "Add OpenAI, Anthropic, Google, Bedrock, Vertex, Azure, or a self-hosted model once in the AI Gateway. Keys stay on the server, and each team gets the models it needs."
-          },
-          {
-            title: "Require company sign-in",
-            body: "Connect SSO and SCIM, push required sign-in to managed computers, and limit sign-up to your email domains."
-          },
-          {
-            title: "Block personal keys and unapproved extensions",
-            body: "Turn on Only models you provide, and use agent permissions to allow only approved local skills and MCP servers."
-          },
-          {
-            title: "Share approved skills and connections",
-            body: "Publish skills and connections such as Google Workspace, Microsoft 365, and Slack once, granted per team, so the approved path is also the easy one."
-          },
-          {
-            title: "Cover engineers too",
-            body: "Connect OpenCode with the opencode-openwork plugin, and Claude Code, Codex, and Cursor with the OpenWork MCP URL, so engineering tools use the same grants."
-          },
-          {
-            title: "Watch usage and spend",
-            body: "Use analytics, spend limits, and the audit log to see adoption by team, catch gaps, and prove control to auditors."
-          }
-        ]
-      },
-      {
-        id: "checklist",
-        heading: "Shadow AI checklist",
-        table: {
-          caption: "Common shadow AI risks and the OpenWork control for each",
-          columns: ["Risk", "OpenWork control"],
-          rows: [
-            ["Personal ChatGPT or Claude accounts", "Approved desktop app with company models"],
-            ["API keys on personal cards", "AI Gateway with keys on the server and Only models you provide"],
-            ["Unvetted MCP servers and skills", "Agent permissions for local skills and MCP servers"],
-            ["Agents running risky commands", "Agent permissions for commands: Allow, Block, or Ask first"],
-            ["Agents browsing unknown sites", "Website allow and block lists"],
-            ["Ex-employees keeping access", "SSO and SCIM deprovisioning"],
-            ["Runaway spend", "Spend limits per team or person"],
-            ["No evidence for auditors", "Audit log and per-member usage"]
-          ]
-        }
-      }
-    ],
-    cards: [
-      { icon: "key", title: "Every control admins have", link: { label: "Policies and controls", href: "/guides/ai-policies-and-controls" } },
-      { icon: "users", title: "One policy for engineers and business teams", link: { label: "Read the guide", href: "/guides/engineers-and-business-teams" } },
-      { icon: "cloud", title: "Data handling and subprocessors", link: { label: "Trust Center", href: "/trust" } },
-      { icon: "monitor", title: "Roll out the desktop app", link: { label: "Enterprise deployment", href: "/docs/start-here/enterprise-desktop-deployment" } }
-    ],
-    faq: [
-      {
-        question: "What is shadow AI?",
-        answer: "Using AI tools, accounts, or extensions an organization hasn't approved, which sends company data where security can't see or control it."
-      },
-      {
-        question: "Is shadow AI a security risk?",
-        answer: "Yes. It can leak confidential data, bypass access controls, and leave no audit trail. It also hides spend."
-      },
-      {
-        question: "Should we just block AI websites?",
-        answer: "Blocking alone pushes use to personal devices. Pair it with an approved tool people prefer, then block what's left."
-      },
-      {
-        question: "Does OpenWork lock us into one AI vendor?",
-        answer: "No. OpenWork is open source and works with 50+ providers and local models, so you can approve the models people actually want."
-      },
-      {
-        question: "Can we self-host OpenWork?",
-        answer: "Yes. OpenWork can run in your own environment, and self-hosting is free for organizations up to 5 users."
-      }
-    ],
-    cta: {
-      heading: "Make the approved path the easy one.",
-      sub: "Give every team a better AI tool, under your rules.",
-      primary: { label: "Talk to us", href: "/enterprise#book" },
-      secondary: { label: "Get started free", href: "https://app.openworklabs.com?mode=sign-up" }
-    }
-  }
+
 ];
 
 export function guidePath(guide: Guide): string {
@@ -963,7 +590,7 @@ ${guide.cards.map((card) => `- ${card.title}: [${card.link.label}](${absolute(ca
 export function guidesIndexMarkdown(): string {
   return `# OpenWork guides
 
-> Short answers about how OpenWork works with OpenCode, Claude Code, Codex, Cursor, and Ollama, and how admins control AI across a company.
+> Short answers about OpenWork with OpenCode, MCP clients, and local models, plus spend allowances and usage reporting.
 
 ${guides.map((guide) => `- [${guide.heading}](${SITE_URL}${guidePath(guide)}) — ${guide.answer}`).join("\n")}
 `;
