@@ -110,12 +110,12 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     expect(summary).not.toContain("·");
     expect(summary).not.toContain("Auto");
     expect((await probe.dom('[data-automation-model] svg[viewBox="146 7 468 585"]')).elements).toHaveLength(1);
-    await user.click({ role: "button", text: "Edit", exact: true });
+    await user.click({ role: "button", text: /^Edit$/ });
     await user.click(modelTrigger);
     await user.see({ role: "option", label: `Organization default (${resolvedName})` });
     await user.screenshot();
     await user.press("Escape");
-    await user.click({ role: "button", text: "Cancel", exact: true });
+    await user.click({ role: "button", text: /^Cancel$/ });
     evidence.recordAssertionEvidence("The default label resolves through Den without changing the stored model", `Den's resolved default is ${resolvedName}; the summary and open chooser say Organization default (${resolvedName}) without a middle-dot meta string.`, true);
   });
 
