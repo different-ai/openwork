@@ -108,6 +108,16 @@
               ],
               "description": "Dashboard activity: Organization admins see recent additions and skill updates on their dashboard instead of Quick add. Renders DEN_FEATURE_DASHBOARD_ACTIVITY."
             },
+            "libraryIntegrated": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Integrated Library: Members see Library lists, details and add flows that match the rest of Den and the desktop app. Renders DEN_FEATURE_LIBRARY_INTEGRATED."
+            },
             "libraryUsage": {
               "enum": [
                 "",

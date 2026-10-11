@@ -16,6 +16,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectionForPresetUrl, GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { displayedConnectorConnections } from "./connector-detail";
 import { type CatalogEntry, catalogEntriesFromPresets, ConnectorPicker } from "./connector-picker";
+import { useLibraryIntegrated } from "./use-library-integrated";
 import { ItemHeader, ItemPage } from "./item-header";
 import { preloadConnectorLogo } from "./item-logo";
 import {
@@ -55,6 +56,7 @@ function nativeConnection(connections: readonly ExternalMcpConnection[], provide
 /** A1 to A3 and C1 to C2: pick what to connect. */
 export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   const { orgSlug } = useOrgDashboard();
+  const integrated = useLibraryIntegrated();
   const presets = useMcpConnectionPresets();
   const connections = useMcpConnections(mode === "admin" ? "manageable" : "usable");
   const usable = useMcpConnections("usable");
@@ -83,9 +85,10 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   return (
     <ItemPage testId="connector-catalog">
       <ItemHeader
+        compact={integrated}
         back={mode === "admin" ? { href: getMcpConnectionsRoute(orgSlug), label: "Connectors" } : { href: getLibraryRoute(orgSlug), label: "My Library" }}
         title="Add a connector"
-        actions={mode === "admin" ? (
+        actions={mode === "admin" && !integrated ? (
           <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustomName("")} data-testid="add-any-mcp">
             Add any MCP
           </DenButton>

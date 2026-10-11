@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, UserPlus } from "lucide-react";
+import { LockKeyhole, MessageSquare, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
@@ -21,7 +21,8 @@ import { formatAddedDate } from "./item-dates";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
 import { DetailRows, ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
-import { ConnectorLogo, KindTile, LetterTile } from "./item-logo";
+import { ConnectorLogo, KindTile, LetterTile, PluginLogo } from "./item-logo";
+import { useLibraryIntegrated } from "./use-library-integrated";
 import { draftFromPluginGrants, useSavePluginAccess } from "./item-sharing";
 import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import { receivedStatus } from "./library-view";
@@ -47,6 +48,7 @@ function thingsLabel(count: number): string {
 }
 
 export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: DenPlugin; appMcpServersEnabled?: boolean }) {
+  const integrated = useLibraryIntegrated();
   const rows = [
     ...plugin.authoredApps.map((app) => ({
       key: `app:${app.id}`,
@@ -80,11 +82,11 @@ export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: 
   ];
   return (
     <section className="flex flex-col gap-2.5" data-testid="whats-inside">
-      <SectionTitle title="What's inside" meta={thingsLabel(rows.length)} />
+      <SectionTitle title="What's inside" meta={integrated ? undefined : thingsLabel(rows.length)} />
       <ItemPanel>
         {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
         {rows.map((row) => (
-          <ItemRow key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
+          <ItemRow compact={integrated} key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
         ))}
       </ItemPanel>
     </section>
@@ -141,6 +143,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const router = useRouter();
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
+  const integrated = useLibraryIntegrated();
   const plugin = usePlugin(pluginId);
   const access = usePluginAccess(pluginId);
   const saveAccess = useSavePluginAccess();
@@ -150,7 +153,7 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
 
   if (plugin.isLoading) {
-    return <PluginPageSkeleton back={back} mode={mode} />;
+    return <PluginPageSkeleton back={back} mode={mode} compact={integrated} />;
   }
 
   if (!plugin.data) {
@@ -216,12 +219,14 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   return (
     <ItemPage testId="plugin-page">
       <ItemHeader
+        compact={integrated}
         back={back}
-        logo={<LetterTile name={data.name} size="lg" />}
+        logo={integrated ? <PluginLogo name={data.name} size="lg" /> : <LetterTile name={data.name} size="lg" />}
         title={data.name}
-        description={data.description || undefined}
+        description={integrated ? undefined : data.description || undefined}
         actions={(
           <>
+            {integrated && !canManage ? <DenButton variant="secondary" icon={LockKeyhole} disabled>Manage</DenButton> : null}
             <ItemMenu
               size="md"
               label={`More for ${data.name}`}
@@ -263,12 +268,15 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
       <WhatsInside plugin={data} appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true} />
       <AppMcpServers plugin={data} />
 
-      {mode === "member" ? (
+      {integrated && !canManage ? <p className="flex items-center gap-2 text-[13px] text-[var(--dls-text-secondary)]" data-testid="plugin-manage-locked"><LockKeyhole className="size-4 shrink-0" aria-hidden />Only a plugin manager or organization admin can edit or remove it.</p> : null}
+
+      {mode === "member" || integrated ? (
         <section className="flex flex-col gap-2.5">
           <SectionTitle title="Details" />
           <DetailRows
             rows={[
-              { label: "Who can use it", value: who },
+              ...(integrated && data.description ? [{ label: "About", value: data.description, wrap: true }] : []),
+              ...(mode === "member" ? [{ label: "Who can use it", value: who }] : []),
               { label: "Made by", value: mine ? "You" : creator?.user.name || "Your organization" },
               ...(formatAddedDate(data.createdAt) ? [{ label: "Added", value: formatAddedDate(data.createdAt) }] : []),
             ]}

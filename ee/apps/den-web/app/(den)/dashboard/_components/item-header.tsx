@@ -3,6 +3,7 @@
 import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { DenPageHeader } from "../../_components/ui/page-header";
 
 /** Page column shared by every Library and Manage screen. */
 export function ItemPage({ children, testId, wide = false }: { children: ReactNode; testId?: string; wide?: boolean }) {
@@ -26,13 +27,23 @@ export function BackLink({ href, label }: { href: string; label: string }) {
  * Title block for an item or a step: optional logo, title and one line of
  * description, with the page's actions on the right.
  */
-export function ItemHeader({ back, logo, title, description, actions }: {
+export function ItemHeader({ back, logo, title, description, actions, compact = false }: {
   back?: { href: string; label: string };
   logo?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <div className="flex flex-col gap-4" data-library-integrated-header>
+        {back ? <BackLink href={back.href} label={back.label} /> : null}
+        <DenPageHeader size="compact" title={<span className="flex min-w-0 items-center gap-3">{logo}<span className="min-w-0 break-words">{title}</span></span>} action={actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : undefined} />
+        {description ? <p className="text-[13px] text-[var(--dls-text-secondary)]">{description}</p> : null}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-4">
       {back ? <BackLink href={back.href} label={back.label} /> : null}

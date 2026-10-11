@@ -8,21 +8,44 @@ import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { getEditPluginSkillRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDeleteSkill, useSkill } from "./skill-data";
+import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
+import { DetailRows, ItemMenu, ItemPanel, ItemRowsSkeleton, removeEntry } from "./item-list";
+import { KindTile } from "./item-logo";
+import { useLibraryIntegrated } from "./use-library-integrated";
+import { skillTitle } from "./plugin-page-screen";
 
 export function SkillDetailScreen({ pluginId, skillId }: { pluginId: string; skillId: string }) {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
+  const integrated = useLibraryIntegrated();
   const { data: skill, isLoading, error } = useSkill(pluginId, skillId);
   const deleteSkill = useDeleteSkill(pluginId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   if (isLoading && !skill) {
-    return <DetailMessage>Loading skill…</DetailMessage>;
+    return integrated ? <ItemPage><ItemPanel><ItemRowsSkeleton label="Loading skill" /></ItemPanel></ItemPage> : <DetailMessage>Loading skill…</DetailMessage>;
   }
 
   if (!skill) {
     return <DetailMessage error>{error instanceof Error ? error.message : "That skill could not be found."}</DetailMessage>;
   }
+
+  if (integrated) return (
+    <ItemPage testId="skill-detail">
+      <ItemHeader compact back={{ href: getPluginRoute(orgSlug, pluginId), label: "Back to plugin" }} logo={<KindTile kind="skill" />} title={skillTitle(skill.name)} actions={<ItemMenu size="md" label={`More for ${skillTitle(skill.name)}`} entries={[
+        { label: "Edit", href: getEditPluginSkillRoute(orgSlug, pluginId, skill.id) },
+        removeEntry(skillTitle(skill.name), async () => {
+          await deleteSkill.mutateAsync(skill.id);
+          router.push(getPluginRoute(orgSlug, pluginId));
+        }),
+      ]} />} />
+      {skill.description ? <DetailRows rows={[{ label: "When to use it", value: skill.description, wrap: true }]} /> : null}
+      <section className="flex flex-col gap-3">
+        <SectionTitle title="Skill steps" />
+        <pre className="whitespace-pre-wrap break-words text-[13px] leading-6 text-[var(--dls-text-primary)]">{skill.body}</pre>
+      </section>
+    </ItemPage>
+  );
 
   return (
     <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">

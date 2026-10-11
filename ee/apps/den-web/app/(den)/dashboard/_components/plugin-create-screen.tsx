@@ -13,10 +13,12 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useMcpConnections } from "./mcp-connections-data";
 import { PluginCreateForm } from "./plugin-create-form";
+import { useLibraryIntegrated } from "./use-library-integrated";
 
 /** B1: a member makes a plugin for themselves. */
 export function LibraryPluginCreateScreen() {
   const router = useRouter();
+  const integrated = useLibraryIntegrated();
   const searchParams = useSearchParams();
   const { orgSlug } = useOrgDashboard();
   const usable = useMcpConnections("usable");
@@ -26,7 +28,7 @@ export function LibraryPluginCreateScreen() {
 
   return (
     <ItemPage testId="plugin-create">
-      <ItemHeader back={{ href: getLibraryRoute(orgSlug), label: "My Library" }} title={startWithSkill ? "Create a skill" : "Create a plugin"} />
+      <ItemHeader compact={integrated} back={{ href: getLibraryRoute(orgSlug), label: "My Library" }} title={startWithSkill ? "Create a skill" : "Create a plugin"} />
       <PluginCreateForm
         connections={ownConnections}
         startWith={startWithSkill ? "skill" : undefined}
@@ -41,13 +43,14 @@ export function LibraryPluginCreateScreen() {
 /** D2: an admin makes a plugin, then chooses which teams get it. */
 export function AdminPluginCreateScreen() {
   const router = useRouter();
+  const integrated = useLibraryIntegrated();
   const { orgSlug } = useOrgDashboard();
   const manageable = useMcpConnections("manageable");
   const connections = (manageable.data ?? []).filter((connection) => !connection.nativeProviderKey);
 
   return (
     <ItemPage testId="plugin-create">
-      <ItemHeader back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
+      <ItemHeader compact={integrated} back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
       <PluginCreateForm
         connections={connections}
         cancelHref={getPluginsRoute(orgSlug)}

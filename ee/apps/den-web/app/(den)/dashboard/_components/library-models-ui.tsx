@@ -1,12 +1,13 @@
 "use client";
 
-import { ChevronRight, LoaderCircle, LockKeyhole } from "lucide-react";
+import { ChevronRight, LoaderCircle, LockKeyhole, LogIn } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { getLibraryModelRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
-import { ItemMenu, ItemPanel, LibraryListRow } from "./item-list";
+import { ItemMenu, ItemPanel, ItemRow, LibraryListRow } from "./item-list";
+import { useLibraryIntegrated } from "./use-library-integrated";
 import {
   type LibraryModelProvider,
   modelCount,
@@ -40,6 +41,7 @@ function WaitingOnAdmin() {
 /** One provider in My Library, with the one thing the person can do about it on the right. */
 export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelProvider; signIn: ModelSignIn }) {
   const { orgSlug } = useOrgDashboard();
+  const integrated = useLibraryIntegrated();
   const waiting = signIn.waitingFor === provider.id;
   const failure = signIn.failureFor(provider.id);
   const status = provider.state === "blocked"
@@ -49,13 +51,13 @@ export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelPr
   const action = provider.state === "blocked" ? null
     : waiting ? <DenButton variant="ghost" size="xs" onClick={signIn.cancel}>Cancel</DenButton>
       : provider.state === "needs_signin" ? (
-        <DenButton variant="secondary" size="xs" onClick={() => void signIn.signIn(provider)}>
-          {failure ? "Try again" : "Sign in"}
+        <DenButton variant="secondary" size="xs" icon={integrated ? LogIn : undefined} aria-label={failure ? "Try again" : "Sign in"} className={integrated ? "size-7 p-0" : undefined} onClick={() => void signIn.signIn(provider)}>
+          {integrated ? null : failure ? "Try again" : "Sign in"}
         </DenButton>
       ) : <ChevronRight className="h-4 w-4 text-gray-400" aria-hidden />;
   return (
     <div data-library-item={provider.name} data-library-kind="model" data-model-state={provider.state} title={modelNamesSummary(provider.models)}>
-      <LibraryListRow
+      {integrated ? <ItemRow compact href={getLibraryModelRoute(orgSlug, provider.id)} logo={<ProviderLogo provider={provider} />} title={provider.name} description={provider.state === "blocked" ? "Your admin needs to finish setup" : waiting ? "Finish signing in in your browser" : failure ?? modelNamesSummary(provider.models)} status={provider.state === "blocked" ? "Set up" : provider.state === "needs_signin" || waiting ? "Sign in" : "Ready"} action={action ?? <span />} /> : <LibraryListRow
         href={getLibraryModelRoute(orgSlug, provider.id)}
         logo={<ProviderLogo provider={provider} />}
         title={provider.name}
@@ -63,7 +65,7 @@ export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelPr
         kind="Model"
         status={status}
         action={action ?? <span />}
-      />
+      />}
     </div>
   );
 }

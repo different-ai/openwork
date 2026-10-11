@@ -1,11 +1,13 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { Boxes, FileText, Plug, X, type LucideIcon } from "lucide-react";
+import { Boxes, Check, FileText, Plug, X, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { ConnectorLogo } from "./item-logo";
+import { useLibraryIntegrated } from "./use-library-integrated";
+import { ItemRow } from "./item-list";
 
 export type LibraryAddChoice = "connector" | "skill" | "plugin";
 
@@ -32,6 +34,7 @@ export function LibraryAddDialog({ open, onOpenChange, hrefFor }: {
   hrefFor: (choice: LibraryAddChoice) => string;
 }) {
   const router = useRouter();
+  const integrated = useLibraryIntegrated();
   const [choice, setChoice] = useState<LibraryAddChoice>("connector");
 
   return (
@@ -44,10 +47,10 @@ export function LibraryAddDialog({ open, onOpenChange, hrefFor }: {
         >
           <div className="flex items-start justify-between gap-4 px-6 pb-3 pt-6">
             <div>
-              <Dialog.Title className="text-[18px] font-semibold leading-6 text-gray-900">Add to your Library</Dialog.Title>
-              <Dialog.Description className="mt-1 text-[13px] leading-[18px] text-gray-500">
+              <Dialog.Title className="text-[18px] font-semibold leading-6 text-gray-900">{integrated ? "Add to library" : "Add to your Library"}</Dialog.Title>
+              {!integrated ? <Dialog.Description className="mt-1 text-[13px] leading-[18px] text-gray-500">
                 Connect the tools your AI works in, or teach it how you work.
-              </Dialog.Description>
+              </Dialog.Description> : null}
             </div>
             <Dialog.Close aria-label="Close" className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900">
               <X className="h-4 w-4" aria-hidden />
@@ -57,6 +60,11 @@ export function LibraryAddDialog({ open, onOpenChange, hrefFor }: {
             {CHOICES.map((entry) => {
               const selected = entry.value === choice;
               const Icon = entry.icon;
+              if (integrated) return (
+                <button key={entry.value} type="button" role="radio" aria-checked={selected} data-testid={`library-add-${entry.value}`} onClick={() => setChoice(entry.value)} onDoubleClick={() => router.push(hrefFor(entry.value))} className="w-full rounded-lg text-left hover:bg-[var(--dls-hover)] focus-visible:ring-2 focus-visible:ring-[var(--dls-border)]">
+                  <ItemRow compact logo={<span className="flex size-8 items-center justify-center text-[var(--dls-text-secondary)]"><Icon className="size-4" aria-hidden /></span>} title={entry.title} description={entry.description} action={selected ? <Check className="size-4 text-[var(--dls-text-primary)]" aria-hidden /> : <span />} />
+                </button>
+              );
               return (
                 <button
                   key={entry.value}
@@ -78,15 +86,15 @@ export function LibraryAddDialog({ open, onOpenChange, hrefFor }: {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[14px] font-medium leading-5 text-gray-900">{entry.title}</span>
-                    <span className="block text-[13px] leading-[18px] text-gray-500">{entry.description}</span>
-                    {entry.value === "connector" ? <span className="mt-2 block"><ConnectorLogoStrip /></span> : null}
+                    <span className={integrated ? "block truncate text-[13px] leading-[18px] text-[var(--dls-text-secondary)]" : "block text-[13px] leading-[18px] text-gray-500"}>{entry.description}</span>
+                    {!integrated && entry.value === "connector" ? <span className="mt-2 block"><ConnectorLogoStrip /></span> : null}
                   </span>
                 </button>
               );
             })}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-3">
-            <p className="pl-1 text-[12px] leading-4 text-gray-500">New things start just for you. Share them whenever you like.</p>
+            <p className="pl-1 text-[12px] leading-4 text-gray-500">{integrated ? "Only you can use it until you share it." : "New things start just for you. Share them whenever you like."}</p>
             <div className="flex items-center gap-2">
               <Dialog.Close className="inline-flex h-9 items-center rounded-lg border border-gray-200 bg-white px-4 text-[13px] font-medium text-gray-700 transition-colors hover:bg-gray-50">
                 Cancel

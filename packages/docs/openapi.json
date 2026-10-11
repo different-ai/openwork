@@ -849,6 +849,7 @@
               "denFlatPageHeaders",
               "analyticsIntegrated",
               "dashboardActivity",
+              "libraryIntegrated",
               "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
@@ -1071,6 +1072,9 @@
                     "dashboardActivity": {
                       "type": "boolean"
                     },
+                    "libraryIntegrated": {
+                      "type": "boolean"
+                    },
                     "libraryUsage": {
                       "type": "boolean"
                     },
@@ -1151,6 +1155,7 @@
                     "denFlatPageHeaders",
                     "analyticsIntegrated",
                     "dashboardActivity",
+                    "libraryIntegrated",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
@@ -1682,6 +1687,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "libraryIntegrated": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "libraryUsage": {
                       "type": "object",
                       "properties": {
@@ -2869,6 +2930,7 @@
                     "denFlatPageHeaders",
                     "analyticsIntegrated",
                     "dashboardActivity",
+                    "libraryIntegrated",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
@@ -3290,6 +3352,9 @@
                     "dashboardActivity": {
                       "type": "boolean"
                     },
+                    "libraryIntegrated": {
+                      "type": "boolean"
+                    },
                     "libraryUsage": {
                       "type": "boolean"
                     },
@@ -3370,6 +3435,7 @@
                     "denFlatPageHeaders",
                     "analyticsIntegrated",
                     "dashboardActivity",
+                    "libraryIntegrated",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
@@ -3901,6 +3967,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "libraryIntegrated": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "libraryUsage": {
                       "type": "object",
                       "properties": {
@@ -5088,6 +5210,7 @@
                     "denFlatPageHeaders",
                     "analyticsIntegrated",
                     "dashboardActivity",
+                    "libraryIntegrated",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
@@ -10536,6 +10659,7 @@
               "denFlatPageHeaders",
               "analyticsIntegrated",
               "dashboardActivity",
+              "libraryIntegrated",
               "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
@@ -27238,6 +27362,9 @@
                         "dashboardActivity": {
                           "type": "boolean"
                         },
+                        "libraryIntegrated": {
+                          "type": "boolean"
+                        },
                         "libraryUsage": {
                           "type": "boolean"
                         },
@@ -27318,6 +27445,7 @@
                         "denFlatPageHeaders",
                         "analyticsIntegrated",
                         "dashboardActivity",
+                        "libraryIntegrated",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
@@ -27849,6 +27977,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "libraryIntegrated": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "libraryUsage": {
                           "type": "object",
                           "properties": {
@@ -29036,6 +29220,7 @@
                         "denFlatPageHeaders",
                         "analyticsIntegrated",
                         "dashboardActivity",
+                        "libraryIntegrated",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
@@ -29202,6 +29387,9 @@
                         "dashboardActivity": {
                           "type": "boolean"
                         },
+                        "libraryIntegrated": {
+                          "type": "boolean"
+                        },
                         "libraryUsage": {
                           "type": "boolean"
                         },
@@ -29282,6 +29470,7 @@
                         "denFlatPageHeaders",
                         "analyticsIntegrated",
                         "dashboardActivity",
+                        "libraryIntegrated",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
@@ -29813,6 +30002,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "libraryIntegrated": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "libraryUsage": {
                           "type": "object",
                           "properties": {
@@ -31000,6 +31245,7 @@
                         "denFlatPageHeaders",
                         "analyticsIntegrated",
                         "dashboardActivity",
+                        "libraryIntegrated",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
