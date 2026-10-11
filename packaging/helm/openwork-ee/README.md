@@ -344,6 +344,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `slackWorkbotReplies` | `DEN_FEATURE_SLACK_WORKBOT_REPLIES` | default off | OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done. |
 | `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
 | `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
+| `calendarPolish` | `DEN_FEATURE_CALENDAR_POLISH` | default off | Members recognize their organization's default model and meeting providers, and can run stopped Workbot tasks again. |
 | `automationCalendar` | `DEN_FEATURE_AUTOMATION_CALENDAR` | default off | Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. |
 | `workbotCalendar` | `DEN_FEATURE_WORKBOT_CALENDAR` | default off | Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot. |
 | `workbotSideChats` | `DEN_FEATURE_WORKBOT_SIDE_CHATS` | default off | Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. |

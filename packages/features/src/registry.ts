@@ -158,6 +158,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  calendarPolish: {
+    label: "Calendar and Workbot polish",
+    description: "Members recognize their organization's default model and meeting providers, and can run stopped Workbot tasks again.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   automationCalendar: {
     label: "Calendar: desktop app",
     description: "Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar.",

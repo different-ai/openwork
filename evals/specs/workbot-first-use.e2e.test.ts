@@ -178,6 +178,51 @@ recovery("a member retries a failed greeting without losing the conversation", a
 
 
 const threadUI = spec.world(workbotThreadWorld, { resources: { surfaces: ["appWeb"], services: [] }, needs: { placement: "local" }, timeout: 120_000 });
+threadUI("a member explicitly runs a stopped job again without changing its stopped history", async ({ world, user, probe, step, evidence }) => {
+  await step("before: a stopped task stays final with Calendar polish off", async () => {
+    world.respond("brief", "done");
+    world.respond("notes", "stopped");
+    await user.navigate(world.url);
+    await user.see({ text: "Stopped" });
+    await user.notSee({ role: "button", text: "Run again" });
+    expect(world.taskWitness()).toHaveLength(2);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The off switch keeps Stop final and offers no restart", "Two historical tasks remain; the stopped Meeting notes task has no Run again control.", true);
+  });
+  await step("after: a stopped task offers a quiet explicit Run again action", async () => {
+    world.setCalendarPolish(true);
+    await user.reload();
+    await user.see({ role: "button", text: "Run again" });
+    await user.see({ text: "Stopped" });
+    expect((await probe.dom('[data-workbot-task] button button')).elements).toHaveLength(0);
+    expect(world.taskWitness()).toHaveLength(2);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Turning on polish does not restart any stopped task", "Run again appears beside Stopped; task count remains two until the member acts.", true);
+  });
+  await step("the member runs the same job again and its old stopped card remains untouched", async () => {
+    await user.click({ role: "button", text: "Run again" });
+    await user.see({ text: 'Try the "Meeting notes" background task again.' });
+    await user.see({ role: "button", text: "Stop" });
+    const tasks = world.taskWitness();
+    expect(tasks).toHaveLength(3);
+    expect(tasks.find((task) => task.id === "notes")?.status).toBe("stopped");
+    expect(tasks.at(-1)?.status).toBe("working");
+    expect(tasks.at(-1)?.id).not.toBe("notes");
+    expect(tasks.at(-1)?.request).toBe('Try the "Meeting notes" background task again.');
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Run again sends the same job request as Try again and creates a separate task", `${tasks.length} fixture API tasks; original notes is stopped; new ${tasks.at(-1)?.id} is working under the explicit retry message. This proves real client submission and fixture task creation, not live runner execution.`, true);
+  });
+  await step("turning polish off hides Run again without interrupting the new job", async () => {
+    world.setCalendarPolish(false);
+    await user.reload();
+    await user.notSee({ role: "button", text: "Run again" });
+    await user.see({ role: "button", text: "Stop" });
+    expect(world.taskWitness().at(-1)?.status).toBe("working");
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The kill switch restores presentation without mutating work", "The new task is still working; the old stopped task has no restart action.", true);
+  });
+});
+
 threadUI("a member keeps task cards in their original turn until all work finishes", async ({ world, user, probe, step, evidence }) => {
   let briefNode = 0;
   const dots = '[aria-label="Workbot is processing"] .workbot-typing-dot';

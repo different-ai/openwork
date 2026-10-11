@@ -57,6 +57,29 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.screenshot();
   });
 
+  await step("before: meeting provider subtitles share the title's space with Calendar polish off", async () => {
+    const meetings = (await look.dom("[data-calendar-meeting]")).elements;
+    expect(meetings.some((meeting) => meeting.text.includes("Google Calendar"))).toBe(true);
+    expect(await blocks("[data-calendar-provider-logo]")).toBe(0);
+    await alex.screenshot();
+    evidence.recordAssertionEvidence("The off switch preserves the existing desktop meeting presentation", "Provider names remain visible beside meeting titles; no compact provider logos are rendered.", true);
+  });
+  await step("after: compact provider logos give desktop meeting titles room without losing their accessible names", async () => {
+    await world.setCalendarPolish(true);
+    await alex.reload();
+    await alex.click({ role: "button", label: "Calendar" });
+    await alex.see({ role: "button", label: /^Launch standup, Google Calendar/ }, { timeoutMs: 60_000 });
+    await alex.see({ role: "button", label: /^Partner pipeline review, Outlook/ });
+    const meetings = (await look.dom("[data-calendar-meeting]")).elements;
+    const logos = await blocks("[data-calendar-meeting] [data-calendar-provider-logo]");
+    expect(logos).toBe(meetings.length);
+    expect(meetings.every((meeting) => !meeting.text.includes("Google Calendar") && !meeting.text.includes("Outlook Calendar"))).toBe(true);
+    originalTop = (await element('[data-calendar-grid="week"]')).rect.top;
+    originalToolbarHeight = (await element("[data-calendar-toolbar]")).rect.height;
+    await alex.screenshot();
+    evidence.recordAssertionEvidence("Both providers stay named for assistive technology, not in the title lane", `${logos} meeting logos; Google and Outlook accessible names still locate their original meetings.`, true);
+  });
+
   await step("Alex selects the weekly launch update and sees when it repeats, where it runs and its past runs", async () => {
     await alex.click({ role: "button", label: /^Weekly launch update, / });
     await alex.see({ text: /Every Friday at 3:00 PM/ });

@@ -182,6 +182,7 @@ export function CalendarPage(props: {
   const { year, month, day } = anchor
   const range = useMemo(() => calendarRange(view, { year, month, day }, timeZone, WEEK_STARTS_ON), [day, month, timeZone, view, year])
   const feature = useCalendarFeature(denContext)
+  const polish = useCalendarFeature(denContext, "calendarPolish").data === true
   const enabled = feature.data === true
   const listQuery = useAutomationListQuery(denContext)
   const automationItems = listQuery.data?.items
@@ -387,6 +388,7 @@ export function CalendarPage(props: {
         <div className="relative flex h-[max(24rem,calc(100dvh-10rem))] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1">
           {view === "month" ? (
             <CalendarMonthGrid
+              polish={polish}
               range={range}
               timeZone={timeZone}
               now={now}
@@ -399,6 +401,7 @@ export function CalendarPage(props: {
             />
           ) : (
             <CalendarTimeGrid
+              polish={polish}
               range={range}
               timeZone={timeZone}
               now={now}

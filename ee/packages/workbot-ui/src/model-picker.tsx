@@ -7,6 +7,8 @@ import type { AutomationModel } from "@openwork/types/automations";
 import { ProviderIcon } from "@openwork/ui/provider-icon";
 import { Check, ChevronDown, Cloud, Search } from "lucide-react";
 import { useMemo } from "react";
+import { OpenWorkMark } from "./mark";
+import { workbotHost } from "./host";
 
 /**
  * Which model an Automation uses, in Workbot's style: the current model with its provider's logo, and a list
@@ -33,7 +35,7 @@ export function ModelLogo({ option, size = 14 }: { option: Pick<AutomationModelO
     <span className="grid shrink-0 place-items-center rounded-md bg-[var(--wb-surface)] text-[var(--wb-ink)] shadow-[0_0_0_1px_var(--wb-ring)]" style={{ width: size + 8, height: size + 8 }}>
       {/* The cloud default is "whatever this organization's cloud runs": a cloud, not a vendor. */}
       {option.accessKind === "cloud_default"
-        ? <Cloud size={size} strokeWidth={1.75} aria-hidden />
+        ? workbotHost().calendarPolish === true ? <OpenWorkMark width={size} height={size} /> : <Cloud size={size} strokeWidth={1.75} aria-hidden />
         : <ProviderIcon providerId={option.logoProviderId ?? option.providerId} providerName={option.providerName} size={size} />}
     </span>
   );
@@ -42,13 +44,15 @@ export function ModelLogo({ option, size = 14 }: { option: Pick<AutomationModelO
 /** One line for a model: logo, name and provider. Shows the raw ID when the model is no longer offered. */
 export function ModelSummary({ model, options }: { model: AutomationModel; options: readonly AutomationModelOption[] }) {
   const option = options.find((candidate) => same(candidate, model));
-  if (!option) return <span className="truncate text-[var(--wb-muted)]">{model.providerId}/{model.modelId} · no longer available</span>;
+  if (!option) return <span className="truncate text-[var(--wb-muted)]">{workbotHost().calendarPolish === true ? "Model no longer available" : `${model.providerId}/${model.modelId} · no longer available`}</span>;
   return (
     <span className="flex min-w-0 items-center gap-2" data-automation-model={modelKey(option)}>
       <ModelLogo option={option} size={12} />
       <span className="min-w-0 truncate">
         <span className="font-medium text-[var(--wb-text)]">{option.modelName}</span>
-        <span className="text-[var(--wb-muted)]"> · {option.providerName}</span>
+        {workbotHost().calendarPolish === true
+          ? option.accessKind === "cloud_default" ? null : <span className="text-[var(--wb-muted)]"> ({option.providerName})</span>
+          : <span className="text-[var(--wb-muted)]"> · {option.providerName}</span>}
       </span>
     </span>
   );
