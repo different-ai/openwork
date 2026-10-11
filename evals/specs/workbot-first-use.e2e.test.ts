@@ -181,8 +181,9 @@ const threadUI = spec.world(workbotThreadWorld, { resources: { surfaces: ["appWe
 threadUI("a member explicitly runs a stopped job again without changing its stopped history", async ({ world, user, probe, step, evidence }) => {
   await step("before: a stopped task stays final with Calendar polish off", async () => {
     world.respond("brief", "done");
-    world.respond("notes", "stopped");
     await user.navigate(world.url);
+    await user.see({ role: "button", text: "Stop" });
+    await user.click({ role: "button", text: "Stop" });
     await user.see({ text: "Stopped" });
     await user.notSee({ role: "button", text: "Run again" });
     expect(world.taskWitness()).toHaveLength(2);

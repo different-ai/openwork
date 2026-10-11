@@ -112,7 +112,8 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     expect((await probe.dom('[data-automation-model] svg[viewBox="146 7 468 585"]')).elements).toHaveLength(1);
     await user.click({ role: "button", text: /^Edit$/ });
     await user.click(modelTrigger);
-    await user.see({ role: "option", label: `Organization default (${resolvedName})` });
+    await user.see({ role: "option", label: /^Organization default/ });
+    expect((await probe.dom('[role="option"]')).elements.some((option) => option.text.includes(`Organization default (${resolvedName})`))).toBe(true);
     await user.screenshot();
     await user.press("Escape");
     await user.click({ role: "button", text: /^Cancel$/ });

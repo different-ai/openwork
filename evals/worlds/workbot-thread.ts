@@ -110,6 +110,14 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
             turns.push({ id: input.id, text: input.text, sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "Four." }], modelSteps: 1, error: null, tasks: input.text === 'Try the "Meeting notes" background task again.' ? [task(`notes-retry-${turns.length}`, "Meeting notes")] : [] });
             response.writeHead(201).end("{}"); change(); return;
           }
+          const stoppedTask = path.match(/^\/v1\/workbot\/tasks\/([^/]+)\/stop$/);
+          if (stoppedTask && method === "POST") {
+            const item = turns.flatMap((turn) => turn.tasks).find((entry) => entry.id === stoppedTask[1]);
+            if (!item) { response.writeHead(404).end("{}"); return; }
+            item.status = "stopped";
+            item.finishedAt = Date.now();
+            response.end("{}"); change(); return;
+          }
           // Edits fail, so the spec can see a failed edit come back with its reason.
           if (/^\/v1\/workbot\/messages\/[^/]+\/edit$/.test(path) && request.method === "POST") {
             editAttempts++;
