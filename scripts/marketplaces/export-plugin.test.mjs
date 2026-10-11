@@ -55,7 +55,7 @@ test("repository manifests, native overrides, endpoints, license and logo valida
   const result = validateDistribution();
   assert.equal(result.files.size, PACKAGE_FILES.length);
   assert.equal(result.catalogs.length, 3);
-  assert.equal(result.version, "1.0.0");
+  assert.equal(result.version, "1.0.1");
   const portable = JSON.parse(result.files.get("mcp.json"));
   const native = JSON.parse(result.files.get(".mcp.json"));
   assert.equal(portable.mcpServers.openwork.type, "streamable-http");
@@ -82,6 +82,22 @@ test("export contains only byte-identical package files and relocated root catal
   assert.equal(existsSync(join(output, "ee")), false);
   assert.equal(existsSync(join(output, "scripts")), false);
   validateDistribution(output, { standalone: true });
+});
+
+test("export preserves exact-identity guidance without claiming a native behavior pass", (t) => {
+  const { source, output } = fixture(t);
+  exportDistribution(output, { sourceRoot: source });
+  const skill = readFileSync(join(output, "skills/openwork-connect/SKILL.md"), "utf8");
+  assert.match(skill, /verify that\n   requested reference with a fresh `get_skill` call/);
+  assert.match(skill, /not proof\n   that the user's requested name exists/);
+  assert.match(skill, /`unknown_skill`/);
+  assert.match(skill, /Do not execute, invent, automatically\n   create, or silently substitute another skill/);
+  assert.match(skill, /unavailable to the current member/);
+  const readme = readFileSync(join(output, "README.md"), "utf8");
+  assert.match(readme, /1\.0\.1/);
+  assert.match(readme, /2\.1\.281\+/);
+  assert.match(readme, /not even a disabled one/);
+  assert.match(readme, /Updated guidance needs native retest/);
 });
 
 test("two exports are deterministic and do not modify their source", (t) => {
