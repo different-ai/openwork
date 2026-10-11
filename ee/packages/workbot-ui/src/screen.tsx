@@ -1679,7 +1679,7 @@ function Composer(props: {
       }`}
     >
       {hasFiles ? <UploadTray uploads={props.uploads} onRemove={props.onRemoveUpload} onRetry={props.onRetryUpload} /> : null}
-      <div className={`flex flex-1 items-end gap-1 ${hasFiles ? "" : "contents"}`}>
+      <div className={hasFiles ? "flex min-w-0 flex-1 items-end gap-1" : "contents"}>
         <AttachButton enabled={props.filesEnabled} onFiles={props.onFiles} />
         <textarea
           ref={input}

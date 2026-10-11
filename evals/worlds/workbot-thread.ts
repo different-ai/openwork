@@ -173,7 +173,14 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
           const box = element.getBoundingClientRect();
           if (box.width === 0 || box.right <= limit) continue;
           if (Array.from(element.children).some((child) => child.getBoundingClientRect().right > limit)) continue;
-          found.push(`${element.tagName.toLowerCase()}.${(element.getAttribute("class") ?? "").split(/\s+/).slice(0, 4).join(".")}→${Math.round(box.right)}px`);
+          const chain: string[] = [];
+          let node: Element | null = element;
+          for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+            const rect = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            chain.push(`${node.tagName.toLowerCase()}.${(node.getAttribute("class") ?? "").split(/\s+/).slice(0, 4).join(".")} ${Math.round(rect.left)}–${Math.round(rect.right)}px width=${style.width} min=${style.minWidth} flex=${style.flex} display=${style.display}`);
+          }
+          found.push(chain.join("; "));
         }
         return found.slice(0, 6);
       }),
