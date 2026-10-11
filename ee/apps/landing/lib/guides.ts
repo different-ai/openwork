@@ -496,6 +496,31 @@ export const guides: Guide[] = [
           "Grant expensive models only to the teams that need them, and turn on Only models you provide so nobody adds a personal key.",
           "Already run LiteLLM? Connect it to OpenWork and keep its budgets."
         ]
+      },
+      {
+        id: "auto-routing",
+        heading: "Auto routing for cost and privacy-sensitive work",
+        badge: "Planned preview",
+        paragraphs: [
+          "Configurable Auto routing is proposed in draft #5100 and is not currently publicly available. It is separate from the free Auto starter model: that is a single model, not a category-based router. The planned router would let a member describe 2–12 categories in plain language, choose one model per category, and select a fallback category and minimum confidence.",
+          "Routers are member-owned and scoped to their author and organization, not admin-owned shared routing policies. Organization model grants still apply to every destination, including fallback; creating a router does not grant access. The draft supports only OpenAI-compatible chat-completions targets, not native Anthropic or Google protocols, Responses API calls, or embeddings.",
+          "With the author's explicit consent, the classifier sends only the latest user message's text, up to 16,000 characters, plus category descriptions to the external Jev service through Vercel AI Gateway. System messages, tool results, and image bytes are not classifier inputs; the selected completion model still receives the original conversation. Jev classification is billed separately to the operator's AI Gateway account and is not included in completion usage."
+        ],
+        table: {
+          caption: "Illustrative categories, not a privacy policy or a ready-to-use configuration",
+          columns: ["Category", "Human-written description", "One completion model"],
+          rows: [
+            ["Routine", "Short rewrites and summaries of public, non-sensitive text.", "An approved lower-cost OpenAI-compatible model"],
+            ["Hard", "Multi-step reasoning about public, non-sensitive material.", "An approved stronger OpenAI-compatible model"],
+            ["Confidential", "Work intended for a private destination; use only sanitized text approved for the external classifier.", "An approved private OpenAI-compatible model, also selected as fallback"]
+          ]
+        },
+        bullets: [
+          "If confidence is below the configured minimum, no category matches, or classification times out after five seconds, the draft uses the explicit fallback only while it remains authorized. Revoked access, invalid classifier output, and missing classifier credentials do not silently choose another model.",
+          "The confidential category illustrates a desired routing use, not a privacy, data-loss prevention (DLP), or access-control guarantee. Jev sees the latest user text before a private completion model is chosen, so a private destination alone cannot keep that prompt private.",
+          "Approve the classifier's data handling, every completion destination, and the fallback before using routing. If policy forbids sending sensitive text to the external classifier, do not send it through this router; choose an approved private model directly instead. Category descriptions must also be safe to share externally.",
+          "Compare total classification and completion charges against manual model selection before claiming savings. Routing does not replace spend limits or provider invoice review."
+        ]
       }
     ],
     cards: [
@@ -516,6 +541,18 @@ export const guides: Guide[] = [
       {
         question: "Are the cost numbers exact?",
         answer: "They're close estimates from token counts and published prices. Your provider's invoice is the final number."
+      },
+      {
+        question: "Is configurable Auto routing available, and is it the free Auto model?",
+        answer: "No. Configurable Auto routing is a planned preview proposed in draft #5100, not currently publicly available. The free Auto starter is a single model. The draft router is member-owned, with 2–12 described categories, one OpenAI-compatible chat-completions model per category, and an authorized fallback for low confidence, no match, or a five-second classification timeout. Organization model grants still apply."
+      },
+      {
+        question: "Does routing confidential work to a private model keep the prompt private?",
+        answer: "No. With the author's explicit consent, the latest user text, up to 16,000 characters, and category descriptions are sent to the external Jev service through Vercel AI Gateway before a completion destination is chosen. A confidential category is illustrative, not a privacy, DLP, or access-control guarantee. The classifier, completion destinations, and fallback must all be approved. If external classification is prohibited, choose an approved private model directly rather than using this router."
+      },
+      {
+        question: "Would Auto routing classification be included in completion usage?",
+        answer: "No. In draft #5100, Jev classification is separately billed to the operator's AI Gateway account; its tokens are not included in completion usage. Compare classification plus completion charges before claiming savings, and keep existing spend limits and invoice review."
       }
     ],
     cta: {
