@@ -166,6 +166,7 @@ export type AdminFeature = {
     | "managedDeployments"
     | "installLinks"
     | "mcpConnections"
+    | "connectorReadiness"
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "denFlatPageHeaders"
@@ -229,6 +230,7 @@ export type AdminOrganizationsPageResponse = {
       managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
+      connectorReadiness: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
@@ -281,6 +283,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      connectorReadiness: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -553,6 +564,7 @@ export type AdminOverviewResponse = {
       managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
+      connectorReadiness: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
@@ -605,6 +617,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      connectorReadiness: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2086,6 +2107,7 @@ export type CapabilityDisabledError = {
     | "managedDeployments"
     | "installLinks"
     | "mcpConnections"
+    | "connectorReadiness"
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "denFlatPageHeaders"
@@ -3595,6 +3617,13 @@ export type ExternalMcpResolveInput = {
   query: string;
 };
 
+export type ExternalMcpConnectionReadiness = {
+  status: "ready" | "could_not_verify";
+  checkedAt: string;
+  lastSuccessfulAt: string | null;
+  reason: string | null;
+};
+
 export type ExternalMcpConnectionRequiredBy = {
   pluginId: string;
   name: string;
@@ -3607,6 +3636,7 @@ export type ExternalMcpConnectionAccessSummary = {
 };
 
 export type ExternalMcpConnectionResponse = {
+  readiness?: ExternalMcpConnectionReadiness | null;
   id: string;
   name: string;
   externalKey: string | null;
@@ -3874,6 +3904,7 @@ export type ExternalMcpConnectionToolRunInput = {
 };
 
 export type ExternalMcpConnectionCreatedResponse = {
+  readiness?: ExternalMcpConnectionReadiness | null;
   id: string;
   name: string;
   externalKey: string | null;
@@ -3948,6 +3979,7 @@ export type ExternalMcpConnectionAccessInput = {
 };
 
 export type ExternalMcpConnectionUpdatedResponse = {
+  readiness?: ExternalMcpConnectionReadiness | null;
   id: string;
   name: string;
   externalKey: string | null;
@@ -6391,6 +6423,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
+      connectorReadiness: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
@@ -6443,6 +6476,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      connectorReadiness: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6703,6 +6745,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       managedDeployments: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
+      connectorReadiness: boolean;
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
@@ -6755,6 +6798,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       mcpConnections: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      connectorReadiness: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -25065,6 +25117,52 @@ export type PutV1McpConnectionsByConnectionIdToolPolicyResponses = {
 
 export type PutV1McpConnectionsByConnectionIdToolPolicyResponse =
   PutV1McpConnectionsByConnectionIdToolPolicyResponses[keyof PutV1McpConnectionsByConnectionIdToolPolicyResponses];
+
+export type PostV1McpConnectionsByConnectionIdCheckData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/check";
+};
+
+export type PostV1McpConnectionsByConnectionIdCheckErrors = {
+  /**
+   * This connection cannot be checked.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Connection management permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Unknown connection or feature disabled.
+   */
+  404: ExternalMcpConnectionNotFoundError;
+};
+
+export type PostV1McpConnectionsByConnectionIdCheckError =
+  PostV1McpConnectionsByConnectionIdCheckErrors[keyof PostV1McpConnectionsByConnectionIdCheckErrors];
+
+export type PostV1McpConnectionsByConnectionIdCheckResponses = {
+  /**
+   * Recorded readiness check.
+   */
+  200: {
+    readiness: ExternalMcpConnectionReadiness;
+  };
+};
+
+export type PostV1McpConnectionsByConnectionIdCheckResponse =
+  PostV1McpConnectionsByConnectionIdCheckResponses[keyof PostV1McpConnectionsByConnectionIdCheckResponses];
 
 export type GetV1McpConnectionsByConnectionIdToolsData = {
   body?: never;

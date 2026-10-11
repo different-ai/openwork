@@ -67,6 +67,15 @@ export const OrgOAuthClientTable = mysqlTable(
   ],
 )
 
+export type ExternalMcpReadinessCheck = {
+  status: "ready" | "could_not_verify"
+  checkedAt: string
+  lastSuccessfulAt: string | null
+  reason: string | null
+  /** Binds the probe to the configuration and credential it actually checked. Never returned. */
+  fingerprint: string
+}
+
 export const ConnectedAccountTable = mysqlTable(
   "connected_account",
   {
@@ -97,6 +106,7 @@ export const ConnectedAccountTable = mysqlTable(
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
+    readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -242,6 +252,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
+    readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
     /**
      * Set when live discovery no longer matches the selected OAuth issuer.
      * The mismatch remains fail-closed until an administrator explicitly

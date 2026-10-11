@@ -367,6 +367,8 @@ export type DenOrgLlmProvider = {
 };
 
 export type DenExternalMcpConnection = {
+  readiness?: { status: "ready" | "could_not_verify"; checkedAt: string; lastSuccessfulAt: string | null; reason: string | null } | null;
+  setupRequired?: boolean;
   credentialHealth?: "unknown" | "ready" | "reconnect_required";
   id: string;
   name: string;
@@ -2061,6 +2063,13 @@ function getDenOrgGatewayProviders(payload: unknown): DenOrgGatewayProvider[] {
   });
 }
 
+function parseConnectionReadiness(value: unknown): DenExternalMcpConnection["readiness"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || (value.status !== "ready" && value.status !== "could_not_verify")
+    || typeof value.checkedAt !== "string" || !Number.isFinite(Date.parse(value.checkedAt))) return null;
+  return { status: value.status, checkedAt: value.checkedAt, lastSuccessfulAt: typeof value.lastSuccessfulAt === "string" ? value.lastSuccessfulAt : null, reason: typeof value.reason === "string" ? value.reason : null };
+}
+
 function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection | null {
   if (
     !isRecord(value) ||
@@ -2075,6 +2084,8 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
 
   return {
     id: value.id,
+    ...(value.readiness !== undefined ? { readiness: parseConnectionReadiness(value.readiness) } : {}),
+    ...(typeof value.setupRequired === "boolean" ? { setupRequired: value.setupRequired } : {}),
     ...(value.credentialHealth === "unknown" || value.credentialHealth === "ready" || value.credentialHealth === "reconnect_required"
       ? { credentialHealth: value.credentialHealth } : {}),
     name: value.name,
@@ -3425,6 +3436,12 @@ export function createDenClient(options: {
         throw new DenApiError(500, "invalid_mcp_discovery_payload", "MCP discovery response was invalid.");
       }
       return discovery;
+    },
+
+    async checkMcpConnection(orgId: string, connectionId: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/check`, {
+        method: "POST", token, organizationId: orgId,
+      });
     },
 
     async startMcpConnectionConnect(orgId: string, connectionId: string): Promise<DenMcpConnectionConnectStart> {

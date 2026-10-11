@@ -48,6 +48,16 @@
               ],
               "description": "OpenWork Connect: Members see the organization's connections, marketplace capabilities on the agent rail, and the desktop Connect tab. Renders DEN_FEATURE_MCP_CONNECTIONS."
             },
+            "connectorReadiness": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Connector readiness: Members see when a connection was checked, and admins can check it again. Renders DEN_FEATURE_CONNECTOR_READINESS."
+            },
             "driveResumableUploads": {
               "enum": [
                 "",

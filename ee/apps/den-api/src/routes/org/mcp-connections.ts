@@ -139,7 +139,9 @@ import {
 } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { beginNativeProviderConnect } from "./oauth-providers.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
+import { createExternalMcpLifecycleDeadline } from "../../capability-sources/external-mcp-client.js"
+import { readinessFingerprint, saveReadinessCheck, visibleReadiness } from "../../capability-sources/external-mcp-readiness.js"
 
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
 const logger = appLogger.child({ component: "mcp_connections" })
@@ -434,7 +436,15 @@ const requiredBySchema = z.object({
   name: z.string(),
 }).meta({ ref: "ExternalMcpConnectionRequiredBy" })
 
+const connectionReadinessSchema = z.object({
+  status: z.enum(["ready", "could_not_verify"]),
+  checkedAt: z.string().datetime(),
+  lastSuccessfulAt: z.string().datetime().nullable(),
+  reason: z.string().nullable(),
+}).meta({ ref: "ExternalMcpConnectionReadiness" })
+
 const connectionResponseSchema = z.object({
+  readiness: connectionReadinessSchema.nullable().optional(),
   id: z.string(),
   name: z.string(),
   externalKey: z.string().nullable(),
@@ -838,6 +848,51 @@ async function resolveExternalMcpToolCredential(
     : { ok: false, message: "Connect this MCP before using its tools." }
 }
 
+async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, memberId: DenTypeId<"member">, requestId: string) {
+  const account = connection.credentialMode === "per_member" ? await getConnectedAccount({
+    organizationId: connection.organizationId, orgMembershipId: memberId, providerId: connection.id,
+  }) : null
+  const fingerprint = readinessFingerprint(connection, account)
+  let status: "ready" | "could_not_verify" = "could_not_verify"
+  let reason: string | null = null
+  const credential = await resolveExternalMcpToolCredential(connection, memberId)
+  if (!credential.ok) {
+    reason = connection.credentialMode === "per_member" ? "Sign in to check this connection." : "Finish setting up this connection."
+  } else {
+    try {
+      // A complete initialize + tools/list, using the normal guarded transport and
+      // Den-managed credential. No tools are executed; an empty catalog is valid.
+      await listExternalMcpTools(connection, await callbackRedirectUri(connection), credential.member, requestId, createExternalMcpLifecycleDeadline(10_000), 10_000)
+      status = "ready"
+    } catch (error) {
+      const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_TOOL_DISCOVERY")
+      reason = diagnostic.category === "provider_unavailable" ? "Service unavailable. Try again."
+        : diagnostic.category === "request_timeout" || diagnostic.category === "lifecycle_deadline" ? "The check timed out. Try again."
+        : diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403 ? "Sign-in was rejected. Sign in again."
+        : "Couldn't read its tools. Check the connection settings."
+      logger.warn("external_mcp_readiness_check_failed", {
+        connection_id: connection.id,
+        ...externalMcpDiagnosticForLog(error, requestId, "MCP_TOOL_DISCOVERY"),
+      })
+    }
+  }
+  // Never turn a probe of an old key or endpoint into Ready for its replacement.
+  const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
+  const currentAccount = connection.credentialMode === "per_member" ? await getConnectedAccount({
+    organizationId: connection.organizationId, orgMembershipId: memberId, providerId: connection.id,
+  }) : null
+  if (!current || readinessFingerprint(current, currentAccount) !== fingerprint) {
+    status = "could_not_verify"
+    reason = "Connection settings changed. Check again."
+  }
+  const checkedAt = new Date().toISOString()
+  const previous = visibleReadiness(connection.credentialMode === "per_member" ? account?.readinessCheck ?? null : connection.readinessCheck, fingerprint)
+  const lastSuccessfulAt = status === "ready" ? checkedAt : previous?.lastSuccessfulAt ?? null
+  const check = { status, checkedAt, lastSuccessfulAt, reason, fingerprint }
+  await saveReadinessCheck(connection, memberId, check)
+  return { status, checkedAt, lastSuccessfulAt, reason }
+}
+
 type ConnectionRequiredBy = {
   pluginId: string
   name: string
@@ -1125,6 +1180,8 @@ async function toConnectionResponse(
   let connectedForMe = connected && row.credentialMode === "shared"
   let grantedScopes = row.scope?.split(/\s+/).filter(Boolean) ?? []
   let callerCredentialHealth = row.credentialHealth
+  let readinessCheck = row.readinessCheck
+  let fingerprint = readinessFingerprint(row)
   let callerExternalAccountId: string | null = null
   if (row.credentialMode === "per_member") {
     const account = await getConnectedAccount({
@@ -1135,6 +1192,8 @@ async function toConnectionResponse(
     connectedForMe = Boolean(account?.accessToken) && (!usesMemberApiKey(row) || account?.tokenType === "api_key")
     callerExternalAccountId = account?.accessToken ? account.externalAccountId : null
     callerCredentialHealth = account?.credentialHealth ?? null
+    readinessCheck = account?.readinessCheck ?? null
+    fingerprint = readinessFingerprint(row, account)
     grantedScopes = account?.scopes ?? []
     if (options.includeAccess) {
       const accountState = await connectedAccountStateForConnection({
@@ -1221,6 +1280,8 @@ async function toConnectionResponse(
     credentialHealth: callerCredentialHealth?.status ?? "unknown",
     credentialHealthReason: callerCredentialHealth?.reason ?? null,
     credentialHealthCheckedAt: callerCredentialHealth?.checkedAt ?? null,
+    ...(row.kind === "external_mcp" && await organizationFeatureEnabled(row.organizationId, "connectorReadiness")
+      ? { readiness: visibleReadiness(readinessCheck, fingerprint) } : {}),
     issuerReviewRequired,
     reconnectActionOwner,
     requiredBy: options.requiredBy,
@@ -1537,6 +1598,10 @@ async function handleExternalMcpOAuthCallback(input: {
       referenceId: diagnostic.referenceId,
     }), 400)
   }
+  if (await organizationFeatureEnabled(connection.organizationId, "connectorReadiness")) {
+    const refreshed = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
+    if (refreshed) await checkConnectionReadiness(refreshed, statePayload.orgMembershipId, input.requestId)
+  }
   if (member) {
     const { bindSlackOAuthMember } = await import("../../slack-assistant/repository.js")
     try {
@@ -1735,7 +1800,12 @@ async function createExternalConnectionResponse(
     }
   }
 
-  const refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
+  let refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
+  if (refreshed && body.authType !== "oauth" && body.credentialMode === "shared"
+    && await organizationFeatureEnabled(payload.organization.id, "connectorReadiness")) {
+    await checkConnectionReadiness(refreshed, payload.currentMember.id, requestId)
+    refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
+  }
   const response = await toConnectionResponse(refreshed ?? created, {
     callerOrgMembershipId: payload.currentMember.id,
     createdByName: resolveCreatorName(payload, (refreshed ?? created).createdByOrgMembershipId),
@@ -2411,6 +2481,35 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         policy,
       )
       return c.json({ policy: toToolPolicyResponse(policy, { includeAttribution: true }) })
+    },
+  )
+
+  app.post(
+    "/v1/mcp-connections/:connectionId/check",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Check and record connection readiness",
+      description: "Checks initialize and tools/list with Den-managed credentials, without executing tools. Stores the result and time. Requires connections.manage and connectorReadiness.",
+      responses: {
+        200: jsonResponse("Recorded readiness check.", z.object({ readiness: connectionReadinessSchema })),
+        400: jsonResponse("This connection cannot be checked.", invalidRequestSchema),
+        401: jsonResponse("Sign in required.", unauthorizedSchema),
+        403: jsonResponse("Connection management permission required.", forbiddenSchema),
+        404: jsonResponse("Unknown connection or feature disabled.", connectionNotFoundSchema),
+      },
+    }),
+    orgPermissionRoute("connections.manage"),
+    requireFeature("connectorReadiness"),
+    paramValidator(connectionParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const connection = await getExternalMcpConnection({
+        organizationId: payload.organization.id,
+        connectionId: normalizeDenTypeId("externalMcpConnection", c.req.valid("param").connectionId),
+      })
+      if (!connection) return c.json({ error: "connection_not_found", message: "Unknown connection." }, 404)
+      if (connection.kind !== "external_mcp") return c.json({ error: "invalid_request", message: "This connection does not support readiness checks." }, 400)
+      return c.json({ readiness: await checkConnectionReadiness(connection, payload.currentMember.id, c.get("requestId")) })
     },
   )
 
@@ -3150,6 +3249,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         changes: { accessToken: parsed.data.apiKey, tokenType: "api_key", refreshToken: null, expiresAt: null, scopes: null, pendingCodeVerifier: null, credentialHealth: null },
       })
       if (!saved) return c.json({ error: "conflict", message: "Connection settings changed. Reload and try again." }, 409)
+      if (await organizationFeatureEnabled(connection.organizationId, "connectorReadiness")) {
+        await checkConnectionReadiness(connection, payload.currentMember.id, c.get("requestId"))
+      }
       return c.json({ ok: true })
     },
   )

@@ -140,10 +140,14 @@ export function ItemRow({
   title,
   description,
   status,
+  statusOnNarrow,
+  wideAction,
   action,
   href,
   testId,
 }: {
+  statusOnNarrow?: boolean;
+  wideAction?: boolean;
   logo?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
@@ -157,6 +161,7 @@ export function ItemRow({
       {logo ? <span className="flex shrink-0 items-center">{logo}</span> : null}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[14px] font-medium leading-5 text-gray-900">{title}</span>
+        {statusOnNarrow && status ? <span className="text-[12px] leading-4 text-muted-foreground sm:hidden">{status}</span> : null}
         {description ? <span className="truncate text-[13px] leading-[18px] text-gray-500">{description}</span> : null}
       </span>
     </>
@@ -175,7 +180,7 @@ export function ItemRow({
           {status}
         </span>
       ) : null}
-      {action !== undefined ? <span className="flex w-[72px] shrink-0 justify-end">{action}</span> : null}
+      {action !== undefined ? <span className={wideAction ? "flex w-[96px] shrink-0 justify-end" : "flex w-[72px] shrink-0 justify-end"}>{action}</span> : null}
     </div>
   );
 }

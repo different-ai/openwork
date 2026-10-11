@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
+import { getMcpConnectionRoute, getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
@@ -19,7 +19,9 @@ import type { MarketplacePluginCloudReadinessConnection } from "./marketplace-da
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
 import { marketplaceConnectionNeedsAdminSetup, marketplaceConnectionSetupTarget } from "./mcp-connection-setup";
 import { personalApiKeyStatus, personalApiKeyStatusLabel, usesMemberApiKey } from "./member-api-key";
-import { ItemMenu } from "./item-list";
+import { ItemMenu, ItemRow } from "./item-list";
+import { connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
+import { useCheckMcpConnection } from "./mcp-connections-data";
 import { MemberApiKeyDialog, type MemberApiKeyTarget } from "./member-api-key-dialog";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
@@ -196,7 +198,7 @@ function YourConnectionRow({
   toolTesterRoute: string;
 }) {
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
-  const { orgContext } = useOrgDashboard();
+  const { orgContext, orgSlug } = useOrgDashboard();
   const isPerMember = connection.credentialMode === "per_member";
   const apiKeyStatus = personalApiKeyStatus(connection);
   const needsAdminRecovery = !needsAdminSetup
@@ -217,6 +219,18 @@ function YourConnectionRow({
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
   const requiredByLabel = formatRequiredBy(connection.requiredBy);
+  const checkConnection = useCheckMcpConnection();
+  const state = connectorReadinessState(connection);
+  if (state) return (
+    <div data-connector-row={connection.name} ref={rowRef}>
+      <ItemRow logo={<IntegrationIcon name={connection.name} serviceUrl={connection.url} />} title={connection.name}
+        description={checkConnection.error ? "Could not check this connection. Try again." : !canManageConnections && state === "Couldn't verify" ? `${connectorReadinessNote(connection)} An admin can check again.` : connectorReadinessNote(connection)} status={state} statusOnNarrow wideAction
+        action={state === "Sign in" ? <DenButton size="xs" variant="secondary" onClick={onConnect}>Sign in</DenButton>
+          : state === "Set up" ? <DenButton size="xs" variant="secondary" disabled={!canManageConnections} title={!canManageConnections ? "An admin can finish setup." : undefined} href={canManageConnections ? getMcpConnectionRoute(orgSlug, connection.id) : undefined}>Set up</DenButton>
+          : <DenButton size="xs" variant="secondary" disabled={!canManageConnections || checkConnection.isPending} title={!canManageConnections ? "An admin can check this connection." : undefined} onClick={() => checkConnection.mutate(connection.id)}>Check again</DenButton>}
+      />
+    </div>
+  );
 
   return (
     <div

@@ -53,6 +53,7 @@ import {
   type ExtensionTaxonomy,
 } from "../extension-taxonomy";
 import { RefreshButton } from "../settings-section";
+import { recordedConnectorState, recordedConnectorNote } from "../connector-readiness";
 import { SettingsListSearchInput } from "../settings-list";
 import {
   openDesktopUrl,
@@ -544,6 +545,18 @@ export function McpView(props: McpViewProps) {
       return result.orgs.find((org) => org.id === identity?.organizationId)?.role ?? null;
     },
   });
+  const [checkingConnection, setCheckingConnection] = useState<string | null>(null);
+  async function checkAgain(connectionId: string) {
+    setCheckingConnection(connectionId);
+    try {
+      await cloudSession.client.checkMcpConnection(activeOrganizationId, connectionId);
+      props.onRefresh?.();
+    } catch {
+      toast.error("Could not check this connection. Try again.");
+    } finally {
+      setCheckingConnection(null);
+    }
+  }
   const canManageCloudConnections = denAuth.isSignedIn
     && identity?.organizationId === activeOrganizationId
     && isConnectAdminRole(organizationRole.data);
@@ -1503,6 +1516,7 @@ export function McpView(props: McpViewProps) {
       {detailOrgMcpItem && isOrgMcpConnectionItem(detailOrgMcpItem) ? (() => {
         const connection = detailOrgMcpItem.orgMcpConnection;
         const ready = isOrgMcpConnectionReady(connection);
+        const recordedState = recordedConnectorState(connection);
         const canAuthorize = canMemberAuthorizeConnection(connection);
         const canDisconnect = canDisconnectMemberConnection(connection);
         const connectingBusy = props.orgMcpConnectingId === connection.id;
@@ -1521,12 +1535,12 @@ export function McpView(props: McpViewProps) {
             presentation={detailPresentation}
             backLabel={t("extensions.title")}
             name={displayName}
-            description={(!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
+            description={recordedState ? recordedConnectorNote(connection) : (!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
             taxonomy="connection"
-            connected={ready}
-            connectedLabel={orgMcpConnectionActionLabel(connection)}
+            connected={recordedState ? recordedState === "Ready" : ready}
+            connectedLabel={recordedState ?? orgMcpConnectionActionLabel(connection)}
             savedKeyOnly={connection.authType === "apikey" && connection.credentialMode === "per_member"}
-            disconnectedLabel={connection.authType === "apikey" && connection.credentialMode === "per_member" ? t("extensions.detail_no_key") : undefined}
+            disconnectedLabel={recordedState ?? (connection.authType === "apikey" && connection.credentialMode === "per_member" ? t("extensions.detail_no_key") : undefined)}
             connecting={connectingBusy || disconnectingBusy}
             connectingLabel={disconnectingBusy ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_waiting_browser")}
             beta
@@ -1695,8 +1709,11 @@ export function McpView(props: McpViewProps) {
     });
   }
 
+  const recordedConnectionFor = (name: string) => orgMcpItems.filter(isOrgMcpConnectionItem).find((item) => connectionPluginName(item.name) === name.toLowerCase() && item.orgMcpConnection.readiness !== undefined);
+
   for (const plugin of ownedPlugins) {
     const taxonomy = libraryCloudItemTaxonomy(plugin.componentKinds, plugin.componentCount);
+    if (taxonomy === "connection" && recordedConnectionFor(plugin.name)) continue;
     const audience = libraryCloud.audienceFor(plugin.id);
     const shared = isLibraryAudienceShared(audience);
     const group = taxonomy === "connection" ? connectorGroup(plugin.name) : "ready";
@@ -1737,6 +1754,7 @@ export function McpView(props: McpViewProps) {
   }
 
   for (const entry of availableConnectMcpServers) {
+    if (recordedConnectionFor(entry.pluginName ?? entry.name)) continue;
     if (entry.pluginName && pluginRowNames.has(entry.pluginName.toLowerCase())) continue;
     const group = connectMcpInventoryGroup(entry, props.availableConnectMcpStatuses ?? {});
     const attention = libraryRowAttention(group);
@@ -1773,6 +1791,7 @@ export function McpView(props: McpViewProps) {
     const taxonomy = (cloudItem
       ? libraryCloudItemTaxonomy(cloudItem.componentKinds, cloudItem.componentCount)
       : libraryCloudItemTaxonomy(plugin.files.map((file) => file.objectType), plugin.files.length));
+    if (taxonomy === "connection" && recordedConnectionFor(plugin.name)) continue;
     const group = taxonomy === "connection" ? connectorGroup(plugin.name) : "ready";
     const attention = libraryRowAttention(group);
     const hidden = isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`);
@@ -1801,25 +1820,31 @@ export function McpView(props: McpViewProps) {
 
   for (const item of orgMcpItems.filter(isOrgMcpConnectionItem)) {
     const connection = item.orgMcpConnection;
-    if (myConnectionIds.has(connection.id) || ownedPluginNames.has(connectionPluginName(item.name))) continue;
+    const recordedState = recordedConnectorState(connection);
+    if (!recordedState && (myConnectionIds.has(connection.id) || ownedPluginNames.has(connectionPluginName(item.name)))) continue;
     const group = resolveExtensionInventoryGroup(item);
     const attention = libraryRowAttention(group);
     rows.push({
       needsSignIn: group === "needs_signin",
       key: item.id,
-      section: "openwork",
+      section: myConnectionIds.has(connection.id) ? "mine" : "openwork",
       taxonomy: "connection",
       searchText: `${item.name} ${item.description ?? ""} ${connection.url}`,
       node: (
         <ExtensionCard
           name={item.name}
-          description={item.description?.trim() || t("extensions.row_shared_connection")}
+          description={recordedState ? `${recordedConnectorNote(connection)}${!canManageCloudConnections && recordedState === "Couldn't verify" ? " An admin can check again." : ""}` : item.description?.trim() || t("extensions.row_shared_connection")}
           taxonomy="connection"
           url={connection.url}
-          connected={group === "ready"}
-          meta={orgCaption}
+          connected={recordedState ? recordedState === "Ready" : group === "ready"}
+          stateLabel={recordedState ?? undefined}
+          meta={recordedState ? null : orgCaption}
           statusChip={attention.statusChip}
-          nextActionLabel={attention.actionLabel}
+          nextActionLabel={recordedState === "Sign in" ? "Sign in" : recordedState === "Set up" ? "Set up" : recordedState ? undefined : attention.actionLabel}
+          onNextAction={recordedState === "Sign in" ? () => props.connectOrgMcp?.(connection.id) : undefined}
+          trailing={recordedState === "Couldn't verify" || recordedState === "Ready" ? (
+            <Button size="sm" variant="outline" disabled={!canManageCloudConnections || checkingConnection !== null} title={!canManageCloudConnections ? "An admin can check this connection." : undefined} onClick={() => void checkAgain(connection.id)}>Check again</Button>
+          ) : undefined}
           onClick={() => openDetail({ kind: "org-mcp", item })}
         />
       ),

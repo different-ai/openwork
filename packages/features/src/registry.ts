@@ -74,6 +74,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: true,
   },
+  connectorReadiness: {
+    label: "Connector readiness",
+    description: "Members see when a connection was checked, and admins can check it again.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   driveResumableUploads: {
     label: "Resumable Google Drive uploads",
     description: "Members upload larger workspace files to Google Drive and prepare upload sessions for external clients.",
