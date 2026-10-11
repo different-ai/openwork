@@ -13,6 +13,10 @@ name: Publish OpenCode plugin
 # approve the staged version.
 
 on:
+  pull_request:
+    paths:
+      - "packages/opencode-plugin/**"
+      - ".github/workflows/publish-opencode-plugin.yml"
   push:
     tags:
       - "opencode-plugin-v*"
@@ -25,7 +29,7 @@ on:
         type: boolean
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -74,7 +78,7 @@ jobs:
         run: npm pack --dry-run
 
       - name: Stage for maintainer approval
-        if: github.event_name == 'push' || inputs.dry_run == false
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && inputs.dry_run == false)
         run: |
           npm stage publish --access public --provenance
           echo "Staged. Approve it at https://www.npmjs.com/package/opencode-openwork or with: npm stage list opencode-openwork" >> "$GITHUB_STEP_SUMMARY"
