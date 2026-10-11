@@ -10,7 +10,7 @@ by this preparation, and no publisher terms have been accepted.
 | Destination | Actual status | Next action |
 | --- | --- | --- |
 | Official MCP Registry | **Published and active**, `com.openworklabs/openwork`, version `1.0.0`, published 2026-09-26 | Keep the existing namespace; do not create a duplicate listing. |
-| Cursor official marketplace | Application route and package format established; **not submitted** | Finish native-client verification, supply the publisher account, review the terms, then apply. Most promising first listing for the general gateway. |
+| Cursor official marketplace | Desktop installation/OAuth/fixture and publisher-form inspection **reported passed**; missing-name interpretation failed; **not submitted** | Retest exact-name guidance, finish refresh/revocation/isolation, confirm repository/publisher/reviewer identity and disclosures. Most promising first listing for the general gateway. |
 | Cursor community directory | Separate submission route; **not submitted** | Optional parallel community submission; this does not grant official Cursor placement. |
 | Claude connector directory | **Architecture preflight required; not submitted** | Resolve mixed read/write executor and dynamic-instruction concerns, then provide a durable populated reviewer login. |
 | Claude plugin directory | GitHub bundle route established; **not submitted** | Validate the exported small repository and linked connector, then submit separately from the MCP connector. |
@@ -54,8 +54,13 @@ or subscription-token sharing.
   clarification; do not send without an authorized person's approval.
 - [Review cases](review-cases.json): reusable test prompts with clearly separated
   private-gateway and proposed-curated-surface expectations.
-- [Live evidence](evidence/2026-10-10.md): bounded checks, failure diagnoses and
-  remaining unverified work.
+- [Live evidence](evidence/2026-10-10.md): original bounded preflight and helper checks.
+- [Native QA handoff](evidence/2026-10-10-native-qa-report.md): user-reported pinned
+  native tests, failures, account prerequisites and missing lifecycle evidence;
+  screenshots/raw traces were not independently inspected.
+- [Targeted native retest](native-retest.md): remove Codex same-name registration
+  shadowing, verify actual bundled runtime/auth, test Cursor exact-name guidance,
+  and separate Claude validator versions from account prerequisites.
 - Existing portable plugin: [`../agent-plugins/openwork-connect`](../agent-plugins/openwork-connect).
 - Existing registry manifest: [`../../ee/apps/den-api/server.json`](../../ee/apps/den-api/server.json).
 
@@ -108,9 +113,12 @@ An authorized owner still needs to provide:
 
 ## Common readiness gaps
 
-- Native ChatGPT/Codex, Claude and Cursor OAuth, refresh, revoke and tenant
-  isolation remain unverified. Public docs correctly label these clients
-  **Setup only**; do not change them to Verified based on this preflight.
+- Cursor desktop, ChatGPT web private MCP and Codex direct MCP OAuth/fixture
+  tests have reported bounded passes. Codex bundled-MCP execution failed; Claude
+  OAuth is blocked by account/binding prerequisites. **All** actual refresh,
+  server-side revocation and isolation cases remain untested. Preserve public
+  **Setup only** labels; neither this handoff nor the original preflight proves
+  complete client support or public-directory eligibility.
 - All 14 tools observed in the isolated QA catalog carry the four explicit
   annotations. Their correctness still needs behavioral review. Catalogs may
   differ by organization and grants.

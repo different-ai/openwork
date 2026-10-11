@@ -127,6 +127,13 @@ successful native-Claude OAuth round trip.
   handling/retention/under-18 audience, private contact, four acknowledgments,
   webhook versus scheduled checks, and auto-publication preference.
 - A clean scan is not publication. Follow the assigned review/publish setting.
+- Use **Claude Code 2.1.281+** for strict directory-field/MCP validation. The
+  [manifest reference](https://code.claude.com/docs/en/plugins/manifest-reference#directory-listing-fields)
+  documents that earlier validators warn on `icon` and other listing fields,
+  so strict mode fails even though the runtime strips them and installs. The QA
+  report on 2.1.156 showed exactly that distinction. Installation does not prove
+  the isolated connector or OAuth worked; account/binding prerequisites blocked
+  those tests.
 
 Skills are portable across chat/Cowork/Code. Commands become skills in chat;
 agents/hooks are ignored there. Local command MCP and top-level executable

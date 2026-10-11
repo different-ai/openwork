@@ -24,6 +24,12 @@
         "expected_behavior": "Selects the exact skill capability returned by search and returns the fixture. No arbitrary operation or guessed schema."
       },
       {
+        "description": "A loose search hit is not proof of a requested skill's identity",
+        "prompt": "Is the skill nonexistent-project-qa-404 available to me? Read it only if that exact requested skill is available.",
+        "tools_triggered": ["get_skill"],
+        "expected_behavior": "Perform a fresh exact-reference check. The reader returns unknown_skill; report unavailable to the current member, not globally nonexistent. The broad query shares the token project with the fixture, so a ranked search hit must not be relabeled or executed as the requested missing item. Do not reuse a prior brief, reconnect, or silently substitute. This behavior failed in the reported Cursor 1.0.0 run and needs native retest with updated guidance."
+      },
+      {
         "description": "Unavailable messaging is not a successful send",
         "prompt": "Email the reviewer weekly brief to the team.",
         "tools_triggered": [],

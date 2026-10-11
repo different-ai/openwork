@@ -95,6 +95,15 @@ A one-click install URL may prefill a single server configuration, but must not
 contain credentials or change unrelated servers. It is not store approval:
 [Install links](https://cursor.com/docs/mcp/install-links).
 
+Later computer-use QA on Cursor 3.24.12 reported desktop install, OAuth, exact
+fixture retrieval, email limitation, consent cancellation and reconnect passes.
+A loose search result was incorrectly presented as a matching nonexistent item;
+the exact reader correctly refused it. Refresh, server-side revocation and
+isolation were not tested; Cloud Agents were blocked by prerequisites. The
+signed-in official publisher fields matched this packet. See the
+[pinned handoff](evidence/2026-10-10-native-qa-report.md), not a global Verified
+support claim.
+
 ## Community-directory submission
 
 Sign in and use Auto (GitHub) or Manual mode. Public source currently documents:

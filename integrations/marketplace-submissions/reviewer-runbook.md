@@ -2,11 +2,15 @@
 
 ## Prepared versus still needed
 
-**Prepared:** a synthetic `reviewer-weekly-brief` fixture, a reproducible
-preflight, and one live isolated provisional QA workspace. Its token exchange,
-MCP initialization, tool catalog, skill creation/list/read and capability
-search/retrieval were verified. This does **not** verify model behavior or any
-native-client OAuth flow.
+**Original preflight:** a synthetic `reviewer-weekly-brief` fixture, reproducible
+checks and one isolated provisional QA workspace. Its token exchange, catalog
+and fixture round trip were verified, not native OAuth or model behavior.
+
+**Later native QA, as reported:** normal signed-in setup created a separate
+synthetic organization using the owner's existing account. Cursor desktop,
+ChatGPT private MCP and Codex direct MCP completed bounded OAuth/fixture tests.
+See the [pinned handoff](evidence/2026-10-10-native-qa-report.md). This does not
+supply a dedicated reviewer identity, complete lifecycle proof or store approval.
 
 **Still needed:** a real company-controlled reviewer login and durable
 workspace. The anonymous QA workspace expires after 72 hours and cannot serve
@@ -70,13 +74,15 @@ identity, cookies, URLs, tokens, internal IDs and unrelated data in evidence.
 
 | Host | Required positive | Required negative/recovery | Current result |
 | --- | --- | --- | --- |
-| ChatGPT desktop + mobile | User OAuth, selected workspace, exact individually exposed public tools; final result/recording | Denied action, invalid args, refresh, revoke, denied cross-workspace access | **Not tested; generic gateway policy mismatch first.** |
-| Codex CLI / ChatGPT desktop | Install plugin/direct MCP, loopback OAuth, declared skill/tools | Same security boundaries; IDE uses direct MCP rather than unsupported plugin bundle | **Not tested.** |
-| Claude web / desktop / supported mobile | Connector add, hosted OAuth, ≥3 repeatable outcomes | Invalid args, unavailable capability, refresh/revoke/isolation | **Not tested; architecture preflight first.** |
-| Claude Cowork | Plugin+connector pairing, skills/commands actually supported there | Missing connection or grant does not become success | **Not tested.** |
-| Claude Code | Native plugin install, loopback OAuth, text result | No UI-rendering claim; denied grant and revoked auth refused | **Not tested.** |
-| Cursor desktop | Package load, OAuth and fixture result | Invalid/unsupported request, revoked grant, token refresh, wrong workspace | **Not tested.** |
-| Cursor web / Cloud Agent | Separate hosted callback and usable declared tools | No assumed sharing of desktop auth; missing configuration explicit | **Not tested.** |
+| ChatGPT web private MCP | User OAuth, selected workspace, fixture/result | Missing item, unavailable action, refresh/revoke/isolation | **Bounded OAuth/fixture/negative passes reported; lifecycle not tested.** No bundle/public approval. |
+| ChatGPT desktop + mobile | User OAuth and exact implemented public tools | Same recovery/security boundaries | **Not tested; public curated surface not implemented.** |
+| Codex CLI direct MCP | Loopback OAuth and declared read tools | Missing item, unavailable action, refresh/revoke/isolation | **Bounded passes reported; lifecycle not tested.** |
+| Codex CLI / desktop plugin | Install package, bundled server, plugin-specific OAuth and tools | No reliance on manual server's credentials/results | **CLI installed but runtime tools absent; root cause unresolved.** Desktop not tested. |
+| Claude web / desktop / supported mobile | Isolated connector, hosted OAuth, ≥3 outcomes | Invalid args, unavailable capability, refresh/revoke/isolation | **Desktop package installed; OAuth blocked by existing unknown binding/Free account.** Web signed out; mobile not tested. |
+| Claude Cowork | Plugin+connector pairing and supported components | Missing connection/grant explicit | **Blocked by account upgrade prerequisite.** |
+| Claude Code | Native plugin, loopback OAuth, text result | No UI claim; denied grant/revoked auth refused | **Installed; OAuth blocked by plan/API-key prerequisite.** 2.1.156 strict icon warning; use 2.1.281+ directory-field validation. |
+| Cursor desktop | Package load, OAuth and fixture result | Invalid/missing item, refresh/revoke/isolation | **Bounded passes and reconnect reported; missing-query interpretation failed.** Lifecycle/isolation not tested. |
+| Cursor web / Cloud Agent | Hosted callback and usable tools | No assumed desktop-auth sharing | **Blocked by source-control/privacy-mode prerequisites.** |
 
 Tools, resources, prompts and grants may differ by account. Inventory the
 **actual production submission endpoint**, not just the QA organization. Every

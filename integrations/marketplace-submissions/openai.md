@@ -138,9 +138,14 @@ Codex redirect:   http://127.0.0.1:<port>/callback/{callback_id}
 ```
 
 OpenWork's general HTTPS/loopback redirect policies appear compatible in source;
-that is not a successful native OAuth test. Stable callback/CIMD values require
-correct RFC 9207 issuer-bound responses; do not merely change the advertised
-boolean. See [Authentication](https://developers.openai.com/plugins/build/auth).
+source inspection is not a native OAuth test. Later computer-use QA reported
+bounded ChatGPT web private-MCP and Codex direct-MCP OAuth/fixture passes, but
+Codex's bundled-MCP runtime exposed no readers and plugin-specific OAuth was not
+verified. No refresh/revocation/isolation or public-curated-surface test passed;
+see the [pinned handoff](evidence/2026-10-10-native-qa-report.md).
+Stable callback/CIMD values require correct RFC 9207 issuer-bound responses; do
+not merely change the advertised boolean. See
+[Authentication](https://developers.openai.com/plugins/build/auth).
 
 The portal provides an exact plain-text domain-verification token for:
 
