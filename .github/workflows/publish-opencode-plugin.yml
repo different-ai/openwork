@@ -1,0 +1,80 @@
+name: Publish OpenCode plugin
+
+# Publishes packages/opencode-plugin to npm as `opencode-openwork`.
+#
+# Uses npm trusted publishing (OIDC) limited to staged publishing: npm trusts
+# this workflow file in different-ai/openwork, no npm token is stored in
+# GitHub, and every release gets signed provenance. The workflow can only
+# *stage* a version; a different-ai-inc maintainer approves it with 2FA on
+# npmjs.com (or `npm stage approve <id>`) before anyone can install it.
+#
+# Release: bump "version" in packages/opencode-plugin/package.json, merge, then
+# push a tag `opencode-plugin-v<version>` (or run this workflow by hand), then
+# approve the staged version.
+
+on:
+  push:
+    tags:
+      - "opencode-plugin-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and pack only; do not stage
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish opencode-openwork
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/opencode-plugin
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Use an npm that supports staged publishing
+        run: npm install -g npm@^11.15.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile --filter opencode-openwork...
+
+      - name: Check the tag matches the package version
+        if: github.event_name == 'push'
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "opencode-plugin-v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package version ${version}" >&2
+            exit 1
+          fi
+
+      - name: Typecheck, test, build
+        run: |
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      - name: Pack (dry run)
+        run: npm pack --dry-run
+
+      - name: Stage for maintainer approval
+        if: github.event_name == 'push' || inputs.dry_run == false
+        run: |
+          npm stage publish --access public --provenance
+          echo "Staged. Approve it at https://www.npmjs.com/package/opencode-openwork or with: npm stage list opencode-openwork" >> "$GITHUB_STEP_SUMMARY"
