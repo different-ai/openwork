@@ -345,10 +345,6 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
     "--window-size=1280,900",
-    "--lang=en-US",
-    // Match Linux/Windows' classic scrollbar gutter even on a macOS headless runner.
-    // Never hide scrollbars: narrow-layout assertions must include their occupied width.
-    "--disable-features=OverlayScrollbar,FluentOverlayScrollbar",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-popup-blocking",
@@ -358,7 +354,9 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     ...(mouse ? [MOUSE_POINTER_CHROME_ARG] : []),
     startUrl,
   ];
-  return headless ? ["--headless=new", ...args] : args;
+  // Match Linux/Windows' classic gutter on headless macOS too, without changing
+  // windowed previews. Never hide scrollbars: narrow proof must include their width.
+  return headless ? ["--headless=new", "--lang=en-US", "--disable-features=OverlayScrollbar,FluentOverlayScrollbar", ...args] : args;
 }
 
 async function waitForCdpOrExit(label: string, cdpUrl: string, spawned: SpawnedDetached, logPath: string, requirePageTarget = false): Promise<void> {
@@ -971,8 +969,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const profileRoot = resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
       registerLiveProfileRoot(profileRoot);
       const profileDir = join(profileRoot, "chrome-profile");
-      await mkdir(join(profileDir, "Default"), { recursive: true });
-      await writeFile(join(profileDir, "Default", "Preferences"), JSON.stringify({ intl: { accept_languages: "en-US,en", selected_languages: "en-US,en" } }), "utf8");
+      await mkdir(profileDir, { recursive: true });
       const cdpPort = await allocateFreePort();
       const binary = resolveChromeBinary(process.env, process.platform);
       const startUrl = opts.startUrl ?? DEFAULT_CHROME_START_URL;
@@ -980,6 +977,10 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const env: NodeJS.ProcessEnv = { ...process.env };
       const cdpUrl = `http://127.0.0.1:${cdpPort}`;
       const launch = async (headless: boolean): Promise<SpawnedDetached> => {
+        if (headless) {
+          await mkdir(join(profileDir, "Default"), { recursive: true });
+          await writeFile(join(profileDir, "Default", "Preferences"), JSON.stringify({ intl: { accept_languages: "en-US,en", selected_languages: "en-US,en" } }), "utf8");
+        }
         const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless, opts.mouse === true), { cwd: profileRoot, env, logPath });
         await writeFile(join(profileDir, "openwork-eval-chrome.pid"), `${spawned.pid}\n`, "utf8");
         try {

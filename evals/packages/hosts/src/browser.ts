@@ -47,8 +47,10 @@ export async function chrome(opts: BrowserOptions = {}): Promise<AttachedSurface
   let surface: AttachedSurface;
   try {
     surface = await attachSurface(handle, { timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS });
-    // --lang fixes browser language; Intl otherwise still inherits the runner's OS locale.
-    await surface.client.send("Emulation.setLocaleOverride", { locale: "en_US" });
+    // Headless proof fixes Intl as well as --lang; windowed previews keep their native locale.
+    if (opts.headless === true || process.env.OPENWORK_EVAL_CHROME_HEADLESS === "1" || host.kind === "daytona") {
+      await surface.client.send("Emulation.setLocaleOverride", { locale: "en_US" });
+    }
   } catch (error) {
     await host.disposeSurface(handle).catch(() => undefined);
     throw error;
