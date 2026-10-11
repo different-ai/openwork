@@ -69,6 +69,7 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
   await step("after: desktop Calendar shows provider marks and an Organization default instead of its routing ID", async () => {
     await world.setCalendarPolish(true);
     await alex.reload();
+    await alex.see("composer", { editable: true });
     await alex.click({ role: "button", label: "Calendar" });
     await alex.see({ role: "button", label: /^Launch standup, Google Calendar/ }, { timeoutMs: 60_000 });
     await alex.see({ role: "button", label: /^Partner pipeline review, Outlook/ });
@@ -224,7 +225,8 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
   await step("after: when Google sign-in expires, Google offers Reconnect and Outlook meetings stay", async () => {
     await world.expireGoogleSignIn();
     await alex.reload();
-    // Startup reopens the last workspace; Alex goes back to the Calendar.
+    // Wait for workspace restoration before choosing a transient surface; otherwise startup can replace the click.
+    await alex.see("composer", { editable: true });
     await alex.click({ role: "button", label: "Calendar" });
     await alex.see({ text: "Reconnect Google Calendar" }, { timeoutMs: 60_000 });
     await alex.see({ role: "button", label: /, Outlook/ });
