@@ -1303,6 +1303,7 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   // v1 credentials predate token audiences. Keep them usable during the Den
   // rollout only for endpoints trusted before the renderer starts issuing IPC.
   legacyBaseUrls: legacyRunnerBaseUrls,
+  getJournalRoot: () => path.join(app.getPath("userData"), "session-runner"),
   getLocalRuntime: async () => {
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };

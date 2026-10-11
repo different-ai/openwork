@@ -225,13 +225,19 @@ export const REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY = "remote_session_v1"
  * misread the request work item, so Den routes requests by this capability.
  */
 export const REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY = "remote_session_control_v1"
+/** An interactive session runner, never a scheduled Automation executor. */
+export const REMOTE_SESSION_ONLY_RUNNER_CAPABILITY = "remote_session_only_v1"
+/** Sticky, same-owner recovery backed by a local effects journal. */
+export const REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY = "remote_session_recovery_v1"
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER = "x-openwork-automation-model-attention" as const
 export const automationDesktopRunnerCapabilitySchema = z.enum([
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+  REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
+  REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
 ])
-export const AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT = 3
+export const AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT = 5
 export type AutomationDesktopRunnerCapability = z.infer<typeof automationDesktopRunnerCapabilitySchema>
 
 export const automationDesktopRunnerRegistrationSchema = z.object({
@@ -518,6 +524,8 @@ export const remoteSessionTranscriptMessageSchema = z.object({
 })
 export type RemoteSessionTranscriptMessage = z.infer<typeof remoteSessionTranscriptMessageSchema>
 export const remoteSessionReadResultSchema = z.object({
+  /** Whether the engine returned full history or only its current context. */
+  historyScope: z.enum(["full", "context"]).optional(),
   title: z.string().max(240).nullable(),
   status: remoteSessionStatusSchema,
   waitingFor: remoteSessionWaitingForSchema.nullable(),

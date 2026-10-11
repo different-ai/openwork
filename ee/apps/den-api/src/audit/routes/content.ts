@@ -87,13 +87,19 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   runner("GET", "/v1/automation-runner/work", "tenant_signal", "automation_runner.work.poll", "automation.runner", "automation_runner", null, { notes: "Frequent poll; writes last_seen_at presence. Lists pending automation runs and remote-session commands/requests." }),
   runner("PUT", "/v1/automation-runner/inventory", "tenant_signal", "automation_runner.inventory.update", "automation.runner", "automation_runner", null, { notes: "High-frequency device inventory; read by MCP remote-session:targets." }),
 
+  // Independent session-runner aliases retain the same credential and actor
+  // attribution as released Automation runners; they never schedule work.
+  member("POST", "/v1/session-runners/token", "tenant_access", "automation_runner.token.issue", "automation.runner", "automation_runner", null, { notes: "Registers a remote-only session target behind remoteSessionTargets and issues an audience-bound runner credential. Never snapshot the token. Blocked from MCP." }),
+  runner("GET", "/v1/session-runners/work", "tenant_signal", "automation_runner.work.poll", "automation.runner", "automation_runner", null, { notes: "Owner-scoped remote command/request discovery and sticky recovery; updates presence, never lists scheduled Automations." }),
+  runner("PUT", "/v1/session-runners/inventory", "tenant_signal", "automation_runner.inventory.update", "automation.runner", "automation_runner", null, { notes: "Reports the opted-in client's approved workspaces and models for remote-session:targets." }),
+
   // Remote-session runner callbacks
   runner("GET", "/v1/remote-session-requests/pending", "tenant_signal", "remote_session.request.pending.list", "remote_session.execution", "remote_session_request", null),
   runner("POST", "/v1/remote-session-commands/:id/claim", "tenant_change", "remote_session.command.claim", "remote_session.execution", "remote_session_command", "id", { notes: `${REMOTE_SESSION_JOB} Response carries the user prompt.` }),
   runner("POST", "/v1/remote-session-commands/:id/complete", "tenant_change", "remote_session.command.complete", "remote_session.execution", "remote_session_command", "id", { notes: REMOTE_SESSION_JOB }),
   runner("POST", "/v1/remote-session-commands/:id/session", "tenant_change", "remote_session.command.session.report", "remote_session.execution", "remote_session_command", "id", { notes: `${REMOTE_SESSION_JOB} Repeated progress reports store final text / last error (user content).` }),
   runner("POST", "/v1/remote-session-requests/:id/claim", "tenant_change", "remote_session.request.claim", "remote_session.execution", "remote_session_request", "id", { notes: `${REMOTE_SESSION_JOB} Response carries follow-up prompt input.` }),
-  runner("POST", "/v1/remote-session-requests/:id/complete", "tenant_change", "remote_session.request.complete", "remote_session.execution", "remote_session_request", "id", { notes: `${REMOTE_SESSION_JOB} A send also marks the command turn started (two UPDATEs, no transaction).` }),
+  runner("POST", "/v1/remote-session-requests/:id/complete", "tenant_change", "remote_session.request.complete", "remote_session.execution", "remote_session_request", "id", { notes: `${REMOTE_SESSION_JOB} A send atomically records its receipt and resets the command for the new turn; immutable retries never reset newer progress.` }),
 
   // Workflows and artifact views
   member("GET", "/v1/workflows", "tenant_read", "workflow.list", "workflow.management", "workflow", null, { notes: `Metadata, schemas and capability names only. ${MCP_NATIVE}` }),

@@ -19,25 +19,21 @@
   ],
   "exports": {
     ".": {
-      "types": "./src/server.ts",
-      "development": "./src/server.ts",
-      "bun": "./src/server.ts",
+      "types": "./dist/server.d.ts",
+      "development": "./dist/server.js",
+      "bun": "./dist/server.js",
       "default": "./dist/server.js"
     },
     "./server": {
-      "types": "./src/server.ts",
-      "development": "./src/server.ts",
-      "bun": "./src/server.ts",
+      "types": "./dist/server.d.ts",
+      "development": "./dist/server.js",
+      "bun": "./dist/server.js",
       "default": "./dist/server.js"
     }
   },
   "files": [
     "dist",
-    "src",
-    "server.ts",
-    "README.md",
-    "!src/*.test.ts",
-    "!src/test-den.ts"
+    "README.md"
   ],
   "engines": {
     "node": ">=20"

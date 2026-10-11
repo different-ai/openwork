@@ -2389,14 +2389,20 @@ export class DenClient extends HeyApiClient {
   /**
    * Connect this desktop as an Automation runner
    *
-   * Mints a time-limited runner-only credential for the desktop SSE connection and HTTP runner APIs.
+   * Mints the existing time-limited runner-only credential. Session runners never execute scheduled Automations.
    */
   public mintAutomationRunnerToken<ThrowOnError extends boolean = false>(
     parameters: {
       runnerId: string;
       protocolVersion: 1;
       supportedExecutionTargets: ["desktop"];
-      capabilities?: Array<"model_attention_v1" | "remote_session_v1" | "remote_session_control_v1">;
+      capabilities?: Array<
+        | "model_attention_v1"
+        | "remote_session_v1"
+        | "remote_session_control_v1"
+        | "remote_session_only_v1"
+        | "remote_session_recovery_v1"
+      >;
       appVersion: string;
       platform: "darwin" | "win32" | "linux";
       concurrency: number;

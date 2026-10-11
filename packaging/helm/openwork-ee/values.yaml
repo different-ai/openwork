@@ -52,6 +52,7 @@ config:
     permissions: ""           # default off · Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults.
     gatewayCloudSignIn: ""    # default off · Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key.
     engineV2Upgrade: ""       # default off · Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.
+    remoteSessionTargets: ""  # default off · Members can register OpenWork and OpenCode clients as computers for remote sessions from MCP, Slack, and chat.
     opencodePlugin: ""        # default off · People can sign in to OpenWork from the OpenCode plugin, approve it as "OpenWork - OpenCode Plugin", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect.
     platformAuditReads: ""    # default off · Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect.
   # END GENERATED features

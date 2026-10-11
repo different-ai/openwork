@@ -144,7 +144,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Pick<FeatureMap, "mcpConnections">
+  organizationFeatures: Pick<FeatureMap, "mcpConnections"> & Partial<Pick<FeatureMap, "remoteSessionTargets">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
 }
@@ -175,7 +175,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     externalMcpConnectionsEnabled,
-    remoteSessionsEnabled: remoteSessionCapabilitiesEnabled(),
+    remoteSessionsEnabled: remoteSessionCapabilitiesEnabled(input.organizationFeatures.remoteSessionTargets === true),
     resolvePlatformAdmin,
     resolveNamespaceContext,
     audit: input.audit ?? null,
@@ -739,7 +739,9 @@ const remoteSessionSource: CapabilitySource = {
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
-    if (!ctx.remoteSessionsEnabled) {
+    // A rollout revert stops admitting new work, never access to an existing
+    // receipt or the ability to stop an already admitted native session.
+    if (!ctx.remoteSessionsEnabled && parsed.action !== "read" && parsed.action !== "list" && parsed.action !== "stop") {
       return {
         isError: true,
         content: textContent(JSON.stringify({

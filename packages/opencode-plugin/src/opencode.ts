@@ -4,9 +4,10 @@
  * the plugin ships with no dependency on it (the same approach as the V2
  * plugins in apps/server/src/opencode-plugins).
  *
- * Source of truth: anomalyco/opencode `v2` branch,
- * packages/plugin/src/promise/{plugin,integration,provider,mcp,storage}.ts and
- * packages/schema/src/{credential,connection,provider,model,mcp}.ts.
+ * Source of truth: anomalyco/opencode `v2.0.26` tag,
+ * packages/plugin/src/promise/{plugin,adapter,integration,provider,mcp,storage,session,permission}.ts,
+ * packages/client/src/promise/generated/{client,types}.ts and
+ * packages/schema/src/{credential,connection,provider,model,mcp,session,session-message}.ts.
  */
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -189,6 +190,81 @@ export interface EventDomain {
   readonly subscribe: (options?: { signal?: AbortSignal }) => AsyncIterable<unknown>
 }
 
+// ---- Native sessions (verified against the 2.0.26 tag, not the full HTTP client) ----
+// packages/plugin/src/promise/{adapter,session,permission}.ts,
+// packages/client/src/promise/generated/{client,types}.ts and packages/schema/src/session-message.ts.
+// Promise host methods return encoded timestamps (milliseconds), not Effect DateTime objects.
+
+export interface NativeModelRef {
+  readonly providerID: string
+  readonly id: string
+  readonly variant?: string
+}
+
+export interface NativeLocation {
+  readonly directory: string
+}
+
+export interface NativeSessionInfo {
+  readonly id: string
+  readonly title?: string
+  readonly location: NativeLocation
+  readonly model?: NativeModelRef
+  readonly metadata?: Readonly<Record<string, Json>>
+  readonly outcome?: "succeeded" | "failed" | "interrupted"
+  readonly time: { readonly created: number; readonly updated: number; readonly idle?: number }
+}
+
+export interface NativeError {
+  readonly type: string
+  readonly message?: string
+}
+
+export type NativeToolState =
+  | { readonly status: "streaming"; readonly input: string }
+  | { readonly status: "running"; readonly input: Record<string, unknown> }
+  | { readonly status: "completed"; readonly input: Record<string, unknown>; readonly content: readonly unknown[] }
+  | { readonly status: "error"; readonly input: Record<string, unknown>; readonly error: NativeError; readonly content?: readonly unknown[] }
+
+export type NativeAssistantContent =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "reasoning"; readonly text: string }
+  | { readonly type: "tool"; readonly id: string; readonly name: string; readonly state: NativeToolState }
+
+interface NativeMessageBase {
+  readonly id: string
+  readonly time: { readonly created: number; readonly completed?: number }
+}
+
+export type NativeMessage =
+  | (NativeMessageBase & { readonly type: "user"; readonly text: string })
+  | (NativeMessageBase & { readonly type: "assistant"; readonly content: readonly NativeAssistantContent[]; readonly error?: NativeError; readonly model: NativeModelRef })
+  | (NativeMessageBase & { readonly type: "idle"; readonly outcome: "succeeded" | "failed" | "interrupted" })
+  | (NativeMessageBase & { readonly type: "compaction"; readonly status: "running" | "completed" | "failed" })
+  | (NativeMessageBase & { readonly type: "agent-switched" | "model-switched" | "location-switched" | "synthetic" | "system" | "skill" | "shell" })
+
+export interface NativeRequestOptions {
+  readonly signal?: AbortSignal
+}
+
+export interface NativeSessionDomain {
+  create(input: { id?: string; title: string; location: NativeLocation; model?: NativeModelRef; metadata?: Readonly<Record<string, Json>> }, options?: NativeRequestOptions): Promise<NativeSessionInfo>
+  get(input: { sessionID: string }, options?: NativeRequestOptions): Promise<NativeSessionInfo>
+  context(input: { sessionID: string }, options?: NativeRequestOptions): Promise<readonly NativeMessage[]>
+  switchModel(input: { sessionID: string; model: NativeModelRef }, options?: NativeRequestOptions): Promise<void>
+  prompt(input: { sessionID: string; id: string; text: string; delivery: "queue"; resume: true }, options?: NativeRequestOptions): Promise<{ readonly id: string; readonly sessionID: string }>
+  interrupt(input: { sessionID: string; resume: false }, options?: NativeRequestOptions): Promise<{ readonly interrupted: boolean }>
+}
+
+export interface NativeModelDomain {
+  list(input?: { location?: { directory?: string } }): Promise<{ readonly location: NativeLocation; readonly data: readonly ModelInfo[] }>
+  default(input?: { location?: { directory?: string } }): Promise<{ readonly location: NativeLocation; readonly data?: ModelInfo }>
+}
+
+export interface NativePermissionDomain {
+  list(input: { sessionID: string }, options?: NativeRequestOptions): Promise<readonly { readonly id: string; readonly sessionID: string }[]>
+}
+
 // ---- Plugin ----
 
 export interface PluginContext {
@@ -200,6 +276,16 @@ export interface PluginContext {
   readonly mcp: McpDomain
   readonly storage: StorageDomain
   readonly event: EventDomain
+  /** Needed only when the member explicitly opts this Location into remote sessions. */
+  readonly session?: NativeSessionDomain
+  readonly model?: NativeModelDomain
+  readonly permission?: NativePermissionDomain
+}
+
+export interface NativePluginContext extends PluginContext {
+  readonly session: NativeSessionDomain
+  readonly model: NativeModelDomain
+  readonly permission: NativePermissionDomain
 }
 
 export type Cleanup = () => Promise<void> | void

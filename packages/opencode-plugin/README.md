@@ -27,7 +27,7 @@ To run the latest code from `dev` instead of the npm release, clone the plugin a
 git clone --depth 1 --filter=blob:none --sparse --branch dev \
   https://github.com/different-ai/openwork.git \
   "$HOME/.local/share/opencode/openwork-source"
-git -C "$HOME/.local/share/opencode/openwork-source" sparse-checkout set packages/opencode-plugin
+git -C "$HOME/.local/share/opencode/openwork-source" sparse-checkout set packages/opencode-plugin packages/remote-sessions
 ```
 
 ```jsonc
@@ -110,12 +110,29 @@ The plugin also ends the OpenWork session and removes the models and MCP servers
         "apiBaseUrl": "https://api.openworklabs.com", // self-hosted or enterprise OpenWork
         "providers": true,                            // false: no AI Gateway models
         "mcp": true,                                  // false: no OpenWork MCP servers
+        "remoteSessions": false,                      // true: explicitly approve remote prompts here
+        "label": "My OpenCode computer",               // optional remote target display name
         "refreshIntervalMs": 300000                   // how often to refresh (minimum 60000)
       }
     }
   ]
 }
 ```
+
+## Optional remote sessions
+
+**Signing in does not approve this machine for remote work.** Remote sessions are off by default. Only set `"remoteSessions": true` yourself when you want OpenWork's remote-session tools (including Slack and MCP) to create sessions and send prompts in this OpenCode Location. Your organization must also enable **Remote session targets**; the plugin cannot enable that rollout.
+
+The runner advertises only the directory where this plugin instance is loaded, with an opaque workspace ID and that Location's available native models. It uses the same native OpenCode host as your interactive work—no embedded OpenWork server, service discovery, local HTTP connection, or authentication override. Normal OpenCode permissions remain in effect. Permission and question waits are reported to the caller; answer them in OpenCode. The plugin never approves them for you.
+
+- Set `remoteSessions` back to `false` and reload the plugin to withdraw local approval. Sign-out, credential expiry, account/organization changes, and plugin unload stop remote polling and native control. Already admitted native sessions are not deleted or silently interrupted.
+- Runner health is inspectable through the controller's `inspectStatus()` and plugin storage at `remoteSessions/status/<directory hash>`. It records the last credentials, registration, inventory, recovery, or work failure phase without credentials, prompts, or provider exception text.
+- Runner tokens renew in the background without clearing the durable delivery journal. Reconnecting reuses saved receipts and stable prompt IDs rather than creating or sending the same work twice. Interrupted creation is recovered by a deterministic native session ID; the returned session must match the original command metadata and approved directory before it is trusted.
+- A process-safe lock permits only one runner for the same actual directory. A live or suspended process's lock is never stolen; a dead process's marker can be reclaimed. An unreadable or incomplete lock fails closed.
+- **Transcript limitation:** OpenCode 2.0.26's plugin host exposes recent context after compaction, not full historical messages. Reads declare `historyScope: "context"`; unknown or compacted pagination cursors return an explicit error. Tool summaries and text are bounded and may be truncated.
+- Stop checks the latest native user message before calling OpenCode's interrupt API. The native host does not expose an atomic message-ID-guarded interrupt, so do not concurrently steer a remotely controlled session from another client if strict turn isolation is required.
+
+The published package bundles the shared remote-session core and has no runtime dependencies. Git source installs need both sparse-checkout directories shown above for remote sessions. An older sparse checkout still supports sign-in, models, and MCP while remote sessions are off; an opt-in missing the shared package reports an unavailable status in plugin storage at `remoteSessions/status` and logs recovery instructions without disabling those ordinary features.
 
 ## How it works
 

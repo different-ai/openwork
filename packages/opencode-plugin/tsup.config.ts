@@ -4,7 +4,7 @@ import { defineConfig } from "tsup"
 // OpenCode provides the plugin host, so the bundle is self-contained.
 export default defineConfig({
   clean: true,
-  dts: false,
+  dts: true,
   entry: { server: "src/server.ts" },
   format: ["esm"],
   platform: "node",

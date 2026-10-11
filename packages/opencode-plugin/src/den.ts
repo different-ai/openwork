@@ -104,7 +104,7 @@ export async function denRequest(
   fetcher: Fetch,
   session: DenSession,
   path: string,
-  init: { method?: "GET" | "POST"; body?: unknown } = {},
+  init: { method?: "GET" | "POST" | "PUT"; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<unknown> {
   assertAllowedApiBaseUrl(session.apiBaseUrl)
   const headers: Record<string, string> = {
@@ -121,7 +121,7 @@ export async function denRequest(
     headers,
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
     redirect: "error",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
   const body = await readJson(response)
   if (response.status === 401) throw new DenAuthError(response.status, path)

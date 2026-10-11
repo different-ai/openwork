@@ -5,7 +5,7 @@ import { isEmulatedClientWidth } from "../worlds/library.ts";
 
 const test = spec.world(opencodePluginSignIn, {
   timeout: 900_000,
-  needs: { commands: ["bun", "pnpm", "node", "tar"], placement: "local" },
+  needs: { commands: ["pnpm", "node", "git"] },
   resources: { surfaces: ["web"], services: ["den"] },
 });
 
@@ -141,7 +141,7 @@ test("a person signs OpenCode in from the browser despite one rate-limited token
     expect(result.stdout).toContain("Connected to OpenWork Cloud");
     const accounts = await world.run(["auth", "list"]);
     const listed = accounts.stdout.includes(world.den.admin.email);
-    const fault = world.tokenPollFault();
+    const fault = await world.tokenPollFault();
     const recovered = listed && fault.injected === 1 && fault.http429s === 1 && fault.authorizations === 1;
     evidence.recordAssertionEvidence(
       "OpenCode stores the approved account without restarting after the single throttle",
