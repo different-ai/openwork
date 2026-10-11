@@ -109,9 +109,9 @@ test("an owner chooses Workbot's model beyond the rounded settings card and can 
     // Keep the popup open in the evidence. The following trusted click's hit
     // test is the witness; positive DOM bounds alone also pass on clipped menus.
     await owner.screenshot();
-    const hit = await world.optionHitTest(4, { x: (option.left + option.right) / 2, y: center });
-    evidence.recordAssertionEvidence("the below-card choice owns its pointer target before automatic scrolling", `option center ${center.toFixed(1)}px; card bottom ${card.bottom.toFixed(1)}px; native hit belongs to this option: ${hit.hitsExpectedOption}`, hit.hitsExpectedOption);
-    expect(hit.hitsExpectedOption).toBe(true);
+    const hit = await world.optionHitTest(4);
+    evidence.recordAssertionEvidence("the below-card choice owns its pointer target before automatic scrolling", `option center ${center.toFixed(1)}px; card bottom ${card.bottom.toFixed(1)}px; native hit belongs to this option: ${hit.hitsExpectedElement}`, hit.hitsExpectedElement);
+    expect(hit.hitsExpectedElement).toBe(true);
     await owner.click({ role: "option", label: chosen.name });
     await expectListClosed(owner, page);
     await owner.see(chooser, { text: chosen.name });

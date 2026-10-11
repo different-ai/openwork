@@ -39,6 +39,12 @@ Copy and structure (P1, P2, P3, C1–C7):
 - Blocked/locked/permission-denied states styled as errors (destructive or
   red tokens) — C5. Capabilities removed by policy without a visible locked
   state or reason — P4.
+- Raw browser errors (`NotAllowedError`, clipboard exception messages, fetch
+  failures) shown as product copy instead of a plain outcome + next action;
+  retain diagnostics behind Technical details — C3, C6, T2.
+- Locked states missing the owner who can change access or the next action
+  (ask an administrator, open settings, reconnect); a lock alone is not a
+  recovery plan — P4, C5, C6.
 - ALL-CAPS eyebrow labels, `→` appended to button text, middle-dot meta
   strings used as decoration — C7.
 
@@ -47,6 +53,17 @@ Components and reuse (P5, S1–S6):
 - A hand-rolled button/input/select/dialog/popover/tooltip/menu where a
   `@/components` primitive exists (`<div onClick>` acting as a button, custom
   dropdown without keyboard handling, bespoke modal). Grep `apps/app/src/components/ui/` before reporting — P5.
+- Absolute in-place menus/listboxes inside overflow-hidden cards or scroll
+  containers: a large bounding box does not prove options are painted or
+  clickable. Use a portaled collision-aware Base UI/shared popup; require an
+  open-state screenshot and a native center hit witness before trusted click
+  lookup can auto-scroll the ancestor — P5, P10.
+- Fixed-width dialogs, popups or split rows without a small-screen plan
+  (max-width from available viewport, wrapping/min-width:0, bounded actions).
+  Check at 320px with 305px usable width and a short viewport. Compare document
+  scrollWidth to measured clientWidth, not scrollbar-inclusive innerWidth;
+  intended ellipsis with full accessible content is not clipping — P10, S2.
+- Raw checkbox/select controls where shared Switch/Checkbox/Select exist — P5.
 - Card nested inside a card or bordered tile inside a bordered tile — S1.
 - Inline chat widgets, MCP App frames, or artifact previews that add internal
   scrolling, tabs/nested navigation, or more than two primary actions — S4.
@@ -56,6 +73,10 @@ Components and reuse (P5, S1–S6):
 
 Visual system (V1–V7):
 
+- Faint body/label ink (`text-gray-400` and equivalent light neutrals or
+  low-opacity text), or 10px-and-smaller labels. Prefer readable semantic ink
+  and the shared type scale; screenshots must show the actual state/background
+  rather than judging hidden retained popup DOM — V1, V2.
 - Hardcoded `#000`, `#fff`, or hex/rgb literals in component code where a
   semantic token (`--background`, `--border`, `--muted-foreground`,
   `--dls-*`, Tailwind theme colors) exists; pure black/white text — V2.

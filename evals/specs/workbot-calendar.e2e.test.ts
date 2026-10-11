@@ -5,15 +5,16 @@ import { workbotCalendar, workbotCalendarShortList } from "../worlds/workbot-cal
 const modelTrigger = { label: "Model" };
 const modelSearch = { label: "Search models" };
 
-async function menuLayout(probe: Probe, height: number) {
+async function menuLayout(probe: Probe, height: number, readOverflow: Awaited<ReturnType<typeof workbotCalendar>>["documentOverflow"]) {
   // Include the outer popup when present, plus both the list and search on the old implementation so a
   // baseline run fails on observed geometry rather than just on a new implementation-specific marker.
   const snapshot = await probe.dom('[data-workbot-model-popup], [role="listbox"], input[aria-label="Search models"]');
   const rects = snapshot.elements.map((element) => element.rect);
   const fits = rects.length > 0 && rects.every((rect) => rect.width > 0 && rect.height > 0
     && rect.left >= 7 && rect.top >= 7 && rect.right <= snapshot.viewportWidth - 7 && rect.bottom <= height - 7);
-  return { fits, noSidewaysScroll: snapshot.documentWidth <= snapshot.viewportWidth,
-    description: `${snapshot.viewportWidth}×${height}; page ${snapshot.documentWidth}px; floating bounds ${JSON.stringify(rects.map((rect) => ({ left: Math.round(rect.left), top: Math.round(rect.top), right: Math.round(rect.right), bottom: Math.round(rect.bottom) })))}` };
+  const overflow = await readOverflow();
+  return { fits, noSidewaysScroll: overflow.noSidewaysScroll,
+    description: `${snapshot.viewportWidth}×${height}; page ${overflow.documentWidth}px; usable ${overflow.clientWidth}px; floating bounds ${JSON.stringify(rects.map((rect) => ({ left: Math.round(rect.left), top: Math.round(rect.top), right: Math.round(rect.right), bottom: Math.round(rect.bottom) })))}` };
 }
 
 async function highlightModel(user: User, probe: Probe, name: string) {
@@ -122,7 +123,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     await user.screenshot();
     const choices = await count('[role="listbox"] [role="option"]');
     const logos = await count('[role="listbox"] [role="option"] svg[role="img"]');
-    const layout = await menuLayout(probe, 960);
+    const layout = await menuLayout(probe, 960, world.documentOverflow);
     const selected = (await probe.dom('[role="option"][aria-selected="true"]')).elements[0]?.text ?? "";
     evidence.recordAssertionEvidence("the complete grouped list stays on screen", `${choices} choices, ${logos} vendor logos; selected "${selected}"; ${layout.description}`, choices === world.pickerModels.length + 1 && logos === world.pickerModels.length && /Cloud default/.test(selected) && layout.fits && layout.noSidewaysScroll);
     expect(choices).toBe(world.pickerModels.length + 1);
@@ -164,7 +165,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     await highlightModel(user, probe, lastModel.name);
     await user.screenshot();
     const reachable = await lastModelIsInView(probe, lastModel.name);
-    const layout = await menuLayout(probe, 960);
+    const layout = await menuLayout(probe, 960, world.documentOverflow);
     evidence.recordAssertionEvidence("arrow navigation scrolls the model list to its last choice", `last choice "${lastModel.name}" fully inside list ${reachable}; ${layout.description}`, reachable && layout.fits && layout.noSidewaysScroll);
     expect(reachable).toBe(true);
     expect(layout.fits && layout.noSidewaysScroll).toBe(true);
@@ -228,7 +229,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
       await user.see(modelSearch);
       await highlightModel(user, probe, lastModel.name);
       await user.screenshot();
-      const layout = await menuLayout(probe, viewport.height);
+      const layout = await menuLayout(probe, viewport.height, world.documentOverflow);
       const reachable = await lastModelIsInView(probe, lastModel.name);
       const form = (await probe.dom("[data-calendar-create]")).elements[0]?.rect;
       const formFits = Boolean(form && form.left >= 7 && form.top >= 7 && form.right <= viewport.width - 7 && form.bottom <= viewport.height - 7);
@@ -248,7 +249,7 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
       await user.see(modelSearch, { value: "" });
       await highlightModel(user, probe, lastModel.name);
       await user.screenshot();
-      const layout = await menuLayout(probe, viewport.height);
+      const layout = await menuLayout(probe, viewport.height, world.documentOverflow);
       const reachable = await lastModelIsInView(probe, lastModel.name);
       const editor = (await probe.dom("[data-calendar-edit]")).elements[0]?.rect;
       const editorFits = Boolean(editor && editor.left >= 7 && editor.top >= 7 && editor.right <= viewport.width - 7 && editor.bottom <= viewport.height - 7);
@@ -298,7 +299,7 @@ shortListTest("a Workbot member chooses from a short model list with Home, End, 
     await user.notSee(modelSearch);
     await user.screenshot();
     const choices = (await probe.dom('[role="listbox"] [role="option"]')).elements.length;
-    const layout = await menuLayout(probe, 960);
+    const layout = await menuLayout(probe, 960, world.documentOverflow);
     evidence.recordAssertionEvidence("a short list keeps all choices and provider marks visible", `${choices} choices, no search field; ${layout.description}`, choices === 3 && layout.fits && layout.noSidewaysScroll);
     expect(choices).toBe(3);
     expect(layout.fits && layout.noSidewaysScroll).toBe(true);

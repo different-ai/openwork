@@ -1,9 +1,10 @@
 import { denFetch } from "@openwork/behaviors";
 import { chrome } from "@openwork/hosts";
-import { evaluateOnSurface, setViewport } from "@openwork/cdp";
+import { setViewport } from "@openwork/cdp";
 import { startMockGoogle } from "@openwork/labs";
 import { localMysqlIsRunning, SkipError, type Place, type Seed } from "@openwork/env";
 import { bootWorkbot, signInWorkbot } from "../../worlds/lib/workbot.ts";
+import { documentOverflow, popupPaintState } from "../helpers/ui-witnesses.ts";
 import { startCalendarMock } from "../packages/labs/src/calendar-mock.mjs";
 import { CALENDAR_ACCOUNT, calendarDenEnv, connectCalendarAccount } from "./automation-calendar.ts";
 import { isRecord } from "./library.ts";
@@ -82,32 +83,8 @@ export async function workbotCalendar(_seed: Seed, { place }: { place: Place }, 
     return {
       app, url: world.workbotUrl,
       pickerModels, pickerProviderName: PICKER_PROVIDER, pickerProviderId,
-      // probe.dom omits computed visibility and hidden ancestors. Observe paint, not unmount: Base UI Select
-      // intentionally keeps hidden options registered for typeahead when focus returns to its trigger.
-      modelListPaintState: () => evaluateOnSurface(app, () => {
-        const trigger = document.querySelector('[aria-label="Model"][aria-expanded]');
-        const lists = Array.from(document.querySelectorAll('[role="listbox"]'), (list) => {
-          const rect = list.getBoundingClientRect();
-          let hiddenBy: string | null = null;
-          for (let ancestor: Element | null = list; ancestor; ancestor = ancestor.parentElement) {
-            const style = getComputedStyle(ancestor);
-            if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || Number(style.opacity) === 0) {
-              hiddenBy = `${ancestor.tagName.toLowerCase()}: display ${style.display}, visibility ${style.visibility}, opacity ${style.opacity}`;
-              break;
-            }
-          }
-          return {
-            width: rect.width, height: rect.height, hiddenBy,
-            painted: hiddenBy === null && rect.width > 0 && rect.height > 0
-              && rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight,
-          };
-        });
-        return {
-          retained: lists.length, painted: lists.filter((list) => list.painted).length, lists,
-          triggerExists: trigger !== null, expanded: trigger?.getAttribute("aria-expanded") === "true",
-          triggerFocused: trigger === document.activeElement,
-        };
-      }),
+      modelListPaintState: () => popupPaintState(app, '[role="listbox"]', '[aria-label="Model"][aria-expanded]'),
+      documentOverflow: () => documentOverflow(app),
       /** Den's effective features for Acme (both Calendars are separate switches). */
       async features() {
         const org = await denFetch(world.den.admin, "/v1/org", { headers: { ...admin, "x-openwork-org-id": world.orgId } });
