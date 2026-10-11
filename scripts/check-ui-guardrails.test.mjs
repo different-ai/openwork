@@ -26,6 +26,7 @@ for (const [name, source, rule] of [
 for (const [name, source] of [
   ["shared controls", '<><Switch /><Select><SelectContent /></Select><Input type="text" /></>'],
   ["Base UI portal", '<Select.Portal><div role="listbox" className="absolute" /></Select.Portal>'],
+  ["shared portal", '<DropdownMenuPortal><div role="menu" className="absolute" /></DropdownMenuPortal>'],
   ["React portal", 'createPortal(<div role="menu" className="absolute" />, document.body)'],
   ["shared content portal", '<PopoverContent><ul role="menu" className="absolute" /></PopoverContent>'],
   ["static list", '<ul role="listbox" className="relative" />'],

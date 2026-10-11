@@ -32,7 +32,7 @@ function attribute(node, name) {
   return node.attributes.properties.find((prop) => ts.isJsxAttribute(prop) && prop.name.getText() === name)?.initializer;
 }
 function isPortal(node) {
-  return (ts.isJsxElement(node) && /(?:^|\.)(?:Portal|SelectContent|DropdownMenuContent|PopoverContent)$/.test(node.openingElement.tagName.getText()))
+  return (ts.isJsxElement(node) && /(?:^|\.)(?:Portal|SelectPortal|DropdownMenuPortal|PopoverPortal|DialogPortal|SelectContent|DropdownMenuContent|PopoverContent)$/.test(node.openingElement.tagName.getText()))
     || (ts.isCallExpression(node) && /(?:^|\.)createPortal$/.test(node.expression.getText()));
 }
 function absolute(node) {
