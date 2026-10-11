@@ -1,0 +1,39 @@
+name: Marketplace artifact checks
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - "integrations/agent-plugins/**"
+      - "integrations/marketplace-submissions/**"
+      - "scripts/marketplaces/**"
+      - ".agents/plugins/**"
+      - ".claude-plugin/**"
+      - ".cursor-plugin/**"
+      - ".github/workflows/ci-marketplace-artifacts.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "integrations/agent-plugins/**"
+      - "integrations/marketplace-submissions/**"
+      - "scripts/marketplaces/**"
+      - ".agents/plugins/**"
+      - ".claude-plugin/**"
+      - ".cursor-plugin/**"
+      - ".github/workflows/ci-marketplace-artifacts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  marketplace-artifacts:
+    name: Marketplace preparation unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Check preparation helpers without live accounts or network
+        run: node --test scripts/marketplaces/*.test.mjs

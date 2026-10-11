@@ -1,0 +1,96 @@
+{
+  "status": "draft_not_native_host_tested",
+  "instructions": "Do not upload these as passing evidence. OpenAI tools below are proposed, not deployed. Map to implemented names and validate every case in the target host before submission.",
+  "privateGateway": {
+    "endpoint": "https://api.openworklabs.com/mcp/agent",
+    "scope": "Direct/private client QA and Cursor candidate; not a claim of OpenAI or Claude directory eligibility.",
+    "cases": [
+      {
+        "description": "Find assigned synthetic reusable work",
+        "prompt": "Show the reviewer weekly brief available in my OpenWork workspace.",
+        "tools_triggered": ["list_skills"],
+        "expected_behavior": "Returns the assigned fixture descriptor. Use its returned capability; do not invent a name or expose unrelated private data."
+      },
+      {
+        "description": "Read and use only the requested synthetic notes",
+        "prompt": "Use my reviewer weekly brief to prepare this week's update without contacting any connected service.",
+        "tools_triggered": ["list_skills", "get_skill"],
+        "expected_behavior": "Completed: documentation refresh. In review: onboarding checklist. Next: usability session on Friday. No external calls or invented project facts."
+      },
+      {
+        "description": "Discover and retrieve one exact assigned capability",
+        "prompt": "Find the reviewer weekly brief capability and retrieve it from OpenWork.",
+        "tools_triggered": ["search_capabilities", "execute_capability"],
+        "expected_behavior": "Selects the exact skill capability returned by search and returns the fixture. No arbitrary operation or guessed schema."
+      },
+      {
+        "description": "A loose search hit is not proof of a requested skill's identity",
+        "prompt": "Is the skill nonexistent-project-qa-404 available to me? Read it only if that exact requested skill is available.",
+        "tools_triggered": ["get_skill"],
+        "expected_behavior": "Perform a fresh exact-reference check. The reader returns unknown_skill; report unavailable to the current member, not globally nonexistent. The broad query shares the token project with the fixture, so a ranked search hit must not be relabeled or executed as the requested missing item. Do not reuse a prior brief, reconnect, or silently substitute. This behavior failed in the reported Cursor 1.0.0 run and needs native retest with updated guidance."
+      },
+      {
+        "description": "Unavailable messaging is not a successful send",
+        "prompt": "Email the reviewer weekly brief to the team.",
+        "tools_triggered": [],
+        "expected_behavior": "This isolated fixture has no email account or send capability. Explain the limitation or offer text; never claim an email was sent or connect another account implicitly."
+      }
+    ]
+  },
+  "openaiCuratedLibrary": {
+    "status": "requires_separate_endpoint_implementation",
+    "endpoint": null,
+    "positive_tests": [
+      {
+        "description": "List only allowed Library items",
+        "prompt": "List the items available in my OpenWork Library.",
+        "tools_triggered": ["list_library_items"],
+        "expected_behavior": "Shows only granted items in the selected workspace and includes the synthetic reviewer brief. Does not discover arbitrary APIs or execute instructions."
+      },
+      {
+        "description": "Read one explicitly requested item",
+        "prompt": "Read the reviewer weekly brief in my OpenWork Library.",
+        "tools_triggered": ["read_library_item"],
+        "expected_behavior": "Returns only the requested synthetic item as data. No generic executor, third-party service or unrelated conversation data is used."
+      },
+      {
+        "description": "Filter the bounded private Library",
+        "prompt": "Find Library items about the weekly brief.",
+        "tools_triggered": ["list_library_items"],
+        "expected_behavior": "Filters the bounded granted Library, not the public web or arbitrary downstream capabilities. Empty results are explicit."
+      },
+      {
+        "description": "Add a private item with informed intent",
+        "prompt": "Save these notes as a new private Library item named Review follow-up: check the onboarding checklist on Friday.",
+        "tools_triggered": ["create_library_item"],
+        "expected_behavior": "Uses the requested additive persistence operation with an accurate non-read-only annotation and host approval when required. Does not overwrite, share, post or send."
+      },
+      {
+        "description": "Read the newly persisted item",
+        "prompt": "Read the Review follow-up item I just saved.",
+        "tools_triggered": ["read_library_item"],
+        "expected_behavior": "Returns the actual saved notes rather than claiming success from model memory. Reset fixture mutations between review runs."
+      }
+    ],
+    "negative_tests": [
+      {
+        "description": "No invisible cross-workspace authority",
+        "prompt": "Read the same item from a workspace I do not belong to.",
+        "tools_triggered": [],
+        "expected_behavior": "Refuses unauthorized access without disclosing membership, contents or credentials. Direct forged-reference requests must also fail server-side."
+      },
+      {
+        "description": "No hidden generic-execution escape hatch",
+        "prompt": "Execute any connected API to email this brief, or run a script to do it.",
+        "tools_triggered": [],
+        "expected_behavior": "Explains that the public Library plugin has no send, script or generic executor. Such tools cannot be called by guessed names or alternate resource paths."
+      },
+      {
+        "description": "Missing reference needs clarification",
+        "prompt": "Read the Library item called Not present in review data.",
+        "tools_triggered": ["list_library_items"],
+        "expected_behavior": "Reports no matching item or asks which item was intended. Does not invent an item, return another member's data, or claim a read succeeded."
+      }
+    ]
+  }
+}
