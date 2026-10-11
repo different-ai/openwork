@@ -128,6 +128,16 @@
               ],
               "description": "Audit logs: Organization admins can read and configure audit logs. Capture still needs an audit entitlement. Renders DEN_FEATURE_AUDIT_LOGS."
             },
+            "auditLogsCompact": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Audit logs: compact Den rows: Organization admins read audit operations and capture settings in compact Den rows, with changes and technical details expanded on demand. Renders DEN_FEATURE_AUDIT_LOGS_COMPACT."
+            },
             "orgManagedDashboards": {
               "enum": [
                 "",

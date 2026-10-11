@@ -38,6 +38,7 @@ claimed. Raw PR material and historical images are not committed here.
 | Desktop upgrade | Optional notice below chrome, background continuity, explicit recovery, preserved backups/history/draft | `engine-v1-history-upgrade.e2e.test.ts` |
 | Plugin sign-in | Compact approval heading with unchanged trusted client identity and consent | `opencode-plugin-sign-in.e2e.test.ts` |
 | Shared headers | Compact headings, unchanged content/navigation and immediate rollback | `den-flat-page-headers.e2e.test.ts` |
+| Audit history | Shared operation and capture settings rows, expandable changes, local timestamps, muted diagnostic disclosure | `audit-logs.e2e.test.ts` |
 
 Journey files are under `evals/specs/`. Their named steps, open-control
 screenshots, observed numbers, and negative identities form the review
@@ -65,6 +66,10 @@ absence. Neither observation workaround weakens the actual UI claim.
   before its implementation. It changes only presentation; turning it off
   restores the existing header without changing objects, permissions,
   navigation, or running work. No production rollout is changed by this audit.
+- `auditLogsCompact` is declared **off** on cloud and self-hosted. It changes
+  only audit presentation, through Den's resolved feature map. Turning it off
+  restores the previous operation table and capture settings; recording,
+  retained evidence, filters, redaction and permission checks remain unchanged.
 - Other repairs preserve their existing feature gates and server contracts.
 - `Cloud default` is the organization's cloud-agent default, not the free
   `Auto` model. Explicit Automation model choices remain intact.
