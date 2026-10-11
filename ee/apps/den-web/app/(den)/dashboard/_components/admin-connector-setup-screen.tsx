@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { orgFeatureEnabled, getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
 import { useConnectorSetup } from "./connector-setup";
@@ -14,7 +14,7 @@ import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
 import { ConfirmDialog } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { useSaveConnectionAccess } from "./item-sharing";
-import { DEFAULT_API_KEY_AUTH_SCHEME, type ExternalMcpApiKeyAuthScheme, type ExternalMcpCredentialMode, useUpdateMcpConnection } from "./mcp-connections-data";
+import { DEFAULT_API_KEY_AUTH_SCHEME, type ExternalMcpApiKeyAuthScheme, type ExternalMcpCredentialMode, useUpdateMcpConnection, useCheckMcpConnection } from "./mcp-connections-data";
 import { usesMemberApiKey } from "./member-api-key";
 import { SetupChecks } from "./setup-checks";
 import { WhoCanUseIt } from "./who-can-use-it";
@@ -75,6 +75,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     : false;
   const { target, loading, missing, failed } = useConnectorTarget(catalogId);
   const updateConnection = useUpdateMcpConnection();
+  const checkConnection = useCheckMcpConnection();
   const saveAccess = useSaveConnectionAccess();
   const viewerId = orgContext?.currentMember.id ?? null;
   const [mode, setMode] = useState<ExternalMcpCredentialMode | null>(null);
@@ -180,9 +181,14 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     setError(null);
     try {
       await saveAccess(connection.id, access);
+      const readinessEnabled = orgContext && orgFeatureEnabled(orgContext, "connectorReadiness");
+      // Individual-key setup publishes the connection; each person's key is
+      // checked when they enroll it, not against an admin's nonexistent key.
+      const checked = readinessEnabled && !usesIndividualKeys
+        ? await checkConnection.mutateAsync(connection.id) : null;
       const connectionId = connection.id;
       toast({
-        title: `${name} is ready`,
+        title: readinessEnabled && usesIndividualKeys ? `${name} is set up` : checked?.status === "could_not_verify" ? `${name} couldn't be verified` : `${name} is ready`,
         description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
@@ -215,7 +221,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={usesIndividualKeys ? `${name} is ready` : `${name} passed all ${checks.length} checks`}
+        title={usesIndividualKeys ? orgContext && orgFeatureEnabled(orgContext, "connectorReadiness") ? `${name} is set up` : `${name} is ready` : `${name} passed all ${checks.length} checks`}
       />
       {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">

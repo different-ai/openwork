@@ -14,6 +14,10 @@ import { ItemPage } from "./item-header";
 import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { ConnectorLogoStrip } from "./library-add-dialog";
+import { DenButton } from "../../_components/ui/button";
+import { connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
+import { useCheckMcpConnection } from "./mcp-connections-data";
+import { getOrgAccessFlags } from "../../_lib/den-org";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
 import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 
@@ -44,6 +48,8 @@ export function AdminConnectorsScreen() {
   const connections = useMcpConnections("manageable");
   const usable = useMcpConnections("usable");
   const deleteConnection = useDeleteMcpConnection();
+  const checkConnection = useCheckMcpConnection();
+  const canCheck = orgContext ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageConnections : false;
   const prefetchCatalog = usePrefetchConnectorCatalog();
   const [query, setQuery] = useState("");
   const viewerId = orgContext?.currentMember.id ?? null;
@@ -61,6 +67,7 @@ export function AdminConnectorsScreen() {
     <ItemPage testId="admin-connectors">
       <DenPageHeader
         title="Connectors"
+        className={all.some((connection) => connection.readiness !== undefined) ? "[&>div:first-child]:basis-full sm:[&>div:first-child]:basis-0" : undefined}
         description="Apps your organization's AI can use."
         action={empty ? undefined : (
           <LinkButton variant="primary" href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>
@@ -88,6 +95,7 @@ export function AdminConnectorsScreen() {
             <ItemPanel>
               {visible.map((connection) => {
                 const href = getMcpConnectionRoute(orgSlug, connection.id);
+                const readinessState = connectorReadinessState(connection);
                 const unfinished = connectorSetupUnfinished(connection);
                 const status = unfinished
                   ? "Setup not finished"
@@ -103,15 +111,22 @@ export function AdminConnectorsScreen() {
                       href={href}
                       logo={<ConnectorLogo name={connection.name} url={connection.url} />}
                       title={connection.name}
-                      description={signInNote}
-                      status={status}
-                      action={unfinished ? (
+                      description={readinessState ? connectorReadinessNote(connection) ?? signInNote : signInNote}
+                      status={readinessState ?? status}
+                      statusOnNarrow={readinessState !== null}
+                      wideAction={readinessState !== null}
+                      wrapDescription={readinessState === "Couldn't verify"}
+                      action={readinessState === "Couldn't verify" ? (
+                        <DenButton size="xs" variant="secondary" disabled={!canCheck || checkConnection.isPending} title={!canCheck ? "An admin can check this connection." : undefined}
+                          onClick={() => void checkConnection.mutateAsync(connection.id).catch(() => toast({ title: "Could not check this connection", description: "Try again." }))}>Check again</DenButton>
+                      ) : unfinished ? (
                         <LinkButton size="xs" href={finishSetupHref(orgSlug, connection)}>Finish</LinkButton>
                       ) : (
                         <ItemMenu
                           label={`More for ${connection.name}`}
                           entries={[
                             { label: "Open", href },
+                            ...(readinessState && canCheck ? [{ label: "Check again", onSelect: () => void checkConnection.mutateAsync(connection.id).catch(() => toast({ title: "Could not check this connection", description: "Try again." })) }] : []),
                             ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID
                               ? []
                               : [removeEntry(connection.name, () => remove(connection))]),

@@ -843,6 +843,7 @@
               "managedDeployments",
               "installLinks",
               "mcpConnections",
+              "connectorReadiness",
               "driveResumableUploads",
               "implicitCloudSkills",
               "denFlatPageHeaders",
@@ -1052,6 +1053,9 @@
                     "mcpConnections": {
                       "type": "boolean"
                     },
+                    "connectorReadiness": {
+                      "type": "boolean"
+                    },
                     "driveResumableUploads": {
                       "type": "boolean"
                     },
@@ -1141,6 +1145,7 @@
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
+                    "connectorReadiness",
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
@@ -1341,6 +1346,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "connectorReadiness": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "driveResumableUploads": {
                       "type": "object",
                       "properties": {
@@ -2802,6 +2863,7 @@
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
+                    "connectorReadiness",
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
@@ -3210,6 +3272,9 @@
                     "mcpConnections": {
                       "type": "boolean"
                     },
+                    "connectorReadiness": {
+                      "type": "boolean"
+                    },
                     "driveResumableUploads": {
                       "type": "boolean"
                     },
@@ -3299,6 +3364,7 @@
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
+                    "connectorReadiness",
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
@@ -3499,6 +3565,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "connectorReadiness": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "driveResumableUploads": {
                       "type": "object",
                       "properties": {
@@ -4960,6 +5082,7 @@
                     "managedDeployments",
                     "installLinks",
                     "mcpConnections",
+                    "connectorReadiness",
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
@@ -10407,6 +10530,7 @@
               "managedDeployments",
               "installLinks",
               "mcpConnections",
+              "connectorReadiness",
               "driveResumableUploads",
               "implicitCloudSkills",
               "denFlatPageHeaders",
@@ -16160,6 +16284,51 @@
           "query"
         ]
       },
+      "ExternalMcpConnectionReadiness": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "could_not_verify"
+            ]
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          },
+          "lastSuccessfulAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "checkedAt",
+          "lastSuccessfulAt",
+          "reason"
+        ]
+      },
       "ExternalMcpConnectionRequiredBy": {
         "type": "object",
         "properties": {
@@ -16203,6 +16372,16 @@
       "ExternalMcpConnectionResponse": {
         "type": "object",
         "properties": {
+          "readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExternalMcpConnectionReadiness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -16618,6 +16797,22 @@
           "disabledTools"
         ]
       },
+      "ExternalMcpConnectionNotReadyError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "const": "connection_not_ready"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      },
       "ExternalMcpConnectionToolAnnotations": {
         "type": "object",
         "properties": {
@@ -16689,22 +16884,6 @@
         "required": [
           "tools",
           "policy"
-        ]
-      },
-      "ExternalMcpConnectionNotReadyError": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string",
-            "const": "connection_not_ready"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "error",
-          "message"
         ]
       },
       "ExternalMcpDiagnostic": {
@@ -17250,6 +17429,16 @@
       "ExternalMcpConnectionCreatedResponse": {
         "type": "object",
         "properties": {
+          "readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExternalMcpConnectionReadiness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -17664,6 +17853,16 @@
       "ExternalMcpConnectionUpdatedResponse": {
         "type": "object",
         "properties": {
+          "readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExternalMcpConnectionReadiness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -27021,6 +27220,9 @@
                         "mcpConnections": {
                           "type": "boolean"
                         },
+                        "connectorReadiness": {
+                          "type": "boolean"
+                        },
                         "driveResumableUploads": {
                           "type": "boolean"
                         },
@@ -27110,6 +27312,7 @@
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
+                        "connectorReadiness",
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
@@ -27310,6 +27513,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "connectorReadiness": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "driveResumableUploads": {
                           "type": "object",
                           "properties": {
@@ -28771,6 +29030,7 @@
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
+                        "connectorReadiness",
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
@@ -28924,6 +29184,9 @@
                         "mcpConnections": {
                           "type": "boolean"
                         },
+                        "connectorReadiness": {
+                          "type": "boolean"
+                        },
                         "driveResumableUploads": {
                           "type": "boolean"
                         },
@@ -29013,6 +29276,7 @@
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
+                        "connectorReadiness",
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
@@ -29213,6 +29477,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "connectorReadiness": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "driveResumableUploads": {
                           "type": "object",
                           "properties": {
@@ -30674,6 +30994,7 @@
                         "managedDeployments",
                         "installLinks",
                         "mcpConnections",
+                        "connectorReadiness",
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
@@ -81975,6 +82296,108 @@
             }
           }
         },
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-connections/{connectionId}/check": {
+      "post": {
+        "operationId": "postV1McpConnectionsByConnectionIdCheck",
+        "tags": [
+          "Capability Sources"
+        ],
+        "summary": "Check and record connection readiness",
+        "description": "Checks initialize and tools/list with Den-managed credentials, without executing tools. Stores the result and time. Requires connections.manage and connectorReadiness.",
+        "responses": {
+          "200": {
+            "description": "Recorded readiness check.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "readiness": {
+                      "$ref": "#/components/schemas/ExternalMcpConnectionReadiness"
+                    }
+                  },
+                  "required": [
+                    "readiness"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "This connection cannot be checked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Connection management permission required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection or feature disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalMcpConnectionNotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Sign in or finish setup before checking.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalMcpConnectionNotReadyError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connectionId",
+            "schema": {
+              "format": "typeid",
+              "type": "string",
+              "minLength": 30,
+              "maxLength": 30
+            },
+            "required": true,
+            "description": "Den TypeID with 'emc_' prefix and a 26-character base32 suffix."
+          }
+        ],
         "security": [
           {
             "denApiKey": []

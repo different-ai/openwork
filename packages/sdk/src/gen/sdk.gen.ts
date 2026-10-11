@@ -808,6 +808,8 @@ import type {
   PostV1MarketplacesByMarketplaceIdRestoreResponses,
   PostV1MarketplacesErrors,
   PostV1MarketplacesResponses,
+  PostV1McpConnectionsByConnectionIdCheckErrors,
+  PostV1McpConnectionsByConnectionIdCheckResponses,
   PostV1McpConnectionsByConnectionIdDisconnectErrors,
   PostV1McpConnectionsByConnectionIdDisconnectMyAccountErrors,
   PostV1McpConnectionsByConnectionIdDisconnectMyAccountResponses,
@@ -11149,6 +11151,29 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Check and record connection readiness
+   *
+   * Checks initialize and tools/list with Den-managed credentials, without executing tools. Stores the result and time. Requires connections.manage and connectorReadiness.
+   */
+  public postV1McpConnectionsByConnectionIdCheck<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1McpConnectionsByConnectionIdCheckResponses,
+      PostV1McpConnectionsByConnectionIdCheckErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/check",
+      ...options,
+      ...params,
     });
   }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { z } from "zod";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -49,7 +50,31 @@ export type ExternalMcpRequiredBy = {
   name: string;
 };
 
+export type ConnectionReadiness = {
+  status: "ready" | "could_not_verify";
+  checkedAt: string;
+  lastSuccessfulAt: string | null;
+  reason: string | null;
+};
+
+export function useCheckMcpConnection() {
+  const { orgId } = useOrgDashboard();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (connectionId: string) => {
+      const { response, payload } = await requestJson(`/v1/mcp-connections/${encodeURIComponent(connectionId)}/check`, {
+        method: "POST", headers: getOrgScopeHeaders(requireOrgId(orgId)),
+      }, 30000);
+      if (!response.ok) throw getRequestError(payload, response, "Could not check this connection. Try again.");
+      return z.object({ readiness: z.object({ status: z.enum(["ready", "could_not_verify"]), checkedAt: z.string(), reason: z.string().nullable() }) }).parse(payload).readiness;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+  });
+}
+
 export type ExternalMcpConnection = {
+  /** Absent when connectorReadiness is off; null means no stored check. */
+  readiness?: ConnectionReadiness | null;
   id: string;
   name: string;
   url: string;
