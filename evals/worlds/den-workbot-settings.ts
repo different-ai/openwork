@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { localMysqlIsRunning, SkipError, type Place, type Seed } from "@openwork/env";
+import { preScrollCenterHitTest } from "../helpers/ui-witnesses.ts";
 import { enableOrganizationCapabilities } from "./dashboards.ts";
 import { isRecord, records } from "./library.ts";
 
@@ -91,21 +92,7 @@ export async function denWorkbotSettings(seed: Seed, { place }: { place: Place }
     return {
       den, web, reader, readerWeb, orgId, models, defaultModel,
       runnerRequests: () => requests.map((request) => ({ ...request })),
-      async optionHitTest(index: number, point: { x: number; y: number }) {
-        // Read-only CDP hit testing happens before user.click's automatic scrolling.
-        // scrollIntoView can otherwise scroll an overflow-hidden card and accidentally
-        // make a clipped option hittable even though a person cannot scroll that card.
-        const document = await web.client.send("DOM.getDocument", {});
-        if (!isRecord(document) || !isRecord(document.root) || typeof document.root.nodeId !== "number") throw new Error("Missing document node");
-        const options = await web.client.send("DOM.querySelectorAll", { nodeId: document.root.nodeId, selector: '[role="option"]' });
-        const nodeId = isRecord(options) && Array.isArray(options.nodeIds) ? options.nodeIds[index] : undefined;
-        if (typeof nodeId !== "number") throw new Error("Missing below-card model option");
-        const option = await web.client.send("DOM.describeNode", { nodeId, depth: -1 });
-        const hit = await web.client.send("DOM.getNodeForLocation", { x: Math.round(point.x), y: Math.round(point.y) });
-        const backendNodeId = isRecord(hit) && typeof hit.backendNodeId === "number" ? hit.backendNodeId : null;
-        const containsHit = (node: unknown): boolean => isRecord(node) && (node.backendNodeId === backendNodeId || records(node.children).some(containsHit));
-        return { hitsExpectedOption: backendNodeId !== null && isRecord(option) && containsHit(option.node) };
-      },
+      optionHitTest: (index: number) => preScrollCenterHitTest(web, '[role="option"]', index),
       async [Symbol.asyncDispose]() { await stopRunner(); },
     };
   } catch (error) {
