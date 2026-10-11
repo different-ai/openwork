@@ -9,7 +9,7 @@ import { ProjectFilter } from "./project-filter";
 import { StatCard } from "./stat-card";
 import { TrendChart } from "./trend-chart";
 import { useAnalytics, useProjectOptions } from "./use-analytics";
-import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "./analytics-layout";
+import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsLoading, AnalyticsPageHeader, analyticsPageClass, analyticsIntegratedPageClass, analyticsSurfaceClass, useAnalyticsIntegrated } from "./analytics-layout";
 import { getMembersRoute } from "../../../_lib/den-org";
 import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
@@ -44,6 +44,7 @@ function selectionShare(value: number, defaultCount: number, manualCount: number
 export function AnalyticsScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
   const [projectValue, setProjectValue] = useState("");
+  const integrated = useAnalyticsIntegrated();
 
   // Server enforces the same gate with a 402 on /v1/telemetry/analytics
   // (entitlements.ts); this mirrors the SSO / desktop policies screens.
@@ -65,7 +66,7 @@ export function AnalyticsScreen() {
   const manualModelSessions = data?.models.selection30d.manual ?? 0;
 
   return (
-    <div className={analyticsPageClass}>
+    <div className={integrated ? analyticsIntegratedPageClass : analyticsPageClass}>
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="adoption"
         title="Usage & adoption"
         action={!locked ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
@@ -73,7 +74,7 @@ export function AnalyticsScreen() {
       {locked ? (
         <EnterprisePlanNotice feature="Usage analytics" detail="Team usage is unavailable on this plan." />
       ) : isError && !data ? <AnalyticsErrorState title="Couldn't load analytics" onRetry={() => void refetch()} retrying={isFetching} />
-      : noActivity ? (
+      : integrated && isLoading ? <AnalyticsLoading label="Loading analytics" /> : noActivity ? (
         <div className={analyticsSurfaceClass} data-testid="analytics-no-activity">
           <AnalyticsEmptyState title="No activity yet" icon={Activity}
             action={<DenButton variant="secondary" href={getMembersRoute(activeOrg?.slug)}>Invite your team</DenButton>}>
@@ -82,7 +83,7 @@ export function AnalyticsScreen() {
         </div>
       ) : (
       <>
-      {isError ? <DenNotice tone="error" message="Could not refresh analytics. Showing the last available data." /> : null}
+      {isError ? <DenNotice tone={integrated ? "neutral" : "error"} presentation={integrated ? "inline" : "panel"} message="Could not refresh analytics. Showing the last available data." action={integrated ? <DenButton variant="secondary" size="sm" disabled={isFetching} onClick={() => void refetch()}>Retry</DenButton> : undefined} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
       <ProjectFilter options={projectOptions} value={projectValue} onValueChange={setProjectValue} />
       <span className="text-xs text-[#637291]">Trends over 12 weeks</span>
@@ -192,6 +193,7 @@ export function AnalyticsScreen() {
         <StatCard
           icon={<Activity className="h-5 w-5 text-[#E5484D]" />}
           title="Tasks failed"
+          attention={(data?.tasksFailed30d ?? 0) > 0}
           value={isLoading ? "…" : `${data?.tasksFailed30d ?? 0}`}
           sub={`${successRate(data?.tasksCompleted30d ?? 0, data?.tasksFailed30d ?? 0)} success rate over 30 days`}
           tone="amber"

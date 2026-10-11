@@ -3,6 +3,8 @@ import { runWorkflow, saveWorkflow } from "@openwork/behaviors";
 import { queryDenDatabase } from "@openwork/env";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { spec } from "@openwork/testkit";
+import { activityTransportFaults } from "../worlds/den-dashboard-activity-faults.ts";
+import { enableOrganizationCapabilities } from "../worlds/dashboards.ts";
 import { enterprisePlanNoticeMeasurements } from "../worlds/workflow-run-previews.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -32,6 +34,13 @@ const test = spec.world(async (seed) => {
   const den = await seed.den({ env: { DEN_PLAN_GATING_ENABLED: "true", DEN_ORG_MODE: "multi_org", STRIPE_SECRET_KEY: "" }, org: { name: "Workflow activity", members: { colleague: { name: "Teammate" }, planViewer: { name: "Analytics teammate" } } } });
   const organization = record((await seed.api(den.admin, "/v1/org")).body);
   const organizationId = field(organization.organization, "id");
+  await enableOrganizationCapabilities(seed, den.admin, { denFlatPageHeaders: true }, organizationId);
+  const setAnalyticsIntegrated = async (enabled: boolean) => {
+    const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
+      method: "PUT", body: JSON.stringify({ capabilities: { analyticsIntegrated: enabled } }),
+    });
+    if (!result.response.ok) throw new Error(`Analytics presentation rollout: HTTP ${result.response.status}`);
+  };
   if (!Array.isArray(organization.members)) throw new Error("Expected organization members");
   const planViewerMember = organization.members.map(record).find((member) => String(record(member.user).email).toLowerCase() === den.members.planViewer.email.toLowerCase()); // Den stores emails lowercased.
   // A non-owner admin can open Analytics, while the ordinary teammate below
@@ -96,7 +105,8 @@ const test = spec.world(async (seed) => {
   const web = await seed.web({ den, signedInAs: "admin", startPath: "/dashboard/workflow-runs", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: den.members.colleague, startPath: "/dashboard", headless: true, viewport });
   const planViewerWeb = await seed.web({ den, signedInAs: den.members.planViewer, startPath: "/dashboard/analytics", headless: true, viewport });
-  return { den, web, memberWeb, planViewerWeb, planNotice: () => enterprisePlanNoticeMeasurements(web), planViewerNotice: () => enterprisePlanNoticeMeasurements(planViewerWeb), setEnterprise, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
+  const faults = await activityTransportFaults(web, new URL(den.ref.webUrl).origin, "/api/browser/v1/workflow-runs");
+  return { faults, async [Symbol.asyncDispose]() { await faults[Symbol.asyncDispose](); }, den, web, memberWeb, planViewerWeb, planNotice: () => enterprisePlanNoticeMeasurements(web), planViewerNotice: () => enterprisePlanNoticeMeasurements(planViewerWeb), setEnterprise, setAnalyticsIntegrated, configObjectId, pluginId, configObjectVersionId, receiptId: field(firstRun, "receiptId"), originalGraph: record(saved.body).graph, revisedGraph: record(revised.body).graph };
 }, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den"] } });
 
 test("workflow activity shows linked version diagrams and keeps one-off and inaccessible runs readable", async ({ world, user, probe, seed, evidence, step }) => {
@@ -345,6 +355,69 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.screenshot();
   });
   evidence.recordAssertionEvidence("The workflow opens with a simple run form and shows the submitted result", "The form precedes the latest result and existing diagram. Advanced input starts hidden and stays synchronized with the named field; editing and inspecting it create no runs. Submitting creates exactly one successful run of the current saved version and displays the entered topic in its result.", true);
+
+  await step("before: workflow history expands every diagram in separate cards", async () => {
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
+    await user.see({ testId: `workflow-run-visualization-${world.receiptId}` }, { timeoutMs: 60_000 });
+    expect((await probe.dom('[data-analytics-integrated="false"]')).elements).toHaveLength(1);
+    evidence.recordAssertionEvidence("the old workflow history remains available with the rollout off", "Executed-version diagrams stay open and the original Library destinations remain.", true);
+    await user.screenshot();
+  });
+
+  await step("after: workflow history shares Den rows and opens the executed preview on demand", async () => {
+    const receipts = await readRuns();
+    await world.setAnalyticsIntegrated(true);
+    await world.faults.delay();
+    await user.reload();
+    await user.see({ testId: "item-rows-skeleton" }, { timeoutMs: 5_000 });
+    await user.notSee({ text: "Loading workflow runs…" });
+    await user.screenshot();
+    await world.faults.recover();
+    await user.see({ testId: `workflow-run-preview-${world.receiptId}` }, { timeoutMs: 60_000 });
+    await user.notSee({ testId: `workflow-run-visualization-${world.receiptId}` });
+    expect(await readRuns()).toEqual(receipts);
+    expect((await world.faults.requests()).some((request) => request.faulted && request.status === 200)).toBe(true);
+    expect((await probe.dom('[data-analytics-row]')).elements.length).toBe(receipts.length);
+    await user.screenshot();
+    await user.click({ testId: `workflow-run-preview-${world.receiptId}` });
+    await user.see({ testId: `workflow-run-visualization-${world.receiptId}` }, { text: /Get workers/ });
+    await user.screenshot();
+    await user.click({ testId: `workflow-run-link-${world.receiptId}` });
+    await user.see({ testId: "den-workflow-detail" }, { timeoutMs: 60_000 });
+    expect(await readRuns()).toEqual(receipts);
+    evidence.recordAssertionEvidence("presentation changes no receipts or destinations", `${receipts.length} existing receipts become Den rows; opening the executed preview and Library detail creates zero runs.`, true);
+    await user.screenshot();
+  });
+
+  await step("a workflow-history outage offers the same retry without replacing receipts with empty history", async () => {
+    const previous = await readRuns();
+    await world.faults.fail();
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
+    await user.see({ role: "heading", label: "Workflow Runs" }, { timeoutMs: 30_000 });
+    await user.reload();
+    await user.see({ text: "Couldn't load workflow runs" }, { timeoutMs: 30_000 });
+    await user.notSee({ text: "No workflow runs yet" });
+    await user.screenshot();
+    await world.faults.recover();
+    await user.click({ role: "button", label: "Try again" });
+    await user.see({ testId: `workflow-run-preview-${world.receiptId}` }, { timeoutMs: 30_000 });
+    expect(await readRuns()).toEqual(previous);
+    expect((await world.faults.requests()).some((request) => request.status === 503)).toBe(true);
+    evidence.recordAssertionEvidence("retry preserves existing workflow history", `${previous.length} receipts survive the transport outage and return after one retry; no empty-history claim appears.`, true);
+    await user.screenshot();
+  });
+
+  await step("a teammate still cannot open another person's history or a revoked workflow", async () => {
+    const teammate = user.on(world.memberWeb);
+    await teammate.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
+    await teammate.notSee({ testId: `workflow-run-link-${world.receiptId}` });
+    await teammate.notSee({ text: "Weekly briefing" });
+    const receipts = await readRuns(world.den.members.colleague);
+    expect(receipts.some((run) => run.id === world.receiptId)).toBe(false);
+    expect((await probe.api(world.den.members.colleague, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
+    evidence.recordAssertionEvidence("integrated history keeps the same identity boundary", "No owner's receipt or workflow title appears for the teammate; the revoked Library detail still returns 403.", true);
+    await teammate.screenshot();
+  });
 
   await step("keep workflow execution working after Enterprise access is removed", async () => {
     await world.setEnterprise(false);

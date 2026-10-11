@@ -169,6 +169,7 @@ export type AdminFeature = {
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "denFlatPageHeaders"
+    | "analyticsIntegrated"
     | "dashboardActivity"
     | "libraryUsage"
     | "modelsAnalytics"
@@ -232,6 +233,7 @@ export type AdminOrganizationsPageResponse = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
+      analyticsIntegrated: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -308,6 +310,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       denFlatPageHeaders: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      analyticsIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -556,6 +567,7 @@ export type AdminOverviewResponse = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
+      analyticsIntegrated: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -632,6 +644,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       denFlatPageHeaders: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      analyticsIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2089,6 +2110,7 @@ export type CapabilityDisabledError = {
     | "driveResumableUploads"
     | "implicitCloudSkills"
     | "denFlatPageHeaders"
+    | "analyticsIntegrated"
     | "dashboardActivity"
     | "libraryUsage"
     | "modelsAnalytics"
@@ -6394,6 +6416,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
+      analyticsIntegrated: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -6470,6 +6493,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       denFlatPageHeaders: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      analyticsIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6706,6 +6738,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       driveResumableUploads: boolean;
       implicitCloudSkills: boolean;
       denFlatPageHeaders: boolean;
+      analyticsIntegrated: boolean;
       dashboardActivity: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
@@ -6782,6 +6815,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       denFlatPageHeaders: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      analyticsIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

@@ -1,11 +1,19 @@
 import { queryDenDatabase, type Seed } from "@openwork/env";
+import { enableOrganizationCapabilities } from "./dashboards.ts";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
 export async function orgModelAnalyticsWorld(seed: Seed) {
   const den = await seed.den({ web: true, org: { name: "Analytics team" }, env: { DEN_ORG_MODE: "multi_org", DEN_PLAN_GATING_ENABLED: "false" } });
+  const orgId = await enableOrganizationCapabilities(seed, den.admin, { denFlatPageHeaders: true });
+  const setAnalyticsIntegrated = async (enabled: boolean) => {
+    const result = await seed.api(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, {
+      method: "PUT", body: JSON.stringify({ capabilities: { analyticsIntegrated: enabled } }),
+    });
+    if (!result.response.ok) throw new Error(`Analytics presentation rollout: HTTP ${result.response.status}`);
+  };
   const web = await seed.web({ den, signedInAs: den.admin,
     startPath: "/dashboard/analytics", headless: true, viewport: { width: 1440, height: 1100 } });
-  return { den, web, async analyticsStoreUnavailable(unavailable: boolean) {
+  return { den, web, setAnalyticsIntegrated, async analyticsStoreUnavailable(unavailable: boolean) {
     // This world owns the disposable store. Preserve its rows while making
     // analytics reads fail, leaving authentication and subscription storage up.
     const sql = unavailable ? "RENAME TABLE telemetry_event TO telemetry_event_unavailable" : "RENAME TABLE telemetry_event_unavailable TO telemetry_event";

@@ -1,6 +1,6 @@
 "use client";
 
-import { analyticsSurfaceClass } from "./analytics-layout";
+import { analyticsSurfaceClass, useAnalyticsIntegrated } from "./analytics-layout";
 
 export function formatWeekLabel(weekStart: string): string {
   const date = new Date(`${weekStart}T00:00:00Z`);
@@ -22,6 +22,8 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
   intervalLabel?: string;
   isLoading?: boolean;
 }) {
+  const integrated = useAnalyticsIntegrated();
+  const colorFor = (item: BarSeries) => integrated ? item.label === "Failed" && item.values.some((value) => value > 0) ? "var(--ow-danger)" : "var(--dls-accent)" : item.color;
   const max = Math.max(1, ...series.flatMap((s) => s.values));
   const hasData = series.some((s) => s.values.some((v) => v > 0));
 
@@ -36,7 +38,7 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
           <div className="flex items-center gap-3">
             {series.map((s) => (
               <span key={s.label} className="flex items-center gap-1.5 text-[11px] text-[#637291]">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colorFor(s) }} />
                 {s.label}
               </span>
             ))}
@@ -61,7 +63,7 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
                     className="w-full max-w-[24px] rounded-t-[4px] transition-[height]"
                     style={{
                       height: `${height}%`,
-                      backgroundColor: value > 0 ? s.color : "#EBEEF4",
+                      backgroundColor: value > 0 ? colorFor(s) : integrated ? "var(--dls-hover)" : "#EBEEF4",
                     }}
                   />
                 );

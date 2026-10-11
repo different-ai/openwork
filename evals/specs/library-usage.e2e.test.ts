@@ -34,7 +34,7 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     await owner.see({ text: "No usage yet" });
     const emptyState = oneLine((await page.dom('[data-testid="library-usage-no-usage"]')).elements[0]?.text ?? "");
     const unused = (await page.dom("[data-item-unused]")).elements.length;
-    const unusedRows = await Promise.all([rowText("Support kit"), rowText("Sales kit")]);
+    const unusedRows = await Promise.all([rowText("Support kit"), rowText("GitHub")]);
     const plainState = emptyState === "No usage yet" && unused === 2 && unusedRows.every((text) => text.includes("Not used"));
     evidence.recordAssertionEvidence("a fresh workspace shows an empty state, not a page of zeros", `${emptyState}; ${unused} of 2 plugins still read Not used; no Counts start explainer or summary cards are drawn`, plainState);
     expect(emptyState).not.toContain("Counts start");
@@ -42,6 +42,19 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     expect(unused).toBe(2);
     expect((await page.dom('[data-testid="library-usage-summary"]')).elements).toHaveLength(0);
     await owner.screenshot();
+  });
+
+  await step("after: the same fresh workspace has one neutral empty state", async () => {
+    await world.setAnalyticsIntegrated(true);
+    await owner.reload();
+    await owner.see({ testId: "library-usage-no-usage" }, { timeoutMs: 60_000 });
+    expect((await page.dom('[data-testid="library-usage-no-usage"] svg')).elements).toHaveLength(0);
+    expect((await page.dom("[data-item-unused]")).elements).toHaveLength(2);
+    evidence.recordAssertionEvidence("no recorded usage stays an empty state, not a fabricated zero report", "No usage yet; both real plugins remain Not used, with no decorative icon tile.", true);
+    await owner.screenshot();
+    await world.setAnalyticsIntegrated(false);
+    await owner.reload();
+    await owner.see({ testId: "library-usage-no-usage" }, { timeoutMs: 60_000 });
   });
 
   await step("when teammates' agents load skills and make two successful connector calls through OpenWork", async () => {
@@ -107,7 +120,7 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     expect(refused).toBe(true);
   });
 
-  await step("after: Support kit shows 3 uses by 2 people today and Sales kit still reads Not used", async () => {
+  await step("after: Support kit shows 3 uses by 2 people today and GitHub still reads Not used", async () => {
     await openView("Plugins", "Support kit");
     await page.eventually(async () => {
       await owner.reload();
@@ -117,8 +130,8 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
       return uses;
     }, { within: 60_000, intervalMs: 2_000, label: "Support kit counts three uses" });
     const support = await rowText("Support kit");
-    const sales = await rowText("Sales kit");
-    evidence.recordAssertionEvidence("plugins add up their skills' uses", `Support kit: ${support}; Sales kit: ${sales}`, support.includes("Today") && sales.includes("Not used"));
+    const sales = await rowText("GitHub");
+    evidence.recordAssertionEvidence("plugins add up their skills' uses", `Support kit: ${support}; GitHub: ${sales}`, support.includes("Today") && sales.includes("Not used"));
     expect(support).toContain("Today");
     expect(sales).toContain("Not used");
     await owner.see({ testId: "library-usage-summary" });
@@ -180,10 +193,101 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     const fits = frames.every((entry) => entry.rect.left >= 0 && entry.rect.right <= layout.viewportWidth);
     const ok = isEmulatedClientWidth(layout.viewportWidth, 390) && layout.documentWidth <= layout.viewportWidth && layout.bodyScrollWidth <= layout.bodyWidth
       && layout.table !== null && layout.table.width > 0 && layout.table.scrollWidth > layout.table.width
-      && layout.table.overflowX === "auto" && fits && visible.length === 2;
+      && layout.table.overflowX === "auto" && fits && visible.length === 3;
     evidence.recordAssertionEvidence("phone-width scrolling stays inside the comparison table", `Viewport ${layout.viewportWidth}px; document ${layout.documentWidth}px; body ${layout.bodyScrollWidth}/${layout.bodyWidth}px; table ${layout.table?.scrollWidth ?? 0}/${layout.table?.width ?? 0}px (${layout.table?.overflowX ?? "missing"}); ${visible.length} real connector rows; columns ${headers.join(", ")}; page frames fit: ${fits}`, ok);
     expect(headers).toEqual(["Connector", "Uses", "People", "Failed", "Last used"]);
     expect(ok).toBe(true);
+    await owner.screenshot();
+    await owner.resizeViewport({ width: 1280, height: 1000, deviceScaleFactor: 1 });
+  });
+
+  await step("before: Members and Connectors use Den rows while Analytics still uses accent tiles", async () => {
+    await owner.navigate(`${world.baseUrl}/dashboard/members`);
+    await owner.see({ role: "heading", label: "Members" }, { timeoutMs: 60_000 });
+    await owner.screenshot();
+    await owner.navigate(`${world.baseUrl}/dashboard/mcp-connections`);
+    await owner.see({ text: world.connectors.tracker }, { timeoutMs: 60_000 });
+    await owner.screenshot();
+    await owner.navigate(`${world.baseUrl}/dashboard/analytics/library`);
+    await owner.see({ testId: "library-usage-row" }, { timeoutMs: 60_000 });
+    const legacy = (await page.dom('[data-analytics-integrated="false"]')).elements.length;
+    expect(legacy).toBe(1);
+    evidence.recordAssertionEvidence("the presentation rollout starts off", `Members and Connectors are shown next to Analytics; ${legacy} legacy Analytics header; the same usage rows remain.`, legacy === 1);
+    await owner.screenshot();
+  });
+
+  await step("after: Analytics uses neutral stats and the same Den rows without changing counts", async () => {
+    const previous = await rowText("Support kit");
+    await world.setAnalyticsIntegrated(true);
+    await owner.reload();
+    await owner.see({ testId: "library-usage-row" }, { timeoutMs: 60_000 });
+    const current = await rowText("Support kit");
+    const marks = (await page.dom(`${row("GitHub")} img`)).elements;
+    const rows = (await page.dom("[data-analytics-row]")).elements;
+    const stats = (await page.dom("[data-analytics-stat]")).elements;
+    expect(current).toBe(previous);
+    expect(rows).toHaveLength(2);
+    expect(stats).toHaveLength(4);
+    expect(marks).toHaveLength(1);
+    expect((await page.dom('[data-analytics-stat] svg')).elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("the same counts share management rows and known brand marks", `Support kit before/after: ${current}; ${rows.length} Den rows, ${stats.length} neutral stats, ${marks.length} GitHub logo; no decorative stat icons.`, current === previous && marks.length === 1);
+    await owner.screenshot();
+  });
+
+  await step("a slow usage read shows Den row skeletons rather than loading prose", async () => {
+    await world.faults.delay();
+    await owner.reload();
+    await owner.see({ testId: "item-rows-skeleton" }, { timeoutMs: 5_000 });
+    await owner.notSee({ text: "Loading usage…" });
+    await owner.screenshot();
+    await world.faults.recover();
+    await owner.see({ testId: "library-usage-row" }, { timeoutMs: 30_000 });
+    const delayed = (await world.faults.requests()).filter((request) => request.faulted && request.status === 200);
+    expect(delayed.length).toBeGreaterThan(0);
+    evidence.recordAssertionEvidence("loading preserves the destination rows", `${delayed.length} actual usage response was delayed; Den row skeletons fill the same list, then real counts return.`, delayed.length > 0);
+  });
+
+  await step("a usage outage gives one retry and never invents empty counts", async () => {
+    await world.faults.fail();
+    await owner.reload();
+    await owner.see({ text: "Couldn't load plugins usage" }, { timeoutMs: 30_000 });
+    await owner.notSee({ text: "No usage yet" });
+    await owner.screenshot();
+    await world.faults.recover();
+    await owner.click({ role: "button", label: "Try again" });
+    await owner.see({ testId: "library-usage-row" }, { timeoutMs: 30_000 });
+    expect((await page.dom(`${row("Support kit")} [data-item-uses]`)).elements[0]?.text).toBe("3");
+    const failed = (await world.faults.requests()).filter((request) => request.status === 503);
+    expect(failed.length).toBeGreaterThan(0);
+    evidence.recordAssertionEvidence("failure and empty usage remain distinct", `${failed.length} intercepted usage read returned 503; retry restored Support kit's 3 real uses.`, failed.length > 0);
+    await owner.screenshot();
+  });
+
+  await step("the owner opens the same plugin and connector details from usage", async () => {
+    await owner.click({ role: "link", label: /Support kit/ });
+    await owner.see({ role: "heading", label: "Support kit" }, { timeoutMs: 60_000 });
+    await owner.screenshot();
+    await owner.navigate(`${world.baseUrl}/dashboard/analytics/library?view=connectors`);
+    await owner.see({ testId: "library-usage-row" }, { timeoutMs: 60_000 });
+    const marks = (await page.dom(`${row("GitHub")} img`)).elements;
+    expect(marks).toHaveLength(1);
+    expect((await page.dom(`${row(world.connectors.tracker)} img`)).elements).toHaveLength(0);
+    await owner.screenshot();
+    await owner.click({ role: "link", label: /Team tracker/ });
+    await owner.see({ role: "heading", label: world.connectors.tracker }, { timeoutMs: 60_000 });
+    evidence.recordAssertionEvidence("usage and management have one detail destination", "Support kit opens its Library detail; Team tracker opens its existing Connectors detail, with no new analytics-only destination.", true);
+    await owner.screenshot();
+  });
+
+  await step("after: integrated comparisons stay inside the table at phone width", async () => {
+    await owner.navigate(`${world.baseUrl}/dashboard/analytics/library?view=connectors`);
+    await owner.resizeViewport({ width: 320, height: 844, deviceScaleFactor: 1 });
+    await owner.see({ testId: "library-usage-table" }, { timeoutMs: 60_000 });
+    const layout = await world.usageLayout();
+    expect(isEmulatedClientWidth(layout.viewportWidth, 320)).toBe(true);
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.table?.overflowX).toBe("auto");
+    evidence.recordAssertionEvidence("narrow integration never widens the page", `Viewport ${layout.viewportWidth}px; document ${layout.documentWidth}px; comparison scrolling stays inside its ${layout.table?.width ?? 0}px table.`, layout.documentWidth <= layout.viewportWidth);
     await owner.screenshot();
     await owner.resizeViewport({ width: 1280, height: 1000, deviceScaleFactor: 1 });
   });
@@ -199,6 +303,17 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     evidence.recordAssertionEvidence("usage is for owners and admins only", `teammate API reads: ${statuses.join(", ")}; teammate page headings: ${headings.join(", ") || "none"}`, statuses.every((status) => status === 403));
     expect(statuses).toEqual([403, 403, 403]);
     await teammate.screenshot();
+  });
+
+  await step("turning the rollout off restores the original presentation and counts", async () => {
+    await world.setAnalyticsIntegrated(false);
+    await owner.navigate(`${world.baseUrl}/dashboard/analytics/library`);
+    await owner.see({ testId: "library-usage-row" }, { timeoutMs: 60_000 });
+    expect((await page.dom("[data-analytics-stat]")).elements).toHaveLength(0);
+    expect((await page.dom('[data-analytics-integrated="false"]')).elements).toHaveLength(1);
+    expect((await page.dom(`${row("Support kit")} [data-item-uses]`)).elements[0]?.text).toBe("3");
+    evidence.recordAssertionEvidence("rollback keeps usage history intact", "The original colored presentation is restored; Support kit still has 3 measured uses.", true);
+    await owner.screenshot();
   });
 });
 

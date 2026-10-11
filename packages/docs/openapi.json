@@ -846,6 +846,7 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "denFlatPageHeaders",
+              "analyticsIntegrated",
               "dashboardActivity",
               "libraryUsage",
               "modelsAnalytics",
@@ -1057,6 +1058,9 @@
                     "denFlatPageHeaders": {
                       "type": "boolean"
                     },
+                    "analyticsIntegrated": {
+                      "type": "boolean"
+                    },
                     "dashboardActivity": {
                       "type": "boolean"
                     },
@@ -1128,6 +1132,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
@@ -1489,6 +1494,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "analyticsIntegrated": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "dashboardActivity": {
                       "type": "object",
                       "properties": {
@@ -2561,6 +2622,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
@@ -2971,6 +3033,9 @@
                     "denFlatPageHeaders": {
                       "type": "boolean"
                     },
+                    "analyticsIntegrated": {
+                      "type": "boolean"
+                    },
                     "dashboardActivity": {
                       "type": "boolean"
                     },
@@ -3042,6 +3107,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
@@ -3403,6 +3469,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "analyticsIntegrated": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "dashboardActivity": {
                       "type": "object",
                       "properties": {
@@ -4475,6 +4597,7 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
@@ -9918,6 +10041,7 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "denFlatPageHeaders",
+              "analyticsIntegrated",
               "dashboardActivity",
               "libraryUsage",
               "modelsAnalytics",
@@ -26531,6 +26655,9 @@
                         "denFlatPageHeaders": {
                           "type": "boolean"
                         },
+                        "analyticsIntegrated": {
+                          "type": "boolean"
+                        },
                         "dashboardActivity": {
                           "type": "boolean"
                         },
@@ -26602,6 +26729,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
@@ -26963,6 +27091,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "analyticsIntegrated": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "dashboardActivity": {
                           "type": "object",
                           "properties": {
@@ -28035,6 +28219,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
@@ -28190,6 +28375,9 @@
                         "denFlatPageHeaders": {
                           "type": "boolean"
                         },
+                        "analyticsIntegrated": {
+                          "type": "boolean"
+                        },
                         "dashboardActivity": {
                           "type": "boolean"
                         },
@@ -28261,6 +28449,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
@@ -28622,6 +28811,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "analyticsIntegrated": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "dashboardActivity": {
                           "type": "object",
                           "properties": {
@@ -29694,6 +29939,7 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
