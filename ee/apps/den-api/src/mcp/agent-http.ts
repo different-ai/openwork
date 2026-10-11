@@ -23,30 +23,36 @@ export function createAgentMcpHttpHandler(
 
 export type ScopedAgentMcpHttpHandlers = {
   /** Serve one request inside a stable, authenticated catalog audience. */
-  fetch: (scopeKey: string, request: Request, server: McpServer) => Promise<Response>
+  fetch: (scopeKey: string, request: Request, server: McpServer, streamKey?: symbol) => Promise<Response>
   /** Publish only to subscription streams in the matching audience. */
   notify: {
     toolsChanged: (scopeKey: string) => void
     resourcesChanged: (scopeKey: string) => void
+    resourceUpdated: (scopeKey: string, uri: string, streamKey?: symbol) => void
   }
   close: () => Promise<void>
 }
 
+type AgentMcpAudience = { scopeKey: string; streamKey?: symbol }
+
 class ScopedAgentMcpEventBus implements ServerEventBus {
-  private readonly scope = new AsyncLocalStorage<string>()
-  private readonly listeners = new Map<(event: ServerEvent) => void, string>()
+  private readonly scope = new AsyncLocalStorage<AgentMcpAudience>()
+  private readonly listeners = new Map<(event: ServerEvent) => void, AgentMcpAudience>()
 
   constructor(private readonly onerror?: (error: Error) => void) {}
 
-  run<T>(scopeKey: string, callback: () => T): T {
-    return this.scope.run(scopeKey, callback)
+  run<T>(scopeKey: string, callback: () => T, streamKey?: symbol): T {
+    return this.scope.run({ scopeKey, streamKey }, callback)
   }
 
   publish(event: ServerEvent): void {
     const scopeKey = this.scope.getStore()
     if (!scopeKey) return
     for (const [listener, listenerScope] of this.listeners) {
-      if (listenerScope !== scopeKey) continue
+      if (listenerScope.scopeKey !== scopeKey.scopeKey) continue
+      // Snapshot watchers belong to one stream; avoid duplicate invalidations
+      // when a member opens two subscriptions to the same receipt.
+      if (event.kind === "resource_updated" && scopeKey.streamKey && listenerScope.streamKey !== scopeKey.streamKey) continue
       try {
         listener(event)
       } catch (error) {
@@ -101,8 +107,8 @@ export function createScopedAgentMcpHttpHandlers(
   })
 
   return {
-    fetch(scopeKey, request, server) {
-      return bus.run(scopeKey, () => requestServer.run(server, () => handler.fetch(request)))
+    fetch(scopeKey, request, server, streamKey) {
+      return bus.run(scopeKey, () => requestServer.run(server, () => handler.fetch(request)), streamKey)
     },
     notify: {
       toolsChanged(scopeKey) {
@@ -110,6 +116,9 @@ export function createScopedAgentMcpHttpHandlers(
       },
       resourcesChanged(scopeKey) {
         bus.run(scopeKey, () => handler.notify.resourcesChanged())
+      },
+      resourceUpdated(scopeKey, uri, streamKey) {
+        bus.run(scopeKey, () => handler.notify.resourceUpdated(uri), streamKey)
       },
     },
     close: handler.close,

@@ -868,6 +868,7 @@
               "gatewayCloudSignIn",
               "engineV2Upgrade",
               "remoteSessionTargets",
+              "remoteSessionEvents",
               "opencodePlugin",
               "platformAuditReads"
             ]
@@ -1128,6 +1129,9 @@
                     "remoteSessionTargets": {
                       "type": "boolean"
                     },
+                    "remoteSessionEvents": {
+                      "type": "boolean"
+                    },
                     "opencodePlugin": {
                       "type": "boolean"
                     },
@@ -1170,6 +1174,7 @@
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
                     "remoteSessionTargets",
+                    "remoteSessionEvents",
                     "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
@@ -2746,6 +2751,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "remoteSessionEvents": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "opencodePlugin": {
                       "type": "object",
                       "properties": {
@@ -2888,6 +2949,7 @@
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
                     "remoteSessionTargets",
+                    "remoteSessionEvents",
                     "opencodePlugin",
                     "platformAuditReads"
                   ],
@@ -3347,6 +3409,9 @@
                     "remoteSessionTargets": {
                       "type": "boolean"
                     },
+                    "remoteSessionEvents": {
+                      "type": "boolean"
+                    },
                     "opencodePlugin": {
                       "type": "boolean"
                     },
@@ -3389,6 +3454,7 @@
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
                     "remoteSessionTargets",
+                    "remoteSessionEvents",
                     "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
@@ -4965,6 +5031,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "remoteSessionEvents": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "opencodePlugin": {
                       "type": "object",
                       "properties": {
@@ -5107,6 +5229,7 @@
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
                     "remoteSessionTargets",
+                    "remoteSessionEvents",
                     "opencodePlugin",
                     "platformAuditReads"
                   ],
@@ -10555,6 +10678,7 @@
               "gatewayCloudSignIn",
               "engineV2Upgrade",
               "remoteSessionTargets",
+              "remoteSessionEvents",
               "opencodePlugin",
               "platformAuditReads"
             ]
@@ -27295,6 +27419,9 @@
                         "remoteSessionTargets": {
                           "type": "boolean"
                         },
+                        "remoteSessionEvents": {
+                          "type": "boolean"
+                        },
                         "opencodePlugin": {
                           "type": "boolean"
                         },
@@ -27337,6 +27464,7 @@
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
                         "remoteSessionTargets",
+                        "remoteSessionEvents",
                         "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
@@ -28913,6 +29041,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "remoteSessionEvents": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "opencodePlugin": {
                           "type": "object",
                           "properties": {
@@ -29055,6 +29239,7 @@
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
                         "remoteSessionTargets",
+                        "remoteSessionEvents",
                         "opencodePlugin",
                         "platformAuditReads"
                       ],
@@ -29259,6 +29444,9 @@
                         "remoteSessionTargets": {
                           "type": "boolean"
                         },
+                        "remoteSessionEvents": {
+                          "type": "boolean"
+                        },
                         "opencodePlugin": {
                           "type": "boolean"
                         },
@@ -29301,6 +29489,7 @@
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
                         "remoteSessionTargets",
+                        "remoteSessionEvents",
                         "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
@@ -30877,6 +31066,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "remoteSessionEvents": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "opencodePlugin": {
                           "type": "object",
                           "properties": {
@@ -31019,6 +31264,7 @@
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
                         "remoteSessionTargets",
+                        "remoteSessionEvents",
                         "opencodePlugin",
                         "platformAuditReads"
                       ],

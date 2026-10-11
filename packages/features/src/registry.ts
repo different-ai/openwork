@@ -249,6 +249,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteSessionEvents: {
+    label: "Remote session events",
+    description: "MCP clients can subscribe to changes in their remote session receipts and read the current state after reconnecting.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   opencodePlugin: {
     label: "OpenCode plugin sign-in",
     description: "People can sign in to OpenWork from the OpenCode plugin, approve it as \"OpenWork - OpenCode Plugin\", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect.",

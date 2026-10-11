@@ -298,6 +298,16 @@
               ],
               "description": "Remote session targets: Members can register OpenWork and OpenCode clients as computers for remote sessions from MCP, Slack, and chat. Renders DEN_FEATURE_REMOTE_SESSION_TARGETS."
             },
+            "remoteSessionEvents": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Remote session events: MCP clients can subscribe to changes in their remote session receipts and read the current state after reconnecting. Renders DEN_FEATURE_REMOTE_SESSION_EVENTS."
+            },
             "opencodePlugin": {
               "enum": [
                 "",

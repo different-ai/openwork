@@ -191,6 +191,7 @@ export type AdminFeature = {
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
     | "remoteSessionTargets"
+    | "remoteSessionEvents"
     | "opencodePlugin"
     | "platformAuditReads";
   label: string;
@@ -259,6 +260,7 @@ export type AdminOrganizationsPageResponse = {
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
       remoteSessionTargets: boolean;
+      remoteSessionEvents: boolean;
       opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
@@ -516,6 +518,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       remoteSessionTargets: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      remoteSessionEvents: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -633,6 +644,7 @@ export type AdminOverviewResponse = {
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
       remoteSessionTargets: boolean;
+      remoteSessionEvents: boolean;
       opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
@@ -890,6 +902,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       remoteSessionTargets: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      remoteSessionEvents: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2216,6 +2237,7 @@ export type CapabilityDisabledError = {
     | "gatewayCloudSignIn"
     | "engineV2Upgrade"
     | "remoteSessionTargets"
+    | "remoteSessionEvents"
     | "opencodePlugin"
     | "platformAuditReads";
 };
@@ -6537,6 +6559,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
       remoteSessionTargets: boolean;
+      remoteSessionEvents: boolean;
       opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
@@ -6794,6 +6817,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       remoteSessionTargets: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      remoteSessionEvents: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6899,6 +6931,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       gatewayCloudSignIn: boolean;
       engineV2Upgrade: boolean;
       remoteSessionTargets: boolean;
+      remoteSessionEvents: boolean;
       opencodePlugin: boolean;
       platformAuditReads: boolean;
       /**
@@ -7156,6 +7189,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       remoteSessionTargets: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      remoteSessionEvents: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
