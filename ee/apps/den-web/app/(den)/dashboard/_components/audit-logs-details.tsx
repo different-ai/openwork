@@ -173,8 +173,8 @@ export function AuditChanges({ changes, compact = false, technical = false }: { 
   }
   return <div className={compact ? "[&_table]:w-full [&_table]:table-fixed [&_td]:break-words max-sm:[&_table]:block max-sm:[&_thead]:hidden max-sm:[&_tbody]:block max-sm:[&_tr]:block max-sm:[&_td]:block max-sm:[&_td]:py-1.5" : undefined}><DenTable density="compact" columns={[
     { key: "field", header: "Field", render: (field: string) => compact ? <span className="font-medium">{auditLabel(field)}</span> : auditLabel(field) },
-    { key: "before", header: "Before", render: (field: string) => <span className="whitespace-pre-wrap break-words">{compact ? <span className="block text-xs text-[var(--dls-text-secondary)] sm:hidden">Before</span> : null}{valueFor(field, "before")}</span> },
-    { key: "after", header: "After", render: (field: string) => <span className="whitespace-pre-wrap break-words">{compact ? <span className="block text-xs text-[var(--dls-text-secondary)] sm:hidden">After</span> : null}{valueFor(field, "after")}</span> },
+    { key: "before", header: "Before", render: (field: string) => <span className="whitespace-pre-wrap break-words">{compact ? <span className="block text-xs text-[var(--dls-text-secondary)] sm:hidden">Before</span> : null}<span>{valueFor(field, "before")}</span></span> },
+    { key: "after", header: "After", render: (field: string) => <span className="whitespace-pre-wrap break-words">{compact ? <span className="block text-xs text-[var(--dls-text-secondary)] sm:hidden">After</span> : null}<span>{valueFor(field, "after")}</span></span> },
   ]} rows={fields} getRowKey={(field) => field} /></div>;
 }
 
