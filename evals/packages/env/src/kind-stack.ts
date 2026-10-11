@@ -1021,6 +1021,8 @@ async function ensureChromeApp(cdpCandidates: string[], options: KubeLayerOption
   const pid = runtime.spawnDetached(binary, [
     "--headless=new",
     "--window-size=1280,900",
+    "--lang=en-US",
+    "--disable-features=OverlayScrollbar,FluentOverlayScrollbar",
     "--disable-gpu",
     "--no-first-run",
     "--no-default-browser-check",

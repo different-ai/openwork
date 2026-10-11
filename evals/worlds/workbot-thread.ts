@@ -2,7 +2,7 @@ import { createServer as viteServer } from "vite";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { chrome } from "@openwork/hosts";
-import { addInitScript, clickAt, evaluateOnSurface, setViewport, waitForLocated, type Surface } from "@openwork/cdp";
+import { addInitScript, clickAt, emulateFocus, evaluateOnSurface, setViewport, waitForLocated, type Surface } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 
 type TaskStatus = "queued" | "working" | "paused" | "done" | "failed" | "stopped";
@@ -142,6 +142,9 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
         document.head.append(style);
       });
     }));
+    // The member's browser remains active even when another local eval activates a native window.
+    // This does not focus a control; keyboard navigation and Escape still use trusted input.
+    await emulateFocus(app);
     await setViewport(app, { width: 1440, height: 1000, deviceScaleFactor: 1 });
     const nativePickers = await observeFilePickers(app, resources);
     return {
@@ -163,6 +166,23 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
           reasonInAccessibleName: accessibleName.includes("Files aren't set up on this server") && accessibleName.includes("your admin can turn them on"),
           portaled: Boolean(trigger && tooltip && !trigger.closest(".workbot")?.contains(tooltip)),
           nativeFileInputs: document.querySelectorAll('input[type="file"]').length,
+        };
+      }),
+      /** Read-only: prove the narrow layout uses a classic scrollbar, not a macOS overlay. */
+      browserLayout: () => evaluateOnSurface(app, () => {
+        const pane = document.querySelector(".workbot-scroll");
+        const sendButton = document.querySelector('button[aria-label="Send"]');
+        const send = sendButton?.getBoundingClientRect();
+        const composer = sendButton?.closest("[data-workbot-composer]")?.getBoundingClientRect();
+        return {
+          clientWidth: document.documentElement.clientWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          scrollbarWidth: pane instanceof HTMLElement ? pane.offsetWidth - pane.clientWidth : 0,
+          language: navigator.language,
+          locale: Intl.DateTimeFormat().resolvedOptions().locale,
+          sendRight: send?.right ?? 0,
+          composerRight: composer?.right ?? 0,
+          rootScrollbarWidth: innerWidth - document.documentElement.clientWidth,
         };
       }),
       /** Read-only: elements reaching past the page's client width, so a sideways-scroll failure names its cause. */

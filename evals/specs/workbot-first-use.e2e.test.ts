@@ -378,6 +378,18 @@ threadUI("a member can read why attachments are blocked without opening a file p
       await user.hover(attach);
       await user.see(reason);
       await user.screenshot();
+      if (viewport.width === 320) {
+        const browser = await world.browserLayout();
+        const fits = browser.documentWidth <= browser.clientWidth && browser.sendRight <= browser.composerRight - 7;
+        evidence.recordAssertionEvidence("the narrow composer fits with a real classic scrollbar", `page ${browser.documentWidth}px; client ${browser.clientWidth}px; root gutter ${browser.rootScrollbarWidth}px; conversation gutter ${browser.scrollbarWidth}px; Send right ${browser.sendRight}px; composer right ${browser.composerRight}px; language ${browser.language}; locale ${browser.locale}`, fits && browser.rootScrollbarWidth === 15 && browser.scrollbarWidth > 0 && browser.language === "en-US" && browser.locale === "en-US");
+        expect(browser.rootScrollbarWidth).toBe(15);
+        expect(browser.clientWidth).toBe(305);
+        expect(browser.scrollbarWidth).toBeGreaterThan(0);
+        expect(browser.language).toBe("en-US");
+        expect(browser.locale).toBe("en-US");
+        expect(browser.documentWidth).toBeLessThanOrEqual(browser.clientWidth);
+        expect(browser.sendRight).toBeLessThanOrEqual(browser.composerRight - 7);
+      }
       const layout = await tooltipLayout(viewport.height);
       const state = await world.blockedAttachmentState();
       evidence.recordAssertionEvidence("the hover hint is portaled, matches its accessible label and stays entirely on screen", `${layout.description}; portaled ${state.portaled}; reason in the control's accessible name ${state.reasonInAccessibleName}; native picker opens ${world.fileAccessWitness().nativePickers.opened}`, layout.fits && layout.noSidewaysScroll && state.portaled && state.reasonInAccessibleName && noFileAction());
