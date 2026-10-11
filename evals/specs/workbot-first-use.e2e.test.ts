@@ -304,7 +304,8 @@ threadUI("a member keeps task cards in their original turn until all work finish
   });
   await step("a failed edit puts the message back and says why", async () => {
     await user.hover({ text: "What is two plus two?" });
-    await user.click({ role: "button", label: "Edit message", nth: 1 });
+    // Only the hovered message's Edit control is visible on desktop.
+    await user.click({ role: "button", label: "Edit message" });
     await user.type({ label: "Edit your message" }, "What is three plus three?", { replace: true });
     await user.press("Enter");
     await user.see({ text: "That didn't send." });
@@ -373,6 +374,7 @@ threadUI("a member can read why attachments are blocked without opening a file p
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 320, height: 568 }]) {
     await step(`hover shows the full blocked attachment reason at ${viewport.width}×${viewport.height}`, async () => {
       await user.resizeViewport({ ...viewport, deviceScaleFactor: 1 });
+      expect((await probe.dom("html")).viewportWidth).toBe(viewport.width - 15);
       await user.hover(attach);
       await user.see(reason);
       await user.screenshot();

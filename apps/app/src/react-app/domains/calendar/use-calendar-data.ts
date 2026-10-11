@@ -40,6 +40,20 @@ export function useCalendarFeature(context: AutomationsDenContext, feature: "aut
   })
 }
 
+export function useCalendarDefaultModelName(context: AutomationsDenContext, enabled: boolean) {
+  return useQuery({
+    queryKey: ["den", "calendar-default-model", context.organizationId],
+    queryFn: () => context.client!.getWorkbotSettings(context.organizationId!),
+    enabled: context.ready && enabled,
+    retry: false,
+    staleTime: 5 * 60_000,
+    select: (settings) => {
+      const id = settings.modelAvailable ? settings.model ?? settings.defaultModel : settings.defaultModel;
+      return settings.models.find((model) => model.id === id)?.name ?? null;
+    },
+  });
+}
+
 export function useCalendarTransport(context: AutomationsDenContext): CalendarTransport | null {
   const mockUrl = readCalendarMockUrl()
   return useMemo(() => {

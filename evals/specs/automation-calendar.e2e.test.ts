@@ -57,14 +57,16 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.screenshot();
   });
 
-  await step("before: meeting provider subtitles share the title's space with Calendar polish off", async () => {
+  await step("before: desktop Calendar repeats provider names and exposes the default model's routing ID", async () => {
     const meetings = (await look.dom("[data-calendar-meeting]")).elements;
     expect(meetings.some((meeting) => meeting.text.includes("Google Calendar"))).toBe(true);
     expect(await blocks("[data-calendar-provider-logo]")).toBe(0);
+    await alex.click({ role: "button", label: /^Weekly launch update, / });
+    await alex.see({ text: /openwork-cloud\/default/ });
     await alex.screenshot();
-    evidence.recordAssertionEvidence("The off switch preserves the existing desktop meeting presentation", "Provider names remain visible beside meeting titles; no compact provider logos are rendered.", true);
+    evidence.recordAssertionEvidence("The off switch preserves the existing desktop meeting presentation", "Provider names remain beside meeting titles; the model shows openwork-cloud/default, with no compact provider logos.", true);
   });
-  await step("after: compact provider logos give desktop meeting titles room without losing their accessible names", async () => {
+  await step("after: desktop Calendar shows provider marks and an Organization default instead of its routing ID", async () => {
     await world.setCalendarPolish(true);
     await alex.reload();
     await alex.click({ role: "button", label: "Calendar" });
@@ -74,10 +76,17 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     const logos = await blocks("[data-calendar-meeting] [data-calendar-provider-logo]");
     expect(logos).toBe(meetings.length);
     expect(meetings.every((meeting) => !meeting.text.includes("Google Calendar") && !meeting.text.includes("Outlook Calendar"))).toBe(true);
+    await alex.click({ role: "button", label: /^Weekly launch update, / });
+    await alex.see({ text: "Organization default" });
+    const model = (await look.dom("[data-calendar-organization-default]")).elements[0]?.text ?? "";
+    expect(model).toBe("Organization default");
+    expect(model).not.toContain("·");
+    expect(await blocks('[data-calendar-organization-default][data-automation-model="openwork-cloud/default"]')).toBe(1);
+    expect(await blocks('[data-calendar-organization-default] img[src$="openwork-mark.svg"]')).toBe(1);
     originalTop = (await element('[data-calendar-grid="week"]')).rect.top;
     originalToolbarHeight = (await element("[data-calendar-toolbar]")).rect.height;
     await alex.screenshot();
-    evidence.recordAssertionEvidence("Both providers stay named for assistive technology, not in the title lane", `${logos} meeting logos; Google and Outlook accessible names still locate their original meetings.`, true);
+    evidence.recordAssertionEvidence("Both providers stay named for assistive technology, not in the title lane", `${logos} meeting logos; Google and Outlook accessible names remain; Organization default uses the OpenWork mark and keeps the stored openwork-cloud/default identity.`, true);
   });
 
   await step("Alex selects the weekly launch update and sees when it repeats, where it runs and its past runs", async () => {

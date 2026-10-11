@@ -2,7 +2,7 @@ import { createServer as viteServer } from "vite";
 import { fileURLToPath } from "node:url";
 import type { ServerResponse } from "node:http";
 import { chrome } from "@openwork/hosts";
-import { clickAt, evaluateOnSurface, setViewport, waitForLocated, type Surface } from "@openwork/cdp";
+import { addInitScript, clickAt, evaluateOnSurface, setViewport, waitForLocated, type Surface } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 
 type TaskStatus = "queued" | "working" | "paused" | "done" | "failed" | "stopped";
@@ -134,6 +134,14 @@ export async function workbotThreadWorld(_seed: Seed, { place }: { place: Place 
     const url = `http://127.0.0.1:${address.port}`;
     // The spec proves hover-only Edit; a member on a desktop has a mouse even when the runner's headless Chrome finds none.
     const app = resources.use(await chrome({ name: "workbot-thread", host: place.host(), startUrl: "about:blank", headless: true, mouse: true }));
+    // Match Linux CI's persistent scrollbar gutter on macOS too: a 320px window has 305px of usable width.
+    resources.use(await addInitScript(app.client, () => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = "html { overflow-y: scroll; } ::-webkit-scrollbar { width: 15px; height: 15px; }";
+        document.head.append(style);
+      });
+    }));
     await setViewport(app, { width: 1440, height: 1000, deviceScaleFactor: 1 });
     const nativePickers = await observeFilePickers(app, resources);
     return {

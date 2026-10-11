@@ -53,6 +53,7 @@ import {
   calendarProviderPresence,
   useAutomationRunsInRange,
   useCalendarFeature,
+  useCalendarDefaultModelName,
   useCalendarMeetings,
   useCalendarTransport,
 } from "./use-calendar-data"
@@ -184,6 +185,7 @@ export function CalendarPage(props: {
   const feature = useCalendarFeature(denContext)
   const polish = useCalendarFeature(denContext, "calendarPolish").data === true
   const enabled = feature.data === true
+  const organizationDefaultName = useCalendarDefaultModelName(denContext, polish && enabled).data
   const listQuery = useAutomationListQuery(denContext)
   const automationItems = listQuery.data?.items
   const runsQuery = useAutomationRunsInRange(denContext, range, automationItems, enabled && layers.automations)
@@ -423,6 +425,8 @@ export function CalendarPage(props: {
         </div>
         {creating ? (
           <CreateAutomationCard
+            polish={polish}
+            organizationDefaultName={organizationDefaultName}
             key={creating.slot.at}
             anchor={creating}
             context={denContext}
@@ -451,6 +455,8 @@ export function CalendarPage(props: {
         ) : null}
         {selectedAutomation ? (
           <AutomationDetailPanel
+            polish={polish}
+            organizationDefaultName={organizationDefaultName}
             key={selectedAutomation.automation.id}
             item={selectedAutomation}
             selectedBlock={selectedBlock}

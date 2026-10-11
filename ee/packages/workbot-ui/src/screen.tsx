@@ -47,7 +47,7 @@ type Pending = {
 };
 
 const PAGE_TURNS = 30;
-const COLUMN = "w-full max-w-[640px]";
+const COLUMN = "min-w-0 w-full max-w-[640px]";
 
 function newMessageId() {
   return crypto.randomUUID().replaceAll("-", "");
@@ -307,7 +307,7 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
         nav={host.calendar && !chatId ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
       />
       <div className="flex min-h-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {empty && side ? (
         <SideChatStart name={data.name} organizationName={data.organizationName}>{composer}</SideChatStart>
       ) : empty && !starting ? (
