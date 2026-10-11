@@ -12,7 +12,6 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenTable } from "../../_components/ui/table";
 import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgContext, type DenOrgMember } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { ItemPage } from "./item-header";
 import { ItemPanel, ItemRow, ItemRowsSkeleton } from "./item-list";
 import { auditQueryKey, isAuditAccessError, useAuditEventTypes, useAuditOperations, type AuditFilters, type AuditReadError, type AuditScope } from "./audit-logs-data";
 import {
@@ -31,10 +30,12 @@ export function getAuditAccess(input: {
 }
 
 function AuditPage({ children, action, compact = false }: { children: ReactNode; action?: ReactNode; compact?: boolean }) {
-  if (compact) return <section aria-label="Audit logs" className="text-[13px] text-[var(--dls-text-primary)]">
-    <ItemPage><DenPageHeader size="compact" title="Audit logs" action={action} />{children}</ItemPage>
-  </section>;
-  return <section aria-label="Audit logs" className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 text-[13px] text-[var(--dls-text-primary)] sm:px-6">
+  // Match ItemPage's centered column without changing the parent of the page
+  // children: a rollout change must not discard filter drafts or unmount an
+  // in-flight capture mutation. ItemPage cannot express the legacy layout.
+  return <section aria-label="Audit logs" className={compact
+    ? "mx-auto flex w-full max-w-[896px] flex-col gap-7 px-6 py-10 text-[13px] text-[var(--dls-text-primary)] md:px-12"
+    : "mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 text-[13px] text-[var(--dls-text-primary)] sm:px-6"}>
     <DenPageHeader size="compact" title="Audit logs" action={action} />{children}
   </section>;
 }
@@ -50,9 +51,9 @@ export function AuditLogsScreen() {
   return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} compact={orgFeatureEnabled(dashboard.orgContext, "auditLogsCompact")} />;
 }
 
-function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {
+function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypesPending, onApply, compact = false }: {
   filters: AuditFilters; members: readonly DenOrgMember[]; operations: AuditOperationSummary[];
-  eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void;
+  eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void; compact?: boolean;
 }) {
   const [draft, setDraft] = useState(filters);
   function localDate(value?: string) {
@@ -82,7 +83,7 @@ function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypes
   }
   function clear() { setDraft({}); setFrom(""); setTo(""); setError(null); onApply({}); }
   return <form onSubmit={apply} aria-label="Filter audit operations" className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-end gap-3" data-testid="audit-primary-filters">
+    <div className={compact ? "grid grid-cols-1 items-end gap-3 lg:grid-cols-2" : "flex flex-wrap items-end gap-3"} data-testid="audit-primary-filters">
       <label className="flex min-w-60 flex-1 flex-col gap-1">From (local time)<DenInput type="datetime-local" aria-label="From (local time)" title="Operation start time" value={from} onChange={(event) => setFrom(event.target.value)} aria-invalid={Boolean(error)} /></label>
       <label className="flex min-w-60 flex-1 flex-col gap-1">To (local time)<DenInput type="datetime-local" aria-label="To (local time)" title="Operation start time" value={to} onChange={(event) => setTo(event.target.value)} aria-invalid={Boolean(error)} /></label>
       <label className="flex min-w-56 flex-1 flex-col gap-1" aria-busy={eventTypesPending}>Event type<DenSelect aria-label="Event type" searchLabel="Search event types" searchEmptyLabel="No event types match. Try another word." disabled={eventTypesPending} value={draft.action ?? ""} onChange={(event) => setDraft({ ...draft, action: event.target.value || undefined })}>
@@ -172,7 +173,7 @@ export function AuditLogsContent({ scope, members, compact = false }: { scope: A
     }}>Retry access check</DenButton>
   </AuditLocked></AuditPage>;
   return <AuditPage compact={compact} action={<DenButton variant="secondary" size="sm" disabled={refreshing} onClick={() => void client.invalidateQueries({ queryKey: auditQueryKey(scope) })}>Refresh history</DenButton>}>
-    <AuditFiltersForm key={JSON.stringify(filters)} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
+    <AuditFiltersForm key={JSON.stringify(filters)} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} compact={compact} />
     {eventTypes.isError ? <div className="flex flex-wrap items-center gap-3">
       <DenNotice tone="error" message={eventTypes.data ? "Could not refresh event types. Showing the last verified catalog." : "Could not load event types. Try again."} />
       <DenButton variant="secondary" size="sm" disabled={eventTypes.isFetching} onClick={() => void eventTypes.refetch()}>Retry event types</DenButton>

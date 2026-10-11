@@ -888,10 +888,32 @@ test("an owner switches audit history to compact Den rows without changing captu
         await owner.see({ text: "Keep all" });
         await owner.see({ text: "Dry run only — no deletion" });
         await owner.screenshot();
+        await owner.click({ text: "Technical details" });
       }
       await owner.click({ text: "Capture and storage" });
     });
   }
+
+  await step("after: the compact capture control pauses and resumes recording without losing history", async () => {
+    await owner.click({ text: "Capture and storage" });
+    await owner.see({ role: "switch", label: "Capture audit logs" });
+    await owner.click({ role: "switch", label: "Capture audit logs" });
+    await owner.see({ text: "Not recording" });
+    const pausedResponse = await probe.api(world.den.admin, "/v1/audit/usage");
+    const paused = auditUsageResponseSchema.parse(pausedResponse.body);
+    expect(paused.captureOn || paused.captureEnabled).toBe(false);
+    const retained = await probe.api(world.den.admin, `/v1/audit/operations/${encodeURIComponent(operationId)}/events?limit=50`);
+    expect(auditEventsResponseSchema.parse(retained.body).events.map((event) => event.id)).toEqual(originalEventIds);
+    await owner.screenshot();
+    await owner.click({ role: "switch", label: "Capture audit logs" });
+    await owner.see({ text: "Recording" });
+    const resumedResponse = await probe.api(world.den.admin, "/v1/audit/usage");
+    const resumed = auditUsageResponseSchema.parse(resumedResponse.body);
+    expect(resumed.captureOn && resumed.captureEnabled).toBe(true);
+    evidence.recordAssertionEvidence("The shared settings row preserves the real capture action", `The owner pauses and resumes capture; ${originalEventIds.length} original events remain unchanged and policy revision advances from ${paused.policy?.revision} to ${resumed.policy?.revision}.`, !paused.captureOn && resumed.captureOn);
+    await owner.screenshot();
+    await owner.click({ text: "Capture and storage" });
+  });
 
   await step("after: a requested event's Unknown result stays neutral and its full diagnostic evidence is available", async () => {
     await filterAndFindOperation("Team create succeeded", "team create", "Team create requested");
@@ -955,6 +977,17 @@ test("an owner switches audit history to compact Den rows without changing captu
       await owner.see({ text: "Changed; values not retained" });
       const details = await audit.dom(`[id="audit-operation-${operationId}"]`);
       expect(details.documentWidth).toBeLessThanOrEqual(viewport.width);
+      if (viewport.width === 320) {
+        const cells = (await audit.dom(`[id="audit-operation-${operationId}"] [data-testid="audit-event"] > div tbody td`)).elements;
+        expect(cells.length).toBeGreaterThan(0);
+        for (const cell of cells) expect(cell.rect.width).toBeGreaterThanOrEqual(160);
+        for (let index = 0; index < cells.length; index += 3) {
+          const [field, before, after] = cells.slice(index, index + 3);
+          if (!field || !before || !after) throw new Error("A changed field must retain its Before and After values");
+          expect(before.rect.top).toBeGreaterThanOrEqual(field.rect.bottom - 1);
+          expect(after.rect.top).toBeGreaterThanOrEqual(before.rect.bottom - 1);
+        }
+      }
       evidence.recordAssertionEvidence("Rows and changes fit the viewport", `${viewport.width}px viewport; ${list.documentWidth}px list document and ${details.documentWidth}px expanded document; no horizontal overflow.`, details.documentWidth <= viewport.width);
       await owner.screenshot();
       await owner.click({ role: "button", label: "Hide changes for Provider configuration update committed" });
