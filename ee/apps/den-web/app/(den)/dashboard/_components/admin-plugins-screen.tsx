@@ -116,12 +116,13 @@ function DirectoryFilter({ label, title, value, options, counts, onChange }: {
   options: { id: string; name: string }[];
   onChange: (value: string | null) => void;
 }) {
+  const integrated = useLibraryIntegrated();
   const [search, setSearch] = useState("");
   const selected = options.find((option) => option.id === value);
   const matches = options.filter((option) => option.name.toLowerCase().includes(search.trim().toLowerCase()));
   return (
     <Popover.Root onOpenChange={(open) => { if (!open) setSearch(""); }}>
-      <Popover.Trigger className="inline-flex h-9 max-w-[210px] items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] text-gray-700 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-gray-300">
+      <Popover.Trigger className={`inline-flex ${integrated ? "h-8" : "h-9"} max-w-[210px] items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] text-gray-700 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-gray-300`}>
         <span className="truncate">{selected ? `${label}: ${selected.name}` : label}</span>
         <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
       </Popover.Trigger>
@@ -224,7 +225,7 @@ export function AdminPluginsScreen() {
   const firstPage = plugins.data?.pages[0];
   const legacyMember = orgContext?.members.find((member) => member.id === memberId);
   const empty = firstPage?.total === 0 && !q && !teamId && !memberId && !ownerId;
-  const createAction = <LinkButton variant="primary" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>;
+  const createAction = <LinkButton variant="primary" size={integrated ? "sm" : "md"} href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>;
 
   function setFilters(next: { name: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
     if (searchTimer.current) clearTimeout(searchTimer.current);

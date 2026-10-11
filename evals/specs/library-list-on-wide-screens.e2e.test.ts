@@ -169,13 +169,19 @@ integratedTest("a flagged member reads the desktop Library as compact rows and c
     evidence.recordAssertionEvidence("the compact lanes remain aligned as the window changes", "2560, 1280 and 900px windows: one state lane, one action lane, no horizontal document overflow", true);
   });
 
-  await step("after: a skill still opens its full description and steps", async () => {
+  await step("after: a skill shows its full steps and reveals its file only on request", async () => {
     const skill = world.skills[0];
     if (!skill) throw new Error("No skill was arranged.");
     await user.click({ text: skill });
     await user.see({ text: skill });
     expect((await probe.dom("[data-extension-detail-page]")).elements).toHaveLength(1);
-    evidence.recordAssertionEvidence("only the list presentation changed", `${skill} opens the existing detail page`, true);
+    expect((await probe.dom("[data-library-detail-state]")).elements[0]?.text).toBe("Ready");
+    expect((await probe.dom("[data-extension-detail-page] details[open]")).elements).toHaveLength(0);
+    await user.see({ text: "Follow the description." });
+    await user.screenshot();
+    await user.click({ text: "Technical details" });
+    await user.see({ text: /weekly-update\/SKILL\.md/ });
+    evidence.recordAssertionEvidence("the detail presentation preserves the skill and its file", `${skill} has a readable Ready word and its original steps; the source file appears only after opening Technical details`, true);
     await user.screenshot();
   });
 

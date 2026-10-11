@@ -15,7 +15,8 @@ The existing `den-manage-plugins` and `library-list-on-wide-screens` journeys pr
 | Contents and skill detail | Separate boxed headers, green skill tile, nested body boxes and a separate Delete confirmation implementation | Shared header, mark, rows and Remove confirmation; authored skill text and version-history behavior remain unchanged |
 | Add picker | Explanatory subtitle, repeated logo strip and a second explanatory footer | Shared compact rows, selection check and one quiet ownership note; the same choices, Continue, Cancel and destinations |
 | Named-service plugins | Letter tile even when the name is an actual recognized service | Existing brand resolver; ordinary user-created plugins still use a neutral letter tile |
-| Desktop list | Name/Kind/From/What it does columns and non-numeric column headings; state hidden or a dot | Same name-over-description anatomy at desktop density, visible state words and straight action lanes; desktop chrome, detail and add flows retained |
+| Desktop list | Name/Kind/From/What it does columns and non-numeric column headings; state hidden or a dot | Same name-over-description anatomy at desktop density, visible state words and straight action lanes; desktop chrome and actions retained |
+| Desktop skill detail | Colored fallback mark, tiny filled state chips, boxed heading, internally scrolling instructions and a file path in the default viewport | Neutral mark and readable state word, compact flat content and sentence-case instructions; the complete file path remains under Technical details |
 
 The desktop add action already lives in its collection toolbar, so it is not moved. Generic user-created names are not treated as brands. Legacy Sources and workflow editors retain their purpose and are not redesigned by this rollout.
 

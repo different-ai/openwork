@@ -1190,7 +1190,7 @@ export function McpView(props: McpViewProps) {
   };
 
   const detailPanels = (
-    <>
+    <LibraryPresentationContext.Provider value={libraryIntegrated}>
       {detailEntry ? (() => {
         const extensionConfigSlot = props.configSlotForEntry?.(detailEntry) ?? null;
         const hasConfigSlot = extensionConfigSlot !== null;
@@ -1589,7 +1589,7 @@ export function McpView(props: McpViewProps) {
           />
         );
       })() : null}
-    </>
+    </LibraryPresentationContext.Provider>
   );
 
   const cloudPlugins = [...libraryCloud.pluginById.values()];
