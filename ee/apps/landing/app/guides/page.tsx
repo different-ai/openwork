@@ -5,9 +5,9 @@ import { GUIDES_PATH, SITE_URL, guidePath, guides } from "../../lib/guides";
 import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
 
 export const metadata = withSocialMetadata({
-  title: "OpenWork guides — OpenCode, MCP, Ollama, and AI costs",
+  title: "OpenWork guides — AI tools, costs, and controls",
   description:
-    "How OpenWork works with OpenCode, Claude Code, Codex, Cursor, and Ollama, and how to manage AI spend with gateway allowances and usage reporting.",
+    "OpenWork with OpenCode, MCP clients, and local models; AI costs, current organization controls, paused policies, and planned desktop agent permissions.",
   alternates: { canonical: GUIDES_PATH },
   openGraph: { ...baseOpenGraph, url: `${SITE_URL}${GUIDES_PATH}` }
 });

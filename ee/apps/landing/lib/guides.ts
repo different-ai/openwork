@@ -525,7 +525,265 @@ export const guides: Guide[] = [
       secondary: { label: "AI Gateway docs", href: "/docs/ai-gateway/overview" }
     }
   },
-
+  {
+    slug: "engineers-and-business-teams",
+    label: "Engineers and business teams",
+    title: "AI controls for engineers and business teams",
+    description:
+      "Share organization models and connections across OpenWork and engineering tools. Learn where gateway controls apply and which desktop permissions are planned.",
+    heading: "Engineers and business teams use different AI tools. How do you keep one security policy?",
+    answer:
+      "Share organization access without assuming every client is controlled. Business teams can use OpenWork; engineers can connect OpenCode or an MCP client. Gateway grants cover organization resources, not the client's shell or whole device. Desktop agent permissions are planned, pending enforcement and rollout.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "OpenWork and OpenCode can use organization AI Gateway models",
+      "Claude Code, Codex, and Cursor connect to organization resources through MCP, not AI Gateway inference",
+      "Gateway grants do not control local commands or unrelated provider sessions",
+      "Planned desktop agent permissions require enforcement and feature activation"
+    ],
+    sections: [
+      {
+        id: "problem",
+        heading: "Why one tool for everyone doesn't work",
+        paragraphs: [
+          "Engineers often want a terminal agent they can script. Finance, legal, sales, and operations often prefer a window and their files. An approved setup should support both groups without promising controls it cannot enforce.",
+          "OpenWork provides shared organization resources. Client-local tools, independent accounts, and device security still need their own controls."
+        ]
+      },
+      {
+        id: "how",
+        heading: "What teams can share today",
+        table: {
+          caption: "Organization resources and their enforcement boundaries",
+          columns: ["Resource", "OpenWork desktop and OpenCode plugin", "Claude Code, Codex, Cursor through MCP"],
+          rows: [
+            ["Sign-in", "OpenWork organization sign-in", "OAuth sign-in for the OpenWork MCP connection"],
+            ["Models", "Granted AI Gateway models", "AI Gateway inference integration is not available"],
+            ["Skills and connections", "Organization resources granted to the member", "Granted resources through the MCP gateway"],
+            ["Connection tool switches", "Apply to calls routed through the gateway", "Apply to calls routed through the gateway, not the client's other tools"],
+            ["Local commands", "Planned desktop agent permissions; the plain OpenCode plugin does not enforce them", "Use the client's own permissions and device controls"],
+            ["Evidence", "Admin audit events and gateway usage", "Not an exhaustive log of the client's actions or connector side effects"]
+          ]
+        }
+      },
+      {
+        id: "shared",
+        heading: "Keep identity, model access, and connections aligned",
+        bullets: [
+          "Identity: use company SSO and SCIM for organization membership. Organization revocation does not revoke independent provider sessions or accounts outside that organization.",
+          "Models: grant organization-managed providers to the teams that need them. Organization provider keys are held by the gateway; separately configured keys remain outside that boundary.",
+          "Connections: grant approved resources and disable gateway tools where appropriate. These switches do not control local shell commands, independently configured connections, or the whole device.",
+          "Evidence: review admin changes and gateway usage alongside each client's and connected service's records. External connector side effects are not exhaustively captured in one audit log."
+        ]
+      },
+      {
+        id: "opencode",
+        heading: "Desktop agent permissions",
+        badge: "Planned",
+        paragraphs: [
+          "The proposed desktop agent permissions use OpenCode rules for commands, file edits, web access, and local skills and MCP servers. Publishing them as enforced requires the enforcement work in #5816 or the complete #5774–#5778 stack to land, ship, and pass a working-organization check.",
+          "The agentPermissions feature must also be enabled for the organization. It can be disabled; no guide should promise unconditional or device-wide enforcement. The plain opencode-openwork plugin supplies models and connections, not desktop permission enforcement."
+        ]
+      }
+    ],
+    cards: [
+      { icon: "library", title: "Engineers: add OpenWork to OpenCode", link: { label: "OpenCode guide", href: "/guides/openwork-and-opencode" } },
+      { icon: "route", title: "Connect engineering tools through MCP", link: { label: "MCP guide", href: "/guides/claude-code-codex-cursor" } },
+      { icon: "key", title: "Current desktop policy status", link: { label: "Desktop policies docs", href: "/docs/cloud/share-with-your-team/desktop-policies" } },
+      { icon: "library", title: "Inspect the current source", link: { label: "OpenWork source code", href: "https://github.com/different-ai/openwork" } }
+    ],
+    faq: [
+      { question: "Do engineers have to switch to the OpenWork app?", answer: "No. OpenCode can use the opencode-openwork plugin. Claude Code, Codex, and Cursor can connect organization resources through MCP; that connection does not configure their inference provider or local permissions." },
+      { question: "Do business teams need a terminal?", answer: "No. The OpenWork desktop app provides a point-and-click workspace with organization resources after sign-in." },
+      { question: "Can different teams get different access?", answer: "Organization models and connections can be granted to teams. Desktop agent permission rules are Planned, pending enforcement and feature activation; they are not a universal policy for every client." },
+      { question: "Does removing a member revoke every AI account?", answer: "No. Organization access revocation does not revoke provider sessions or personal accounts outside the organization." }
+    ],
+    cta: {
+      heading: "Different tools. Shared organization access.",
+      sub: "Check each client's enforcement boundary before relying on a control.",
+      primary: { label: "Talk to us", href: "/enterprise#book" },
+      secondary: { label: "Read MCP docs", href: "/docs/start-here/connect-openwork-mcp" }
+    }
+  },
+  {
+    slug: "ai-policies-and-controls",
+    label: "AI policies and controls",
+    title: "AI policies and admin controls in OpenWork",
+    description:
+      "Current OpenWork controls for identity, organization models, spend, connections, and app versions, plus planned agent permissions and paused desktop policies.",
+    heading: "What do policies and controls mean in OpenWork?",
+    answer:
+      "OpenWork controls organization access, gateway models and spend, and shared connections. The desktop currently applies custom-provider access and allowed-version settings; most desktop policies are paused. Agent permissions for commands, websites, and local extensions are planned, pending enforcement work and feature activation.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "Gateway controls apply to organization resources, not the whole device",
+      "Most desktop policy controls are paused",
+      "Current desktop controls include custom-provider access and allowed versions",
+      "Planned agent permissions are not live enforcement"
+    ],
+    sections: [
+      {
+        id: "layers",
+        heading: "The controls, layer by layer",
+        table: {
+          caption: "Current controls, paused settings, and planned enforcement",
+          columns: ["Control", "Scope and status", "Where admins set it"],
+          rows: [
+            ["Sign-in and roles", "Organization membership, SSO, SCIM, and role-based access; not revocation of independent provider accounts", "SSO, SCIM, Members"],
+            ["Models", "Granted organization providers and models; custom-provider access applies in managed OpenWork desktop, not every external client", "AI Gateway"],
+            ["Spend", "Allowances for priced organization-key providers; not a cap on personal keys or every external bill", "AI Gateway"],
+            ["Agent permissions", "Planned: command, file-edit, web, and local-extension rules; requires enforcement and agentPermissions activation", "Planned Agent permissions editor"],
+            ["Desktop policies", "Paused: extra workspaces, settings, extension installation, built-in extensions, alpha updates, command and browser restrictions", "Desktop policies (saved settings are not enforcement)"],
+            ["App versions", "Allowed Desktop Versions applies to the OpenWork desktop app", "Settings › General"],
+            ["Connections", "Resource grants and tool switches for calls through the MCP gateway; not local commands or independent connections", "Connections"],
+            ["Audit and usage", "Admin audit events and usage reporting; not an exhaustive record of tool actions or external side effects", "Audit logs, Analytics"]
+          ]
+        }
+      },
+      {
+        id: "agent-permissions",
+        heading: "Agent permissions: proposed desktop rules",
+        badge: "Planned",
+        paragraphs: [
+          "The proposed rules cover commands, file edits, websites, web search, and local skills and MCP servers, with organization and team settings. Allow, Block, and Ask first describe the planned permission choices, not a control to rely on today.",
+          "Rollout prerequisite: #5816 or the complete #5774–#5778 enforcement stack must land and ship, and the relevant feature must be enabled. Confirm blocked, allowed, and approval-required actions in the actual desktop version before updating this guide. Turning the feature off can remove enforcement; saved rules alone are not proof."
+        ]
+      },
+      {
+        id: "how-rules-combine",
+        heading: "Check the scope of each setting",
+        bullets: [
+          "Organization model and connection grants apply to the member's organization resources.",
+          "Desktop custom-provider access and allowed versions apply in managed OpenWork desktop, not other apps or the user's entire computer.",
+          "Planned agent permissions have their own rule-resolution behavior; do not infer it from paused desktop policy settings.",
+          "SSO and SCIM manage organization access, not every independently authorized provider or connector session.",
+          "Client permissions, operating-system controls, and connected-service access rules remain separate."
+        ]
+      },
+      {
+        id: "where-enforced",
+        heading: "Where each control applies",
+        table: {
+          caption: "Client boundaries; MCP access is not device management",
+          columns: ["Control", "OpenWork desktop", "Plain OpenCode plugin", "Claude Code, Codex, Cursor through MCP"],
+          rows: [
+            ["Organization access", "Organization resources", "Organization resources", "OpenWork MCP resources only"],
+            ["Gateway model access and spend", "Gateway requests", "Gateway requests", "Inference integration not available"],
+            ["Connection grants and tool switches", "Calls through gateway", "Calls through gateway", "Calls through gateway, not local shell"],
+            ["Agent permissions", "Planned; rollout prerequisite", "Not enforced by this plugin", "Use client-local permissions"],
+            ["Custom-provider access and allowed versions", "Current desktop settings", "Not desktop enforcement", "Not applicable"],
+            ["Other desktop policies", "Paused", "Not applicable", "Not applicable"]
+          ]
+        }
+      }
+    ],
+    cards: [
+      { icon: "key", title: "Desktop policies and paused controls", link: { label: "Docs", href: "/docs/cloud/share-with-your-team/desktop-policies" } },
+      { icon: "users", title: "Members, roles, and permissions", link: { label: "Docs", href: "/docs/cloud/members-and-rbac" } },
+      { icon: "route", title: "AI Gateway access and limits", link: { label: "Docs", href: "/docs/ai-gateway/overview" } },
+      { icon: "library", title: "Current desktop policy documentation source", link: { label: "Source", href: "https://github.com/different-ai/openwork/blob/dev/packages/docs/cloud/share-with-your-team/desktop-policies.mdx" } }
+    ],
+    faq: [
+      { question: "Can I stop people using their own API keys?", answer: "Only models you provide limits custom-provider access in managed OpenWork desktop. It does not prevent personal keys in other clients, scripts, or devices." },
+      { question: "Can I block risky commands?", answer: "Organization-managed agent permissions are Planned, pending enforcement and feature activation. Do not rely on paused desktop command settings or MCP tool switches to block local shell commands." },
+      { question: "Can I limit which websites agents open?", answer: "Desktop organization website rules are Planned. The current desktop-policy approved-sites controls are paused; gateway grants do not limit a client's browser or web tools." },
+      { question: "Can I pin the desktop app version?", answer: "Allowed Desktop Versions is a current OpenWork desktop setting in Settings › General. It is not a control for independently installed AI clients." },
+      { question: "Does one audit log capture every action?", answer: "No. Admin audit events and gateway usage do not exhaustively record every client tool call or external connector side effect. Review the documented event fields and connected-service records; this is not a blanket privacy or completeness guarantee." }
+    ],
+    cta: {
+      heading: "Check which controls apply today.",
+      sub: "Separate current gateway access from paused policies and planned desktop permissions.",
+      primary: { label: "Talk to us", href: "/enterprise#book" },
+      secondary: { label: "Desktop policies docs", href: "/docs/cloud/share-with-your-team/desktop-policies" }
+    }
+  },
+  {
+    slug: "prevent-shadow-ai",
+    label: "Prevent shadow AI",
+    title: "How to reduce shadow AI at work",
+    description:
+      "Reduce unapproved AI use with useful approved tools, organization models, SSO, shared connections, and usage review. Planned permissions are not live controls.",
+    heading: "How do you prevent shadow AI?",
+    answer:
+      "Reduce shadow AI by making approved tools useful, sharing organization models and connections, and reviewing adoption. OpenWork supports that approved path, but cannot make it the only path to company data. Local commands, independent accounts, and device security need separate controls; desktop agent permissions are planned.",
+    updated: "2026-10-10",
+    keyFacts: [
+      "Seven steps to reduce unapproved AI use, not a prevention guarantee",
+      "Organization provider keys are held by the gateway",
+      "MCP access does not control client-local tools",
+      "Planned permissions require enforcement, release, and feature activation"
+    ],
+    sections: [
+      {
+        id: "what",
+        heading: "What is shadow AI?",
+        paragraphs: [
+          "Shadow AI is using tools, accounts, or extensions an organization has not approved, such as a personal chat account, an unvetted MCP server, or a personally funded provider key. It can send company data outside the organization's approved processing and access rules.",
+          "People may turn to those tools when the approved setup is missing, slow, or limited. Providing a useful approved option addresses part of the problem, not every route around it."
+        ]
+      },
+      {
+        id: "why-bans-fail",
+        heading: "Why blocking alone is not enough",
+        bullets: [
+          "A website block does not cover personal devices or independent accounts.",
+          "Engineers and business teams often need different interfaces.",
+          "Usage reporting covers the approved path, not every unapproved tool.",
+          "Use training, identity, endpoint, and data-access controls alongside the approved AI setup."
+        ]
+      },
+      {
+        id: "steps",
+        heading: "Seven steps to reduce shadow AI with OpenWork",
+        steps: [
+          { title: "Give everyone an approved agent", body: "Offer OpenWork desktop for macOS, Windows, and Linux. Local files can be used in a workspace; prompts, selected content, and tool requests may still be sent to the configured provider or service." },
+          { title: "Provide useful organization models", body: "Grant organization-managed gateway providers to the teams that need them. Gateway-held keys are separate from personal keys or providers configured outside that organization." },
+          { title: "Use company sign-in", body: "Configure organization SSO and SCIM, and required desktop sign-in through the managed installation where appropriate. Organization revocation does not revoke independent provider sessions." },
+          { title: "Limit custom providers and plan local permissions", body: "Only models you provide is a current managed-desktop control. Local skill, MCP-server, command, and website rules are Planned, pending #5816 or #5774–#5778 and feature activation; paused extension settings do not block unapproved extensions today." },
+          { title: "Share approved skills and connections", body: "Publish useful organization resources and grant access to teams. Tool switches apply to gateway-routed calls, not independently configured services or local shell commands." },
+          { title: "Cover engineers without overstating MCP", body: "OpenCode can use the opencode-openwork plugin for organization models and resources. Claude Code, Codex, and Cursor can connect resources through MCP, but AI Gateway inference integration is not available and their local permissions remain separate." },
+          { title: "Review usage and gaps", body: "Use gateway usage, spend reporting, and admin audit events to review adoption. Combine them with client and service records: external connector side effects are not exhaustively logged by OpenWork." }
+        ]
+      },
+      {
+        id: "checklist",
+        heading: "Shadow AI checklist",
+        table: {
+          caption: "Risk reduction and remaining boundaries",
+          columns: ["Risk", "OpenWork control or prerequisite"],
+          rows: [
+            ["Personal AI accounts", "Offer an approved desktop app; personal accounts remain outside organization control"],
+            ["Personal provider keys", "Gateway-managed keys and desktop custom-provider access; not a device-wide key ban"],
+            ["Unvetted local skills and MCP servers", "Planned agent permissions; enforcement and feature activation required"],
+            ["Risky local commands", "Planned agent permissions; MCP tool switches do not control shell commands"],
+            ["Unapproved websites", "Planned desktop website rules; current desktop-policy browsing restrictions are paused"],
+            ["Former members keeping access", "SSO/SCIM organization revocation; separately revoke external sessions where necessary"],
+            ["Runaway spend", "Allowances for priced organization-key providers, not all external bills"],
+            ["Incomplete audit evidence", "Admin events and gateway usage plus client and connected-service records"]
+          ]
+        }
+      }
+    ],
+    cards: [
+      { icon: "key", title: "Current and planned admin controls", link: { label: "Policies and controls", href: "/guides/ai-policies-and-controls" } },
+      { icon: "users", title: "Organization access across team tools", link: { label: "Read the guide", href: "/guides/engineers-and-business-teams" } },
+      { icon: "cloud", title: "Data handling and subprocessors", link: { label: "Trust Center", href: "/trust" } },
+      { icon: "monitor", title: "Roll out the desktop app", link: { label: "Enterprise deployment docs", href: "/docs/start-here/enterprise-desktop-deployment" } }
+    ],
+    faq: [
+      { question: "What is shadow AI?", answer: "Using AI tools, accounts, or extensions an organization has not approved. It can put company data outside approved processing and access rules." },
+      { question: "Is shadow AI a security risk?", answer: "It can expose confidential data, bypass approved access paths, hide spend, and create gaps in evidence. The risk depends on what data is shared and which services are used." },
+      { question: "Should we just block AI websites?", answer: "Use appropriate endpoint and data controls alongside an approved tool people can use. Website blocks alone do not cover independent accounts, scripts, or personal devices." },
+      { question: "Does OpenWork prevent all shadow AI?", answer: "No. It supports an approved path and organization access controls, not a universal device sandbox or a guarantee against unapproved use. Planned desktop permissions are not live controls." },
+      { question: "Does OpenWork lock us into one AI vendor?", answer: "No. OpenWork is open source and supports the providers and local models available through OpenCode." }
+    ],
+    cta: {
+      heading: "Make the approved path useful.",
+      sub: "Reduce unapproved use without assuming every client or device is controlled.",
+      primary: { label: "Talk to us", href: "/enterprise#book" },
+      secondary: { label: "Deployment docs", href: "/docs/start-here/enterprise-desktop-deployment" }
+    }
+  }
 ];
 
 export function guidePath(guide: Guide): string {
@@ -590,7 +848,7 @@ ${guide.cards.map((card) => `- ${card.title}: [${card.link.label}](${absolute(ca
 export function guidesIndexMarkdown(): string {
   return `# OpenWork guides
 
-> Short answers about OpenWork with OpenCode, MCP clients, and local models, plus spend allowances and usage reporting.
+> Short answers about OpenWork with OpenCode, MCP clients, local models, AI costs, and organization controls. Desktop agent permissions are Planned; most desktop policies are paused.
 
 ${guides.map((guide) => `- [${guide.heading}](${SITE_URL}${guidePath(guide)}) — ${guide.answer}`).join("\n")}
 `;

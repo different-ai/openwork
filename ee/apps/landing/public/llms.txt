@@ -48,6 +48,9 @@ One URL brings the user's organization skills, plugins, and connections into any
 - [Can you use OpenWork with Claude Code, Codex, or Cursor?](https://openworklabs.com/guides/claude-code-codex-cursor) — yes, through the OpenWork MCP URL; AI Gateway models for these clients are in progress
 - [How does OpenWork work with Ollama?](https://openworklabs.com/guides/ollama) — built-in Settings › Ollama screen, fully local
 - [How do you keep AI agent costs under control?](https://openworklabs.com/guides/control-ai-costs) — spend allowances for priced organization-key providers and usage by model, team, or person
+- [AI controls for engineers and business teams](https://openworklabs.com/guides/engineers-and-business-teams) — organization resources across clients; MCP grants do not control local commands or devices; desktop agent permissions are Planned
+- [AI policies and admin controls](https://openworklabs.com/guides/ai-policies-and-controls) — current gateway and desktop controls, paused desktop policies, and Planned agent permissions pending enforcement and feature activation
+- [How to reduce shadow AI at work](https://openworklabs.com/guides/prevent-shadow-ai) — an approved path and adoption review, not a prevention guarantee; Planned permissions are not live controls
 - Every guide is also served as Markdown with `Accept: text/markdown`.
 
 ### Machine-readable resources
