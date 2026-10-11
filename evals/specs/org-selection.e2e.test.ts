@@ -129,7 +129,7 @@ function switcherReachable(measured: WorkspaceSwitcherMeasurements): boolean {
 function switcherEvidence(measured: WorkspaceSwitcherMeasurements): string {
   const hits = [measured.email, measured.search, measured.firstWorkspace, measured.showMore, measured.create, measured.signOut]
     .map((control) => control?.hitTest ?? false);
-  return `${measured.viewport.width}×${measured.viewport.height}: popup top=${measured.menu.top.toFixed(1)}, bottom=${measured.menu.bottom.toFixed(1)}, height=${measured.menu.height.toFixed(1)}px; trigger top=${measured.trigger?.top.toFixed(1)}px; native hits for account/search/first workspace/show more/create/sign out=${hits.join("/")}; list ${measured.list?.scrollHeight}/${measured.list?.clientHeight}px, scrollTop=${measured.list?.scrollTop}; clipping ancestors=${JSON.stringify(measured.clippingAncestors)}.`;
+  return `${measured.viewport.width}×${measured.viewport.height}, usable ${measured.viewport.clientWidth}px, document ${measured.viewport.documentWidth}px: popup top=${measured.menu.top.toFixed(1)}, bottom=${measured.menu.bottom.toFixed(1)}, height=${measured.menu.height.toFixed(1)}px; trigger top=${measured.trigger?.top.toFixed(1)}px; native hits for account/search/first workspace/show more/create/sign out=${hits.join("/")}; list ${measured.list?.scrollHeight}/${measured.list?.clientHeight}px, scrollTop=${measured.list?.scrollTop}; clipping ancestors=${JSON.stringify(measured.clippingAncestors)}.`;
 }
 
 switcherTest("an owner with many workspaces can switch workspaces on short and narrow screens without losing choices or permissions", async ({ world, user, probe, step, evidence }) => {
@@ -161,8 +161,13 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
     });
   };
   // notSee proves stable absence from now on; first let a closing workspace menu stop painting.
-  const menuCloses = (label: string) => page.eventually(async () => (await page.dom('[data-testid="workspace-switcher-menu"]')).elements.filter((menu) => menu.rect.width > 0 && menu.rect.height > 0).length, {
-    within: 30_000, label, until: (painted) => painted === 0,
+  const menuCloses = (label: string) => page.eventually(async () => ({
+    paint: await world.menuPaintState(),
+    sizedMenus: (await page.dom('[data-testid="workspace-switcher-menu"]')).elements.filter((menu) => menu.rect.width > 0 && menu.rect.height > 0).length,
+  }), {
+    // Keep the existing zero-sized-menu condition and stable user.notSee below;
+    // the shared paint witness additionally observes hidden ancestors.
+    within: 30_000, label, until: (state) => state.paint.painted === 0 && state.sizedMenus === 0,
   });
   const openSwitcher = async (expectRows = true) => {
     await owner.click(mobileTrigger);
@@ -219,6 +224,7 @@ switcherTest("an owner with many workspaces can switch workspaces on short and n
       expect(measured.menu.left).toBeGreaterThanOrEqual(0);
       expect(measured.menu.right).toBeLessThanOrEqual(measured.viewport.width);
       expect(measured.viewport.documentWidth).toBeLessThanOrEqual(measured.viewport.width);
+      expect(measured.viewport.documentWidth).toBeLessThanOrEqual(measured.viewport.clientWidth);
       expect(measured.email?.text).toBe(world.owner.email);
       expect(measured.createHref).toBe("/organization");
       for (const control of [measured.email, measured.search, measured.firstWorkspace, measured.showMore, measured.create, measured.signOut]) {

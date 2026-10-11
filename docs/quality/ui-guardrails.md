@@ -55,6 +55,9 @@ To retire fixed entries, or after an intentional scanner rule change:
   clientWidth. Classic scrollbars reduce usable width; innerWidth is diagnostic,
   not the overflow limit.
 
-The settings and Calendar journeys use these helpers without removing their
-geometry, pointer, keyboard, focus, saved-state or stable-absence assertions.
+The settings, Calendar and workspace-selection journeys use these helpers
+without removing their geometry, pointer, keyboard, focus, saved-state or
+stable-absence assertions. Workspace selection retains its atomic DOM center
+hit observations alongside clipping ancestors, scroll demand and focused state;
+shared paint and usable-width checks add to its existing closure/overflow checks.
 They do not change Chrome launch policy or the design measurement collector.
