@@ -75,6 +75,10 @@ export interface HeadlessThreadUsage {
 
 export interface CreateThreadInput {
   title: string;
+  /** Native V2 creation identity. V1 rejects this before creating a session. */
+  id?: string;
+  /** Native V2 metadata, verified on the creation receipt before any prompt. */
+  metadata?: Record<string, unknown>;
   /** Optional first turn. When present the thread starts running immediately. */
   prompt?: string;
   model?: HeadlessThreadModel;
@@ -102,7 +106,7 @@ export interface HeadlessThread {
 export interface HeadlessThreadTurnInput {
   prompt: string;
   model?: HeadlessThreadModel;
-  /** Stable engine message id used to make prompt admission idempotent. */
+  /** Stable message identity. V2 deduplicates admission atomically; V1 only checks history before submitting. */
   messageId?: string;
   signal?: AbortSignal;
 }

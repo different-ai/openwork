@@ -35,7 +35,8 @@ import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerInternalRoutes } from "./routes/internal/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
-import { configureCloudAgentExecutor, configureCloudWorkflowExecutor, configureHeadlessAgentExecutor } from "./automations/service.js"
+import { registerSessionRunnerRoutes } from "./routes/session-runners/index.js"
+import { automationService, configureCloudAgentExecutor, configureCloudWorkflowExecutor, configureHeadlessAgentExecutor } from "./automations/service.js"
 import { cloudAgentRuntimeAvailable, executeCloudAgent } from "./automations/cloud-agent-executor.js"
 import { executeHeadlessAgent } from "./automations/headless-agent-executor.js"
 import { getCatalog } from "./mcp/index.js"
@@ -282,7 +283,10 @@ registerDeprecatedMemoryRoutes(app)
 registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
 registerMeRoutes(app)
-registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
+// Interactive sessions are not a scheduler feature: their credentials, polls,
+// inventory and receipts stay available when the Automation runtime is off.
+registerSessionRunnerRoutes(app, { automationService: env.automations.runtimeEnabled ? automationService : undefined })
+registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled, sessionRunners: false })
 registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
 registerWorkbotRoutes(app)

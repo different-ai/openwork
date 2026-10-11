@@ -847,15 +847,18 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "denFlatPageHeaders",
+              "analyticsIntegrated",
               "dashboardActivity",
               "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
+              "auditLogsCompact",
               "orgManagedDashboards",
               "slackAssistant",
               "slackWorkbotReplies",
               "headlessAutomations",
               "workbot",
+              "calendarPolish",
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
@@ -864,6 +867,7 @@
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "remoteSessionTargets",
               "opencodePlugin",
               "platformAuditReads"
             ]
@@ -1061,6 +1065,9 @@
                     "denFlatPageHeaders": {
                       "type": "boolean"
                     },
+                    "analyticsIntegrated": {
+                      "type": "boolean"
+                    },
                     "dashboardActivity": {
                       "type": "boolean"
                     },
@@ -1071,6 +1078,9 @@
                       "type": "boolean"
                     },
                     "auditLogs": {
+                      "type": "boolean"
+                    },
+                    "auditLogsCompact": {
                       "type": "boolean"
                     },
                     "orgManagedDashboards": {
@@ -1086,6 +1096,9 @@
                       "type": "boolean"
                     },
                     "workbot": {
+                      "type": "boolean"
+                    },
+                    "calendarPolish": {
                       "type": "boolean"
                     },
                     "automationCalendar": {
@@ -1112,6 +1125,9 @@
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
+                    "remoteSessionTargets": {
+                      "type": "boolean"
+                    },
                     "opencodePlugin": {
                       "type": "boolean"
                     },
@@ -1133,15 +1149,18 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -1150,6 +1169,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
@@ -1550,6 +1570,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "analyticsIntegrated": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "dashboardActivity": {
                       "type": "object",
                       "properties": {
@@ -1719,6 +1795,62 @@
                       ]
                     },
                     "auditLogs": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "auditLogsCompact": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -1999,6 +2131,62 @@
                       ]
                     },
                     "workbot": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "calendarPolish": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -2502,6 +2690,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "remoteSessionTargets": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "opencodePlugin": {
                       "type": "object",
                       "properties": {
@@ -2623,15 +2867,18 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -2640,6 +2887,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads"
                   ],
@@ -3036,6 +3284,9 @@
                     "denFlatPageHeaders": {
                       "type": "boolean"
                     },
+                    "analyticsIntegrated": {
+                      "type": "boolean"
+                    },
                     "dashboardActivity": {
                       "type": "boolean"
                     },
@@ -3046,6 +3297,9 @@
                       "type": "boolean"
                     },
                     "auditLogs": {
+                      "type": "boolean"
+                    },
+                    "auditLogsCompact": {
                       "type": "boolean"
                     },
                     "orgManagedDashboards": {
@@ -3061,6 +3315,9 @@
                       "type": "boolean"
                     },
                     "workbot": {
+                      "type": "boolean"
+                    },
+                    "calendarPolish": {
                       "type": "boolean"
                     },
                     "automationCalendar": {
@@ -3087,6 +3344,9 @@
                     "engineV2Upgrade": {
                       "type": "boolean"
                     },
+                    "remoteSessionTargets": {
+                      "type": "boolean"
+                    },
                     "opencodePlugin": {
                       "type": "boolean"
                     },
@@ -3108,15 +3368,18 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -3125,6 +3388,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads",
                     "gatewayDashboard"
@@ -3525,6 +3789,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "analyticsIntegrated": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "dashboardActivity": {
                       "type": "object",
                       "properties": {
@@ -3694,6 +4014,62 @@
                       ]
                     },
                     "auditLogs": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "auditLogsCompact": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -3974,6 +4350,62 @@
                       ]
                     },
                     "workbot": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
+                    "calendarPolish": {
                       "type": "object",
                       "properties": {
                         "enabled": {
@@ -4477,6 +4909,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "remoteSessionTargets": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "opencodePlugin": {
                       "type": "object",
                       "properties": {
@@ -4598,15 +5086,18 @@
                     "driveResumableUploads",
                     "implicitCloudSkills",
                     "denFlatPageHeaders",
+                    "analyticsIntegrated",
                     "dashboardActivity",
                     "libraryUsage",
                     "modelsAnalytics",
                     "auditLogs",
+                    "auditLogsCompact",
                     "orgManagedDashboards",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "headlessAutomations",
                     "workbot",
+                    "calendarPolish",
                     "automationCalendar",
                     "workbotCalendar",
                     "workbotSideChats",
@@ -4615,6 +5106,7 @@
                     "permissions",
                     "gatewayCloudSignIn",
                     "engineV2Upgrade",
+                    "remoteSessionTargets",
                     "opencodePlugin",
                     "platformAuditReads"
                   ],
@@ -10042,15 +10534,18 @@
               "driveResumableUploads",
               "implicitCloudSkills",
               "denFlatPageHeaders",
+              "analyticsIntegrated",
               "dashboardActivity",
               "libraryUsage",
               "modelsAnalytics",
               "auditLogs",
+              "auditLogsCompact",
               "orgManagedDashboards",
               "slackAssistant",
               "slackWorkbotReplies",
               "headlessAutomations",
               "workbot",
+              "calendarPolish",
               "automationCalendar",
               "workbotCalendar",
               "workbotSideChats",
@@ -10059,6 +10554,7 @@
               "permissions",
               "gatewayCloudSignIn",
               "engineV2Upgrade",
+              "remoteSessionTargets",
               "opencodePlugin",
               "platformAuditReads"
             ]
@@ -24694,6 +25190,9 @@
           "sideChats": {
             "type": "boolean"
           },
+          "calendarPolish": {
+            "type": "boolean"
+          },
           "model": {
             "anyOf": [
               {
@@ -26733,6 +27232,9 @@
                         "denFlatPageHeaders": {
                           "type": "boolean"
                         },
+                        "analyticsIntegrated": {
+                          "type": "boolean"
+                        },
                         "dashboardActivity": {
                           "type": "boolean"
                         },
@@ -26743,6 +27245,9 @@
                           "type": "boolean"
                         },
                         "auditLogs": {
+                          "type": "boolean"
+                        },
+                        "auditLogsCompact": {
                           "type": "boolean"
                         },
                         "orgManagedDashboards": {
@@ -26758,6 +27263,9 @@
                           "type": "boolean"
                         },
                         "workbot": {
+                          "type": "boolean"
+                        },
+                        "calendarPolish": {
                           "type": "boolean"
                         },
                         "automationCalendar": {
@@ -26784,6 +27292,9 @@
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
+                        "remoteSessionTargets": {
+                          "type": "boolean"
+                        },
                         "opencodePlugin": {
                           "type": "boolean"
                         },
@@ -26805,15 +27316,18 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
@@ -26822,6 +27336,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
@@ -27222,6 +27737,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "analyticsIntegrated": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "dashboardActivity": {
                           "type": "object",
                           "properties": {
@@ -27391,6 +27962,62 @@
                           ]
                         },
                         "auditLogs": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "auditLogsCompact": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -27671,6 +28298,62 @@
                           ]
                         },
                         "workbot": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "calendarPolish": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -28174,6 +28857,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "remoteSessionTargets": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "opencodePlugin": {
                           "type": "object",
                           "properties": {
@@ -28295,15 +29034,18 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
@@ -28312,6 +29054,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads"
                       ],
@@ -28453,6 +29196,9 @@
                         "denFlatPageHeaders": {
                           "type": "boolean"
                         },
+                        "analyticsIntegrated": {
+                          "type": "boolean"
+                        },
                         "dashboardActivity": {
                           "type": "boolean"
                         },
@@ -28463,6 +29209,9 @@
                           "type": "boolean"
                         },
                         "auditLogs": {
+                          "type": "boolean"
+                        },
+                        "auditLogsCompact": {
                           "type": "boolean"
                         },
                         "orgManagedDashboards": {
@@ -28478,6 +29227,9 @@
                           "type": "boolean"
                         },
                         "workbot": {
+                          "type": "boolean"
+                        },
+                        "calendarPolish": {
                           "type": "boolean"
                         },
                         "automationCalendar": {
@@ -28504,6 +29256,9 @@
                         "engineV2Upgrade": {
                           "type": "boolean"
                         },
+                        "remoteSessionTargets": {
+                          "type": "boolean"
+                        },
                         "opencodePlugin": {
                           "type": "boolean"
                         },
@@ -28525,15 +29280,18 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
@@ -28542,6 +29300,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads",
                         "gatewayDashboard"
@@ -28942,6 +29701,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "analyticsIntegrated": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "dashboardActivity": {
                           "type": "object",
                           "properties": {
@@ -29111,6 +29926,62 @@
                           ]
                         },
                         "auditLogs": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "auditLogsCompact": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -29391,6 +30262,62 @@
                           ]
                         },
                         "workbot": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
+                        "calendarPolish": {
                           "type": "object",
                           "properties": {
                             "enabled": {
@@ -29894,6 +30821,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "remoteSessionTargets": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "opencodePlugin": {
                           "type": "object",
                           "properties": {
@@ -30015,15 +30998,18 @@
                         "driveResumableUploads",
                         "implicitCloudSkills",
                         "denFlatPageHeaders",
+                        "analyticsIntegrated",
                         "dashboardActivity",
                         "libraryUsage",
                         "modelsAnalytics",
                         "auditLogs",
+                        "auditLogsCompact",
                         "orgManagedDashboards",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "headlessAutomations",
                         "workbot",
+                        "calendarPolish",
                         "automationCalendar",
                         "workbotCalendar",
                         "workbotSideChats",
@@ -30032,6 +31018,7 @@
                         "permissions",
                         "gatewayCloudSignIn",
                         "engineV2Upgrade",
+                        "remoteSessionTargets",
                         "opencodePlugin",
                         "platformAuditReads"
                       ],
@@ -33198,7 +34185,7 @@
         ],
         "x-mcp": false,
         "summary": "Connect this desktop as an Automation runner",
-        "description": "Mints a time-limited runner-only credential for the desktop SSE connection and HTTP runner APIs.",
+        "description": "Mints the existing time-limited runner-only credential. Session runners never execute scheduled Automations.",
         "responses": {
           "200": {
             "description": "Runner credential minted.",
@@ -33248,14 +34235,16 @@
                   },
                   "capabilities": {
                     "default": [],
-                    "maxItems": 3,
+                    "maxItems": 5,
                     "type": "array",
                     "items": {
                       "type": "string",
                       "enum": [
                         "model_attention_v1",
                         "remote_session_v1",
-                        "remote_session_control_v1"
+                        "remote_session_control_v1",
+                        "remote_session_only_v1",
+                        "remote_session_recovery_v1"
                       ]
                     }
                   },

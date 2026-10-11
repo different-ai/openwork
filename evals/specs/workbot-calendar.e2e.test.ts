@@ -74,6 +74,52 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     await user.screenshot();
   });
 
+  await step("before: meeting sources take title space and the cloud default does not name the organization's choice", async () => {
+    const meetings = (await probe.dom("[data-calendar-meeting]")).elements;
+    expect(meetings.some((meeting) => meeting.text.includes("Google Calendar"))).toBe(true);
+    expect(await count("[data-calendar-provider-logo]")).toBe(0);
+    await user.click({ role: "button", label: /^Weekly launch update, / });
+    await user.see({ text: /Cloud default/ });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The off switch preserves existing meeting and model presentation", "Meeting blocks show provider subtitles, no provider logos, and the model remains Cloud default.", true);
+  });
+  await step("after: meeting logos leave room for titles and the default is clearly the organization's choice", async () => {
+    await world.setCalendarPolish(true);
+    await probe.eventually(() => world.polishEnabled(), { within: 45_000, label: "Den's Calendar polish switch reaches Workbot" });
+    await user.reload();
+    await user.see({ role: "button", label: /^Launch standup, Google Calendar/ });
+    await user.see({ role: "button", label: /^Partner pipeline review, Outlook Calendar/ });
+    const meetings = (await probe.dom("[data-calendar-meeting]")).elements;
+    const logos = await count("[data-calendar-meeting] [data-calendar-provider-logo]");
+    expect(logos).toBe(meetings.length);
+    expect(meetings.every((meeting) => !meeting.text.includes("Google Calendar") && !meeting.text.includes("Outlook Calendar"))).toBe(true);
+    await user.click({ role: "button", label: /^Weekly launch update, / });
+    await user.see({ text: "Organization default" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Provider identity stays accessible without repeating it in meeting text", `${logos} meeting logos; both provider names remain in the buttons' accessible names; Organization default is distinct from Auto.`, true);
+  });
+
+  await step("after: a known organization default names the actual resolved model in the open chooser", async () => {
+    await world.enableDefaultModel();
+    const resolvedName = await world.resolvedDefaultModelName();
+    await user.reload();
+    await user.see({ role: "button", label: /^Weekly launch update, / });
+    await user.click({ role: "button", label: /^Weekly launch update, / });
+    await user.see({ text: `Organization default (${resolvedName})` });
+    const summary = (await probe.dom("[data-automation-model]")).elements[0]?.text ?? "";
+    expect(summary).not.toContain("·");
+    expect(summary).not.toContain("Auto");
+    expect((await probe.dom('[data-automation-model] svg[viewBox="146 7 468 585"]')).elements).toHaveLength(1);
+    await user.click({ role: "button", text: /^Edit$/ });
+    await user.click(modelTrigger);
+    await user.see({ role: "option", label: /^Organization default/ });
+    expect((await probe.dom('[role="option"]')).elements.some((option) => option.text.includes(`Organization default (${resolvedName})`))).toBe(true);
+    await user.screenshot();
+    await user.press("Escape");
+    await user.click({ role: "button", text: /^Cancel$/ });
+    evidence.recordAssertionEvidence("The default label resolves through Den without changing the stored model", `Den's resolved default is ${resolvedName}; the summary and open chooser say Organization default (${resolvedName}) without a middle-dot meta string.`, true);
+  });
+
   await step("Alex opens the weekly launch update: when it repeats, where it runs, and a past run's result", async () => {
     await user.click({ role: "button", label: /^Weekly launch update, / });
     await user.see({ text: /^Every Friday at 3:00 PM/ });
@@ -94,7 +140,8 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     await probe.eventually(async () => (await probe.dom("[data-calendar-range-label]")).elements[0]?.text ?? "", { within: 15_000, label: "next week is on screen", until: (text) => text !== "" && text !== thisWeek });
     await user.click({ role: "button", label: /^Update launch deals, Blocked until fixed/ });
     await user.see({ text: "Not scheduled until fixed" });
-    await user.see({ text: /Needs HubSpot access/ });
+    await user.see({ text: "Needs HubSpot access. Connect HubSpot so this Automation can update deals." });
+    expect((await probe.dom("[data-calendar-recovery]")).elements[0]?.text).toBe("Needs HubSpot access. Connect HubSpot so this Automation can update deals.");
     const runNow = (await probe.dom("[data-calendar-detail] button[disabled]")).elements.map((element) => element.text);
     evidence.recordAssertionEvidence("blocked is not a confirmed run", `panel: "Not scheduled until fixed"; disabled: ${runNow.join(", ")}`, runNow.includes("Run now"));
     expect(runNow).toContain("Run now");
@@ -124,10 +171,10 @@ test("a Workbot member sees their Automations next to Google and Outlook meeting
     const logos = await count('[role="listbox"] [role="option"] svg[role="img"]');
     const layout = await menuLayout(probe, 960);
     const selected = (await probe.dom('[role="option"][aria-selected="true"]')).elements[0]?.text ?? "";
-    evidence.recordAssertionEvidence("the complete grouped list stays on screen", `${choices} choices, ${logos} vendor logos; selected "${selected}"; ${layout.description}`, choices === world.pickerModels.length + 1 && logos === world.pickerModels.length && /Cloud default/.test(selected) && layout.fits && layout.noSidewaysScroll);
+    evidence.recordAssertionEvidence("the complete grouped list stays on screen", `${choices} choices, ${logos} vendor logos; selected "${selected}"; ${layout.description}`, choices === world.pickerModels.length + 1 && logos === world.pickerModels.length && /Organization default/.test(selected) && layout.fits && layout.noSidewaysScroll);
     expect(choices).toBe(world.pickerModels.length + 1);
     expect(logos).toBe(world.pickerModels.length);
-    expect(selected).toContain("Cloud default");
+    expect(selected).toContain("Organization default");
     expect(layout.fits && layout.noSidewaysScroll).toBe(true);
   });
 

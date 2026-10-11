@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { AutomationClaimResult, AutomationListItem } from "@openwork/automations"
 import { AUTOMATION_MANUAL_CLAIM_WINDOW_MS, desktopRunnerConnected } from "@openwork/automations"
-import { AUTOMATION_RUNNER_WORK_RUN_LIMIT, isAutomationCloudDefaultModel } from "@openwork/types/automations"
+import { AUTOMATION_RUNNER_WORK_RUN_LIMIT, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY, isAutomationCloudDefaultModel } from "@openwork/types/automations"
 import type {
   AutomationCloudTarget,
   AutomationDesktopRunnerCapability,
@@ -597,7 +597,16 @@ export class AutomationService {
     return { connected: desktopRunnerConnected({ lastSeenAt, now: Date.now() }), lastSeenAt }
   }
 
+  private async canRunScheduledAutomations(scope: DesktopRunnerScope) {
+    if (scope.capabilities?.includes(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)) return false
+    // A token issued before the registration changed must not restore scheduled
+    // execution to a session-only runner.
+    const registration = await automationRepository.desktopRunnerById(scope)
+    return !registration?.capabilities.includes(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)
+  }
+
   async discoverDesktopRunnerWork(scope: DesktopRunnerScope) {
+    if (!await this.canRunScheduledAutomations(scope)) return []
     try {
       await this.touchDesktopRunner(scope)
     } catch (error) {
@@ -614,6 +623,7 @@ export class AutomationService {
   }
 
   async claimDesktopRunner(scope: DesktopRunnerScope, runId: string) {
+    if (!await this.canRunScheduledAutomations(scope)) return null
     const claimed = await automationRepository.claimDesktop({
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,

@@ -84,6 +84,13 @@ export async function automationCalendar(seed: Seed, { place }: { place: Place }
   const resources = setup.move();
   return {
     den, desktop, recovery,
+    async setCalendarPolish(enabled: boolean) {
+      const updated = await denFetch(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, {
+        method: "PUT", headers: { authorization: `Bearer ${den.admin.token}` },
+        body: JSON.stringify({ capabilities: { calendarPolish: enabled } }),
+      });
+      if (!updated.response.ok) throw new Error(`Could not set Calendar polish: HTTP ${updated.response.status}`);
+    },
     hourRail: () => readCalendarRail(desktop),
     /** One read-only projection keeps the hour and its real clipping boundary in the same frame. */
     async hourRailLayout() {

@@ -129,6 +129,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       calendar: who.enabled && who.calendar === true,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
+      calendarPolish: who.enabled && who.calendarPolish,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
   })

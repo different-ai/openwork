@@ -102,6 +102,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  analyticsIntegrated: {
+    label: "Den: integrated analytics",
+    description: "Admins see analytics in the same style as Library and Connectors, with links to manage the items they use.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   dashboardActivity: {
     label: "Dashboard activity",
     description: "Organization admins see recent additions and skill updates on their dashboard instead of Quick add.",
@@ -126,6 +133,13 @@ export const FEATURES = defineFeatures({
   auditLogs: {
     label: "Audit logs",
     description: "Organization admins can read and configure audit logs. Capture still needs an audit entitlement.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  auditLogsCompact: {
+    label: "Audit logs: compact Den rows",
+    description: "Organization admins read audit operations and capture settings in compact Den rows, with changes and technical details expanded on demand.",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -161,6 +175,13 @@ export const FEATURES = defineFeatures({
   workbot: {
     label: "Workbot",
     description: "Members can use Workbot. Needs the deployment's Workbot app.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  calendarPolish: {
+    label: "Calendar and Workbot polish",
+    description: "Members recognize their organization's default model and meeting providers, and can run stopped Workbot tasks again.",
     since: "2026-10",
     deployments: everywhere,
     default: false,
@@ -217,6 +238,13 @@ export const FEATURES = defineFeatures({
   engineV2Upgrade: {
     label: "Desktop: upgrade prompt to OpenCode v2",
     description: "Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
+  remoteSessionTargets: {
+    label: "Remote session targets",
+    description: "Members can register OpenWork and OpenCode clients as computers for remote sessions from MCP, Slack, and chat.",
     since: "2026-10",
     deployments: everywhere,
     default: false,

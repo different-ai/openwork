@@ -15,6 +15,7 @@ import type {
   AutomationListItem,
   AutomationRepository,
 } from "@openwork/automations"
+import { REMOTE_SESSION_ONLY_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import type {
   Automation,
   AutomationAction,
@@ -1388,6 +1389,7 @@ export class DenAutomationRepository implements AutomationRepository {
       .where(and(
         eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
         eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+        sql`not coalesce(json_contains(${AutomationRunnerTable.capabilities}, ${JSON.stringify(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)}), false)`,
       )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(1)
     return rows[0]?.lastSeenAt?.getTime() ?? null
   }
@@ -1421,17 +1423,19 @@ export class DenAutomationRepository implements AutomationRepository {
     capability: AutomationDesktopRunnerCapability
     limit: number
   }) {
-    return db.select({
+    const rows = await db.select({
       id: AutomationRunnerTable.id,
       platform: AutomationRunnerTable.platform,
       appVersion: AutomationRunnerTable.app_version,
       lastSeenAt: AutomationRunnerTable.last_seen_at,
+      capabilities: AutomationRunnerTable.capabilities,
       inventory: AutomationRunnerTable.inventory,
     }).from(AutomationRunnerTable).where(and(
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       sql`json_contains(${AutomationRunnerTable.capabilities}, ${JSON.stringify(input.capability)})`,
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
+    return rows.map((row) => ({ ...row, capabilities: row.capabilities ?? [] }))
   }
 
   /** The owner's registered desktops, most recently seen first. */
@@ -1444,6 +1448,7 @@ export class DenAutomationRepository implements AutomationRepository {
     }).from(AutomationRunnerTable).where(and(
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+      sql`not coalesce(json_contains(${AutomationRunnerTable.capabilities}, ${JSON.stringify(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)}), false)`,
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
   }
 
@@ -1457,10 +1462,10 @@ export class DenAutomationRepository implements AutomationRepository {
       capabilities: AutomationRunnerTable.capabilities,
       lastSeenAt: AutomationRunnerTable.last_seen_at,
     }).from(AutomationRunnerTable).where(and(
-      eq(AutomationRunnerTable.id, input.runnerId),
+      inArray(AutomationRunnerTable.id, automationRunnerComputerIds(input)),
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
-    )).limit(1)
+    )).orderBy(desc(sql`${AutomationRunnerTable.id} = ${automationRunnerRowId(input)}`)).limit(1)
     const row = rows[0]
     return row ? { capabilities: row.capabilities ?? [], lastSeenAt: row.lastSeenAt.getTime() } : null
   }

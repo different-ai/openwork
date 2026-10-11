@@ -21,6 +21,11 @@ type UnderlineTabsProps<T extends string> = {
   showZeroCounts?: boolean;
 };
 
+/** Shared appearance for Den's tab buttons and route-based tab links. */
+export function underlineTabClassName(selected: boolean) {
+  return `inline-flex items-center gap-2 border-b-2 pb-3 text-[14px] font-medium transition-colors ${selected ? "border-[var(--dls-accent)] text-[var(--dls-text-primary)]" : "border-transparent text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"}`;
+}
+
 export function UnderlineTabs<T extends string>({
   tabs,
   activeTab,

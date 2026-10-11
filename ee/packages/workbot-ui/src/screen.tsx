@@ -47,7 +47,7 @@ type Pending = {
 };
 
 const PAGE_TURNS = 30;
-const COLUMN = "w-full max-w-[640px]";
+const COLUMN = "min-w-0 w-full max-w-[640px]";
 
 function newMessageId() {
   return crypto.randomUUID().replaceAll("-", "");
@@ -307,7 +307,7 @@ function ChatScreen({ host, navigation }: { host: WorkbotHost; navigation: ChatN
         nav={host.calendar && !chatId ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
       />
       <div className="flex min-h-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {empty && side ? (
         <SideChatStart name={data.name} organizationName={data.organizationName}>{composer}</SideChatStart>
       ) : empty && !starting ? (
@@ -1513,12 +1513,24 @@ function WorkCard(props: {
           ) : null}
         </span>
       </span>
-      {props.action}
+      {expandable && workbotHost().calendarPolish === true ? null : props.action}
     </>
   );
   return (
     <div className="workbot-row-enter max-w-[480px] rounded-[14px] bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]">
-      {expandable ? (
+      {expandable && workbotHost().calendarPolish === true ? (
+        <div className="flex items-center pr-2">
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-[14px] py-2.5 pl-2.5 pr-3 outline-none focus-visible:shadow-[var(--wb-focus)]"
+          >
+            {body}
+          </button>
+          {props.action}
+        </div>
+      ) : expandable ? (
         <button
           type="button"
           aria-expanded={open}
@@ -1573,8 +1585,8 @@ function TaskCard({ task, onRetry, canRetry = true }: { task: WorkbotTask; onRet
           >
             {stopping ? "Stopping" : "Stop"}
           </button>
-        ) : task.status === "failed" && onRetry ? (
-          <button type="button" disabled={!canRetry} onClick={onRetry} className="h-7 shrink-0 rounded-full px-3 text-[12px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Try again</button>
+        ) : (task.status === "failed" || (outcome === "stopped" && workbotHost().calendarPolish === true)) && onRetry ? (
+          <button type="button" disabled={!canRetry} onClick={onRetry} className="h-7 shrink-0 rounded-full px-3 text-[12px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">{outcome === "stopped" ? "Run again" : "Try again"}</button>
         ) : null
       }
     />
@@ -1667,7 +1679,7 @@ function Composer(props: {
       }`}
     >
       {hasFiles ? <UploadTray uploads={props.uploads} onRemove={props.onRemoveUpload} onRetry={props.onRetryUpload} /> : null}
-      <div className={`flex flex-1 items-end gap-1 ${hasFiles ? "" : "contents"}`}>
+      <div className={hasFiles ? "flex min-w-0 flex-1 items-end gap-1" : "contents"}>
         <AttachButton enabled={props.filesEnabled} onFiles={props.onFiles} />
         <textarea
           ref={input}

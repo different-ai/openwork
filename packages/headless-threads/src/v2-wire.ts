@@ -47,6 +47,7 @@ export const v2SessionSchema = data(
   z
     .object({
       id: z.string(),
+      metadata: z.record(z.string(), z.unknown()).nullish(),
       title: z.string().nullish(),
       openworkHomeDirectory: z.string().optional(),
       location: z.object({ directory: z.string().optional() }).passthrough().optional(),

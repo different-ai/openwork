@@ -146,10 +146,13 @@ export function ItemRow({
   action,
   href,
   testId,
+  comparison,
 }: {
   statusOnNarrow?: boolean;
   wideAction?: boolean;
   wrapDescription?: boolean;
+  /** Numeric comparisons stay next to the name instead of using the status lane. */
+  comparison?: ReactNode;
   logo?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
@@ -177,6 +180,7 @@ export function ItemRow({
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-3.5">{body}</span>
       )}
+      {comparison}
       {status !== undefined ? (
         <span className="hidden w-[220px] shrink-0 truncate text-right text-[12px] leading-4 text-gray-500 sm:block" data-item-status>
           {status}

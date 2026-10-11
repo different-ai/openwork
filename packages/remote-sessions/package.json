@@ -1,0 +1,28 @@
+{
+  "name": "@openwork/remote-sessions",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Dependency-free durable OpenWork offload core and remote-session wire transport.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./remote-client": {
+      "types": "./dist/remote-client.d.ts",
+      "bun": "./src/remote-client.ts",
+      "development": "./src/remote-client.ts",
+      "default": "./dist/remote-client.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --test test/*.test.ts",
+    "test:built": "node --test test/built.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

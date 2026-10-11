@@ -57,6 +57,39 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
     await alex.screenshot();
   });
 
+  await step("before: desktop Calendar repeats provider names and exposes the default model's routing ID", async () => {
+    const meetings = (await look.dom("[data-calendar-meeting]")).elements;
+    expect(meetings.some((meeting) => meeting.text.includes("Google Calendar"))).toBe(true);
+    expect(await blocks("[data-calendar-provider-logo]")).toBe(0);
+    await alex.click({ role: "button", label: /^Weekly launch update, / });
+    await alex.see({ text: /openwork-cloud\/default/ });
+    await alex.screenshot();
+    evidence.recordAssertionEvidence("The off switch preserves the existing desktop meeting presentation", "Provider names remain beside meeting titles; the model shows openwork-cloud/default, with no compact provider logos.", true);
+  });
+  await step("after: desktop Calendar shows provider marks and an Organization default instead of its routing ID", async () => {
+    await world.setCalendarPolish(true);
+    await alex.reload();
+    await alex.see("composer", { editable: true });
+    await alex.click({ role: "button", label: "Calendar" });
+    await alex.see({ role: "button", label: /^Launch standup, Google Calendar/ }, { timeoutMs: 60_000 });
+    await alex.see({ role: "button", label: /^Partner pipeline review, Outlook/ });
+    const meetings = (await look.dom("[data-calendar-meeting]")).elements;
+    const logos = await blocks("[data-calendar-meeting] [data-calendar-provider-logo]");
+    expect(logos).toBe(meetings.length);
+    expect(meetings.every((meeting) => !meeting.text.includes("Google Calendar") && !meeting.text.includes("Outlook Calendar"))).toBe(true);
+    await alex.click({ role: "button", label: /^Weekly launch update, / });
+    await alex.see({ text: "Organization default" });
+    const model = (await look.dom("[data-calendar-organization-default]")).elements[0]?.text ?? "";
+    expect(model).toBe("Organization default");
+    expect(model).not.toContain("·");
+    expect(await blocks('[data-calendar-organization-default][data-automation-model="openwork-cloud/default"]')).toBe(1);
+    expect(await blocks('[data-calendar-organization-default] img[src$="openwork-mark.svg"]')).toBe(1);
+    originalTop = (await element('[data-calendar-grid="week"]')).rect.top;
+    originalToolbarHeight = (await element("[data-calendar-toolbar]")).rect.height;
+    await alex.screenshot();
+    evidence.recordAssertionEvidence("Both providers stay named for assistive technology, not in the title lane", `${logos} meeting logos; Google and Outlook accessible names remain; Organization default uses the OpenWork mark and keeps the stored openwork-cloud/default identity.`, true);
+  });
+
   await step("Alex selects the weekly launch update and sees when it repeats, where it runs and its past runs", async () => {
     await alex.click({ role: "button", label: /^Weekly launch update, / });
     await alex.see({ text: /Every Friday at 3:00 PM/ });
@@ -192,7 +225,8 @@ test("an owner sees their Automations next to Google and Outlook meetings, pause
   await step("after: when Google sign-in expires, Google offers Reconnect and Outlook meetings stay", async () => {
     await world.expireGoogleSignIn();
     await alex.reload();
-    // Startup reopens the last workspace; Alex goes back to the Calendar.
+    // Wait for workspace restoration before choosing a transient surface; otherwise startup can replace the click.
+    await alex.see("composer", { editable: true });
     await alex.click({ role: "button", label: "Calendar" });
     await alex.see({ text: "Reconnect Google Calendar" }, { timeoutMs: 60_000 });
     await alex.see({ role: "button", label: /, Outlook/ });

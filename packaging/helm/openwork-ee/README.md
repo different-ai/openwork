@@ -336,15 +336,18 @@ OpenWork Cloud. Don't change it on a customer install.
 | `driveResumableUploads` | `DEN_FEATURE_DRIVE_RESUMABLE_UPLOADS` | default off | Members upload larger workspace files to Google Drive and prepare upload sessions for external clients. |
 | `implicitCloudSkills` | `DEN_FEATURE_IMPLICIT_CLOUD_SKILLS` | default off | Agents discover organization skills automatically without waiting for Cloud before starting a task. |
 | `denFlatPageHeaders` | `DEN_FEATURE_DEN_FLAT_PAGE_HEADERS` | default off | Members see compact, readable page headings in Den instead of decorative gradient banners. |
+| `analyticsIntegrated` | `DEN_FEATURE_ANALYTICS_INTEGRATED` | default off | Admins see analytics in the same style as Library and Connectors, with links to manage the items they use. |
 | `dashboardActivity` | `DEN_FEATURE_DASHBOARD_ACTIVITY` | default off | Organization admins see recent additions and skill updates on their dashboard instead of Quick add. |
 | `libraryUsage` | `DEN_FEATURE_LIBRARY_USAGE` | default off | Organization admins see in Analytics how often each skill, plugin and connector is used, by how many people, which calls fail, and what nobody uses, so they can decide what to keep. |
 | `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
 | `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |
+| `auditLogsCompact` | `DEN_FEATURE_AUDIT_LOGS_COMPACT` | default off | Organization admins read audit operations and capture settings in compact Den rows, with changes and technical details expanded on demand. |
 | `orgManagedDashboards` | `DEN_FEATURE_ORG_MANAGED_DASHBOARDS` | default off | Organization admins publish dashboards to members in Den and the desktop app. |
 | `slackAssistant` | `DEN_FEATURE_SLACK_ASSISTANT` | default off | Answers Slack mentions and DMs for the organization after the Slack connector is set up. |
 | `slackWorkbotReplies` | `DEN_FEATURE_SLACK_WORKBOT_REPLIES` | default off | OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done. |
 | `headlessAutomations` | `DEN_FEATURE_HEADLESS_AUTOMATIONS` | default off | Runs the organization's cloud Automations on the shared headless runner. Needs the deployment's headless runner and a plan that includes it. |
 | `workbot` | `DEN_FEATURE_WORKBOT` | default off | Members can use Workbot. Needs the deployment's Workbot app. |
+| `calendarPolish` | `DEN_FEATURE_CALENDAR_POLISH` | default off | Members recognize their organization's default model and meeting providers, and can run stopped Workbot tasks again. |
 | `automationCalendar` | `DEN_FEATURE_AUTOMATION_CALENDAR` | default off | Members see a Calendar in the desktop app with their Automations next to meetings from their connected Google or Outlook calendar. |
 | `workbotCalendar` | `DEN_FEATURE_WORKBOT_CALENDAR` | default off | Workbot members see a Calendar tab with Workbot's scheduled work next to meetings from their connected Google or Outlook calendar. Needs Workbot. |
 | `workbotSideChats` | `DEN_FEATURE_WORKBOT_SIDE_CHATS` | default off | Members can start side chats in Workbot next to their main chat, for one topic at a time. Needs Workbot. |
@@ -353,6 +356,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `permissions` | `DEN_FEATURE_PERMISSIONS` | default off | Organization admins choose what members, admins and each team can do, instead of the fixed Member and Admin defaults. |
 | `gatewayCloudSignIn` | `DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN` | default off | Organization admins can add Microsoft Foundry, and let each person sign in to Amazon Bedrock with AWS IAM Identity Center or to Microsoft Foundry with Microsoft Entra ID instead of sharing one key. |
 | `engineV2Upgrade` | `DEN_FEATURE_ENGINE_V2_UPGRADE` | default off | Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. |
+| `remoteSessionTargets` | `DEN_FEATURE_REMOTE_SESSION_TARGETS` | default off | Members can register OpenWork and OpenCode clients as computers for remote sessions from MCP, Slack, and chat. |
 | `opencodePlugin` | `DEN_FEATURE_OPENCODE_PLUGIN` | default off | People can sign in to OpenWork from the OpenCode plugin, approve it as "OpenWork - OpenCode Plugin", and land back on OpenCode afterwards. Applies to the whole deployment; organization overrides have no effect. |
 | `platformAuditReads` | `DEN_FEATURE_PLATFORM_AUDIT_READS` | default off | Platform administrators also get evidence of successful read-only platform requests (session reads, discovery documents). Applies to the whole deployment; organization overrides have no effect. |
 <!-- END GENERATED features -->

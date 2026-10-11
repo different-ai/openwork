@@ -172,14 +172,18 @@ async function settle() {
 }
 
 test("reads options with safe defaults", () => {
-  assert.deepEqual(readOptions({}), { apiBaseUrl: "https://api.openworklabs.com", providers: true, mcp: true, refreshIntervalMs: 300_000 })
+  assert.deepEqual(readOptions({}), { apiBaseUrl: "https://api.openworklabs.com", providers: true, mcp: true, remoteSessions: false, refreshIntervalMs: 300_000 })
   assert.deepEqual(readOptions({ apiBaseUrl: "https://den.example/", providers: false, refreshIntervalMs: 5 }), {
     apiBaseUrl: "https://den.example",
     providers: false,
     mcp: true,
+    remoteSessions: false,
     refreshIntervalMs: 60_000,
   })
   assert.equal(readOptions({ apiBaseUrl: "javascript:alert(1)" }).apiBaseUrl, "https://api.openworklabs.com")
+  assert.equal(readOptions({ remoteSessions: "true" }).remoteSessions, false)
+  assert.equal(readOptions({ remoteSessions: true }).remoteSessions, true)
+  assert.equal(readOptions({ label: "  Example computer  " }).label, "Example computer")
 })
 
 test("signed out: registers the OpenWork Cloud sign-in and injects nothing", async () => {

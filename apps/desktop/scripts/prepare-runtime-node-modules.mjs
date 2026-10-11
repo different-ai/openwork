@@ -8,6 +8,10 @@ const desktopRoot = resolve(dirnameHere, "..");
 const requiredRoots = [{
   name: "@modelcontextprotocol/sdk",
   resolveTarget: "@modelcontextprotocol/sdk/validation/ajv",
+}, {
+  // Imported by Electron's feature-gated session adapter; ensure plain-node
+  // ESM is included even when pnpm's workspace collector skips a symlink.
+  name: "@openwork/remote-sessions",
 }];
 
 function packageRoot(name, fromPackageJson, resolveTarget = name) {
@@ -62,8 +66,15 @@ export function stageRuntimeNodeModules(outdir) {
     cpSync(resolvedPackage.root, destination, {
       recursive: true,
       dereference: true,
-      filter: (source) => source === resolvedPackage.root
-        || !relative(resolvedPackage.root, source).split(sep).includes("node_modules"),
+      filter: (source) => {
+        if (source === resolvedPackage.root) return true;
+        const parts = relative(resolvedPackage.root, source).split(sep);
+        if (parts.includes("node_modules")) return false;
+        // The core's published entrypoints are dist (Node) and src (Bun/dev).
+        // Do not ship checkout-only tests, tooling or incidental local links.
+        if (name === "@openwork/remote-sessions") return ["dist", "src", "package.json"].includes(parts[0]);
+        return true;
+      },
     });
     staged.push(destination.slice(output.length + 1));
     const dependencies = resolvedPackage.packageJson.dependencies ?? {};

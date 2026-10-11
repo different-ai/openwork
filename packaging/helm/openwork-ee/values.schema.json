@@ -88,6 +88,16 @@
               ],
               "description": "Den: flat page headers: Members see compact, readable page headings in Den instead of decorative gradient banners. Renders DEN_FEATURE_DEN_FLAT_PAGE_HEADERS."
             },
+            "analyticsIntegrated": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Den: integrated analytics: Admins see analytics in the same style as Library and Connectors, with links to manage the items they use. Renders DEN_FEATURE_ANALYTICS_INTEGRATED."
+            },
             "dashboardActivity": {
               "enum": [
                 "",
@@ -127,6 +137,16 @@
                 false
               ],
               "description": "Audit logs: Organization admins can read and configure audit logs. Capture still needs an audit entitlement. Renders DEN_FEATURE_AUDIT_LOGS."
+            },
+            "auditLogsCompact": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Audit logs: compact Den rows: Organization admins read audit operations and capture settings in compact Den rows, with changes and technical details expanded on demand. Renders DEN_FEATURE_AUDIT_LOGS_COMPACT."
             },
             "orgManagedDashboards": {
               "enum": [
@@ -177,6 +197,16 @@
                 false
               ],
               "description": "Workbot: Members can use Workbot. Needs the deployment's Workbot app. Renders DEN_FEATURE_WORKBOT."
+            },
+            "calendarPolish": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Calendar and Workbot polish: Members recognize their organization's default model and meeting providers, and can run stopped Workbot tasks again. Renders DEN_FEATURE_CALENDAR_POLISH."
             },
             "automationCalendar": {
               "enum": [
@@ -257,6 +287,16 @@
                 false
               ],
               "description": "Desktop: upgrade prompt to OpenCode v2: Desktop members still on OpenCode v1 see a short notice offering to upgrade: their chats are copied to v2 with a backup, then OpenWork switches engines. Renders DEN_FEATURE_ENGINE_V2_UPGRADE."
+            },
+            "remoteSessionTargets": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Remote session targets: Members can register OpenWork and OpenCode clients as computers for remote sessions from MCP, Slack, and chat. Renders DEN_FEATURE_REMOTE_SESSION_TARGETS."
             },
             "opencodePlugin": {
               "enum": [
