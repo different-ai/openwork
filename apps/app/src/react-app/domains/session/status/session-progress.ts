@@ -1,3 +1,5 @@
+import { codeModeToolCalls } from "../../../../lib/code-mode-tools";
+import { messageNotice } from "../../../../lib/session-run";
 import { isToolUIPart, type UIMessage } from "ai";
 
 import { isTaskToolPart, taskChildSessionId, type TaskToolPart } from "../../../../lib/build-in-tools";
@@ -73,12 +75,13 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
   let latestUserIndex = -1;
   let latestUserCreated: number | null = null;
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.role === "user") {
+    if (messages[index]?.role === "user" || messageNotice(messages[index])) {
       latestUserIndex = index;
       const metadata = messages[index].metadata;
       const time = metadata && typeof metadata === "object" ? Reflect.get(metadata, "opencode") : undefined;
       const created = time && typeof time === "object" ? Reflect.get(time, "created") : undefined;
       if (typeof created === "number" && Number.isFinite(created)) latestUserCreated = created;
+      latestUserCreated = messageNotice(messages[index])?.timestamp || latestUserCreated;
       break;
     }
   }
@@ -89,13 +92,15 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
     for (const [index, part] of message.parts.entries()) {
       const key = `${message.id}:${isToolUIPart(part) ? part.toolCallId : index}`;
       let activity: string;
-      if ((part.type === "text" || part.type === "reasoning") && part.text.trim()) {
+      if ((part.type === "text" || part.type === "reasoning") && (part.text.trim() || (part.type === "reasoning" && typeof part.providerMetadata?.opencode?.startedAt === "number"))) {
         parts[key] = partFingerprint(part, () => [part.type, part.text, part.state]);
         activity = part.type === "text" ? "Response updated" : "Reasoning activity received";
       } else if (isToolUIPart(part)) {
         parts[key] = partFingerprint(part, () => [part.state, part.input,
           part.state === "output-available" ? part.output : null,
-          part.state === "output-error" ? part.errorText : null]);
+          part.state === "output-error" ? part.errorText : null,
+          part.type === "dynamic-tool" ? codeModeToolCalls(part)?.map(call => [call.toolCallId, call.toolName, call.state, call.input,
+            call.state === "output-available" ? call.output : null, call.state === "output-error" ? call.errorText : null]) : null]);
         if (isToolPartInFlight(part)) active = true;
         // Fixed labels, not raw arguments, outputs, prompts, or tool payloads.
         activity = part.state === "output-available" ? "Tool result received"

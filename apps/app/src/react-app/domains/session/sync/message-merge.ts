@@ -3,6 +3,27 @@ import type { UIMessage } from "ai";
 const mergedMessageCache = new WeakMap<UIMessage, WeakMap<UIMessage, UIMessage>>();
 const messageSignatureCache = new WeakMap<UIMessage, string>();
 
+/** Native reply ancestry wins over arrival order and tied server timestamps. */
+export function orderMessageParents(messages: UIMessage[]): UIMessage[] {
+  const users = new Map(messages.flatMap((message, index) => message.role === "user" ? [[message.id, index] as const] : []));
+  const emitted = new Set<number>();
+  const result: UIMessage[] = [];
+  const append = (index: number) => {
+    if (emitted.has(index)) return;
+    emitted.add(index);
+    result.push(messages[index]!);
+  };
+  messages.forEach((message, index) => {
+    const metadata = message.metadata;
+    const native = metadata && typeof metadata === "object" && "opencode" in metadata ? metadata.opencode : undefined;
+    const parentId = native && typeof native === "object" && "parentID" in native ? native.parentID : undefined;
+    const parent = message.role === "assistant" && typeof parentId === "string" ? users.get(parentId) : undefined;
+    if (parent !== undefined) append(parent);
+    append(index);
+  });
+  return result.every((message, index) => message === messages[index]) ? messages : result;
+}
+
 function messageSignature(message: UIMessage) {
   const cached = messageSignatureCache.get(message);
   if (cached) return cached;
@@ -148,7 +169,7 @@ function mergeMissingMessagesByChronology(messages: UIMessage[], missing: UIMess
 export function upsertMessageByChronology(messages: UIMessage[], message: UIMessage) {
   const sourceIndex = messages.findIndex((existing) => existing.id === message.id);
   const result = messages.filter((existing) => existing.id !== message.id);
-  if (sourceIndex === -1) return mergeMissingMessagesByChronology(result, [message], messages);
+  if (sourceIndex === -1) return orderMessageParents(mergeMissingMessagesByChronology(result, [message], messages));
 
   let insertionIndex = sourceIndex;
   const created = messageCreated(message);
@@ -164,7 +185,7 @@ export function upsertMessageByChronology(messages: UIMessage[], message: UIMess
     }
   }
   result.splice(insertionIndex, 0, message);
-  return result;
+  return orderMessageParents(result);
 }
 
 export function mergeSnapshotAndLiveMessages(
@@ -172,8 +193,8 @@ export function mergeSnapshotAndLiveMessages(
   liveMessages: UIMessage[],
   options: { appendLiveOnlyMessages?: boolean } = {},
 ) {
-  if (snapshotMessages.length === 0) return liveMessages;
-  if (liveMessages.length === 0) return snapshotMessages;
+  if (snapshotMessages.length === 0) return orderMessageParents(liveMessages);
+  if (liveMessages.length === 0) return orderMessageParents(snapshotMessages);
 
   const liveById = new Map(liveMessages.map((message) => [message.id, message]));
   const snapshotIds = new Set(snapshotMessages.map((message) => message.id));
@@ -185,12 +206,12 @@ export function mergeSnapshotAndLiveMessages(
   const missing = options.appendLiveOnlyMessages
     ? liveMessages.filter((message) => !snapshotIds.has(message.id))
     : [];
-  return mergeMissingMessagesByChronology(merged, missing, liveMessages);
+  return orderMessageParents(mergeMissingMessagesByChronology(merged, missing, liveMessages));
 }
 
 export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], cachedMessages: UIMessage[]) {
-  if (snapshotMessages.length === 0) return cachedMessages;
-  if (cachedMessages.length === 0) return snapshotMessages;
+  if (snapshotMessages.length === 0) return orderMessageParents(cachedMessages);
+  if (cachedMessages.length === 0) return orderMessageParents(snapshotMessages);
 
   const snapshotById = new Map(snapshotMessages.map((message) => [message.id, message]));
   const cachedById = new Map(cachedMessages.map((message) => [message.id, message]));
@@ -211,5 +232,5 @@ export function mergeSnapshotIntoCachedMessages(snapshotMessages: UIMessage[], c
     missing.push(message);
   }
 
-  return mergeMissingMessagesByChronology(merged, missing, cachedMessages);
+  return orderMessageParents(mergeMissingMessagesByChronology(merged, missing, cachedMessages));
 }
