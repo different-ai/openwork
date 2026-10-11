@@ -32,8 +32,8 @@ function WorkflowRunCard({ run }: { run: WorkflowRun }) {
     <ItemRow logo={<LetterTile name={run.workflow?.title ?? "One-off task"} />}
       title={run.workflow ? <span data-testid={`workflow-run-link-${run.id}`}>{run.workflow.title}</span> : run.source === "adhoc" ? "One-off task" : "Workflow run"}
       href={run.workflow ? `/dashboard/library/workflows/${encodeURIComponent(run.workflow.configObjectId)}` : undefined}
-      description={<time data-testid={`workflow-run-time-${run.id}`} dateTime={run.finishedAt}>{new Date(run.finishedAt).toLocaleString()}</time>}
-      comparison={<span className={`shrink-0 text-[13px] ${run.status === "failed" ? "text-[var(--ow-danger)]" : "text-[var(--dls-text-secondary)]"}`}>{run.status === "succeeded" ? "Succeeded" : "Failed"}</span>}
+      description={<><span className={run.status === "failed" ? "text-[var(--ow-danger)] sm:hidden" : "sm:hidden"}>{run.status === "succeeded" ? "Succeeded" : "Failed"} </span><time data-testid={`workflow-run-time-${run.id}`} dateTime={run.finishedAt}>{new Date(run.finishedAt).toLocaleString()}</time></>}
+      comparison={<span className={`hidden shrink-0 text-[13px] sm:block ${run.status === "failed" ? "text-[var(--ow-danger)]" : "text-[var(--dls-text-secondary)]"}`}>{run.status === "succeeded" ? "Succeeded" : "Failed"}</span>}
       action={<DenButton variant="plain" size="inline" data-testid={`workflow-run-preview-${run.id}`} aria-expanded={previewOpen} aria-controls={`run-preview-${run.id}`} onClick={() => setPreviewOpen(!previewOpen)}><ChevronRight size={16} strokeWidth={1.5} aria-hidden className={previewOpen ? "rotate-90" : undefined} />Details</DenButton>} />
     {previewOpen ? <div id={`run-preview-${run.id}`}>
       {run.workflow ? run.workflow.graph ? <div data-testid={`workflow-run-visualization-${run.id}`} role="region" aria-label={`${run.workflow.title} workflow visualization`} className="px-5 pb-3">

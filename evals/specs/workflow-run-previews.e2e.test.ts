@@ -407,6 +407,20 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.screenshot();
   });
 
+  await step("after: workflow names and Details remain usable at phone width", async () => {
+    await user.resizeViewport({ width: 320, height: 844, deviceScaleFactor: 1 });
+    await user.see({ testId: `workflow-run-preview-${world.receiptId}` });
+    const frame = (await probe.dom("html")).elements[0];
+    const names = (await probe.dom("[data-analytics-row] a > span:last-child")).elements;
+    const actions = (await probe.dom("[data-analytics-row] button")).elements;
+    const fits = frame !== undefined && names.every((name) => name.rect.width >= 72) && actions.every((action) => action.rect.left >= 0 && action.rect.right <= frame.rect.right);
+    expect(names.length).toBeGreaterThan(0);
+    expect(fits).toBe(true);
+    evidence.recordAssertionEvidence("phone rows keep a readable name lane and visible Details", `${names.length} workflow names retain at least 72px; ${actions.length} Details buttons fit within the ${frame?.rect.width ?? 0}px page.`, fits);
+    await user.screenshot();
+    await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  });
+
   await step("a teammate still cannot open another person's history or a revoked workflow", async () => {
     const teammate = user.on(world.memberWeb);
     await teammate.navigate(`${world.den.ref.webUrl}/dashboard/analytics/workflow-runs`);
