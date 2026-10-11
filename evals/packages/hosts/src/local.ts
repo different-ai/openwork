@@ -345,6 +345,10 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
     "--window-size=1280,900",
+    "--lang=en-US",
+    // Match Linux/Windows' classic scrollbar gutter even on a macOS headless runner.
+    // Never hide scrollbars: narrow-layout assertions must include their occupied width.
+    "--disable-features=OverlayScrollbar,FluentOverlayScrollbar",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-popup-blocking",
@@ -967,7 +971,8 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const profileRoot = resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
       registerLiveProfileRoot(profileRoot);
       const profileDir = join(profileRoot, "chrome-profile");
-      await mkdir(profileDir, { recursive: true });
+      await mkdir(join(profileDir, "Default"), { recursive: true });
+      await writeFile(join(profileDir, "Default", "Preferences"), JSON.stringify({ intl: { accept_languages: "en-US,en", selected_languages: "en-US,en" } }), "utf8");
       const cdpPort = await allocateFreePort();
       const binary = resolveChromeBinary(process.env, process.platform);
       const startUrl = opts.startUrl ?? DEFAULT_CHROME_START_URL;

@@ -47,6 +47,8 @@ export async function chrome(opts: BrowserOptions = {}): Promise<AttachedSurface
   let surface: AttachedSurface;
   try {
     surface = await attachSurface(handle, { timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS });
+    // --lang fixes browser language; Intl otherwise still inherits the runner's OS locale.
+    await surface.client.send("Emulation.setLocaleOverride", { locale: "en_US" });
   } catch (error) {
     await host.disposeSurface(handle).catch(() => undefined);
     throw error;
