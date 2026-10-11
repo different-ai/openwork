@@ -523,13 +523,15 @@ export function McpView(props: McpViewProps) {
   const libraryCloudSignedIn = cloudSession.isSignedIn
     || (Boolean(cloudSession.authToken.trim()) && denAuth.isSignedIn);
   const activeOrganizationId = cloudSession.activeOrganization?.id.trim() ?? "";
+  const featureOrganizationId = cloudSession.authToken.trim() ? activeOrganizationId : "";
   const libraryFeatures = useQuery({
-    queryKey: ["library-presentation-features", cloudSession.baseUrl, activeOrganizationId],
-    enabled: libraryCloudSignedIn && Boolean(activeOrganizationId),
+    queryKey: ["library-presentation-features", cloudSession.baseUrl, featureOrganizationId],
     staleTime: 30_000,
-    queryFn: () => cloudSession.client.getOrgFeatures(activeOrganizationId),
+    queryFn: () => featureOrganizationId
+      ? cloudSession.client.getOrgFeatures(featureOrganizationId)
+      : cloudSession.client.getDeploymentFeatures(),
   });
-  const libraryIntegrated = libraryCloudSignedIn && libraryFeatures.data?.libraryIntegrated === true;
+  const libraryIntegrated = libraryFeatures.data?.libraryIntegrated === true;
   // The connector catalog rarely changes; keep it across visits so the Add dialog shows its logos at once.
   const connectorPresetsQuery = useQuery({
     queryKey: ["library-connector-presets", cloudSession.baseUrl, activeOrganizationId],
@@ -2465,6 +2467,7 @@ export function LibraryInventory(props: {
                         meta={t("extensions.row_locked_from")}
                         taxonomy="connection"
                         disabled
+                        statusChip={props.integrated ? { label: t("extensions.row_chip_sign_in"), tone: "attention" } : undefined}
                         trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
                       />
                     </div>

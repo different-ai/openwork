@@ -78,7 +78,7 @@ function PluginRow({ plugin }: { plugin: DenPluginSummary }) {
 
   if (integrated) return (
     <div data-plugin-row={plugin.name} data-plugin-access={sharing} onPointerEnter={prefetch} onFocus={prefetch}>
-      <ItemRow compact href={href} logo={<PluginLogo name={plugin.name} />} title={plugin.name} description={plugin.description || "Plugin"} status={status && status !== "Only you" ? "Shared" : "Private"} action={<ItemMenu label={`More for ${plugin.name}`} entries={[
+      <ItemRow compact href={href} logo={<PluginLogo name={plugin.name} />} title={plugin.name} description={plugin.description || "Plugin"} status={status ? status === "Only you" ? "Private" : "Shared" : "Unknown"} action={<ItemMenu label={`More for ${plugin.name}`} entries={[
         { label: "Open", href },
         ...(status === "Only you" ? [{ label: "Share", href }] : []),
         removeEntry(plugin.name, remove),

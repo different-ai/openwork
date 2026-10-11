@@ -1,10 +1,11 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { libraryListWide, integratedLibraryListWide } from "../worlds/library-list-wide.ts";
+import { isRecord } from "../worlds/library.ts";
 
 const test = spec.world(libraryListWide, {
   timeout: 300_000,
-  resources: { surfaces: ["appWeb"], services: [] },
+  resources: { surfaces: ["appWeb"], services: ["den"] },
 });
 
 const integratedTest = spec.world(integratedLibraryListWide, {
@@ -34,6 +35,8 @@ test("a member on a big screen reads the Library as one aligned list, and there 
     await user.notSee({ role: "button", label: "Card view" });
     await user.notSee({ role: "button", label: "List view" });
     const listed = await rows(expected);
+    const deployment = await probe.api(world.den.admin, "/v1/features");
+    expect(isRecord(deployment.body) && isRecord(deployment.body.features) && deployment.body.features.libraryIntegrated).toBe(false);
     await user.screenshot();
     evidence.recordAssertionEvidence(
       "Only the list exists",
@@ -146,6 +149,10 @@ integratedTest("a flagged member reads the desktop Library as compact rows and c
       within: 60_000, label: "the organization rollout selects the compact Library", until: (items) => items.length >= world.skills.length + world.servers.length,
     });
     expect((await probe.dom("[data-library-columns]")).elements).toHaveLength(0);
+    const deployment = await probe.api(world.den.admin, "/v1/features");
+    const organization = await probe.api(world.den.admin, "/v1/org");
+    expect(isRecord(deployment.body) && isRecord(deployment.body.features) && deployment.body.features.libraryIntegrated).toBe(false);
+    expect(isRecord(organization.body) && isRecord(organization.body.features) && organization.body.features.libraryIntegrated).toBe(true);
     const description = (await probe.dom('[data-library-row="weekly-update"] [data-library-description]')).elements[0];
     const state = (await probe.dom('[data-library-row="weekly-update"] + [data-library-status]')).elements[0];
     expect(description?.text).toContain("Friday team update");
@@ -173,6 +180,9 @@ integratedTest("a flagged member reads the desktop Library as compact rows and c
     const skill = world.skills[0];
     if (!skill) throw new Error("No skill was arranged.");
     await user.click({ text: skill });
+    await probe.eventually(async () => (await probe.dom("[data-extension-detail-page]")).elements.length, {
+      within: 10_000, label: "the skill detail replaces the list after its body loads", until: (count) => count === 1,
+    });
     await user.see({ text: skill });
     expect((await probe.dom("[data-extension-detail-page]")).elements).toHaveLength(1);
     expect((await probe.dom("[data-library-detail-state]")).elements[0]?.text).toBe("Ready");

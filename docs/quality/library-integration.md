@@ -1,6 +1,6 @@
 # Library presentation rollout
 
-`libraryIntegrated` is off by default on cloud and self-hosted. It changes presentation only: disabling it restores the original rows, headings and picker while retaining plugins, connector accounts, grants and routes.
+`libraryIntegrated` is off by default on cloud and self-hosted. It changes presentation only: disabling it restores the original rows, headings and picker while retaining plugins, connector accounts, grants and routes. Desktop reads deployment flags when signed out and organization overrides when signed in.
 
 ## Observed differences
 

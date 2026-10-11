@@ -337,7 +337,7 @@ export function ExtensionDetailModal({
         {presentation === "page" ? (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className={integrated ? "break-words text-xl font-semibold tracking-tight text-foreground" : "text-lg font-semibold leading-none tracking-tight text-foreground"}>{name}</h2>
+              <h2 className={integrated ? "min-w-0 break-words text-xl font-semibold tracking-tight text-foreground" : "text-lg font-semibold leading-none tracking-tight text-foreground"}>{name}</h2>
               {integrated ? <span className="text-[13px] font-normal text-muted-foreground" data-library-detail-state>{connected ? savedKeyOnly ? t("extensions.detail_key_saved") : t("extensions.detail_ready") : oauth ? "Sign in" : "Set up"}</span> : taxonomyPills}
             </div>
             {!integrated ? <p className="text-sm leading-relaxed text-muted-foreground">{description}</p> : null}
