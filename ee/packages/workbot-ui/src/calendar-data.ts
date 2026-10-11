@@ -171,23 +171,30 @@ export function useAutomationModels(options: { includeCloudDefault: boolean }) {
     queryFn: () => calendarJson(providerNamesSchema, "/v1/llm-providers"),
     staleTime: 5 * 60_000,
   });
-  const polish = workbotHost().calendarPolish === true;
+  const host = workbotHost();
+  const polish = host.calendarPolish === true;
+  const identity = host.identity;
   const settings = useQuery({
-    queryKey: [...calendarKey, "organization-default-model"],
+    queryKey: [...calendarKey, "organization-default-model", host.homeHref, identity?.organizationId ?? null, identity?.principalId ?? null],
     queryFn: () => calendarJson(workbotSettingsSchema, "/v1/org/workbot-settings"),
-    enabled: polish && options.includeCloudDefault,
+    enabled: polish && options.includeCloudDefault && identity !== undefined,
     retry: false,
-    staleTime: 5 * 60_000,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchInterval: 60_000,
   });
+  const authorizedSettings = identity && !settings.isError && !settings.isFetching ? settings.data : undefined;
   const models = useMemo(() => {
     const available = automationModelOptions(query.data?.llmProviders ?? [], { includeFreeStarter: false, includeCloudDefault: options.includeCloudDefault });
     if (!polish) return available;
-    const resolvedId = settings.data?.modelAvailable ? settings.data.model ?? settings.data.defaultModel : settings.data?.defaultModel;
-    const resolvedName = settings.data?.models.find((model) => model.id === resolvedId)?.name;
+    const resolvedId = authorizedSettings?.modelAvailable ? authorizedSettings.model ?? authorizedSettings.defaultModel : authorizedSettings?.defaultModel;
+    const resolvedName = authorizedSettings?.models.find((model) => model.id === resolvedId)?.name;
     return available.map((option) => option.accessKind === "cloud_default"
       ? { ...option, modelName: resolvedName ? `Organization default (${resolvedName})` : "Organization default" }
       : option);
-  }, [options.includeCloudDefault, query.data, polish, settings.data]);
+  }, [options.includeCloudDefault, query.data, polish, authorizedSettings]);
   return { models, isLoading: query.isLoading, error: query.error };
 }
 

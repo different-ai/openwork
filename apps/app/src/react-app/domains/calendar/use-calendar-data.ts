@@ -4,7 +4,9 @@ import { useMeetingsQuery, useRunsInRangeQuery } from "@openwork/calendar/react"
 import type { AutomationList } from "@openwork/types/automations"
 
 import type { AutomationRunsSource, CalendarProviderId, CalendarTransport } from "@openwork/calendar"
-import type { DenClient, DenExternalMcpConnection } from "@/app/lib/den"
+import { readDenSettings, type DenClient, type DenExternalMcpConnection } from "@/app/lib/den"
+import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { calendarDefaultModelQueryKey, visibleCalendarDefaultModelName } from "./calendar-default-model-scope"
 import type { AutomationsDenContext } from "@/react-app/domains/automations/use-automations"
 import { createDenCalendarTransport, createMockCalendarTransport, readCalendarMockUrl } from "./calendar-source"
 
@@ -41,17 +43,26 @@ export function useCalendarFeature(context: AutomationsDenContext, feature: "aut
 }
 
 export function useCalendarDefaultModelName(context: AutomationsDenContext, enabled: boolean) {
-  return useQuery({
-    queryKey: ["den", "calendar-default-model", context.organizationId],
+  const auth = useDenAuth()
+  const identity = auth.verifiedIdentity
+  const verified = context.ready && enabled && auth.isSignedIn && identity !== null
+    && identity.organizationId === context.organizationId && identity.principalId === auth.user?.id
+  const query = useQuery({
+    queryKey: calendarDefaultModelQueryKey(readDenSettings().baseUrl, context.organizationId, identity?.principalId ?? null),
     queryFn: () => context.client!.getWorkbotSettings(context.organizationId!),
-    enabled: context.ready && enabled,
+    enabled: verified,
     retry: false,
-    staleTime: 5 * 60_000,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchInterval: 60_000,
     select: (settings) => {
-      const id = settings.modelAvailable ? settings.model ?? settings.defaultModel : settings.defaultModel;
-      return settings.models.find((model) => model.id === id)?.name ?? null;
+      const id = settings.modelAvailable ? settings.model ?? settings.defaultModel : settings.defaultModel
+      return settings.models.find((model) => model.id === id)?.name ?? null
     },
-  });
+  })
+  return { ...query, data: visibleCalendarDefaultModelName({ verified, fetching: query.isFetching, failed: query.isError, name: query.data }) }
 }
 
 export function useCalendarTransport(context: AutomationsDenContext): CalendarTransport | null {

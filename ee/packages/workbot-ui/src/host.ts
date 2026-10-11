@@ -29,6 +29,8 @@ export type WorkbotHost = {
   sideChats?: boolean
   /** Calendar and task presentation polish, resolved by Den's feature registry. Older hosts keep it off. */
   calendarPolish?: boolean
+  /** Authenticated identity for permission-protected model-setting caches; absent on older hosts. */
+  identity?: { principalId: string; organizationId: string }
 }
 
 let current: WorkbotHost | null = null
