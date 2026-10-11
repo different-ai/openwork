@@ -8,7 +8,7 @@ import {
   type SessionRunner,
 } from "../../remote-sessions/src/index.ts"
 import { INTEGRATION_ID, readCredentialMetadata } from "./auth.ts"
-import { DenAuthError, DenRequestError, denRequest, isAllowedApiBaseUrl, isRecord, type DenSession, type Fetch } from "./den.ts"
+import { DenAuthError, DenRequestError, denRequest, isAllowedApiBaseUrl, isRecord, readMe, type DenSession, type Fetch } from "./den.ts"
 import { createNativeOpenCodeAdapter, nativeWorkspace } from "./native-opencode.ts"
 export { hasNativeSessionHost } from "./native-opencode.ts"
 import type { NativePluginContext } from "./opencode.ts"
@@ -98,6 +98,9 @@ export function createRemoteRunnerController(input: {
   let disposed = false
   let started = false
   let active: Active | null = null
+  // Process-local, one-entry cache. Only a hash of the credential is retained;
+  // cached metadata/email cannot establish the authenticated member's identity.
+  let verifiedMember: { key: string; userId: string } | null = null
   let ownership: RunnerOwnership | null = null
   let directory: string | null = null
   let cancelTimer: (() => void) | null = null
@@ -124,9 +127,22 @@ export function createRemoteRunnerController(input: {
     if (!credential || credential.type !== "oauth" || !Number.isFinite(credential.expires) || credential.expires <= now()) return null
     const metadata = readCredentialMetadata(credential, input.apiBaseUrl)
     if (!metadata.orgId || !isAllowedApiBaseUrl(metadata.apiBaseUrl)) return null
+    const session = { apiBaseUrl: metadata.apiBaseUrl, orgId: metadata.orgId, token: credential.access }
+    const key = hash(JSON.stringify([session.apiBaseUrl, session.orgId, session.token]))
+    if (verifiedMember?.key !== key) {
+      verifiedMember = null
+      // Validate every replacement access token before runner HTTP or native work.
+      // Keep the explicitly approved org, not /me's mutable active organization.
+      const me = await hostRead(() => readMe((url, init) => fetcher(url, {
+        ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+      }), session), signal)
+      signal.throwIfAborted()
+      if (!me.userId) throw new Error("OpenWork returned an invalid authenticated member.")
+      verifiedMember = { key, userId: me.userId }
+    }
     return {
-      identity: hash(JSON.stringify([metadata.apiBaseUrl, metadata.orgId, connection.id])),
-      session: { apiBaseUrl: metadata.apiBaseUrl, orgId: metadata.orgId, token: credential.access },
+      identity: hash(JSON.stringify([session.apiBaseUrl, session.orgId, verifiedMember.userId, connection.id])),
+      session,
       credentialExpiresAt: credential.expires,
     }
   }
@@ -209,8 +225,9 @@ export function createRemoteRunnerController(input: {
     let value: Account | null
     try { value = await account(signal) }
     catch (error) {
-      // A failed credential resolution cannot authorize remote native work, even if an old runner token remains valid.
-      if (error instanceof DenAuthError) active = null
+      // Resolution or /me validation failures cannot authorize old runner tokens.
+      // An aborted stale resolution must not overwrite newer credential state.
+      if (!signal.aborted) active = null
       throw error
     }
     if (!value) { active = null; return }

@@ -28,6 +28,7 @@ export function createNativeHost(directory = process.cwd()) {
   let credential: CredentialValue | undefined = { type: "oauth", methodID: "code", access: "member-one", refresh: "member-one", expires: 100_000_000,
     metadata: { apiBaseUrl: "https://den.example.test", orgId: "org_example" } }
   let resolveError: Error | null = null
+  let blockedResolve: (() => Promise<CredentialValue | undefined>) | null = null
   let pendingPermissions = false
   const info = (id: string) => {
     const value = sessions.get(id)
@@ -37,7 +38,7 @@ export function createNativeHost(directory = process.cwd()) {
   const ctx: NativePluginContext = {
     app: { version: "2.0.26" }, location: { directory }, options: {},
     integration: { transform: async () => ({ dispose: async () => {} }), get: async () => ({}),
-      connection: { active: async () => connection, resolve: async () => { if (resolveError) throw resolveError; return credential }, status: async () => {} } },
+      connection: { active: async () => connection, resolve: async () => { if (resolveError) throw resolveError; return blockedResolve ? blockedResolve() : credential }, status: async () => {} } },
     provider: { transform: async () => ({ dispose: async () => {} }), reload: async () => {} },
     mcp: { transform: async () => ({ dispose: async () => {} }), reload: async () => {} },
     event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {} }) },
@@ -79,6 +80,7 @@ export function createNativeHost(directory = process.cwd()) {
     set credential(value: CredentialValue | undefined) { credential = value },
     get credential() { return credential },
     set resolveError(value: Error | null) { resolveError = value },
+    set blockedResolve(value: (() => Promise<CredentialValue | undefined>) | null) { blockedResolve = value },
     set pendingPermissions(value: boolean) { pendingPermissions = value },
     finish(id: string, text = "Current answer") {
       histories.get(id)?.push({ id: `msg_answer${++sequence}`, type: "assistant", model: { providerID: "local-provider", id: "local-model" },
