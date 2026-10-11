@@ -38,7 +38,6 @@ async function buildLibraryListWide(seed: Seed, integrated: boolean) {
   const den = integrated ? await seed.den({ org: { name: "Integrated Library", admin: { name: "Library Owner" } } }) : null;
   if (den) await enableOrganizationCapabilities(seed, den.admin, { libraryIntegrated: true });
   const app = await seed.appWeb({ name: "library-list-wide", workspacePath,
-    ...(den ? { den: den.ref } : {}),
     env: {
       // Use the existing app-web Den proxy, as the MCP App journeys do. Browser
       // auth and feature reads must not depend on cross-origin loopback access.
