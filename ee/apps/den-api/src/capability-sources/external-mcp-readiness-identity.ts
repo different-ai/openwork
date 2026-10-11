@@ -1,4 +1,3 @@
-import { createHmac } from "node:crypto"
 import type { ConnectedAccountTable, ExternalMcpConnectionTable, ExternalMcpReadinessCheck } from "@openwork-ee/den-db/schema"
 
 type Connection = typeof ExternalMcpConnectionTable.$inferSelect
@@ -6,21 +5,20 @@ type Account = typeof ConnectedAccountTable.$inferSelect
 export type ReadinessIdentity = Pick<Connection, "url" | "authType" | "credentialMode" | "apiKeyAuthScheme" | "oauthConfiguration" | "oauthIssuerReviewRequiredAt" | "accessToken" | "apiKey" | "readinessCredentialBinding">
 export type ReadinessAccountIdentity = Pick<Account, "accessToken" | "externalAccountId" | "readinessCredentialBinding">
 
-export function fingerprintReadinessIdentity(connection: ReadinessIdentity, secret: string, account?: ReadinessAccountIdentity | null) {
-  // OAuth tokens rotate within one grant. A separate grant binding survives
-  // refresh, but changes when a person authorizes again (including while off).
-  const credentialIdentity = connection.authType === "oauth"
-    ? connection.credentialMode === "shared"
-      ? [Boolean(connection.accessToken), connection.readinessCredentialBinding]
-      : [Boolean(account?.accessToken), account?.readinessCredentialBinding, account?.externalAccountId]
-    : connection.credentialMode === "shared" ? connection.apiKey : account?.accessToken
-  // A database-only reader must not be able to test guesses of a personal key.
-  return createHmac("sha256", secret).update(JSON.stringify([
+export function fingerprintReadinessIdentity(connection: ReadinessIdentity, account?: ReadinessAccountIdentity | null) {
+  // Only public configuration, credential presence and a random credential
+  // revision are retained. No key/token material or password verifier is stored.
+  // OAuth revisions change on re-authorization, not routine token refresh;
+  // API-key revisions change atomically with key replacement, even while off.
+  const credentialIdentity = connection.credentialMode === "shared"
+    ? [connection.authType === "apikey" ? Boolean(connection.apiKey) : Boolean(connection.accessToken), connection.readinessCredentialBinding]
+    : [Boolean(account?.accessToken), account?.readinessCredentialBinding, account?.externalAccountId]
+  return JSON.stringify([
     connection.url, connection.authType, connection.credentialMode, connection.apiKeyAuthScheme,
     connection.oauthConfiguration?.authorizationServerIssuer, connection.oauthConfiguration?.requestedScopes,
     connection.oauthConfiguration?.callbackMode, connection.oauthIssuerReviewRequiredAt,
     credentialIdentity,
-  ])).digest("hex")
+  ])
 }
 
 export function visibleReadiness(check: ExternalMcpReadinessCheck | null, fingerprint: string) {

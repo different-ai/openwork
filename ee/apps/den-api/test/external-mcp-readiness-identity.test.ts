@@ -8,32 +8,32 @@ const connection = {
   oauthConfiguration: null, oauthIssuerReviewRequiredAt: null,
   readinessCredentialBinding: "first-grant",
 } satisfies ReadinessIdentity
-const secret = "readiness-unit-test-key-not-a-production-secret"
-const fingerprint = (identity: ReadinessIdentity) => fingerprintReadinessIdentity(identity, secret)
+const fingerprint = (identity: ReadinessIdentity) => fingerprintReadinessIdentity(identity)
 
 test("shared OAuth refresh preserves the observation but re-grant and disconnect invalidate it", () => {
   const original = fingerprint(connection)
   assert.equal(fingerprint({ ...connection, accessToken: "refreshed-token" }), original)
   assert.notEqual(fingerprint({ ...connection, readinessCredentialBinding: "new-grant" }), original)
   assert.notEqual(fingerprint({ ...connection, accessToken: null }), original)
+  assert.ok(!original.includes("first-token"))
 })
 
 test("personal OAuth refresh is stable and observations remain bound to the person's grant", () => {
   const personal: ReadinessIdentity = { ...connection, credentialMode: "per_member" }
   const account = { accessToken: "first-token", externalAccountId: "sam@example.test", readinessCredentialBinding: "member-grant" }
-  const original = fingerprintReadinessIdentity(personal, secret, account)
-  assert.equal(fingerprintReadinessIdentity(personal, secret, { ...account, accessToken: "refreshed-token" }), original)
-  assert.notEqual(fingerprintReadinessIdentity(personal, secret, { ...account, readinessCredentialBinding: "new-member-grant" }), original)
-  assert.notEqual(fingerprintReadinessIdentity(personal, secret, { ...account, externalAccountId: "other@example.test" }), original)
+  const original = fingerprintReadinessIdentity(personal, account)
+  assert.equal(fingerprintReadinessIdentity(personal, { ...account, accessToken: "refreshed-token" }), original)
+  assert.notEqual(fingerprintReadinessIdentity(personal, { ...account, readinessCredentialBinding: "new-member-grant" }), original)
+  assert.notEqual(fingerprintReadinessIdentity(personal, { ...account, externalAccountId: "other@example.test" }), original)
 })
 
-test("API key replacement, endpoint edits and server-key rotation invalidate a check", () => {
+test("API key revisions and endpoint edits invalidate a check without retaining any key material", () => {
   const keyed: ReadinessIdentity = { ...connection, authType: "apikey", apiKey: "first-key", accessToken: null }
   const original = fingerprint(keyed)
-  assert.notEqual(fingerprint({ ...keyed, apiKey: "replacement-key" }), original)
+  assert.notEqual(fingerprint({ ...keyed, apiKey: "replacement-key", readinessCredentialBinding: "new-key-revision" }), original)
   assert.notEqual(fingerprint({ ...keyed, url: "https://other.example.test/mcp" }), original)
-  assert.notEqual(fingerprintReadinessIdentity(keyed, "different-server-key"), original)
-  assert.match(original, /^[a-f0-9]{64}$/)
+  assert.equal(fingerprint({ ...keyed, apiKey: "any-other-key" }), original, "only the independent credential revision is retained")
+  assert.ok(!original.includes("first-key"))
 })
 
 test("no check or a mismatched identity never yields Ready and internal binding material is omitted", () => {

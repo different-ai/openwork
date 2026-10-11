@@ -107,7 +107,7 @@ export const ConnectedAccountTable = mysqlTable(
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
-    /** Rotated on a new OAuth grant, never on routine token refresh. */
+    /** Rotated on API-key replacement or a new OAuth grant, never routine refresh. */
     readinessCredentialBinding: varchar("readiness_credential_binding", { length: 64 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
@@ -255,7 +255,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
-    /** Rotated on a new OAuth grant, never on routine token refresh. */
+    /** Rotated on API-key replacement or a new OAuth grant, never routine refresh. */
     readinessCredentialBinding: varchar("readiness_credential_binding", { length: 64 }),
     /**
      * Set when live discovery no longer matches the selected OAuth issuer.

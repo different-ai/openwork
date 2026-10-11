@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
+import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   SlackAssistantInstallationTable,
@@ -529,6 +530,7 @@ export async function createExternalMcpConnection(input: {
     credentialMode: input.credentialMode,
     exposeDirectly: input.exposeDirectly ?? false,
     apiKey: input.apiKey ?? null,
+    readinessCredentialBinding: input.authType === "apikey" && input.apiKey ? randomUUID() : null,
     apiKeyAuthScheme: input.apiKeyAuthScheme ?? "bearer",
     oauthConfiguration,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
@@ -1128,6 +1130,8 @@ export async function updateExternalMcpConnection(
           ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
           oauthConfiguration: input.authType === "oauth" ? input.oauthConfiguration ?? null : null,
           apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
+          readinessCredentialBinding: randomUUID(),
+          readinessCheck: null,
           accessToken: null,
           refreshToken: null,
           tokenType: null,
@@ -1153,7 +1157,7 @@ export async function updateExternalMcpConnection(
           credentialMode: input.credentialMode,
           apiKeyAuthScheme,
           ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
-          ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+          ...(input.apiKey !== undefined ? { apiKey: input.apiKey, readinessCredentialBinding: randomUUID(), readinessCheck: null } : {}),
           ...(input.oauthConfiguration !== undefined ? { oauthConfiguration: input.oauthConfiguration } : {}),
           ...(input.authType === "none" && input.validatedAt ? { connectedAt: input.validatedAt } : {}),
           updatedAt: changedAt,
@@ -1922,6 +1926,7 @@ export async function upsertConnectedAccountForExternalMcpIdentity(input: {
         .update(ConnectedAccountTable)
         .set({
           ...connectedAccountChanges(input.changes),
+          ...(current.authType === "apikey" && input.changes.accessToken !== undefined ? { readinessCredentialBinding: randomUUID(), readinessCheck: null } : {}),
           ...(current.authType === "apikey" ? { updatedAt: new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1)) } : {}),
         })
         .where(eq(ConnectedAccountTable.id, existing.id))
@@ -1935,6 +1940,7 @@ export async function upsertConnectedAccountForExternalMcpIdentity(input: {
       externalAccountId: input.changes.externalAccountId ?? null,
       scopes: input.changes.scopes ?? null,
       accessToken: input.changes.accessToken ?? null,
+      readinessCredentialBinding: current.authType === "apikey" ? randomUUID() : null,
       refreshToken: input.changes.refreshToken ?? null,
       tokenType: input.changes.tokenType ?? null,
       expiresAt: input.changes.expiresAt ?? null,

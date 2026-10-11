@@ -181,11 +181,14 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
     setError(null);
     try {
       await saveAccess(connection.id, access);
-      const checked = orgContext && orgFeatureEnabled(orgContext, "connectorReadiness")
+      const readinessEnabled = orgContext && orgFeatureEnabled(orgContext, "connectorReadiness");
+      // Individual-key setup publishes the connection; each person's key is
+      // checked when they enroll it, not against an admin's nonexistent key.
+      const checked = readinessEnabled && !usesIndividualKeys
         ? await checkConnection.mutateAsync(connection.id) : null;
       const connectionId = connection.id;
       toast({
-        title: checked?.status === "could_not_verify" ? `${name} couldn't be verified` : `${name} is ready`,
+        title: readinessEnabled && usesIndividualKeys ? `${name} is set up` : checked?.status === "could_not_verify" ? `${name} couldn't be verified` : `${name} is ready`,
         description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
@@ -218,7 +221,7 @@ export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) 
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={usesIndividualKeys ? `${name} is ready` : `${name} passed all ${checks.length} checks`}
+        title={usesIndividualKeys ? orgContext && orgFeatureEnabled(orgContext, "connectorReadiness") ? `${name} is set up` : `${name} is ready` : `${name} passed all ${checks.length} checks`}
       />
       {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">

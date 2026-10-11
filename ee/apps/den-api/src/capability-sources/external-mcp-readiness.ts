@@ -4,15 +4,14 @@ export { visibleReadiness } from "./external-mcp-readiness-identity.js"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { ConnectedAccountTable, ExternalMcpConnectionTable, type ExternalMcpReadinessCheck } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
-import { env } from "../env.js"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import { getConnectedAccount } from "./oauth-credentials.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 
 // A successful probe of someone else's account never makes this member Ready.
-// Configuration/key changes invalidate the stored result without deleting history.
+// Configuration and credential revisions keep an old check from verifying a replacement.
 export function readinessFingerprint(connection: ExternalMcpConnectionRow, account?: Awaited<ReturnType<typeof getConnectedAccount>>) {
-  return fingerprintReadinessIdentity(connection, env.betterAuthSecret, account)
+  return fingerprintReadinessIdentity(connection, account)
 }
 
 export async function rotateReadinessCredentialBinding(connection: ExternalMcpConnectionRow, memberId: DenTypeId<"member">) {

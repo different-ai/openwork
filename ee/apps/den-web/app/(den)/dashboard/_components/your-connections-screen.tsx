@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getMcpConnectionRoute, getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, getMcpConnectionRoute, getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
@@ -223,7 +223,7 @@ function YourConnectionRow({
   const state = connectorReadinessState(connection);
   if (state) return (
     <div data-connector-row={connection.name} ref={rowRef}>
-      <ItemRow logo={<IntegrationIcon name={connection.name} serviceUrl={connection.url} />} title={connection.name}
+      <ItemRow href={getLibraryConnectorRoute(orgSlug, connection.id)} logo={<IntegrationIcon name={connection.name} serviceUrl={connection.url} />} title={connection.name}
         description={checkConnection.error ? "Could not check this connection. Try again." : !canManageConnections && state === "Couldn't verify" ? `${connectorReadinessNote(connection)} An admin can check again.` : connectorReadinessNote(connection)} status={state} statusOnNarrow wideAction wrapDescription={state === "Couldn't verify"}
         action={state === "Sign in" ? <DenButton size="xs" variant="secondary" onClick={onConnect}>Sign in</DenButton>
           : state === "Set up" ? <DenButton size="xs" variant="secondary" disabled={!canManageConnections} title={!canManageConnections ? "An admin can finish setup." : undefined} href={canManageConnections ? getMcpConnectionRoute(orgSlug, connection.id) : undefined}>Set up</DenButton>
