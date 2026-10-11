@@ -11,7 +11,17 @@ No OpenWork desktop app is needed.
 
 This plugin needs **OpenCode V2** with the integration, provider and MCP plugin APIs; it is tested with **2.0.26**. OpenCode V1 and older V2 betas without those APIs are not supported. Check `opencode --version` (or `opencode2 --version` if that is your V2 executable). Installing the plugin does not install or upgrade OpenCode.
 
-## Install from Git
+## Install
+
+```sh
+opencode plugin add opencode-openwork
+```
+
+This adds `opencode-openwork` to the `plugins` array in your global `~/.config/opencode/opencode.json`, keeping your other settings.
+
+### Install from Git (unreleased changes)
+
+To run the latest code from `dev` instead of the npm release, clone the plugin and point OpenCode at the folder:
 
 ```sh
 git clone --depth 1 --filter=blob:none --sparse --branch dev \
@@ -19,8 +29,6 @@ git clone --depth 1 --filter=blob:none --sparse --branch dev \
   "$HOME/.local/share/opencode/openwork-source"
 git -C "$HOME/.local/share/opencode/openwork-source" sparse-checkout set packages/opencode-plugin
 ```
-
-Add the plugin to the `plugins` array in your existing global `~/.config/opencode/opencode.json(c)`, preserving all other settings:
 
 ```jsonc
 {
@@ -31,7 +39,7 @@ Add the plugin to the `plugins` array in your existing global `~/.config/opencod
 }
 ```
 
-Replace `/absolute/path/to/home` with your own home directory; do not copy another person's path. OpenCode V2 loads the source entrypoint directly, so this Git installation does not need a dependency install or build.
+Replace `/absolute/path/to/home` with your own home directory. OpenCode V2 loads the source entrypoint directly, so this needs no dependency install or build.
 
 ### Sign in yourself
 
@@ -59,14 +67,9 @@ Check which installed OpenCode executable is V2. This plugin needs OpenCode V2
 (tested with 2.0.26); if it is unavailable, explain that requirement and stop.
 Leave installed OpenCode versions unchanged.
 
-Clone https://github.com/different-ai/openwork, branch dev, into
-~/.local/share/opencode/openwork-source with a sparse checkout of
-packages/opencode-plugin. If that directory already exists, inspect it first
-and preserve any local changes.
-
-Add the plugin's absolute file:// directory URL to the plugins array in the
-existing global ~/.config/opencode/opencode.json(c). Preserve all existing
-settings. Use Git only for the plugin; no dependency install or build is needed.
+Run `opencode plugin add opencode-openwork` with the V2 executable. Check that
+the global ~/.config/opencode/opencode.json(c) now lists opencode-openwork in
+its plugins array and that all existing settings are preserved.
 
 Give me the browser-login command for the installed V2 executable:
 opencode auth login openwork --method browser --standalone
@@ -121,3 +124,11 @@ The plugin also ends the OpenWork session and removes the models and MCP servers
 - AI Gateway models talk to `gateway.openworklabs.com` with your personal gateway key. MCP servers talk to OpenWork's MCP gateway (`/mcp/agent`) with a 7-day token that is renewed automatically.
 
 Built for OpenCode 2 (`@opencode/plugin` 2.0.26).
+
+## Releasing
+
+Maintainers of the `different-ai-inc` npm organization release new versions:
+
+1. Bump `version` in `package.json` and merge.
+2. Push a tag `opencode-plugin-v<version>`. The [Publish OpenCode plugin](../../.github/workflows/publish-opencode-plugin.yml) workflow tests, builds, and stages the version with signed provenance. No npm token is stored in GitHub; npm trusts that workflow file.
+3. Approve the staged version with 2FA on [npmjs.com](https://www.npmjs.com/package/opencode-openwork) or with `npm stage list opencode-openwork` and `npm stage approve <id>`. It is not installable until then.
