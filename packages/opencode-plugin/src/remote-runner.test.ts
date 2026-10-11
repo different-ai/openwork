@@ -389,15 +389,25 @@ test("poll/registration is single-flight; a credential event cancels a stale cla
 
 test("unload is bounded even when a polling fetch ignores AbortSignal", async () => {
   const f = fixture()
-  let blocked = false
-  f.blockedWork = () => { blocked = true; return new Promise(() => {}) }
+  let entered: (() => void) | undefined
+  const workStarted = new Promise<void>(resolve => { entered = resolve })
+  f.blockedWork = () => { entered?.(); return new Promise(() => {}) }
   const poll = f.controller.poll()
-  for (let i = 0; i < 30 && !blocked; i++) await new Promise(resolve => setImmediate(resolve))
-  assert.equal(blocked, true)
-  await f.controller.close()
-  await poll
-  assert.equal(nativePrompts(f), 0)
-  assert.equal(f.released, 1)
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  try {
+    // Witness actual entry into the uncooperative fetch. A fixed number of
+    // event-loop turns can finish before realpath I/O completes on CI.
+    await Promise.race([workStarted, new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new Error("The work-fetch witness was not reached.")), 5000)
+    })])
+    await f.controller.close()
+    await poll
+    assert.equal(nativePrompts(f), 0)
+    assert.equal(f.released, 1)
+  } finally {
+    if (deadline) clearTimeout(deadline)
+    await f.controller.close()
+  }
 })
 
 test("uses the shared read/send/stop control protocol without arbitrary native session control", async () => {
