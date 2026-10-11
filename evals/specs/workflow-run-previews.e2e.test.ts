@@ -396,6 +396,8 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.see({ role: "heading", label: "Workflow Runs" }, { timeoutMs: 30_000 });
     await user.reload();
     await user.see({ text: "Couldn't load workflow runs" }, { timeoutMs: 30_000 });
+    await user.notSee({ role: "button", label: "Refresh runs" });
+    await user.see({ role: "button", label: "Try again" });
     await user.notSee({ text: "No workflow runs yet" });
     await user.screenshot();
     await world.faults.recover();

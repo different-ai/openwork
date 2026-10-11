@@ -244,9 +244,9 @@ export function ModelsAnalyticsPanel() {
               <option value="model">By model</option><option value="member">By member</option><option value="day">By day</option>
             </DenSelect> : null}
           </div>
-          <div className="flex items-center gap-3"><span className="text-xs text-[#637291]">Updates automatically</span>
+          {integrated && dataQuery.isError ? null : <div className="flex items-center gap-3"><span className="text-xs text-[#637291]">Updates automatically</span>
             <DenButton variant="secondary" size="sm" disabled={busy} onClick={() => void dataQuery.refetch()}><RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${dataQuery.isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton>
-          </div>
+          </div>}
         </div>
         {!dataQuery.isError || dataQuery.data ? <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard icon={<Zap className="text-[#6F3DFF]" />} title="Model calls" value={loading ? "…" : calls.toLocaleString()} sub={`Last ${days} days`} tone="violet" />

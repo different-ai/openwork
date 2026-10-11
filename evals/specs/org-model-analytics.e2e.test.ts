@@ -151,9 +151,12 @@ test("organization model analytics aggregate session dimensions without cross-or
     await user.see({ text: "Couldn't load analytics" }, { timeoutMs: 60_000 });
     await user.notSee({ text: "No model usage yet" });
     await user.notSee({ text: "No usage events yet" });
+    await user.notSee({ role: "button", label: "Refresh analytics" });
+    await user.see({ role: "button", label: "Try again" });
+    await user.notSee({ text: "Your data is safe. This is usually a short connection problem." });
     await user.screenshot();
     await world.analyticsStoreUnavailable(false);
-    await user.click({ role: "button", label: "Refresh analytics" });
+    await user.click({ role: "button", label: "Try again" });
     await user.see({ text: "prov/model-a" }, { timeoutMs: 30_000 });
     await user.notSee({ text: "Couldn't load analytics" });
     evidence.recordAssertionEvidence("An analytics outage is shown as an error and can recover without inventing zero usage", "An analytics storage outage returned HTTP 500 and produced the error state with no empty charts; Refresh restored the previously ingested models after recovery", true);

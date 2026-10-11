@@ -95,10 +95,11 @@ export function AnalyticsLoading({ label }: { label: string }) {
 
 /** The one way an Analytics view says it could not load: what happened, and one way to try again. */
 export function AnalyticsErrorState({ title, onRetry, retrying = false }: { title: string; onRetry: () => void; retrying?: boolean }) {
+  const integrated = useAnalyticsIntegrated();
   return <div className={analyticsSurfaceClass} role="alert">
     <AnalyticsEmptyState title={title} icon={CloudOff}
       action={<DenButton variant="secondary" onClick={onRetry} disabled={retrying}>{retrying ? "Trying again…" : "Try again"}</DenButton>}>
-      Your data is safe. This is usually a short connection problem.
+      {integrated ? null : "Your data is safe. This is usually a short connection problem."}
     </AnalyticsEmptyState>
   </div>;
 }

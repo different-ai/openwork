@@ -101,7 +101,7 @@ export function WorkflowRunsScreen() {
 
   return <div className={integrated ? analyticsIntegratedPageClass : analyticsPageClass}>
     <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="workflows" title="Workflow Runs"
-      action={entitled ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}>
+      action={entitled && !(integrated && isError) ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}>
         <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh runs
       </DenButton> : null} />
     {!entitled ? <EnterprisePlanNotice feature="Workflow run history" detail="Run history is unavailable on this plan." /> : <>

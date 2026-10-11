@@ -45,7 +45,7 @@ export function ModelsAnalyticsScreen() {
       </> : status.data ? <div className={analyticsSurfaceClass}>
         <AnalyticsEmptyState title="Model insights are included with OpenWork Models"
           action={<DenButton href={getInferenceRoute(activeOrg?.slug)}>Set up OpenWork Models</DenButton>}>
-          Enable OpenWork Models for your workspace to see shared limits and choose whether to collect task analytics.
+          {integrated ? null : "Enable OpenWork Models for your workspace to see shared limits and choose whether to collect task analytics."}
         </AnalyticsEmptyState>
       </div> : null}
     </>}

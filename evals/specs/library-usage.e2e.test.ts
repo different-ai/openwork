@@ -252,14 +252,19 @@ test("an owner sees which plugins, skills and connectors the team uses, which fa
     await owner.reload();
     await owner.see({ text: "Couldn't load plugins usage" }, { timeoutMs: 30_000 });
     await owner.notSee({ text: "No usage yet" });
+    await owner.notSee({ text: "Your data is safe. This is usually a short connection problem." });
+    const failed = (await world.faults.requests()).filter((request) => request.status === 503);
+    expect(failed.length).toBeGreaterThan(0);
+    evidence.recordAssertionEvidence("failure and empty usage remain distinct", `${failed.length} intercepted usage read returned 503; no empty or zero report replaces the error.`, failed.length > 0);
     await owner.screenshot();
+  });
+
+  await step("after: one retry restores the recorded plugin counts", async () => {
     await world.faults.recover();
     await owner.click({ role: "button", label: "Try again" });
     await owner.see({ testId: "library-usage-row" }, { timeoutMs: 30_000 });
     expect((await page.dom(`${row("Support kit")} [data-item-uses]`)).elements[0]?.text).toBe("3");
-    const failed = (await world.faults.requests()).filter((request) => request.status === 503);
-    expect(failed.length).toBeGreaterThan(0);
-    evidence.recordAssertionEvidence("failure and empty usage remain distinct", `${failed.length} intercepted usage read returned 503; retry restored Support kit's 3 real uses.`, failed.length > 0);
+    evidence.recordAssertionEvidence("retry restores real usage", "Support kit again shows its 3 recorded uses after the transport recovers.", true);
     await owner.screenshot();
   });
 

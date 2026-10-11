@@ -69,7 +69,7 @@ export function AnalyticsScreen() {
     <div className={integrated ? analyticsIntegratedPageClass : analyticsPageClass}>
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="adoption"
         title="Usage & adoption"
-        action={!locked ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
+        action={!locked && !(integrated && isError) ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
 
       {locked ? (
         <EnterprisePlanNotice feature="Usage analytics" detail="Team usage is unavailable on this plan." />
@@ -152,7 +152,7 @@ export function AnalyticsScreen() {
       {/* Model usage */}
       <div>
         <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-[#07192C]">Models</h2>
-        <p className="mt-0.5 text-[12px] text-[#637291]">See which models your team uses and how they are selected.</p>
+        {integrated ? null : <p className="mt-0.5 text-[12px] text-[#637291]">See which models your team uses and how they are selected.</p>}
         <div className="mt-3 grid gap-3.5 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <ModelUsageList models={modelUsage} isLoading={isLoading} />
           <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-1">
