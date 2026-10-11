@@ -1,6 +1,7 @@
 import type { Seed } from "@openwork/env";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { enableOrganizationCapabilities } from "./dashboards.ts";
 
 /** Skills a member wrote in this workspace: enough rows to read lanes across. */
 export const librarySkills = [
@@ -20,10 +21,10 @@ const handWrittenServers = {
 
 /**
  * One member's workspace with a handful of skills and MCP servers, opened in
- * the real app in headless Chrome. No Den: everything lives on this computer,
- * which is enough to read the Library's list at several window widths.
+ * the real app in headless Chrome. The signed-out case reads the real public
+ * deployment flags; the signed-in case adds an organization-only override.
  */
-export async function libraryListWide(seed: Seed) {
+async function buildLibraryListWide(seed: Seed, integrated: boolean) {
   const workspacePath = seed.tmpPath("library-list-wide");
   for (const skill of librarySkills) {
     const directory = join(workspacePath, ".opencode", "skills", skill.name);
@@ -34,6 +35,25 @@ export async function libraryListWide(seed: Seed) {
     join(workspacePath, "opencode.json"),
     `${JSON.stringify({ $schema: "https://opencode.ai/config.json", mcp: handWrittenServers }, null, 2)}\n`,
   );
-  const app = await seed.appWeb({ name: "library-list-wide", workspacePath });
-  return { app, workspacePath, skills: librarySkills.map((skill) => skill.name), servers: Object.keys(handWrittenServers) };
+  const den = await seed.den({ org: { name: "Integrated Library", admin: { name: "Library Owner" } } });
+  if (integrated) await enableOrganizationCapabilities(seed, den.admin, { libraryIntegrated: true });
+  const app = await seed.appWeb({ name: "library-list-wide", workspacePath,
+    env: {
+      // Use the existing app-web Den proxy, as the MCP App journeys do. Browser
+      // auth and feature reads must not depend on cross-origin loopback access.
+      OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1",
+      OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
+      OPENWORK_DEV_HEADLESS_DEN_API_TARGET: den.ref.apiUrl,
+      VITE_DEN_BASE_URL: den.ref.webUrl,
+      VITE_DEN_API_BASE_URL: "/api/den",
+      // The isolated runtime does not inherit executable overrides. Local proof can pin v1
+      // when the machine's default opencode is v2; CI keeps its normal provisioned binary.
+      ...(process.env.OPENWORK_OPENCODE_BIN ? { OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN } : {}),
+    },
+  });
+  if (integrated) await seed.signIn(app, den.admin, "Library Owner");
+  return { app, den, workspacePath, skills: librarySkills.map((skill) => skill.name), servers: Object.keys(handWrittenServers) };
 }
+
+export const libraryListWide = (seed: Seed) => buildLibraryListWide(seed, false);
+export const integratedLibraryListWide = (seed: Seed) => buildLibraryListWide(seed, true);

@@ -1,4 +1,6 @@
 /** @jsxImportSource react */
+import { useContext } from "react";
+import { LibraryPresentationContext } from "./extension-card";
 import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, MessageCircle, Share2 } from "lucide-react";
 import {
   Card,
@@ -262,6 +264,7 @@ export function ExtensionDetailModal({
   backLabel = "Library",
 }: ExtensionDetailModalProps) {
   "use memo";
+  const integrated = useContext(LibraryPresentationContext);
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
 
   if (!open) return null;
@@ -307,15 +310,15 @@ export function ExtensionDetailModal({
       <div className="relative shrink-0">
         <div
           className={cn(
-            "flex size-12 items-center justify-center rounded-xl border",
-            connected && !savedKeyOnly ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
+            integrated ? "flex size-10 items-center justify-center rounded-lg border" : "flex size-12 items-center justify-center rounded-xl border",
+            !integrated && connected && !savedKeyOnly ? "border-green-6 bg-green-2" : "border-dls-border bg-dls-hover",
           )}
         >
           {resolvedIconSrc ? (
             <div className="flex size-8 items-center justify-center rounded-md bg-white">
               <img src={resolvedIconSrc} alt="" width={20} height={20} loading="lazy" style={{ display: "block" }} />
             </div>
-          ) : (
+          ) : integrated ? <span className="text-lg font-medium text-muted-foreground" aria-hidden>{name.trim().charAt(0).toUpperCase()}</span> : (
             <ExtensionMeshAvatar
               name={name}
               category={taxonomy}
@@ -323,7 +326,7 @@ export function ExtensionDetailModal({
             />
           )}
         </div>
-        {connected && !savedKeyOnly ? (
+        {!integrated && connected && !savedKeyOnly ? (
           <div className="absolute -bottom-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-dls-surface bg-green-9">
             <CheckCircle2 size={11} className="text-white" strokeWidth={3} />
           </div>
@@ -334,11 +337,11 @@ export function ExtensionDetailModal({
         {presentation === "page" ? (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold leading-none tracking-tight text-foreground">{name}</h2>
-              {taxonomyPills}
+              <h2 className={integrated ? "min-w-0 break-words text-xl font-semibold tracking-tight text-foreground" : "text-lg font-semibold leading-none tracking-tight text-foreground"}>{name}</h2>
+              {integrated ? <span className="text-[13px] font-normal text-muted-foreground" data-library-detail-state>{connected ? savedKeyOnly ? t("extensions.detail_key_saved") : t("extensions.detail_ready") : oauth ? "Sign in" : "Set up"}</span> : taxonomyPills}
             </div>
-            <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
-            {sourceLabel ? (
+            {!integrated ? <p className="text-sm leading-relaxed text-muted-foreground">{description}</p> : null}
+            {!integrated && sourceLabel ? (
               <p className="text-xs text-muted-foreground">{sourceLabel}</p>
             ) : null}
           </>
@@ -372,6 +375,12 @@ export function ExtensionDetailModal({
 
   const body = (
     <div className="space-y-5 px-px">
+      {integrated && presentation === "page" ? <Table><TableBody>
+        {description ? <TableRow><TableCell className="w-24 text-muted-foreground">About</TableCell><TableCell className="whitespace-normal text-[13px]">{description}</TableCell></TableRow> : null}
+        {composerCapability ? <TableRow><TableCell className="text-muted-foreground">Type</TableCell><TableCell>{extensionTaxonomyLabel(taxonomy)}</TableCell></TableRow> : null}
+        {preview || beta ? <TableRow><TableCell className="text-muted-foreground">Release</TableCell><TableCell>{[preview ? "Preview" : null, beta ? "Beta" : null].filter(Boolean).join(", ")}</TableCell></TableRow> : null}
+      </TableBody></Table> : null}
+      {integrated && presentation === "page" && sourceLabel ? <details className="text-[13px] text-muted-foreground"><summary>Technical details</summary><p className="mt-2 break-all font-mono text-xs">{sourceLabel}</p></details> : null}
       {presentation !== "page" ? (
         <div className="text-sm leading-relaxed text-card-foreground">
           {description}
@@ -477,14 +486,14 @@ export function ExtensionDetailModal({
       {composerCapability && instructionBody ? (
         <div className="flex flex-col gap-2">
           <div className="flex items-baseline justify-between gap-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+            <div className={integrated ? "text-sm font-semibold text-foreground" : "text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground"}>
               {t("extensions.detail_instructions")}
             </div>
-            {instructionsHint ? (
+            {!integrated && instructionsHint ? (
               <div className="text-xs text-muted-foreground">{instructionsHint}</div>
             ) : null}
           </div>
-          <div className="max-h-[320px] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-card-foreground">
+          <div className={integrated ? "text-sm leading-relaxed text-foreground" : "max-h-[320px] overflow-y-auto rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-card-foreground"}>
             <MarkdownBlock text={instructionBody} />
           </div>
           {onReveal ? (
@@ -746,7 +755,7 @@ export function ExtensionDetailModal({
           <ChevronLeft size={16} />
           {backLabel}
         </Button>
-        {composerCapability ? (
+        {composerCapability && !integrated ? (
           <div className="rounded-xl border border-border bg-card p-5">
             {header}
           </div>

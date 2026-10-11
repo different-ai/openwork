@@ -25,6 +25,11 @@ import {
   useUpdatePlugin,
 } from "./plugin-data";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
+import { ItemHeader, SectionTitle } from "./item-header";
+import { DetailRows, ItemMenu, ItemPanel, ItemRow, removeEntry } from "./item-list";
+import { ConnectorLogo, KindTile, PluginLogo } from "./item-logo";
+import { useLibraryIntegrated } from "./use-library-integrated";
+import { skillTitle } from "./plugin-page-screen";
 import { type PluginAccessGrant, usePluginAccess } from "./plugin-access-data";
 import { PluginAccessSection } from "./plugin-access-section";
 import { WorkflowDetailPanel } from "./workflow-detail-panel";
@@ -39,6 +44,7 @@ export function PluginDetailScreen({
 }) {
   const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
+  const integrated = useLibraryIntegrated();
   const { data: plugin, isLoading, error, refetch } = usePlugin(pluginId);
   const pluginAccessQuery = usePluginAccess(pluginId);
   const archivePlugin = useArchivePlugin();
@@ -126,7 +132,19 @@ export function PluginDetailScreen({
   }
 
   return (
-    <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
+    <div className={integrated ? "mx-auto flex w-full max-w-[896px] flex-col gap-7 px-6 py-10 md:px-12" : "mx-auto max-w-[860px] px-6 py-8 md:px-8"}>
+      {integrated ? <>
+        <ItemHeader compact back={{ href: backHref ?? getPluginsRoute(orgSlug), label: "Plugins" }} logo={<PluginLogo name={plugin.name} size="lg" />} title={plugin.name} actions={canManagePlugin ? <ItemMenu size="md" label={`More actions for ${plugin.name}`} entries={[
+          { label: "Edit", onSelect: () => setEditPlugin({ name: plugin.name, description: plugin.description }) },
+          removeEntry(plugin.name, async () => { await archivePlugin.mutateAsync(pluginId); router.push(getPluginsRoute(orgSlug)); router.refresh(); }),
+        ]} /> : undefined} />
+        <DetailRows rows={[
+          ...(plugin.description ? [{ label: "About", value: plugin.description, wrap: true }] : []),
+          { label: "Made by", value: creator?.user.name ?? "Your organization" },
+          { label: "Updated", value: formatPluginTimestamp(plugin.updatedAt) },
+          ...(plugin.version ? [{ label: "Version", value: plugin.version }] : []),
+        ]} />
+      </> : <>
       <div className="mb-6 flex items-center justify-between gap-4">
         <Link
           href={backHref ?? getPluginsRoute(orgSlug)}
@@ -220,8 +238,9 @@ export function PluginDetailScreen({
           </p>
         </div>
       </article>
+      </>}
 
-      <div className="mt-6 space-y-6">
+      <div className={integrated ? "flex flex-col gap-6" : "mt-6 space-y-6"}>
         <PluginAccessSection
           pluginId={plugin.id}
           pluginCreatedByOrgMembershipId={plugin.createdByOrgMembershipId}
@@ -239,13 +258,13 @@ export function PluginDetailScreen({
           }}
           onOpen={(workflowId) => setSelectedWorkflowId(workflowId)}
         />
-        <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
-        <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
-        <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
-        <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
+        <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={(item) => renderAgentRow(item, integrated)} />
+        <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={(item) => renderCommandRow(item, integrated)} />
+        <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={(item) => renderHookRow(item, integrated)} />
+        <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={(item) => renderMcpRow(item, integrated)} />
       </div>
 
-      {missingLabels.length > 0 ? (
+      {!integrated && missingLabels.length > 0 ? (
         <p className="mt-6 text-center text-[12px] text-gray-400">
           No {formatMissingList(missingLabels)} detected in this plugin.
         </p>
@@ -485,9 +504,11 @@ function PrimitiveSection<T>({
   items: T[];
   render: (item: T) => React.ReactNode;
 }) {
+  const integrated = useLibraryIntegrated();
   if (items.length === 0) {
     return null;
   }
+  if (integrated) return <section className="flex flex-col gap-3"><SectionTitle title={label} /><ItemPanel>{items.map((item) => render(item))}</ItemPanel></section>;
 
   return (
     <section>
@@ -506,6 +527,15 @@ function PrimitiveSection<T>({
 }
 
 function SkillsSection({ orgSlug, plugin, canEdit }: { orgSlug: string | null; plugin: DenPlugin; canEdit: boolean }) {
+  const integrated = useLibraryIntegrated();
+  if (integrated) return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-3"><SectionTitle title="Skills" />{canEdit ? <DenButton size="sm" href={getNewPluginSkillRoute(orgSlug, plugin.id)} icon={Plus}>Add skill</DenButton> : null}</div>
+      <ItemPanel>
+        {plugin.skills.length === 0 ? <p className="px-3 py-4 text-[13px] text-[var(--dls-text-secondary)]">No skills yet.</p> : plugin.skills.map((skill) => <ItemRow compact key={skill.id} logo={<KindTile kind="skill" />} title={skillTitle(skill.name)} description={skill.description} href={canEdit ? getPluginSkillRoute(orgSlug, plugin.id, skill.id) : undefined} />)}
+      </ItemPanel>
+    </section>
+  );
   return (
     <section>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -569,7 +599,8 @@ function SkillRow({
   return <div className={className}>{body}</div>;
 }
 
-function renderHookRow(hook: PluginHook) {
+function renderHookRow(hook: PluginHook, integrated = false) {
+  if (integrated) return <div key={hook.id}><ItemRow compact title={hook.event} description={hook.description} />{hook.matcher ? <details className="px-3 pb-3 text-[13px] text-[var(--dls-text-secondary)]"><summary>Technical details</summary><DetailRows rows={[{ label: "Matcher", value: hook.matcher, wrap: true }]} /></details> : null}</div>;
   return (
     <div
       key={hook.id}
@@ -590,7 +621,8 @@ function renderHookRow(hook: PluginHook) {
   );
 }
 
-function renderMcpRow(mcp: PluginMcp) {
+function renderMcpRow(mcp: PluginMcp, integrated = false) {
+  if (integrated) return <div key={mcp.id}><ItemRow compact logo={<ConnectorLogo name={mcp.name} url={mcp.url} />} title={mcp.name} description={mcp.description} /><details className="px-3 pb-3 text-[13px] text-[var(--dls-text-secondary)]"><summary>Technical details</summary><DetailRows rows={[{ label: "Transport", value: mcp.transport }, { label: "Tools", value: mcp.toolCount }]} /></details></div>;
   const label = mcp.connectionId ? "Connector" : mcp.transport === "stdio" ? "Desktop only" : "Remote";
   return (
     <div
@@ -610,7 +642,8 @@ function renderMcpRow(mcp: PluginMcp) {
   );
 }
 
-function renderAgentRow(agent: PluginAgent) {
+function renderAgentRow(agent: PluginAgent, integrated = false) {
+  if (integrated) return <ItemRow compact key={agent.id} logo={<PluginLogo name={agent.name} />} title={agent.name} description={agent.description} />;
   return (
     <div
       key={agent.id}
@@ -624,7 +657,8 @@ function renderAgentRow(agent: PluginAgent) {
   );
 }
 
-function renderCommandRow(command: PluginCommand) {
+function renderCommandRow(command: PluginCommand, integrated = false) {
+  if (integrated) return <ItemRow compact key={command.id} logo={<KindTile kind="command" />} title={command.name} description={command.description} />;
   return (
     <div
       key={command.id}
@@ -649,16 +683,17 @@ function WorkflowsSection({
   onAdd: () => void;
   onOpen: (workflowId: string) => void;
 }) {
+  const integrated = useLibraryIntegrated();
   return (
     <section>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
+        {integrated ? <SectionTitle title="Workflows" /> : <div>
           <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
             <Code2 className="h-3.5 w-3.5" />
             Workflows
           </h2>
           <p className="mt-1 text-[12px] text-gray-400">Reusable Workflows shared with this Plugin and its collection audiences.</p>
-        </div>
+        </div>}
         {canEdit ? (
           <DenButton size="sm" onClick={onAdd}><Plus className="h-3.5 w-3.5" aria-hidden />Add Workflow</DenButton>
         ) : null}

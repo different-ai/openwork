@@ -116,6 +116,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  libraryIntegrated: {
+    label: "Integrated Library",
+    description: "Members see Library lists, details and add flows that match the rest of Den and the desktop app.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   libraryUsage: {
     label: "Library usage",
     description: "Organization admins see in Analytics how often each skill, plugin and connector is used, by how many people, which calls fail, and what nobody uses, so they can decide what to keep.",

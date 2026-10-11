@@ -3373,6 +3373,13 @@ export function createDenClient(options: {
       return workbotSettingsSchema.parse(payload);
     },
 
+    /** Deployment switches for people without an organization; missing keys are off. */
+    async getDeploymentFeatures(): Promise<Record<string, boolean>> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/features", { method: "GET" });
+      const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
+    },
+
     /** Effective feature switches for the active organization (`GET /v1/org` `features`); missing keys are off. */
     async getOrgFeatures(orgId: string): Promise<Record<string, boolean>> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });

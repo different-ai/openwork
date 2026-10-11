@@ -29,7 +29,7 @@ import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } f
 import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../../app/cloud/import-state";
-import { ExtensionCard, libraryRowLanes } from "../../../design-system/extension-card";
+import { ExtensionCard, LibraryPresentationContext, libraryRowLanes } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
 import {
@@ -523,6 +523,15 @@ export function McpView(props: McpViewProps) {
   const libraryCloudSignedIn = cloudSession.isSignedIn
     || (Boolean(cloudSession.authToken.trim()) && denAuth.isSignedIn);
   const activeOrganizationId = cloudSession.activeOrganization?.id.trim() ?? "";
+  const featureOrganizationId = cloudSession.authToken.trim() ? activeOrganizationId : "";
+  const libraryFeatures = useQuery({
+    queryKey: ["library-presentation-features", cloudSession.baseUrl, featureOrganizationId],
+    staleTime: 30_000,
+    queryFn: () => featureOrganizationId
+      ? cloudSession.client.getOrgFeatures(featureOrganizationId)
+      : cloudSession.client.getDeploymentFeatures(),
+  });
+  const libraryIntegrated = libraryFeatures.data?.libraryIntegrated === true;
   // The connector catalog rarely changes; keep it across visits so the Add dialog shows its logos at once.
   const connectorPresetsQuery = useQuery({
     queryKey: ["library-connector-presets", cloudSession.baseUrl, activeOrganizationId],
@@ -1183,7 +1192,7 @@ export function McpView(props: McpViewProps) {
   };
 
   const detailPanels = (
-    <>
+    <LibraryPresentationContext.Provider value={libraryIntegrated}>
       {detailEntry ? (() => {
         const extensionConfigSlot = props.configSlotForEntry?.(detailEntry) ?? null;
         const hasConfigSlot = extensionConfigSlot !== null;
@@ -1582,7 +1591,7 @@ export function McpView(props: McpViewProps) {
           />
         );
       })() : null}
-    </>
+    </LibraryPresentationContext.Provider>
   );
 
   const cloudPlugins = [...libraryCloud.pluginById.values()];
@@ -1864,6 +1873,7 @@ export function McpView(props: McpViewProps) {
 
   const inventory = (
     <LibraryInventory
+      integrated={libraryIntegrated}
       rows={rows}
       loading={props.inventoryLoading === true}
       filter={filter}
@@ -2404,6 +2414,7 @@ export function LibraryInventory(props: {
   signedOut?: boolean;
   onSignUp?: () => void;
   emptyState?: ReactNode;
+  integrated?: boolean;
 }) {
   const needle = props.search?.trim().toLowerCase() ?? "";
   const category = primaryLibraryFilter(props.filter);
@@ -2418,6 +2429,7 @@ export function LibraryInventory(props: {
   const showLocked = props.signedOut === true && category === "all" && !needle && !props.onlyNeedsSignIn;
 
   return (
+    <LibraryPresentationContext.Provider value={props.integrated === true}>
     <div className="space-y-6">
       {props.signedOut ? <LibrarySignUpBanner onSignUp={props.onSignUp} /> : null}
       {sections.length === 0 && props.loading ? (
@@ -2430,7 +2442,7 @@ export function LibraryInventory(props: {
         // The column labels belong to the rows: they sit directly on the first
         // section instead of floating one section-gap above it.
         <div>
-          <LibraryColumnHeader />
+          {!props.integrated ? <LibraryColumnHeader /> : null}
           <div className="space-y-6">
             {sections.map(({ section, rows }) => (
               <div key={section} data-library-section={section}>
@@ -2455,6 +2467,7 @@ export function LibraryInventory(props: {
                         meta={t("extensions.row_locked_from")}
                         taxonomy="connection"
                         disabled
+                        statusChip={props.integrated ? { label: t("extensions.row_chip_sign_in"), tone: "attention" } : undefined}
                         trailing={<Lock size={13} className="text-dls-secondary" aria-label={t("extensions.row_locked")} />}
                       />
                     </div>
@@ -2467,6 +2480,7 @@ export function LibraryInventory(props: {
         </div>
       )}
     </div>
+    </LibraryPresentationContext.Provider>
   );
 }
 

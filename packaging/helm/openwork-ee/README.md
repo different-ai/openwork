@@ -338,6 +338,7 @@ OpenWork Cloud. Don't change it on a customer install.
 | `denFlatPageHeaders` | `DEN_FEATURE_DEN_FLAT_PAGE_HEADERS` | default off | Members see compact, readable page headings in Den instead of decorative gradient banners. |
 | `analyticsIntegrated` | `DEN_FEATURE_ANALYTICS_INTEGRATED` | default off | Admins see analytics in the same style as Library and Connectors, with links to manage the items they use. |
 | `dashboardActivity` | `DEN_FEATURE_DASHBOARD_ACTIVITY` | default off | Organization admins see recent additions and skill updates on their dashboard instead of Quick add. |
+| `libraryIntegrated` | `DEN_FEATURE_LIBRARY_INTEGRATED` | default off | Members see Library lists, details and add flows that match the rest of Den and the desktop app. |
 | `libraryUsage` | `DEN_FEATURE_LIBRARY_USAGE` | default off | Organization admins see in Analytics how often each skill, plugin and connector is used, by how many people, which calls fail, and what nobody uses, so they can decide what to keep. |
 | `modelsAnalytics` | `DEN_FEATURE_MODELS_ANALYTICS` | default off | Organization admins can opt in to task analytics for OpenWork Models. |
 | `auditLogs` | `DEN_FEATURE_AUDIT_LOGS` | default off | Organization admins can read and configure audit logs. Capture still needs an audit entitlement. |

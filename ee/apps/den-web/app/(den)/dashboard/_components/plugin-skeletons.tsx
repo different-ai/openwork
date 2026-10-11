@@ -6,14 +6,15 @@ function Bar({ className }: { className: string }) {
 }
 
 /** The plugin page's header and sections, in place, while the plugin loads. */
-export function PluginPageSkeleton({ back, mode }: { back: { href: string; label: string }; mode: "member" | "admin" }) {
+export function PluginPageSkeleton({ back, mode, compact = false }: { back: { href: string; label: string }; mode: "member" | "admin"; compact?: boolean }) {
   return (
     <ItemPage>
       <ItemHeader
+        compact={compact}
         back={back}
         logo={<span aria-hidden className="h-10 w-10 shrink-0 rounded-xl bg-gray-100 motion-safe:animate-pulse" />}
         title={<><span className="sr-only">Loading plugin</span><Bar className="h-6 w-56 max-w-full rounded-md" /></>}
-        description={<Bar className="h-3 w-72 max-w-full" />}
+        description={compact ? undefined : <Bar className="h-3 w-72 max-w-full" />}
       />
       {mode === "admin" ? (
         <section className="flex flex-col gap-2.5">

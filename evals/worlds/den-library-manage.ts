@@ -5,6 +5,7 @@ import type { DenSession } from "@openwork/behaviors";
 import type { Place, Seed } from "@openwork/env";
 import type { MockMcpTool } from "@openwork/labs";
 import { isRecord, records, stringField } from "./library.ts";
+import { enableOrganizationCapabilities } from "./dashboards.ts";
 
 const people = {
   sam: "Sam K.",
@@ -39,7 +40,7 @@ const slackTools: MockMcpTool[] = [
  * answers, so the catalog's Slack entry points at a local mock that signs
  * people in and serves tools; no real provider is contacted.
  */
-export async function denLibraryManage(seed: Seed, ctx: { place: Place }, options: { samHasSlack?: boolean; asAdmin?: boolean; adminStartPath?: string } = {}) {
+export async function denLibraryManage(seed: Seed, ctx: { place: Place }, options: { samHasSlack?: boolean; asAdmin?: boolean; adminStartPath?: string; integrated?: boolean } = {}) {
   if (ctx.place.kind !== "local") throw new Error("This world fixes a local proxy in front of den-api before boot; run it on the local lane.");
   const [apiPort, webPort] = await allocateFreePorts(2);
   const denApiUrl = `http://127.0.0.1:${apiPort}`;
@@ -64,6 +65,7 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
     },
   });
 
+  if (options.integrated) await enableOrganizationCapabilities(seed, den.admin, { libraryIntegrated: true });
   const org = await seed.api(den.admin, "/v1/org");
   const members = isRecord(org.body) ? records(org.body.members) : [];
   const memberIds = Object.fromEntries(Object.entries(people).map(([key, name]) => {
@@ -124,6 +126,9 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
   const web = options.asAdmin
     ? await seed.web({ den, signedInAs: den.admin, startPath: options.adminStartPath ?? "/dashboard/mcp-connections", headless: true, viewport })
     : await seed.web({ den, signedInAs: den.members.sam, startPath: "/dashboard/library", headless: true, viewport });
+  const memberWeb = options.integrated || options.adminStartPath === "/dashboard/plugins"
+    ? await seed.web({ den, signedInAs: den.members.omar, startPath: "/dashboard/library", headless: true, viewport })
+    : null;
   const denWebOrigin = new URL(den.ref.webUrl).origin;
 
   async function library(session: DenSession): Promise<{ type: string; name: string }[]> {
@@ -135,6 +140,7 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
   return Object.assign({
     den,
     web,
+    memberWeb,
     proxy,
     slack,
     custom: den.mocks.custom,
@@ -143,6 +149,8 @@ export async function denLibraryManage(seed: Seed, ctx: { place: Place }, option
     people,
     memberIds,
     teamIds,
+    organizationId: stringField(isRecord(org.body) ? org.body.organization : null, "id"),
+    organizationSlug: stringField(isRecord(org.body) ? org.body.organization : null, "slug"),
     teamSize: (name: keyof typeof teams) => teams[name].length,
     /** True once the browser has been served the pinned catalog and discovery answers, never Den's real ones. */
     async servedPinnedCatalog(): Promise<boolean> {
@@ -197,3 +205,6 @@ export const denManageAsAdmin = (seed: Seed, ctx: { place: Place }) => denLibrar
 
 /** The same organization, with the admin signed in on Manage › Plugins. */
 export const denManagePluginsAsAdmin = (seed: Seed, ctx: { place: Place }) => denLibraryManage(seed, ctx, { asAdmin: true, adminStartPath: "/dashboard/plugins" });
+
+/** Same permissions and empty inventory, with only the Library presentation rollout enabled. */
+export const denManageIntegratedPluginsAsAdmin = (seed: Seed, ctx: { place: Place }) => denLibraryManage(seed, ctx, { asAdmin: true, adminStartPath: "/dashboard/plugins", integrated: true });

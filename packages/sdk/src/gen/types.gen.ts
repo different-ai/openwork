@@ -172,6 +172,7 @@ export type AdminFeature = {
     | "denFlatPageHeaders"
     | "analyticsIntegrated"
     | "dashboardActivity"
+    | "libraryIntegrated"
     | "libraryUsage"
     | "modelsAnalytics"
     | "auditLogs"
@@ -241,6 +242,7 @@ export type AdminOrganizationsPageResponse = {
       denFlatPageHeaders: boolean;
       analyticsIntegrated: boolean;
       dashboardActivity: boolean;
+      libraryIntegrated: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -347,6 +349,15 @@ export type AdminOrganizationsPageResponse = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -625,6 +636,7 @@ export type AdminOverviewResponse = {
       denFlatPageHeaders: boolean;
       analyticsIntegrated: boolean;
       dashboardActivity: boolean;
+      libraryIntegrated: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -731,6 +743,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -2218,6 +2239,7 @@ export type CapabilityDisabledError = {
     | "denFlatPageHeaders"
     | "analyticsIntegrated"
     | "dashboardActivity"
+    | "libraryIntegrated"
     | "libraryUsage"
     | "modelsAnalytics"
     | "auditLogs"
@@ -6540,6 +6562,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       denFlatPageHeaders: boolean;
       analyticsIntegrated: boolean;
       dashboardActivity: boolean;
+      libraryIntegrated: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -6646,6 +6669,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -6912,6 +6944,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       denFlatPageHeaders: boolean;
       analyticsIntegrated: boolean;
       dashboardActivity: boolean;
+      libraryIntegrated: boolean;
       libraryUsage: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
@@ -7018,6 +7051,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       dashboardActivity: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      libraryIntegrated: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

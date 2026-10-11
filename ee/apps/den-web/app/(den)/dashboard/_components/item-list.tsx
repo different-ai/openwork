@@ -147,6 +147,7 @@ export function ItemRow({
   href,
   testId,
   comparison,
+  compact = false,
 }: {
   statusOnNarrow?: boolean;
   wideAction?: boolean;
@@ -160,6 +161,8 @@ export function ItemRow({
   action?: ReactNode;
   href?: string;
   testId?: string;
+  /** Compact state lane remains visible in a narrow Library window. */
+  compact?: boolean;
 }) {
   const body = (
     <>
@@ -172,7 +175,7 @@ export function ItemRow({
     </>
   );
   return (
-    <div className={statusOnNarrow ? "flex items-center gap-2 px-3 py-3 sm:gap-3.5 sm:px-5" : "flex items-center gap-3.5 px-5 py-3"} data-testid={testId}>
+    <div className={compact ? "flex items-center gap-3 px-3 py-3" : statusOnNarrow ? "flex items-center gap-2 px-3 py-3 sm:gap-3.5 sm:px-5" : "flex items-center gap-3.5 px-5 py-3"} data-testid={testId} data-library-integrated-row={compact || undefined}>
       {href ? (
         <Link href={href} className="flex min-w-0 flex-1 items-center gap-3.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">
           {body}
@@ -182,11 +185,11 @@ export function ItemRow({
       )}
       {comparison}
       {status !== undefined ? (
-        <span className="hidden w-[220px] shrink-0 truncate text-right text-[12px] leading-4 text-gray-500 sm:block" data-item-status>
+        <span className={compact ? "w-14 shrink-0 truncate text-right text-[13px] text-[var(--dls-text-secondary)] sm:w-28" : "hidden w-[220px] shrink-0 truncate text-right text-[12px] leading-4 text-gray-500 sm:block"} data-item-status>
           {status}
         </span>
       ) : null}
-      {action !== undefined ? <span className={wideAction ? "flex w-[96px] shrink-0 justify-end" : "flex w-[72px] shrink-0 justify-end"}>{action}</span> : null}
+      {action !== undefined ? <span className={wideAction ? "flex w-[96px] shrink-0 justify-end" : compact ? "flex w-7 shrink-0 justify-end sm:w-[72px]" : "flex w-[72px] shrink-0 justify-end"} data-item-action>{action}</span> : null}
     </div>
   );
 }
@@ -317,13 +320,13 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
 }
 
 /** Label and value rows under Details. */
-export function DetailRows({ rows }: { rows: { label: string; value: ReactNode }[] }) {
+export function DetailRows({ rows }: { rows: { label: string; value: ReactNode; wrap?: boolean }[] }) {
   return (
     <div className="flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
       {rows.map((row) => (
         <div key={row.label} className="flex items-center justify-between gap-4 px-5 py-3 text-[13px] leading-[18px]">
           <span className="text-gray-500">{row.label}</span>
-          <span className="min-w-0 truncate text-right font-medium text-gray-900">{row.value}</span>
+          <span className={row.wrap ? "min-w-0 break-words text-right font-medium text-[var(--dls-text-primary)]" : "min-w-0 truncate text-right font-medium text-gray-900"}>{row.value}</span>
         </div>
       ))}
     </div>
