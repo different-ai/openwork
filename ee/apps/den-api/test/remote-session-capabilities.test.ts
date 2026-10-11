@@ -127,6 +127,35 @@ test("the legacy Cloud and desktop paths retain their Web access gate", async ()
   }
 })
 
+test("registered admission cannot select legacy desktops through explicit, workspace-only, or automatic targeting", async () => {
+  const legacy = { ...computer("legacy-computer"), registered: false }
+  let enqueued = 0
+  const dependencies = deps({
+    desktopTargets: async () => ({ ownerMemberId, computers: [legacy] }),
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, enqueue: async () => { enqueued++; return command() } },
+  })
+  for (const selection of [{ computerId: legacy.computerId }, { workspaceId: "synthetic-workspace" }, {}]) {
+    const result = await call("create", { target: "registered", ...selection }, dependencies)
+    assert.equal(result.error, true)
+    assert.equal(result.payload.commandId, undefined)
+  }
+  assert.equal(enqueued, 0)
+})
+
+test("registered automatic targeting excludes a newer legacy computer", async () => {
+  const selected: string[] = []
+  const result = await call("create", { target: "registered" }, deps({
+    desktopTargets: async () => ({ ownerMemberId, computers: [{ ...computer("legacy"), registered: false }, computer()] }),
+    commandStore: {
+      ...DEFAULT_REMOTE_SESSION_DEPS.commandStore,
+      latestSettled: async () => null,
+      enqueue: async (input) => { selected.push(input.targetComputerId ?? ""); return command() },
+    },
+  }))
+  assert.equal(result.error, false)
+  assert.deepEqual(selected, ["synthetic-computer"])
+})
+
 test("killing the rollout leaves admitted history readable and refuses another turn", async () => {
   const queued = command()
   const session: RemoteSessionDesktopSession = {

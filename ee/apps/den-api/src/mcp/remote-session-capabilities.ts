@@ -1193,20 +1193,25 @@ async function executeRemoteSession(
       const targets = registeredEnabled || env.automations.runtimeEnabled
         ? await (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId })
         : { ownerMemberId: null, computers: [] }
-      if (!targets.ownerMemberId || targets.computers.length === 0) {
+      // Registered admission has separate access rules. Never let that alias
+      // select a legacy desktop that still requires Web access.
+      const computers = body.target === "registered"
+        ? targets.computers.filter((computer) => computer.registered === true)
+        : targets.computers
+      if (!targets.ownerMemberId || computers.length === 0) {
         return errorResult({
           error: "desktop_offline",
           message: "No desktop is connected for your account. Open the OpenWork desktop app and try again.",
         })
       }
-      const online = targets.computers.filter((computer) => desktopOnline(computer, Date.now()))
+      const online = computers.filter((computer) => desktopOnline(computer, Date.now()))
       if (body.target === "registered" && !body.computerId && !body.workspaceId && online.length !== 1) {
         return errorResult({ error: online.length === 0 ? "computer_offline" : "ambiguous_computer", message: "Choose a computerId from remote-session:targets before offloading this task.", retryable: online.length === 0 })
       }
       const selection = body.target === "registered" && !body.computerId && !body.workspaceId
         ? { ...body, computerId: online[0]?.computerId }
         : body
-      const resolved = resolveDesktopTarget(selection, targets.computers, Date.now())
+      const resolved = resolveDesktopTarget(selection, computers, Date.now())
       if (!resolved.ok) return errorResult({ error: resolved.error, message: resolved.message, retryable: false })
       const unreachable = await recentDesktopUnreachable(deps, input, targets.ownerMemberId, resolved.computerId)
       if (unreachable) return unreachable
