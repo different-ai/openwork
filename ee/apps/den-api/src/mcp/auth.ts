@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto"
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
+import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
+import { AuthSessionTable, MemberTable, OAuthAccessTokenTable, OAuthConsentTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { verifyJwsAccessToken } from "better-auth/oauth2"
 import {
@@ -489,4 +489,36 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
   }
 
   return { userId, organizationId, scopes, payload }
+}
+
+/** Long-lived streams must not extend cached membership, grant or session liveness. */
+export async function verifyMcpSubscriptionRequest(headers: Headers, options: McpAuthResourceContext, signal: AbortSignal): Promise<McpPrincipal | null> {
+  signal.throwIfAborted()
+  const principal = await verifyMcpRequest(headers, options)
+  signal.throwIfAborted()
+  if (principal instanceof Response) return null
+  const userId = normalizeDenTypeId("user", principal.userId)
+  const organizationId = normalizeDenTypeId("organization", principal.organizationId)
+  const [member] = await db.select({ id: MemberTable.id }).from(MemberTable).where(and(
+    eq(MemberTable.userId, userId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt),
+  )).limit(1)
+  signal.throwIfAborted()
+  if (!member) return null
+  const grantId = readStringClaim(principal.payload, DEN_MCP_GRANT_ID_CLAIM)
+  if (grantId) {
+    const [grant] = await db.select({ id: OAuthConsentTable.id }).from(OAuthConsentTable).where(and(
+      eq(OAuthConsentTable.id, normalizeDenTypeId("oauthConsent", grantId)), eq(OAuthConsentTable.userId, userId),
+    )).limit(1)
+    if (!grant) return null
+  } else {
+    const sessionId = readStringClaim(principal.payload, "sid")
+    if (sessionId) {
+      const [session] = await db.select({ id: AuthSessionTable.id }).from(AuthSessionTable).where(and(
+        eq(AuthSessionTable.id, normalizeDenTypeId("session", sessionId)), eq(AuthSessionTable.userId, userId), gt(AuthSessionTable.expiresAt, new Date()),
+      )).limit(1)
+      if (!session) return null
+    }
+    // Session-less headless credentials were already verified by verifyMcpRequest.
+  }
+  return principal
 }

@@ -53,6 +53,8 @@
     "test:fs-engine": "pnpm --filter @openwork/app test:fs-engine",
     "warden:check": "PI_CODING_AGENT_DIR=.warden/pi pnpm dlx @sentry/warden@0.43.0 --runtime pi --config-path warden.toml --log",
     "check:outbound-access": "node scripts/check-outbound-access.mjs",
+    "check:ui-guardrails": "node scripts/check-ui-guardrails.mjs",
+    "test:ui-guardrails": "node --test scripts/check-ui-guardrails.test.mjs",
     "features:sync": "node scripts/features-sync.mjs",
     "features:check": "node scripts/features-sync.mjs --check",
     "test:e2e": "pnpm --filter @openwork/app test:e2e",

@@ -1,5 +1,6 @@
 import { callFunctionOnSurface, type Surface } from "@openwork/cdp";
 import { createOrg, localMysqlIsRunning, localRedisIsRunning, needs, SkipError, type Seed } from "@openwork/env";
+import { documentOverflow, popupPaintState } from "../helpers/ui-witnesses.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,8 +115,8 @@ export function workspaceMemberships(value: unknown) {
  * the popup. No DOM/style injection, focus, scrolling, or manual coordinates.
  * probe.dom does not expose clipping ancestors, scroll demand or native hits.
  */
-function readWorkspaceSwitcher(surface: Surface, authorizedNames: string[]) {
-  return callFunctionOnSurface(surface, (serializedNames) => {
+async function readWorkspaceSwitcher(surface: Surface, authorizedNames: string[]) {
+  const measured = await callFunctionOnSurface(surface, (serializedNames) => {
     if (typeof serializedNames !== "string") throw new Error("Expected serialized workspace names");
     const namesValue: unknown = JSON.parse(serializedNames);
     if (!Array.isArray(namesValue) || !namesValue.every((name) => typeof name === "string")) throw new Error("Expected authorized workspace names");
@@ -177,6 +178,8 @@ function readWorkspaceSwitcher(surface: Surface, authorizedNames: string[]) {
       clippingAncestors,
     };
   }, [JSON.stringify(authorizedNames)]);
+  const overflow = await documentOverflow(surface);
+  return { ...measured, viewport: { ...measured.viewport, documentWidth: overflow.documentWidth, clientWidth: overflow.clientWidth } };
 }
 
 export type WorkspaceSwitcherMeasurements = Awaited<ReturnType<typeof readWorkspaceSwitcher>>;
@@ -259,6 +262,7 @@ export async function workspaceSwitcherLayout(seed: Seed, { place }: { place: { 
       den, web, owner, outsider, outside: { id: outside.id, name: outside.name }, first, last,
       initialMemberships: initial.orgs,
       measurements: () => readWorkspaceSwitcher(web, names),
+      menuPaintState: () => popupPaintState(web, '[data-testid="workspace-switcher-menu"]', '[data-testid="workspace-switcher-trigger"]'),
       async [Symbol.asyncDispose]() { await extraOrganizations.disposeAsync(); },
     };
   } catch (error) {

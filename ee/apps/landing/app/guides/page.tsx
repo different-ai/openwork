@@ -1,0 +1,34 @@
+import { GuidesIndexPage } from "../../components/guide-page";
+import { StructuredData } from "../../components/structured-data";
+import { getGithubData } from "../../lib/github";
+import { GUIDES_PATH, SITE_URL, guidePath, guides } from "../../lib/guides";
+import { baseOpenGraph, withSocialMetadata } from "../../lib/seo";
+
+export const metadata = withSocialMetadata({
+  title: "OpenWork guides — OpenCode, MCP, Ollama, and AI costs",
+  description:
+    "How OpenWork works with OpenCode, Claude Code, Codex, Cursor, and Ollama, and how to manage AI spend with gateway allowances and usage reporting.",
+  alternates: { canonical: GUIDES_PATH },
+  openGraph: { ...baseOpenGraph, url: `${SITE_URL}${GUIDES_PATH}` }
+});
+
+const itemListSchema = {
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  itemListElement: guides.map((guide, index) => ({
+    "@type": "ListItem",
+    position: index + 1,
+    name: guide.heading,
+    url: `${SITE_URL}${guidePath(guide)}`
+  }))
+};
+
+export default async function Guides() {
+  const github = await getGithubData();
+  return (
+    <>
+      <StructuredData data={itemListSchema} />
+      <GuidesIndexPage stars={github.stars} />
+    </>
+  );
+}

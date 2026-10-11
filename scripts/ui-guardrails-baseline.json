@@ -1,0 +1,1145 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "file": "apps/app/src/components/chat/capability-call-line.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/react-app/design-system/extension-detail-modal.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 6
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-editor.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-schedule-fields.tsx",
+      "rule": "raw-control",
+      "fingerprint": "05c8328b6997c82d",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/share-dashboard-button.tsx",
+      "rule": "raw-control",
+      "fingerprint": "230812b220da4497",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/permission-approval-modal.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "a3c18814b8bb96c9",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/panel/side-panel.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 5
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 4
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/composer-chips.ts",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/composer.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/advanced-view-sections.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 6
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/debug-view.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 8
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/library-add-kind-picker.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/plugins-view.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/provider-rows.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "a3c18814b8bb96c9",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/provider-rows.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/shell/settings-page.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/workspace/create-workspace-local-panel.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 3
+    },
+    {
+      "file": "apps/app/src/react-app/shell/dev-profiler.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "a3c18814b8bb96c9",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/shell/dev-profiler.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 7
+    },
+    {
+      "file": "apps/app/src/react-app/shell/react-render-watchdog-overlay.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 7
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/install-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "7cc2dfe1738915cf",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/install-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ccb55655f9dad32f",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/install-visual.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/org-limit-dialog.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/organization-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/reauth-dialog.tsx",
+      "rule": "faint-text",
+      "fingerprint": "7cc2dfe1738915cf",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/auto-name-field.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/auto-name-field.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/catalog-row.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/combobox.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/combobox.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/combobox.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/input.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/page-header.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/segmented.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/select.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/select.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/select.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/table.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/_components/ui/textarea.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/admin-connectors-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/admin-plugins-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/api-keys-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ccb55655f9dad32f",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/api-keys-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/automations-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ad8a96b82d91ee14",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/automations-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 23
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/automations-screen.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/brand-appearance-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/brand-appearance-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "ec9bdfccaa71ba57",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/command-palette/den-command-palette.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/connector-picker.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/connector-quick-add-grid.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/connector-settings.tsx",
+      "rule": "raw-control",
+      "fingerprint": "1cb8b6c7086098a5",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/connector-setup-fields.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/desktop-policies-screen.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "a3c18814b8bb96c9",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/desktop-policy-editor-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "0cb9ec5d3b0b893b",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/desktop-policy-editor-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "3137680f421387cb",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/desktop-policy-editor-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "53806d85f0a097e4",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/desktop-policy-editor-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "74fbf91e1c9e077f",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/egress-diagnostics-card.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/execution-policy-fields.tsx",
+      "rule": "raw-control",
+      "fingerprint": "052f6bc0615b7f82",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/execution-policy-fields.tsx",
+      "rule": "raw-control",
+      "fingerprint": "ab69f5fa8f508ef5",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/execution-policy-fields.tsx",
+      "rule": "raw-control",
+      "fingerprint": "f9eaeb1244fa7e95",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/gateway-limit-editor-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/gateway-spend-breakdown.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/gateway-usage-section.tsx",
+      "rule": "raw-control",
+      "fingerprint": "04c9434d9a46b827",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/gateway-users-teams-section.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/gateway-who-can-use-models.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/gateway-who-can-use-models.tsx",
+      "rule": "raw-control",
+      "fingerprint": "3bfb889180526620",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/github-integration-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/github-integration-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 20
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-provider-editor-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-provider-editor-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-provider-editor-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "1fd97e2e0acf7349",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-provider-picker-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-provider-picker-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-providers-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/inference-screen.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "a3c18814b8bb96c9",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/integration-connect-dialog.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 10
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/integrations-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 9
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/item-list.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/item-list.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/library-models-ui.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/library-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/litellm-provider-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "9b15e8c7b33472b5",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 7
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-editor-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-editor-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-pickers.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/llm-provider-pickers.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/llm-providers-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/manage-members-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/manage-members-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 7
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/manage-members-screen.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/managed-deployments-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/managed-deployments-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/managed-deployments-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "2d834f49b0035c66",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplace-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplace-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplace-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 16
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplace-detail-screen.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplace-detail-screen.tsx",
+      "rule": "unportaled-popup",
+      "fingerprint": "04e2fd48b901381a",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplace-onboarding-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ec0f699ecf73ca93",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplaces-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "7d26f0a2643f1b1f",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/marketplaces-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/native-provider-setup.tsx",
+      "rule": "raw-control",
+      "fingerprint": "aee885af816ec9f1",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/onboarding-teammates-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ec0f699ecf73ca93",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/onboarding-tools-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ec0f699ecf73ca93",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/onboarding-tools-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "60088c807358764c",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/org-dashboard-shell.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/org-dashboard-shell.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 6
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/org-settings-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/org-settings-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 8
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/org-settings-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "dd37713d31a93757",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/org-settings-screen.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/org-web-origins-section.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/permission-keys-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/permission-set-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/permissions-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "545e202c453d7bdd",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-access-section.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 7
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-create-form.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-create-form.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 12
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-detail-screen.tsx",
+      "rule": "unportaled-popup",
+      "fingerprint": "28b9059185d94e85",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-editor-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-editor-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "c5f598913018cf2d",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-import-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugin-import-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "b446ba81b4f71ee3",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/plugins-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/runtime-env-key.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/scim-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ccb55655f9dad32f",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/scim-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/setup-checks.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/skill-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/skill-editor-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/slack-assistant-setup.tsx",
+      "rule": "raw-control",
+      "fingerprint": "6d27ab43617cfe0f",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/sso-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "7cc2dfe1738915cf",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/sso-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "7d27b72bd4e18302",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/sso-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "f3ad40474bd24619",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/team-admin-checkbox.tsx",
+      "rule": "raw-control",
+      "fingerprint": "08a3dde9be655528",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/team-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 4
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/team-execution-fields.tsx",
+      "rule": "raw-control",
+      "fingerprint": "2d6f693283109935",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/team-permission-fields.tsx",
+      "rule": "raw-control",
+      "fingerprint": "5b87e1d04ef0b6c9",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/team-permissions-panel.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/arguments-editor.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/arguments-editor.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/recent-runs.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/recent-runs.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/tool-call-inspector.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ad8a96b82d91ee14",
+      "count": 4
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/tool-call-inspector.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/tool-call-inspector.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 11
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/tool-rail.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 4
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/tool-rail.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/tool-tester-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/tool-tester/tool-tester-screen.tsx",
+      "rule": "raw-control",
+      "fingerprint": "6c301440e143d548",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/user-profile-dialog.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/who-can-use-it.tsx",
+      "rule": "faint-text",
+      "fingerprint": "599e29b7b0330738",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/who-can-use-it.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-artifact-result.tsx",
+      "rule": "faint-text",
+      "fingerprint": "ad8a96b82d91ee14",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-artifact-result.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 10
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-detail-screen.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-flow-diagram.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-flow-diagram.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "a3c18814b8bb96c9",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-flow-diagram.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 11
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-friendly-value.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-input-form.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-input-form.tsx",
+      "rule": "raw-control",
+      "fingerprint": "09e6eb0946537c31",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-input-form.tsx",
+      "rule": "raw-control",
+      "fingerprint": "29631280ef8e8c65",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-overview-tab.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 3
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-overview-tab.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 2
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/workflow-runs-tab.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/_components/your-connections-screen.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/app/(den)/dashboard/automations/page.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/components/admin/free-auto-usage/free-auto-usage-page.tsx",
+      "rule": "faint-text",
+      "fingerprint": "faf2b08f95c14e03",
+      "count": 5
+    },
+    {
+      "file": "ee/apps/den-web/components/den-admin-panel.tsx",
+      "rule": "faint-text",
+      "fingerprint": "7cc2dfe1738915cf",
+      "count": 6
+    },
+    {
+      "file": "ee/apps/den-web/components/den-admin-panel.tsx",
+      "rule": "raw-control",
+      "fingerprint": "284d4f1172e97779",
+      "count": 1
+    },
+    {
+      "file": "ee/apps/den-web/components/den-admin-panel.tsx",
+      "rule": "raw-control",
+      "fingerprint": "8b2d9c1c12318749",
+      "count": 1
+    },
+    {
+      "file": "ee/packages/workbot-ui/src/files.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "a3c18814b8bb96c9",
+      "count": 1
+    },
+    {
+      "file": "ee/packages/workbot-ui/src/model-picker.tsx",
+      "rule": "tiny-text",
+      "fingerprint": "e85d3e9f173807f6",
+      "count": 1
+    }
+  ]
+}
