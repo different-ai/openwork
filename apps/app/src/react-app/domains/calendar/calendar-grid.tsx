@@ -141,7 +141,7 @@ function MeetingBlock(props: { polish?: boolean; event: CalendarEvent; timeZone:
       {props.polish ? (
         <span className="flex min-w-0 items-start gap-1.5 font-medium">
           <img aria-hidden="true" alt="" data-calendar-provider-logo={event.provider} className="size-3 shrink-0" src={resolveExtensionIconSrc(event.provider === "google" ? "/ext-google-workspace.svg" : "/ext-microsoft-365.svg")} />
-          <span className={cn("min-w-0 flex-1", props.compact ? "truncate" : "line-clamp-2 break-words")}>{event.title}</span>
+          <span className="min-w-0 flex-1 truncate">{event.title}</span>
         </span>
       ) : <span className="truncate font-medium">{event.title} <span className="font-normal text-muted-foreground">{source}</span></span>}
       {props.compact || event.timing.kind !== "timed" ? null : (
