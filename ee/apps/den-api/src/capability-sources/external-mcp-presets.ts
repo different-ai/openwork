@@ -92,7 +92,7 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     presetId: "glasser",
     displayName: "Glasser",
     description: "People and company enrichment, SEO, web and news search, and social data from 1,000+ paid endpoints. Each member signs in to Glasser, or paste an org API key from app.glasser.ai/keys; calls are billed per use.",
-    url: "https://api.glasser.ai/mcp",
+    url: "https://api.glasser.ai/mcp?utm_source=openwork&utm_medium=mcp_preset",
     authType: "oauth",
     supportedAuthTypes: ["oauth", "apikey"],
   },
