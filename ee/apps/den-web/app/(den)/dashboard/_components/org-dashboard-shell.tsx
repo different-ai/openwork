@@ -127,14 +127,16 @@ function OpenWorkMark({ className = "h-9 w-auto" }: { className?: string }) {
 export function SidebarBrandMark({
   metadata,
   organizationName,
+  whiteLabelEnabled = false,
 }: {
   metadata: string | null | undefined;
   organizationName: string;
+  whiteLabelEnabled?: boolean;
 }) {
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
-  if (metadata === undefined) {
+  if (whiteLabelEnabled && metadata === undefined) {
     return (
       <div
         className="h-10 w-10 rounded-xl"
@@ -144,7 +146,7 @@ export function SidebarBrandMark({
     );
   }
 
-  const iconUrl = getManagedBrandIconUrl(metadata);
+  const iconUrl = whiteLabelEnabled ? getManagedBrandIconUrl(metadata ?? null) : null;
   if (!iconUrl || failedUrl === iconUrl) {
     return (
       <div data-sidebar-brand-icon="fallback">
@@ -173,18 +175,14 @@ const DEFAULT_WORKSPACE_FAVICON_HREF = "/openwork-mark.svg";
 
 export function WorkspaceFavicon({
   metadata,
+  whiteLabelEnabled = false,
 }: {
   metadata: string | null | undefined;
+  whiteLabelEnabled?: boolean;
 }) {
-  const orgContextLoading = metadata === undefined;
-  const iconUrl = getManagedBrandIconUrl(metadata ?? null);
+  const iconUrl = whiteLabelEnabled ? getManagedBrandIconUrl(metadata ?? null) : null;
 
   useEffect(() => {
-    if (orgContextLoading) {
-      // Keep the server-rendered favicon until the org context is known.
-      return;
-    }
-
     let favicon = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!favicon) {
       favicon = document.createElement("link");
@@ -198,8 +196,6 @@ export function WorkspaceFavicon({
       return;
     }
 
-    const previousHref = favicon.getAttribute("href");
-    const previousType = favicon.getAttribute("type");
     favicon.href = iconUrl;
     favicon.type = iconUrl.toLowerCase().endsWith(".jpg")
       || iconUrl.toLowerCase().endsWith(".jpeg")
@@ -207,18 +203,10 @@ export function WorkspaceFavicon({
       : "image/png";
 
     return () => {
-      if (previousHref === null) {
-        favicon.setAttribute("href", DEFAULT_WORKSPACE_FAVICON_HREF);
-      } else {
-        favicon.setAttribute("href", previousHref);
-      }
-      if (previousType === null) {
-        favicon.removeAttribute("type");
-      } else {
-        favicon.setAttribute("type", previousType);
-      }
+      favicon.setAttribute("href", DEFAULT_WORKSPACE_FAVICON_HREF);
+      favicon.removeAttribute("type");
     };
-  }, [orgContextLoading, iconUrl]);
+  }, [iconUrl]);
 
   return null;
 }
@@ -413,7 +401,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   if (isOnboarding) {
     return (
       <>
-        <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
+        <WorkspaceFavicon metadata={orgContext?.organization.metadata} whiteLabelEnabled={orgFeatureEnabled(orgContext, "whiteLabel")} />
         <main data-testid="den-onboarding-shell">{children}</main>
       </>
     );
@@ -636,6 +624,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           <SidebarBrandMark
             metadata={orgContext?.organization.metadata}
             organizationName={activeOrg?.name ?? runtimeConfig.singleOrgName}
+            whiteLabelEnabled={orgFeatureEnabled(orgContext, "whiteLabel")}
           />
           <button
             type="button"
@@ -766,7 +755,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#fafafa] md:h-screen md:flex-row">
-      <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
+      <WorkspaceFavicon metadata={orgContext?.organization.metadata} whiteLabelEnabled={orgFeatureEnabled(orgContext, "whiteLabel")} />
       {/* Desktop sidebar — always visible at md+ */}
       <aside className="hidden min-h-0 shrink-0 overflow-hidden border-r border-gray-100 bg-white md:flex md:h-screen md:w-[260px] md:flex-col">
         {sidebarContent}

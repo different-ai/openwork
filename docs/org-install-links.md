@@ -14,8 +14,8 @@ An organization install link opens a three-step Den page:
 3. Confirm the exact organization and server in the app, then complete normal
    organization sign-in.
 
-This flow does not build a customer-specific installer or ZIP. Branding and
-server configuration are applied only after the user confirms the deep link.
+This flow does not build a customer-specific installer or ZIP. Server
+configuration is applied only after the user confirms the deep link.
 Possession of the install link never signs a user in or grants workspace
 access.
 
@@ -190,7 +190,6 @@ compatibility. When both files exist, the valid configuration with the newest
 - Returned claims must identify the same API origin carried by the deep link.
 - The app displays the exact organization and server before changing local
   configuration; cancel and every validation failure leave it untouched.
-- Branding URLs from the keyless exchange are not loaded before confirmation.
 - The standard release installer bytes are never modified, preserving normal
   macOS and Windows signature verification.
 

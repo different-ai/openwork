@@ -13,6 +13,10 @@ import { startGithubSyncWorker } from "./workers/github-sync.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
+import { initializeWhiteLabelFeature } from "./white-label-initialization.js"
+
+// Grandfather existing branding before any worker or HTTP request can resolve flags.
+await initializeWhiteLabelFeature()
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()

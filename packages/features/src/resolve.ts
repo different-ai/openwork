@@ -55,6 +55,12 @@ export function featureAvailableOn(key: FeatureKey, deployment: FeatureDeploymen
   return featureDefinition(key).deployments.includes(deployment)
 }
 
+/** Registry fallback for this deployment; stored rollout state always takes precedence. */
+export function featureDefaultEnabled(key: FeatureKey, deployment: FeatureDeployment): boolean {
+  const definition = featureDefinition(key)
+  return definition.defaultByDeployment?.[deployment] ?? definition.default
+}
+
 /** Features that exist on this deployment; the only ones with a Helm key there. */
 export function availableFeatureKeys(deployment: FeatureDeployment): FeatureKey[] {
   return FEATURE_KEYS.filter((key) => featureAvailableOn(key, deployment))
@@ -84,9 +90,9 @@ export type FeatureRollout = { enabled: boolean; killed: boolean }
 
 export type FeatureRollouts = Partial<Record<FeatureKey, FeatureRollout>>
 
-/** The stored state, or the registry default when nothing is stored. */
-export function featureRollout(key: FeatureKey, rollouts: FeatureRollouts): FeatureRollout {
-  return rollouts[key] ?? { enabled: featureDefinition(key).default, killed: false }
+/** The stored state, or the deployment's registry default when nothing is stored. */
+export function featureRollout(key: FeatureKey, rollouts: FeatureRollouts, deployment: FeatureDeployment): FeatureRollout {
+  return rollouts[key] ?? { enabled: featureDefaultEnabled(key, deployment), killed: false }
 }
 
 export type FeatureEnvironment = {
@@ -117,7 +123,7 @@ export type ResolvedFeature = {
 }
 
 export function resolveFeature(key: FeatureKey, context: FeatureContext): ResolvedFeature {
-  const { enabled: everyone, killed } = featureRollout(key, context.rollouts)
+  const { enabled: everyone, killed } = featureRollout(key, context.rollouts, context.deployment)
   const lock = context.locks[key] ?? null
   const override = context.overrides[key] ?? null
   const base = { key, everyone, killed, lock, override }

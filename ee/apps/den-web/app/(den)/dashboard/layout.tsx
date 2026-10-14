@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 
-import { getManagedBrandIconUrl, parseOrgListPayload } from "../_lib/den-org";
+import { getManagedBrandIconUrl, orgFeatureEnabled, parseOrgContextPayload } from "../_lib/den-org";
 import { DenToastProvider } from "./_components/den-toast";
 import { OrgDashboardShell } from "./_components/org-dashboard-shell";
 import { OrgDashboardProvider } from "./_providers/org-dashboard-provider";
@@ -20,7 +20,7 @@ async function getWorkspaceFaviconUrl(): Promise<string | null> {
   }
 
   try {
-    const response = await fetch(joinBaseUrl(apiBase, "v1/me/orgs"), {
+    const response = await fetch(joinBaseUrl(apiBase, "v1/org"), {
       headers: { cookie },
       cache: "no-store",
       signal: AbortSignal.timeout(3000),
@@ -29,13 +29,10 @@ async function getWorkspaceFaviconUrl(): Promise<string | null> {
       return null;
     }
 
-    const { orgs, activeOrgId } = parseOrgListPayload(await response.json());
-    const activeOrg =
-      (activeOrgId ? orgs.find((org) => org.id === activeOrgId) : null) ??
-      orgs.find((org) => org.isActive) ??
-      orgs[0] ??
-      null;
-    return activeOrg ? getManagedBrandIconUrl(activeOrg.metadata) : null;
+    const orgContext = parseOrgContextPayload(await response.json());
+    return orgFeatureEnabled(orgContext, "whiteLabel")
+      ? getManagedBrandIconUrl(orgContext?.organization.metadata ?? null)
+      : null;
   } catch {
     return null;
   }
@@ -43,7 +40,7 @@ async function getWorkspaceFaviconUrl(): Promise<string | null> {
 
 export async function generateMetadata(): Promise<Metadata> {
   const iconUrl = await getWorkspaceFaviconUrl();
-  return iconUrl ? { icons: { icon: iconUrl } } : {};
+  return { icons: { icon: iconUrl ?? "/openwork-mark.svg" } };
 }
 
 export default function DashboardLayout({

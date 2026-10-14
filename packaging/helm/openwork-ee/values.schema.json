@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "whiteLabel": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "White-label appearance: Customize organization app names, logos, icons, and colors. Renders DEN_FEATURE_WHITE_LABEL."
+            },
             "teamMembershipCache": {
               "enum": [
                 "",

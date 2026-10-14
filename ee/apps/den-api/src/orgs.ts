@@ -1,3 +1,4 @@
+import { projectBrandMetadata } from "./white-label.js"
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import { listAuthoritativeTeamMemberships } from "@openwork-ee/den-db/permissions"
@@ -35,7 +36,7 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { getOrganizationFeatures, readOrganizationWithPermissions, type FeatureMap } from "./features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled, readOrganizationWithPermissions, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
   roleIncludesAdmin,
@@ -170,6 +171,7 @@ export type InvitationPreview = {
     name: string
     slug: string
     allowedEmailDomains: AllowedEmailDomains
+    whiteLabelEnabled: boolean
     branding: {
       appName: string
       logoUrl: string | null
@@ -412,11 +414,8 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
  * release, for rollback) and are never sent; clients read the effective
  * `features` from GET /v1/org instead.
  */
-export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
-  const metadata = parseMetadataRecord(input)
-  if (!("capabilities" in metadata)) {
-    return serializeOrganizationMetadata(input)
-  }
+export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput, whiteLabelEnabled = false) {
+  const metadata = projectBrandMetadata(parseMetadataRecord(input), whiteLabelEnabled)
   const { capabilities: _platformOnly, ...memberFacing } = metadata
   return serializeMetadataRecord(memberFacing)
 }
@@ -1023,7 +1022,8 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
     return null
   }
 
-  const organizationMetadata = normalizeOrganizationMetadata(row.organization.metadata).metadata
+  const whiteLabelEnabled = await organizationFeatureEnabled(row.organization.id, "whiteLabel")
+  const organizationMetadata: Record<string, unknown> = whiteLabelEnabled ? normalizeOrganizationMetadata(row.organization.metadata).metadata : {}
 
   return {
     invitation: {
@@ -1035,9 +1035,10 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
       name: row.organization.name,
       slug: row.organization.slug,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
+      whiteLabelEnabled,
       branding: {
         appName: typeof organizationMetadata.brandAppName === "string" ? organizationMetadata.brandAppName : "OpenWork",
-        logoUrl: typeof organizationMetadata.brandLogoUrl === "string" ? organizationMetadata.brandLogoUrl : row.organization.logo,
+        logoUrl: typeof organizationMetadata.brandLogoUrl === "string" ? organizationMetadata.brandLogoUrl : whiteLabelEnabled ? row.organization.logo : null,
         iconUrl: typeof organizationMetadata.brandIconUrl === "string" ? organizationMetadata.brandIconUrl : null,
       },
     },
@@ -1462,13 +1463,14 @@ export async function listUserOrgs(userId: UserId) {
 
   return Promise.all(memberships.map(async (row) => {
     const adminTeams = await listMemberAdminTeams({ organizationId: row.organization.id, memberId: row.membershipId })
+    const whiteLabelEnabled = await organizationFeatureEnabled(row.organization.id, "whiteLabel")
     return {
       id: row.organization.id,
       name: row.organization.name,
       slug: row.organization.slug,
-      logo: row.organization.logo,
+      logo: whiteLabelEnabled ? row.organization.logo : null,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
-      metadata: serializeMemberFacingOrganizationMetadata(row.organization.metadata),
+      metadata: serializeMemberFacingOrganizationMetadata(row.organization.metadata, whiteLabelEnabled),
       role: effectiveOrganizationRole(row.role, adminTeams),
       directRole: row.role,
       adminTeams,

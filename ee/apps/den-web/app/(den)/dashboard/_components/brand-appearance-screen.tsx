@@ -1,10 +1,11 @@
 "use client";
 
-import { ImageUp, Trash2 } from "lucide-react";
+import { ImageUp, Lock, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
   getOrgAccessFlags,
+  orgFeatureEnabled,
   getManagedBrandAssetFromMetadata,
   parseOrganizationMetadata,
   permissionLockReason,
@@ -14,6 +15,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
+import { DenSkeleton } from "../../_components/ui/skeleton";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { AdvancedPageTemplate } from "./advanced-page-template";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
@@ -164,8 +166,9 @@ export function BrandAppearanceScreen() {
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.currentMember.permissions,
   );
-  const canManageBrandAppearance = access.canManageBranding;
-  const metadata = parseOrganizationMetadata(orgContext?.organization.metadata ?? null);
+  const whiteLabelEnabled = orgFeatureEnabled(orgContext, "whiteLabel");
+  const canManageBrandAppearance = whiteLabelEnabled && access.canManageBranding && Boolean(orgContext?.entitlements.desktopPolicies);
+  const metadata = whiteLabelEnabled ? parseOrganizationMetadata(orgContext?.organization.metadata ?? null) : null;
   const currentLogoUrl = typeof metadata?.brandLogoUrl === "string" ? metadata.brandLogoUrl : null;
   const currentIconUrl = typeof metadata?.brandIconUrl === "string" ? metadata.brandIconUrl : null;
   const currentLogoAsset = getManagedBrandAssetFromMetadata(orgContext?.organization.metadata ?? null, "logo");
@@ -191,7 +194,7 @@ export function BrandAppearanceScreen() {
   }, [iconDraft]);
 
   if (orgBusy && !orgContext) {
-    return <div className="mx-auto max-w-[860px] p-8 text-[14px] text-gray-500">Loading brand appearance...</div>;
+    return <AdvancedPageTemplate tab="brand-appearance"><div className="grid gap-6" aria-busy="true" aria-label="Loading brand appearance"><DenSkeleton className="h-8 w-40" /><DenSkeleton className="h-48 w-full" /><DenSkeleton className="h-10 w-40" /></div></AdvancedPageTemplate>;
   }
 
   if (!activeOrg || !orgContext) {
@@ -269,7 +272,9 @@ export function BrandAppearanceScreen() {
   return (
     <div data-testid="brand-appearance-screen">
       <AdvancedPageTemplate tab="brand-appearance">
-        {!orgContext.entitlements.desktopPolicies ? (
+        {!whiteLabelEnabled ? (
+          <DenNotice tone="neutral" icon={Lock} message="White-label branding is off for this organization. A platform administrator can enable it." />
+        ) : !orgContext.entitlements.desktopPolicies ? (
           <EnterprisePlanNotice feature="White-label brand appearance" />
         ) : (
           <form className="grid gap-6" onSubmit={handleSave}>
@@ -277,11 +282,7 @@ export function BrandAppearanceScreen() {
             {pageSuccess ? <DenNotice tone="neutral" message={pageSuccess} /> : null}
 
             <DenCard size="spacious" className="grid gap-6">
-              <div className="grid gap-2">
-                <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-violet-500">Workspace brand</p>
-                <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-gray-900">Desktop identity</h2>
-                <p className="text-[14px] text-gray-500">Set the desktop application name, wordmark, app icon, and accent color.</p>
-              </div>
+              <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-gray-900">Desktop identity</h2>
 
               <div className="grid gap-5" data-testid="brand-identity-fields">
                 <label className="grid gap-3">

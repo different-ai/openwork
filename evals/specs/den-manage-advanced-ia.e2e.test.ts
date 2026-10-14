@@ -1,14 +1,42 @@
 import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
-import { adminDashboardWeb } from "../worlds/den-admin-navigation.ts";
+import { adminDashboardWeb, selfHostedAdminDashboardWeb } from "../worlds/den-admin-navigation.ts";
 
 // The Den admin sidebar has two jobs: Work for everyone, and Manage plus Team
-// for admins. Collections and Brand appearance live in Settings › Advanced,
+// for admins. Collections lives in Settings › Advanced,
 // Desktop policies is its own Manage entry, and Plugins lists plugins without
 // GitHub sources while the legacy integrations URL still opens its old tab.
-const test = spec.world(adminDashboardWeb, { timeout: 420_000 });
+const test = spec.world(adminDashboardWeb, { timeout: 420_000, resources: { surfaces: ["web"], services: ["den"] } });
+const selfHostedTest = spec.world(selfHostedAdminDashboardWeb, { timeout: 420_000, resources: { surfaces: ["web"], services: ["den"] } });
 
-test("the Den admin sidebar groups Manage and moves Advanced into Settings", async ({ world, user, probe, evidence }) => {
+selfHostedTest("self-hosted organizations keep Brand appearance in Settings › Advanced", async ({ world, user, probe, evidence, step }) => {
+  await step("a self-hosted admin opens Settings › Advanced", async () => {
+    await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
+    await user.click({ role: "link", label: "Settings" });
+    await user.click({ role: "link", label: "Advanced" });
+    await user.see({ role: "tab", label: "Brand appearance" });
+    evidence.recordAssertionEvidence("Self-hosted keeps Brand appearance available", "The unlocked Brand appearance tab is visible", true);
+    await user.screenshot();
+  });
+  await step("the admin opens Brand appearance", async () => {
+    await user.click({ role: "tab", label: "Brand appearance" });
+    const path = await probe.eventually(() => world.location(), {
+      within: 30_000, label: "enabled Brand appearance route", until: (path) => path === "/dashboard/brand-appearance",
+    });
+    expect(path).toBe("/dashboard/brand-appearance");
+    await user.see({ testId: "brand-appearance-screen" }, { timeoutMs: 30_000 });
+    evidence.recordAssertionEvidence("Brand appearance opens normally", `path=${path}`, true);
+  });
+  await step("after: self-hosted defaults to the editable brand identity form", async () => {
+    await user.see({ testId: "brand-identity-fields" });
+    await user.see({ role: "button", label: "Save brand appearance" });
+    await user.notSee({ text: "White-label branding is off for this organization. A platform administrator can enable it." });
+    evidence.recordAssertionEvidence("Self-hosted branding is on by default", "Brand identity fields and Save brand appearance are visible; the off notice is absent", true);
+    await user.screenshot();
+  });
+});
+
+test("the Den admin sidebar groups Manage and keeps Cloud branding visibly locked", async ({ world, user, probe, evidence, step }) => {
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
   const manage = ["Plugins", "Connectors", "AI Gateway", "Desktop policies", "Analytics", "Members", "Settings"];
   const initialLabels = await probe.eventually(() => world.sidebarLinks(), {
@@ -52,11 +80,27 @@ test("the Den admin sidebar groups Manage and moves Advanced into Settings", asy
   evidence.recordAssertionEvidence("Settings › Advanced opens Collections at /dashboard/marketplaces", `path=${advancedPath}; selected=${JSON.stringify(collectionsTabs)}`, advancedOk);
   await user.screenshot();
 
-  await user.click({ role: "tab", label: "Brand appearance" });
-  await probe.eventually(() => world.location(), {
-    within: 30_000, label: "Brand appearance route", until: (path) => path === "/dashboard/brand-appearance",
+  await step("before: a new Cloud organization keeps Brand appearance visible but locked", async () => {
+    await user.see({ role: "tab", label: "Brand appearance (locked)" });
+    evidence.recordAssertionEvidence("Cloud branding is visibly locked", "Settings › Advanced includes Brand appearance (locked)", true);
+    await user.screenshot();
   });
-  await user.see({ testId: "brand-appearance-screen" }, { timeoutMs: 30_000 });
+  await step("the Cloud admin opens the locked Brand appearance tab", async () => {
+    await user.click({ role: "tab", label: "Brand appearance (locked)" });
+    const path = await probe.eventually(() => world.location(), {
+      within: 30_000, label: "locked Brand appearance route", until: (path) => path === "/dashboard/brand-appearance",
+    });
+    expect(path).toBe("/dashboard/brand-appearance");
+    await user.see({ testId: "brand-appearance-screen" }, { timeoutMs: 30_000 });
+    evidence.recordAssertionEvidence("The locked tab stays reachable", `path=${path}`, true);
+  });
+  await step("after: Cloud explains who can enable branding without exposing an editable form", async () => {
+    await user.see({ text: "White-label branding is off for this organization. A platform administrator can enable it." });
+    await user.notSee({ testId: "brand-identity-fields" });
+    await user.notSee({ role: "button", label: "Save brand appearance" });
+    evidence.recordAssertionEvidence("New Cloud branding is off without hiding its entry point", "The off notice names the platform administrator; brand fields and Save brand appearance are absent", true);
+    await user.screenshot();
+  });
 
   await user.click({ role: "link", label: "Plugins" });
   const pluginsPath = await probe.eventually(() => world.location(), {

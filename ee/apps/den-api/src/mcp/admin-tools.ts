@@ -10,7 +10,7 @@ import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
 import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
-import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
+import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureDefaultEnabled, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
 
@@ -563,7 +563,7 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
               label: definition.label,
               deployments: definition.deployments,
               available: featureAvailableOn(key, env.features.deployment),
-              ...featureRollout(key, rollouts),
+              ...featureRollout(key, rollouts, env.features.deployment),
               lock: env.features.locks[key] ?? null,
             }
           }),
@@ -588,8 +588,8 @@ export function registerAdminMcpTools(server: McpServer, admin: PlatformAdminAud
         if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
         // Deployment-wide: no organization's data changes, so platform evidence only.
         const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
-          updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default }))
-        return { ok: true, feature, ...featureRollout(feature, rollouts) }
+          updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefaultEnabled(feature, env.features.deployment) }))
+        return { ok: true, feature, ...featureRollout(feature, rollouts, env.features.deployment) }
       }),
   )
 

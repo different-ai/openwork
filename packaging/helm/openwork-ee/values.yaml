@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    whiteLabel: ""            # default on (self-hosted), off (cloud) · Customize organization app names, logos, icons, and colors.
     teamMembershipCache: ""   # default off · Reduce repeated team lookups while keeping access changes immediate. Enable only after every API instance runs revision-aware team writes.
     managedDeploymentsGcp: "" # default off (cloud only) · Organization admins approve OpenWork installations in their own Google Cloud project and track health and updates.
     managedDeployments: ""    # default off (cloud only) · Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork.

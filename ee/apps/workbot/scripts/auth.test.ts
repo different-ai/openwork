@@ -9,7 +9,7 @@ const SECRET = "test-secret-test-secret-test-secret-0001"
 const config = { publicUrl: "https://workbot.test", secureCookies: true, sessionSecret: SECRET }
 const who: DenSession = {
   user: { id: "user_test", name: "Test Person", email: "person@example.test" },
-  organization: { id: "org_test", name: "Test Org", brandAppName: null },
+  organization: { id: "org_test", name: "Test Org" },
   memberId: "member_test",
   enabled: true,
   canSchedule: false,

@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
+import { parseOrganizationBrand } from "../_lib/organization-brand";
 
 const OPENWORK_MARK_SRC = "/openwork-mark.svg";
 
@@ -54,12 +55,16 @@ function BrandLabel({ organization }: { organization: OnboardingCardOrganization
 }
 
 export function OnboardingCard({
-  organization,
+  organization: suppliedOrganization,
   children,
 }: {
   organization: OnboardingCardOrganization | null;
   children: ReactNode;
 }) {
+  const organization = suppliedOrganization ? {
+    ...suppliedOrganization,
+    brand: parseOrganizationBrand(suppliedOrganization.brand, suppliedOrganization.brand.whiteLabelEnabled),
+  } : null;
   return (
     <div className="grid gap-8 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 sm:p-8 md:p-10 sm:gap-10">
       <div className="flex min-w-0 items-center gap-2.5">

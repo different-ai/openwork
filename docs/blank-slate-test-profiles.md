@@ -43,8 +43,8 @@ and redirects every persisted path into it before any other module loads:
 It also:
 
 - enables Chromium's mock keychain so the real login keychain is never touched
-- skips `openwork://` protocol registration, Windows shortcut writes, brand
-  icon/name persistence, and Linux desktop integration
+- skips `openwork://` protocol registration, Windows shortcut writes, and Linux
+  desktop integration
 - suffixes the window title with `Test profile`
 - spawns a detached cleanup worker on quit that removes the whole temporary
   root after the app exits

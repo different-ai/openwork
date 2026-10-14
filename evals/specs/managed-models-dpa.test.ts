@@ -269,17 +269,17 @@ test("DPA policy blocks warm managed keys without revoking customer-owned models
   const priorAuditCount = list((await fixture()).audits).length;
   for (let index = 0; index < 3; index++) {
     const outcomes = await Promise.all([
-      api("/v1/org", "PATCH", { brandAppName: `Boundary ${index}` }),
+      api("/v1/org", "PATCH", { allowedDesktopVersions: [`9.9.${index}`] }),
       api(adminPath, "PATCH", { dpaSigned: true, reason: `concurrent set ${index}` }),
       api(`/v1/admin/organizations/${world.orgId}/capabilities`, "PUT", { capabilities: { slackWorkbotReplies: false } }),
     ]);
     expect(outcomes.map((outcome) => outcome.response.status)).toEqual([200, 200, 200]);
     const metadata = record((await fixture()).metadata);
-    expect(metadata).toMatchObject({ dpaSigned: true, brandAppName: `Boundary ${index}`, fixtureNested: { keep: { value: "unchanged" } }, capabilities: { slackWorkbotReplies: false } });
+    expect(metadata).toMatchObject({ dpaSigned: true, allowedDesktopVersions: [`9.9.${index}`], fixtureNested: { keep: { value: "unchanged" } }, capabilities: { slackWorkbotReplies: false } });
     await blocked();
   }
   expect(list((await fixture()).audits)).toHaveLength(priorAuditCount + 3);
-  evidence.recordAssertionEvidence("Concurrent ordinary/admin metadata changes preserve DPA and unrelated nested data", "Three concurrent rounds of branding, capability and DPA updates all returned 200, preserved nested fixture metadata and all requested changes, added one audit each, and kept inference blocked.", true);
+  evidence.recordAssertionEvidence("Concurrent ordinary/admin metadata changes preserve DPA and unrelated nested data", "Three concurrent rounds of desktop-version policy, capability and DPA updates all returned 200, preserved nested fixture metadata and all requested changes, added one audit each, and kept inference blocked.", true);
 
   for (const input of [
     { mode: "string-true" },

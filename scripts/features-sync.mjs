@@ -21,6 +21,7 @@ import {
   FEATURE_KEYS,
   RETIRED_FEATURE_KEYS,
   featureAvailableOn,
+  featureDefaultEnabled,
   featureLockEnvName,
 } from "../packages/features/src/index.ts"
 import { checkDockerWorkspacePackages } from "./check-docker-workspace-packages.mjs"
@@ -41,8 +42,15 @@ const README_END = "<!-- END GENERATED features -->"
 const helmKeys = FEATURE_KEYS.filter((key) => featureAvailableOn(key, "self_hosted") || featureAvailableOn(key, "cloud"))
 
 function defaultLabel(key) {
-  const scope = featureAvailableOn(key, "self_hosted") ? "" : " (cloud only)"
-  return `default ${FEATURES[key].default ? "on" : "off"}${scope}`
+  const selfHosted = featureAvailableOn(key, "self_hosted")
+  const cloud = featureAvailableOn(key, "cloud")
+  const selfHostedDefault = featureDefaultEnabled(key, "self_hosted") ? "on" : "off"
+  const cloudDefault = featureDefaultEnabled(key, "cloud") ? "on" : "off"
+  if (selfHosted && cloud && selfHostedDefault !== cloudDefault) {
+    return `default ${selfHostedDefault} (self-hosted), ${cloudDefault} (cloud)`
+  }
+  if (!selfHosted) return `default ${cloudDefault} (cloud only)`
+  return `default ${selfHostedDefault}${cloud ? "" : " (self-hosted only)"}`
 }
 
 function valuesBlock() {

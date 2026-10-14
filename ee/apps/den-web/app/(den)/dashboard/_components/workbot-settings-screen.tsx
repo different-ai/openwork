@@ -8,6 +8,7 @@ import {
   getBrandAppearanceRoute,
   getOrgAccessFlags,
   parseOrganizationMetadata,
+  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
@@ -73,7 +74,8 @@ export function WorkbotSettingsScreen() {
     setDraft(settings?.model ?? "");
   }, [settings?.model]);
 
-  const name = workbotName(orgContext?.organization.metadata ?? null);
+  const whiteLabelEnabled = orgFeatureEnabled(orgContext, "whiteLabel");
+  const name = whiteLabelEnabled ? workbotName(orgContext?.organization.metadata ?? null) : "Workbot";
   const savedModel = settings?.model ?? null;
   const draftModel = draft || null;
   const changed = draftModel !== savedModel;
@@ -176,7 +178,7 @@ export function WorkbotSettingsScreen() {
                   href={getBrandAppearanceRoute(orgSlug)}
                   className="rounded text-[13px] text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
                 >
-                  Change in Brand appearance
+                  {whiteLabelEnabled ? "Change in Brand appearance" : <><Lock className="mr-1 inline size-3.5" aria-hidden="true" />Brand appearance (locked)</>}
                 </Link>
               </SettingsRow>
             </div>

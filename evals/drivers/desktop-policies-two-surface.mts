@@ -5,7 +5,7 @@ import { browserScript } from "@openwork/cdp";
  *
  * Drives BOTH surfaces of the real flow and captures interleaved frames:
  *   - ADMIN: the Den web dashboard in Chrome (CDP :9224) — real clicks on the
- *     Brand Appearance card and Desktop Policy editor.
+ *     Desktop Policy editor.
  *   - MEMBER: the OpenWork desktop app in Electron (CDP :9823) — signed into
  *     the same org, fetching desktop config from the local Den on its own.
  *
@@ -16,7 +16,7 @@ import { browserScript } from "@openwork/cdp";
  * Prereqs (all already running for this demo):
  *   - den-api  :8790  (local)
  *   - den-web  :3005  (local, proxying to den-api)
- *   - Chrome   :9224  signed in as alex@acme.test, on /dashboard/org-settings
+ *   - Chrome   :9224  signed in as alex@acme.test, on /dashboard/desktop-policies
  *   - Electron :9823  signed into Acme Robotics via handoff grant
  *
  * Usage: node evals/drivers/desktop-policies-two-surface.mts
@@ -34,7 +34,6 @@ const DEN_API = "http://localhost:8790";
 const DEN_WEB = "http://localhost:3005";
 const ADMIN_EMAIL = "alex@acme.test";
 const ADMIN_PASSWORD = "OpenWorkDemo123!";
-const DEMO_LOGO = "https://openworklabs.com/favicon.ico";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
@@ -95,49 +94,6 @@ async function denApi(token: string, path: string, options: RequestInit = {}) {
   return body;
 }
 
-/** Drive the admin web UI: fill logo URL field + click Save. */
-async function adminSetLogoViaUI(admin: CdpClient, logoUrl: string) {
-  // Set the controlled React input by writing through the native setter AND
-  // clearing React's internal value tracker so onChange fires.
-  await evaluate(admin, browserScript((logoUrl) => {
-    const logo = [...document.querySelectorAll('input')].find(i => (i.placeholder || '').includes('logo'));
-    if (!logo) throw new Error('Logo URL input not found');
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    if (logo._valueTracker) logo._valueTracker.setValue('');
-    if (!setter) throw new Error("Native form setter missing");
-    setter.call(logo, logoUrl);
-    logo.dispatchEvent(new Event('input', { bubbles: true }));
-    logo.dispatchEvent(new Event('change', { bubbles: true }));
-    logo.scrollIntoView({ block: 'center' });
-    return logo.value;
-  }, [logoUrl]));
-}
-
-async function adminSetAccentViaUI(admin: CdpClient, accentValue: string) {
-  await evaluate(admin, browserScript((accentValue) => {
-    const select = document.querySelector('select');
-    if (!select) throw new Error('Accent select not found');
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-    if (select._valueTracker) select._valueTracker.setValue('');
-    if (!setter) throw new Error("Native form setter missing");
-    setter.call(select, accentValue);
-    select.dispatchEvent(new Event('input', { bubbles: true }));
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-    select.scrollIntoView({ block: 'center' });
-    return select.value;
-  }, [accentValue]));
-}
-
-async function adminClickSave(admin: CdpClient) {
-  await evaluate(admin, () => {
-    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Save settings');
-    if (!btn) throw new Error('Save settings button not found');
-    btn.scrollIntoView({ block: 'center' });
-    btn.click();
-    return true;
-  });
-}
-
 /**
  * Org settings changes require "fresh" auth (≤15 min). Re-sign-in the admin
  * browser session so privileged PATCH /v1/org and policy edits aren't blocked
@@ -184,29 +140,6 @@ async function memberOpenNotifications(member: CdpClient) {
   return false;
 }
 
-/** Count how many distinct accent-colored pixels appear (proves the accent paints). */
-async function memberAccentVisible(member: CdpClient) {
-  // The notification badge + unread dots use the accent. Verify a blue-ish
-  // pixel exists by sampling the accent CSS var and an actual painted element.
-  return evaluate(member, () => {
-    const v = getComputedStyle(document.documentElement).getPropertyValue('--dls-accent').trim();
-    // Find an element actually painted with the accent (badge, unread dot, primary button).
-    const candidates = [...document.querySelectorAll('*')].slice(0, 4000);
-    let painted = false;
-    for (const el of candidates) {
-      const s = getComputedStyle(el);
-      const bg = s.backgroundColor;
-      // Radix blue-9 ≈ rgb(0, 144, 255)
-      const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      if (m) {
-        const [r,g,b] = [+m[1],+m[2],+m[3]];
-        if (b > 180 && r < 80 && g > 100 && g < 200) { painted = true; break; }
-      }
-    }
-    return { accentVar: v, painted };
-  });
-}
-
 async function main() {
   await mkdir(outDir, { recursive: true });
   console.log(`Output: ${outDir}\n`);
@@ -222,8 +155,7 @@ async function main() {
   const { token } = await signIn.json();
 
   // ---- Reset to clean state (server + member app) ----
-  console.log("Reset: clearing brand + restoring policies");
-  await denApi(token, "/v1/org", { method: "PATCH", body: JSON.stringify({ brandLogoUrl: null, brandAccentColor: null }) });
+  console.log("Reset: restoring policies");
   const list0 = await denApi(token, "/v1/desktop-policies");
   const def = list0.desktopPolicies.find((p: { isDefault?: boolean; name?: string; id: string }) => p.isDefault);
   await denApi(token, `/v1/desktop-policies/${def.id}`, {
@@ -233,116 +165,26 @@ async function main() {
       allowControlSettings: true, allowManageExtensions: true, allowBuiltInExtensions: true, showWelcomePage: true,
     } }),
   });
-  // Member: light mode + session view + refresh to clear brand.
+  // Member: light mode + session view.
   await evaluate(member, () => (localStorage.setItem('openwork.react.settings.theme-mode','light')));
   await evaluate(member, () => (window.location.hash = '#/session'));
-  await memberRefreshAndWait(member, () => (!document.querySelector('[data-testid=\"brand-logo\"]')), "no logo (clean)").catch(() => {});
   await sleep(1500);
 
-  // Reload admin org-settings so the form reflects the cleared state.
+  // Reload the policy list so it reflects the restored state.
   // Refresh auth first so privileged saves aren't blocked (fresh_auth_required).
   await adminEnsureFreshAuth(admin);
-  await admin.send("Page.navigate", { url: `${DEN_WEB}/dashboard/org-settings` });
+  await admin.send("Page.navigate", { url: `${DEN_WEB}/dashboard/desktop-policies` });
   await sleep(3500);
 
   // =================================================================
   // JOURNEY 0: baseline — both surfaces clean
   // =================================================================
   console.log("\nJourney 0: baseline");
-  await evaluate(admin, () => { const h=[...document.querySelectorAll('h2')].find(x=>x.textContent.includes('Brand Appearance')); if(h) h.scrollIntoView({block:'center'}); return true; });
-  await shot(admin, "admin", "00-baseline-brand-card",
-    "Admin: Brand Appearance card with empty logo + default accent.",
-    [{ label: "Brand Appearance card visible", passed: await evaluate(admin, () => (document.body.innerText.includes('Brand Appearance'))) }]);
+  await shot(admin, "admin", "00-baseline-policies",
+    "Admin: Desktop Policies list before restricting the default policy.",
+    [{ label: "policies page", passed: await evaluate(admin, () => document.body.innerText.includes('Desktop')) }]);
   await shot(member, "member", "00-baseline-app",
-    "Member: clean app, no logo, default accent.",
-    [{ label: "no brand logo", passed: await evaluate(member, () => (!document.querySelector('[data-testid="brand-logo"]'))) }]);
-
-  // =================================================================
-  // JOURNEY 1: admin sets OpenWork demo logo in the web UI → member sees it
-  // =================================================================
-  console.log("\nJourney 1: admin sets logo via web UI");
-  await adminSetLogoViaUI(admin, DEMO_LOGO);
-  await sleep(500);
-  await shot(admin, "admin", "01-logo-typed",
-    "Admin: typed OpenWork demo logo URL into the Logo URL field.",
-    [{ label: "logo URL in field", passed: await evaluate(admin, browserScript((expectedLogo) => [...document.querySelectorAll('input')].some(input => input.value === expectedLogo), [DEMO_LOGO])) }]);
-
-  await adminClickSave(admin);
-  await sleep(2500); // let the PATCH land
-  // Verify server persisted it.
-  const cfg1 = await denApi(token, "/v1/me/desktop-config");
-  await shot(admin, "admin", "01-logo-saved",
-    "Admin: clicked Save → server persisted brandLogoUrl.",
-    [{ label: "server has brandLogoUrl", passed: cfg1.brandLogoUrl === DEMO_LOGO, detail: cfg1.brandLogoUrl || "(none)" }]);
-
-  // Member app fetches the change on its own and renders the logo.
-  await memberRefreshAndWait(member,
-    () => { const img = document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img'); return img && img.naturalWidth > 0 && img.complete; },
-    "OpenWork demo logo loaded in member app");
-  // Verify the logo renders at a legible size (not a squished icon).
-  const logoDims = await evaluate(member, () => { const i = document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img'); if (!i) throw new Error('Brand logo missing'); const r = i.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
-  await shot(member, "member", "01-logo-appeared",
-    "Member: app fetched the change and rendered the OpenWork demo logo at a legible size (no reload).",
-    [
-      { label: "OpenWork demo logo rendered", passed: await evaluate(member, () => (Boolean(document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img')))) },
-      { label: "logo legible (height ≥ 28px)", passed: logoDims.h >= 28, detail: `${logoDims.w}x${logoDims.h}` },
-    ]);
-
-  // =================================================================
-  // JOURNEY 2: admin sets accent (blue) in the web UI → member accent changes
-  // =================================================================
-  console.log("\nJourney 2: admin sets accent via web UI");
-  await adminSetAccentViaUI(admin, "blue");
-  await sleep(400);
-  await shot(admin, "admin", "02-accent-selected",
-    "Admin: selected 'Blue' accent in the dropdown.",
-    [{ label: "blue selected", passed: await evaluate(admin, () => (document.querySelector('select')?.value === 'blue')) }]);
-
-  await adminClickSave(admin);
-  await sleep(2500);
-  const cfg2 = await denApi(token, "/v1/me/desktop-config");
-  await shot(admin, "admin", "02-accent-saved",
-    "Admin: clicked Save → server persisted brandAccentColor=blue.",
-    [{ label: "server has accent=blue", passed: cfg2.brandAccentColor === "blue", detail: cfg2.brandAccentColor || "(none)" }]);
-
-  await memberRefreshAndWait(member,
-    () => (document.documentElement.dataset.brandAccent === 'blue'),
-    "blue accent applied in member app");
-  // The accent's most prominent painted surface is the notification badge +
-  // unread dots. Push a fresh unread notice so the blue accent is guaranteed
-  // visible, then open the bell — this single frame shows the blue accent
-  // (badge + unread dot) together with the OpenWork demo logo top-left.
-  await evaluate(member, () => (window.location.hash = '#/session'));
-  await sleep(800);
-  await evaluate(member, () => {
-    // Use the public notify path if exposed; otherwise write an unread entry.
-    try {
-      const raw = localStorage.getItem('openwork:notifications:v1');
-      const data = raw ? JSON.parse(raw) : { state: { notifications: [] }, version: 0 };
-      data.state.notifications.unshift({
-        id: 'accent-demo-' + Date.now(), kind: 'cloud', severity: 'info',
-        title: 'Brand updated', body: 'Your organization accent color was applied.',
-        count: 1, createdAt: Date.now(), updatedAt: Date.now(), readAt: null,
-      });
-      localStorage.setItem('openwork:notifications:v1', JSON.stringify(data));
-    } catch {}
-    return true;
-  });
-  // Reload so the store rehydrates the unread entry, then re-apply brand.
-  await evaluate(member, () => (location.reload()));
-  await memberRefreshAndWait(member, () => (document.documentElement.dataset.brandAccent === 'blue'), "accent re-applied after reload");
-  await sleep(800);
-  await memberOpenNotifications(member);
-  const cssAccent = await evaluate(member, () => (getComputedStyle(document.documentElement).getPropertyValue('--dls-accent').trim()));
-  const accentCheck = await memberAccentVisible(member);
-  await shot(member, "member", "02-accent-applied",
-    "Member: accent switched to blue — visible on the notification badge + unread dots, with the OpenWork demo logo top-left.",
-    [
-      { label: "data-brand-accent=blue", passed: await evaluate(member, () => (document.documentElement.dataset.brandAccent === 'blue')) },
-      { label: "--dls-accent is blue-9", passed: cssAccent === "#0090ff" || cssAccent.includes("blue"), detail: cssAccent },
-      { label: "blue accent painted on screen", passed: accentCheck.painted, detail: accentCheck.painted ? "blue pixels found" : "no blue painted" },
-      { label: "OpenWork demo logo still shown", passed: await evaluate(member, () => (Boolean(document.querySelector<HTMLImageElement>('[data-testid="brand-logo"] img')))) },
-    ]);
+    "Member: workspace before the policy restriction.");
 
   // =================================================================
   // JOURNEY 3: admin restricts a policy in the web UI → member restricted
@@ -449,24 +291,13 @@ async function main() {
     [{ label: "policy banner visible", passed: await evaluate(member, () => (Boolean(document.querySelector('[data-testid="desktop-policy-banner"]')))) }]);
 
   // =================================================================
-  // JOURNEY 4: admin clears everything → member returns to default
+  // JOURNEY 4: admin restores the policy → member returns to default
   // =================================================================
-  console.log("\nJourney 4: admin restores everything via web UI");
+  console.log("\nJourney 4: admin restores the policy via API");
   await adminEnsureFreshAuth(admin);
-  await admin.send("Page.navigate", { url: `${DEN_WEB}/dashboard/org-settings` });
+  await admin.send("Page.navigate", { url: `${DEN_WEB}/dashboard/desktop-policies` });
   await sleep(3500);
-  // Clear logo field + reset accent to Default, then Save.
-  await evaluate(admin, () => {
-    const logo = [...document.querySelectorAll('input')].find(i => (i.placeholder||'').includes('logo'));
-    if (logo) { const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set; if (!s) throw new Error('Native form setter missing'); s.call(logo,''); logo.dispatchEvent(new Event('input',{bubbles:true})); logo.dispatchEvent(new Event('change',{bubbles:true})); }
-    const sel = document.querySelector('select');
-    if (sel) { const s=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')?.set; if (!s) throw new Error('Native form setter missing'); s.call(sel,''); sel.dispatchEvent(new Event('change',{bubbles:true})); }
-    return true;
-  });
-  await sleep(400);
-  await adminClickSave(admin);
-  await sleep(2500);
-  // Restore the policy too (via API — owner action).
+  // Restore the policy (via API — owner action).
   const list4 = await denApi(token, "/v1/desktop-policies");
   const d4 = list4.desktopPolicies.find((p: { isDefault?: boolean; name?: string; id: string }) => p.isDefault);
   await denApi(token, `/v1/desktop-policies/${d4.id}`, {
@@ -477,20 +308,20 @@ async function main() {
     } }),
   });
   const cfg4 = await denApi(token, "/v1/me/desktop-config");
+  await admin.send("Page.reload");
+  await sleep(2500);
   await shot(admin, "admin", "04-restored",
-    "Admin: cleared logo + accent and restored policies. Server clean.",
-    [{ label: "server: no brand", passed: !cfg4.brandLogoUrl && !cfg4.brandAccentColor }]);
+    "Admin: restored the default policy. Server allows multiple workspaces again.",
+    [{ label: "server: workspaces allowed", passed: cfg4.allowMultipleWorkspaces === true }]);
 
-  await evaluate(member, () => (window.location.hash = '#/session'));
+  await evaluate(member, () => (window.location.hash = '#/settings/general'));
+  await sleep(1500);
   await memberRefreshAndWait(member,
-    () => (!document.documentElement.dataset.brandAccent && !document.querySelector('[data-testid="brand-logo"]')),
-    "member app returned to default");
+    () => !document.querySelector('[data-testid="desktop-policy-banner"]'),
+    "member app returned to unrestricted policy");
   await shot(member, "member", "04-back-to-default",
-    "Member: app returned to clean default — no logo, no custom accent.",
-    [
-      { label: "no brand accent", passed: await evaluate(member, () => (!document.documentElement.dataset.brandAccent)) },
-      { label: "no brand logo", passed: await evaluate(member, () => (!document.querySelector('[data-testid="brand-logo"]'))) },
-    ]);
+    "Member: settings no longer shows the organization policy restriction banner.",
+    [{ label: "policy restriction cleared", passed: await evaluate(member, () => !document.querySelector('[data-testid="desktop-policy-banner"]')) }]);
 
   admin.close();
   member.close();

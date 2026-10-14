@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { execFileSync, spawn } from "node:child_process"
 import { createHash, generateKeyPairSync } from "node:crypto"
 import { tmpdir } from "node:os"
@@ -1005,17 +1005,73 @@ async function createDesktopHandoff(baseUrl, auth) {
   return handoff.body
 }
 
+function desktopUserDataPath() {
+  if (process.env.OPENWORK_ELECTRON_USERDATA?.trim()) return resolve(process.env.OPENWORK_ELECTRON_USERDATA.trim())
+  const home = process.env.HOME || process.env.USERPROFILE || process.cwd()
+  const appData = process.platform === "darwin" ? join(home, "Library", "Application Support")
+    : process.platform === "win32" ? process.env.APPDATA || join(home, "AppData", "Roaming")
+      : process.env.XDG_CONFIG_HOME || join(home, ".config")
+  return join(appData, process.env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim() || "com.differentai.openwork")
+}
+
+function archiveDormantDesktopBrand(previous, settings) {
+  const userDataPath = desktopUserDataPath()
+  const files = ["brand-icon.json", "brand-icon.png", "brand-icon.ico", "openwork-stock.ico"]
+    .filter((name) => existsSync(join(userDataPath, name)))
+  if (!files.length && !Object.values(settings).some((value) => typeof value === "string")) return null
+  const target = {
+    baseUrl: previous.baseUrl,
+    ...(previous.apiBaseUrl ? { apiBaseUrl: previous.apiBaseUrl } : {}),
+    organizationId: previous.prepared?.orgId ?? previous.handoff?.orgId ?? null,
+  }
+  const targetKey = createHash("sha256").update(JSON.stringify(target)).digest("hex")
+  const parent = join(userDataPath, "desktop-brand-rollback", targetKey)
+  mkdirSync(parent, { recursive: true })
+  const archivePath = mkdtempSync(join(parent, "snapshot-"))
+  writeFileSync(join(archivePath, "settings.json"), `${JSON.stringify({ ...target, ...settings }, null, 2)}\n`, { mode: 0o600 })
+  const moved = []
+  try {
+    // Old Electron boot-time cache restoration is not target-aware. Quarantine
+    // its lookup files without changing any source bytes or metadata.
+    for (const name of files) {
+      renameSync(join(userDataPath, name), join(archivePath, name))
+      moved.push(name)
+    }
+  } catch (error) {
+    for (const name of moved.reverse()) renameSync(join(archivePath, name), join(userDataPath, name))
+    rmSync(archivePath, { recursive: true, force: true })
+    throw error
+  }
+  return archivePath
+}
+
+function readDormantDesktopBrand(bootstrapPath, next) {
+  let previous
+  try {
+    previous = JSON.parse(readFileSync(bootstrapPath, "utf8"))
+  } catch (error) {
+    if (error.code === "ENOENT" || error instanceof SyntaxError) return { settings: {}, archivePath: null }
+    throw error
+  }
+  const settings = Object.fromEntries(["brandAppName", "brandLogoUrl", "brandIconUrl"]
+    .filter((key) => typeof previous?.[key] === "string" || previous?.[key] === null)
+    .map((key) => [key, previous[key]]))
+  let sameOrigin = false
+  try {
+    sameOrigin = new URL(previous.baseUrl).origin === new URL(next.baseUrl).origin
+      && (!previous.apiBaseUrl || !next.apiBaseUrl
+        || new URL(previous.apiBaseUrl).origin === new URL(next.apiBaseUrl).origin)
+  } catch {}
+  const previousOrg = previous?.prepared?.orgId || previous?.handoff?.orgId
+  if (!sameOrigin || (previousOrg && previousOrg !== next.organization.id)) {
+    return { settings: {}, archivePath: archiveDormantDesktopBrand(previous || {}, settings) }
+  }
+  // The disk record is rollback data, never active identity or cloud input.
+  return { settings, archivePath: null }
+}
+
 function writePreparedDesktop(input) {
   const bootstrapPath = resolve(input.bootstrapPath)
-  let existingBrandAppName = null
-  if (existsSync(bootstrapPath)) {
-    try {
-      const existingBootstrap = JSON.parse(readFileSync(bootstrapPath, "utf8"))
-      existingBrandAppName = typeof existingBootstrap.brandAppName === "string"
-        ? existingBootstrap.brandAppName.trim().slice(0, 64)
-        : null
-    } catch {}
-  }
   const skillName = slugifySkillName(input.skill.title)
   const skillDir = resolve(input.skillsDir, skillName)
   const skillPath = join(skillDir, "SKILL.md")
@@ -1033,11 +1089,18 @@ function writePreparedDesktop(input) {
     skillPath,
     preparedAt,
   }
+  const dormant = readDormantDesktopBrand(bootstrapPath, input)
   const bootstrap = {
+    ...dormant.settings,
+    whiteLabelEnabled: input.whiteLabelEnabled === true,
+    ...(input.whiteLabelEnabled === true ? {
+      ...(typeof input.brand?.appName === "string" ? { brandAppName: input.brand.appName } : {}),
+      ...(typeof input.brand?.logoUrl === "string" || input.brand?.logoUrl === null ? { brandLogoUrl: input.brand.logoUrl } : {}),
+      ...(typeof input.brand?.iconUrl === "string" || input.brand?.iconUrl === null ? { brandIconUrl: input.brand.iconUrl } : {}),
+    } : {}),
     baseUrl: input.baseUrl,
     apiBaseUrl: input.apiBaseUrl,
     requireSignin: false,
-    ...(existingBrandAppName ? { brandAppName: existingBrandAppName } : {}),
     prepared,
     ...(input.claimLinks ? { claimLinks: input.claimLinks } : {}),
   }
@@ -1056,7 +1119,17 @@ function writePreparedDesktop(input) {
     bootstrap.handoff = null
   }
 
-  writeFileSync(bootstrapPath, `${JSON.stringify(bootstrap, null, 2)}\n`, "utf8")
+  try {
+    writeFileSync(bootstrapPath, `${JSON.stringify(bootstrap, null, 2)}\n`, "utf8")
+  } catch (error) {
+    if (dormant.archivePath) {
+      for (const name of ["brand-icon.json", "brand-icon.png", "brand-icon.ico", "openwork-stock.ico"]) {
+        const source = join(dormant.archivePath, name)
+        if (existsSync(source)) renameSync(source, join(desktopUserDataPath(), name))
+      }
+    }
+    throw error
+  }
 
   return {
     prepared: true,
@@ -1245,7 +1318,11 @@ async function runCloudOnboard(args) {
   let desktop = null
   if (prepareDesktop) {
     const handoff = await createDesktopHandoff(baseUrl, auth)
+    const desktopConfig = await request(baseUrl, "/v1/me/desktop-config", { method: "GET", headers: auth })
+    const effective = desktopConfig.status === 200 ? desktopConfig.body : null
     desktop = writePreparedDesktop({
+      whiteLabelEnabled: effective?.whiteLabelEnabled === true,
+      brand: { appName: effective?.brandAppName, logoUrl: effective?.brandLogoUrl, iconUrl: effective?.brandIconUrl },
       baseUrl: webBaseUrl,
       apiBaseUrl: baseUrl,
       bootstrapPath: desktopBootstrapPath,
@@ -1335,6 +1412,8 @@ async function runCloudBootstrapWorkspace(args) {
       skillsDir,
       organization: response.body.organization,
       skill,
+      whiteLabelEnabled: response.body.whiteLabelEnabled === true,
+      brand: response.body.brand,
       claimLinks: response.body.claimLinks,
     })
   }

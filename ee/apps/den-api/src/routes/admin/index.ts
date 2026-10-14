@@ -53,6 +53,7 @@ import {
   FEATURE_KEYS,
   featureAvailableOn,
   featureDefinition,
+  featureDefaultEnabled,
   featureKeySchema,
   featureRollout,
   mapFeatures,
@@ -357,14 +358,14 @@ function readAdminVisibleOrganizationCapabilities(described: DescribedFeatures):
 
 function readAdminFeature(key: FeatureKey, rollouts: FeatureRollouts): z.infer<typeof adminFeatureSchema> {
   const definition = featureDefinition(key)
-  const { enabled, killed } = featureRollout(key, rollouts)
+  const { enabled, killed } = featureRollout(key, rollouts, env.features.deployment)
   return {
     key,
     label: definition.label,
     description: definition.description,
     since: definition.since,
     deployments: [...definition.deployments],
-    default: definition.default,
+    default: featureDefaultEnabled(key, env.features.deployment),
     available: featureAvailableOn(key, env.features.deployment),
     enabled,
     killed,
@@ -2230,7 +2231,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         key: key.data,
         enabled: body.data.enabled,
         killed: body.data.killed,
-        defaultEnabled: featureDefinition(key.data).default,
+        defaultEnabled: featureDefaultEnabled(key.data, env.features.deployment),
         updatedByUserId: c.get("user")?.id ?? null,
       })
       return c.json({ ok: true, feature: readAdminFeature(key.data, rollouts) })

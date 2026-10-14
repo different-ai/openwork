@@ -18,6 +18,7 @@ import {
   type DenOrgSummary,
   getOrgDashboardRoute,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   parseOrgContextPayload,
   parseOrgListPayload,
   roleIncludesCanonicalRole,
@@ -604,6 +605,11 @@ export function OrgDashboardProvider({
 
   async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
     ensureCanManageSettings();
+    const updatesBrand = input.brandAppName !== undefined || input.brandLogoUrl !== undefined
+      || input.brandIconUrl !== undefined || input.brandAccentColor !== undefined;
+    if (updatesBrand && !orgFeatureEnabled(orgContext, "whiteLabel")) {
+      throw new Error("White-label branding is off for this organization. A platform administrator can enable it.");
+    }
     const shouldPublishOrgSettingsCompletion = pathnameRef.current === ORG_SETTINGS_PATH;
     const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
     if (typeof input.name === "string") {

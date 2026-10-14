@@ -192,13 +192,18 @@ export type DesktopBootstrapOrgSkill = {
 };
 
 export type DesktopBootstrapConfig = {
+  /** Backend-resolved whiteLabel decision. Missing/false always uses stock identity. */
+  whiteLabelEnabled?: boolean;
+  /** Source settings retained while disabled; only effective when explicitly enabled. */
+  brandAppName?: string | null;
+  brandLogoUrl?: string | null;
+  brandIconUrl?: string | null;
+  /** Opaque process-local receipt for restoring previously read dormant data. Never persisted. */
+  rollbackSnapshotId?: string;
   baseUrl: string;
   apiBaseUrl?: string | null;
   requireSignin: boolean;
   requireActivation?: boolean;
-  brandAppName?: string | null;
-  brandLogoUrl?: string | null;
-  brandIconUrl?: string | null;
   writtenAt?: string | null;
   fromFile?: boolean;
   claimLinks?: Array<{
@@ -395,7 +400,7 @@ export type DesktopCommandMap = {
   debugDesktopBootstrapConfig: { args: []; result: unknown };
   clearDesktopBootstrapConfig: { args: []; result: unknown };
   setDesktopBootstrapConfig: {
-    args: [config: Partial<DesktopBootstrapConfig>];
+    args: [config: Partial<DesktopBootstrapConfig> & { restoreSnapshotId?: string }];
     result: DesktopBootstrapConfig;
   };
 

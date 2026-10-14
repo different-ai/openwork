@@ -19,7 +19,8 @@ export type WorkbotActor = {
   organizationId: string
   organizationName: string
   /** The organization's metadata (an object or its JSON), read for its brand name. */
-  organizationMetadata: unknown
+  whiteLabelEnabled?: boolean
+  organizationMetadata?: unknown
   memberId: string
   userId: string
   firstName: string | null
@@ -103,7 +104,8 @@ function parseMetadata(metadata: WorkbotActor["organizationMetadata"]): Record<s
 }
 
 /** The organization's own app name when it set one (Settings → Brand), otherwise Workbot. */
-export function workbotName(metadata: WorkbotActor["organizationMetadata"]) {
+export function workbotName(metadata: WorkbotActor["organizationMetadata"], whiteLabelEnabled = false) {
+  if (!whiteLabelEnabled) return "Workbot"
   const brand = parseMetadata(metadata).brandAppName
   return typeof brand === "string" && brand.trim() && brand.trim() !== "OpenWork" ? brand.trim().slice(0, 40) : "Workbot"
 }
@@ -171,7 +173,7 @@ function clientOf(deps: WorkbotDeps) {
  */
 async function ensureSession(actor: WorkbotActor, timeZone: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
   const client = clientOf(deps)
-  const name = workbotName(actor.organizationMetadata)
+  const name = workbotName(actor.organizationMetadata, actor.whiteLabelEnabled)
   const canSchedule = await deps.canSchedule(actor.organizationId).catch(() => false)
   const main = workbotSessionId(actor.organizationId, actor.memberId)
   const common = {
@@ -264,7 +266,7 @@ export async function readWorkbotThread(
 ): Promise<WorkbotThread> {
   const client = clientOf(deps)
   const sessionId = sessionOf(actor, input.chat ?? null)
-  const name = workbotName(actor.organizationMetadata)
+  const name = workbotName(actor.organizationMetadata, actor.whiteLabelEnabled)
   // Windowed: reading a year-long thread costs the same as reading a new one.
   const read = await client.readSession(sessionId, { turns: input.turns ?? WORKBOT_PAGE_TURNS, limit: 2_000, outputs: "none" })
   if (!read.ok && read.status === 404) {

@@ -1,8 +1,6 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, type ReactNode } from "react";
-import { desktopPolicyKeys, type BrandAccentColor } from "@openwork/types/den/desktop-policies";
-
-import { useNotificationStore } from "../../kernel/notification-store";
+import { useEffect, type ReactNode } from "react";
+import { type BrandAccentColor } from "@openwork/types/den/desktop-policies";
 import { useOrgRestrictions } from "./desktop-config-provider";
 
 // ---------------------------------------------------------------------------
@@ -63,7 +61,7 @@ function clearBrandAccent() {
  */
 export function BrandThemeEffect() {
   const config = useOrgRestrictions();
-  const brandAccentColor = config.brandAccentColor;
+  const brandAccentColor = config.whiteLabelEnabled === true ? config.brandAccentColor : undefined;
 
   useEffect(() => {
     if (!brandAccentColor) {
@@ -81,45 +79,14 @@ export function BrandThemeEffect() {
  * Hook returning the org's brand logo URL if set via desktop policy.
  */
 export function useBrandLogoUrl(): string | undefined {
-  return useOrgRestrictions().brandLogoUrl;
+  const config = useOrgRestrictions();
+  return config.whiteLabelEnabled === true ? config.brandLogoUrl : undefined;
 }
 
 /** Organization-managed display name. It does not change the signed app identity. */
 export function useBrandAppName(): string {
-  return useOrgRestrictions().brandAppName ?? "OpenWork";
-}
-
-const POLICY_NOTIFICATION_DEDUPE = "desktop-policy-active";
-
-/**
- * Pushes a notification when any desktop policy restriction or branding
- * override is active. Fires at most once per provider mount (deduped).
- */
-function DesktopPolicyNotificationEffect() {
   const config = useOrgRestrictions();
-  const firedRef = useRef(false);
-  const addNotification = useNotificationStore((state) => state.add);
-
-  useEffect(() => {
-    if (firedRef.current) return;
-
-    const hasRestriction = desktopPolicyKeys.some(
-      (key) => config[key] === false,
-    );
-    const hasBranding = Boolean(config.brandAppName ?? config.brandLogoUrl ?? config.brandAccentColor);
-    if (!hasRestriction && !hasBranding) return;
-
-    firedRef.current = true;
-    addNotification({
-      kind: "cloud",
-      severity: "info",
-      title: "Organization policies active",
-      body: "Some features and appearance settings are managed by your administrator.",
-      dedupeKey: POLICY_NOTIFICATION_DEDUPE,
-    });
-  }, [config, addNotification]);
-
-  return null;
+  return config.whiteLabelEnabled === true ? config.brandAppName ?? "OpenWork" : "OpenWork";
 }
 
 /**
@@ -130,7 +97,6 @@ export function BrandThemeProvider({ children }: { children: ReactNode }) {
   return (
     <>
       <BrandThemeEffect />
-      <DesktopPolicyNotificationEffect />
       {children}
     </>
   );

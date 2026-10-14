@@ -160,7 +160,6 @@ export function PricingGrid(props: PricingGridProps) {
         { text: "Usage and adoption analytics", icon: SlidersHorizontal },
         { text: "Desktop policies and version controls", icon: SlidersHorizontal },
         { text: "Audit log and spend observability", icon: FileText },
-        { text: "Internal white-labeling — your name, logo, and branding", icon: FileText },
         { text: "Bring your own inference — self-hosted or private models", icon: Server },
         { text: "Standard SLA support included", icon: Plug },
       ],
@@ -228,7 +227,7 @@ export function PricingGrid(props: PricingGridProps) {
       </p>
       <p className="text-center text-[12px] font-medium text-gray-500">
         Self-hosting the control plane is free for organizations with up to 5 users (excluding Enterprise Features such as
-        SCIM, analytics, desktop policies, and white-labeling), free for development and testing, and
+        SCIM, analytics, and desktop policies), free for development and testing, and
         free to evaluate for 30 days at any size with all features — see the{" "}
         <a
           href="https://github.com/different-ai/openwork/blob/dev/ee/LICENSE"

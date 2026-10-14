@@ -103,12 +103,12 @@ test("the admin page sees whether the saved model is still served", () => {
 })
 
 test("the model is stored in organization metadata without touching anything else", () => {
-  const metadata = { brandAppName: "Acme Helper", workbot: { other: 1 } }
+  const metadata = { unrelatedSetting: "preserved", workbot: { other: 1 } }
   const saved = withWorkbotModel(metadata, "gateway/model-a")
-  assert.deepEqual(saved, { brandAppName: "Acme Helper", workbot: { other: 1, model: "gateway/model-a" } })
+  assert.deepEqual(saved, { unrelatedSetting: "preserved", workbot: { other: 1, model: "gateway/model-a" } })
   assert.equal(readWorkbotModel(saved), "gateway/model-a")
   assert.equal(readWorkbotModel(JSON.stringify(saved)), "gateway/model-a")
-  assert.deepEqual(withWorkbotModel(saved, null), { brandAppName: "Acme Helper", workbot: { other: 1 } })
+  assert.deepEqual(withWorkbotModel(saved, null), { unrelatedSetting: "preserved", workbot: { other: 1 } })
   assert.equal(readWorkbotModel(null), null)
   assert.equal(readWorkbotModel("not json"), null)
 })

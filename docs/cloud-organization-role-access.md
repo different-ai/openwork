@@ -41,7 +41,7 @@ For cloud organization admins (`owner`, `super-admin`, and `admin`), the Den Web
   - Models
     - OpenWork Models, on hosted deployments only
     - Bring your Own Keys
-  - Advanced, with Collections, Desktop policies, and Brand appearance tabs
+  - Advanced, with Collections, Desktop policies, and Brand appearance tabs. Brand appearance is locked when the workspace's white-label flag is off
 - Observability
   - Workflow Runs, when enabled
   - Analytics

@@ -10,6 +10,7 @@ import { signConnectLinkToken } from "@openwork/connect-link/node"
 import { env } from "./env.js"
 
 export type DesktopConnectLinkInput = {
+  whiteLabelEnabled: boolean
   organizationName: string
   appName: string
   logoUrl: string | null
@@ -36,6 +37,7 @@ export function mintDesktopConnectLink(input: DesktopConnectLinkInput) {
     jti: randomBytes(16).toString("base64url"),
     v: CONNECT_LINK_VERSION,
     org: { name: input.organizationName },
+    whiteLabelEnabled: input.whiteLabelEnabled,
     brand: {
       appName: input.appName,
       logoUrl: input.logoUrl,

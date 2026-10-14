@@ -3,6 +3,9 @@ import { test } from "node:test"
 import {
   FEATURE_KEYS,
   FEATURES,
+  featureAvailableOn,
+  featureDefaultEnabled,
+  featureRollout,
   featureKeySchema,
   featureLockEnvName,
   mapFeatures,
@@ -11,16 +14,77 @@ import {
   resolveFeatures,
   RETIRED_FEATURE_KEYS,
   type FeatureContext,
+  type FeatureDeployment,
 } from "@openwork/features"
 
 const base: FeatureContext = { deployment: "cloud", locks: {}, rollouts: {}, overrides: {} }
+const deployments: FeatureDeployment[] = ["cloud", "self_hosted"]
 
-test("without stored state, every feature follows its registry default", () => {
-  for (const key of FEATURE_KEYS) {
-    const resolved = resolveFeature(key, base)
-    assert.equal(resolved.enabled, FEATURES[key].default)
-    assert.equal(resolved.source, "everyone")
-    assert.equal(resolved.overrideApplies, true)
+test("without stored state, every feature follows its deployment default and availability", () => {
+  for (const deployment of deployments) {
+    for (const key of FEATURE_KEYS) {
+      const available = featureAvailableOn(key, deployment)
+      const resolved = resolveFeature(key, { ...base, deployment })
+      const enabled = featureDefaultEnabled(key, deployment)
+      assert.equal(resolved.everyone, enabled)
+      assert.equal(resolved.enabled, available && enabled)
+      assert.equal(resolved.source, available ? "everyone" : "unavailable")
+      assert.equal(resolved.overrideApplies, available)
+      if (key !== "whiteLabel") assert.equal(enabled, FEATURES[key].default)
+    }
+  }
+})
+
+test("white-label defaults are on for self-hosted, off for cloud, including without an organization", () => {
+  assert.equal(featureDefaultEnabled("whiteLabel", "self_hosted"), true)
+  assert.equal(featureDefaultEnabled("whiteLabel", "cloud"), false)
+  for (const deployment of deployments) {
+    const expected = deployment === "self_hosted"
+    const context = { ...base, deployment }
+    assert.deepEqual(featureRollout("whiteLabel", {}, deployment), { enabled: expected, killed: false })
+    assert.equal(resolveFeatures(context).whiteLabel, expected)
+    assert.equal(resolveFeature("whiteLabel", context).source, "everyone")
+  }
+})
+
+test("stored everyone state supersedes either white-label deployment default", () => {
+  for (const deployment of deployments) {
+    for (const enabled of [true, false]) {
+      const rollout = { enabled, killed: false }
+      const rollouts = { whiteLabel: rollout }
+      assert.deepEqual(featureRollout("whiteLabel", rollouts, deployment), rollout)
+      const resolved = resolveFeature("whiteLabel", { ...base, deployment, rollouts })
+      assert.equal(resolved.enabled, enabled)
+      assert.equal(resolved.everyone, enabled)
+      assert.equal(resolved.source, "everyone")
+    }
+  }
+})
+
+test("white-label deployment defaults do not bypass organization overrides, locks, or kill switches", () => {
+  for (const deployment of deployments) {
+    const context = { ...base, deployment }
+    for (const enabled of [true, false]) {
+      const overrides = { whiteLabel: enabled }
+      const overridden = resolveFeature("whiteLabel", { ...context, overrides })
+      assert.equal(overridden.enabled, enabled)
+      assert.equal(overridden.source, "override")
+      assert.equal(overridden.overrideApplies, true)
+
+      const locks = { whiteLabel: !enabled }
+      const locked = resolveFeature("whiteLabel", { ...context, overrides, locks })
+      assert.equal(locked.enabled, !enabled)
+      assert.equal(locked.source, "lock")
+      assert.equal(locked.overrideApplies, false)
+
+      const rollouts = { whiteLabel: { enabled, killed: true } }
+      const killed = resolveFeature("whiteLabel", { ...context, overrides, locks, rollouts })
+      assert.equal(killed.enabled, false)
+      assert.equal(killed.source, "killed")
+      assert.equal(killed.overrideApplies, false)
+      assert.deepEqual(featureRollout("whiteLabel", rollouts, deployment), rollouts.whiteLabel)
+      assert.equal(resolveFeatures({ ...context, rollouts }).whiteLabel, false)
+    }
   }
 })
 

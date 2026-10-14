@@ -22,6 +22,7 @@ import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { OnboardingCard } from "./onboarding-card";
 import { OnboardingShell } from "./onboarding-shell";
 import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
+import { parseOrganizationBrand } from "../_lib/organization-brand";
 
 const OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download";
 
@@ -92,11 +93,12 @@ type JoinOrgSuccessProps = {
 export function JoinOrgSuccess({
   organizationId,
   organizationName,
-  brand,
+  brand: suppliedBrand,
   desktopAuthRequested,
   desktopAuthScheme,
   onContinueInBrowser,
 }: JoinOrgSuccessProps) {
+  const brand = parseOrganizationBrand(suppliedBrand, suppliedBrand.whiteLabelEnabled);
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
   const [detected, setDetected] = useState<DetectedPlatform | null>(null);
   const [platformReady, setPlatformReady] = useState(false);

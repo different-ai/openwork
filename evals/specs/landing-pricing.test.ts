@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { chrome } from "@openwork/hosts";
 import { clickAt, evaluateOnSurface, freezeMotion, locate, navigate, reload, setViewport, waitForLocated } from "@openwork/cdp";
 import { eventually, needs, test } from "@openwork/testkit";
+import { screenshot } from "@openwork/test-evidence";
 
 test("visitors see Team at $10 with SSO and Enterprise as custom pricing", async ({ evidence }) => {
   needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
@@ -34,6 +35,48 @@ test("visitors see Team at $10 with SSO and Enterprise as custom pricing", async
   expect(guide).toContain("Enterprise — custom pricing");
   expect(guide).not.toContain("Team Starter");
   evidence.recordAssertionEvidence("The public agent guide agrees with pricing", "Team $10/seat/month with SSO; Enterprise custom", true);
+});
+
+test("pricing, agent guide and Enterprise do not universally advertise selected-organization branding", async ({ evidence }) => {
+  needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
+  const origin = process.env.OPENWORK_EVAL_LANDING_URL;
+  await using browser = await chrome({ startUrl: `${origin}/pricing`, headless: true });
+  await setViewport(browser, { width: 1440, height: 1000, deviceScaleFactor: 1 });
+  const universalBrandingPromise = /\bwhite[\s-]*label/i;
+
+  for (const path of ["/pricing", "/enterprise"]) {
+    await navigate(browser.client, `${origin}${path}`);
+    const text = await eventually(() => evaluateOnSurface(browser, () => document.body.innerText), {
+      within: 30_000,
+      until: (value) => typeof value === "string" && (path === "/pricing"
+        ? value.includes("$10") && value.includes("Custom pricing")
+        : value.includes("OpenWork Enterprise") && value.includes("Self-host or managed")),
+    });
+    expect(text, `${path} visible offers`).not.toMatch(universalBrandingPromise);
+    if (path === "/pricing") {
+      expect(text).toContain("SSO / SAML");
+    } else {
+      for (const badge of ["SOC 2 Type II", "SAML SSO + SCIM", "Audit logs", "Self-host or managed"]) {
+        expect(text).toContain(badge);
+      }
+    }
+    const response = await fetch(`${origin}${path}`, { signal: AbortSignal.timeout(60_000) });
+    expect(response.status).toBe(200);
+    expect(await response.text(), `${path} HTML and search metadata`).not.toMatch(universalBrandingPromise);
+    evidence.recordAssertionEvidence(`${path} does not advertise white labeling`,
+      "Visible offers and server-rendered HTML contain no white-label promise; remaining pricing and Enterprise capabilities are retained.", true);
+    await freezeMotion(browser);
+    await screenshot(browser, { caption: `${path}: public offers without a universal white-label promise` });
+  }
+
+  const response = await fetch(`${origin}/llms.txt`, { signal: AbortSignal.timeout(10_000) });
+  expect(response.status).toBe(200);
+  const guide = await response.text();
+  expect(guide).toContain("Team — $10 per seat/month");
+  expect(guide).toContain("Enterprise — custom pricing");
+  expect(guide).not.toMatch(universalBrandingPromise);
+  evidence.recordAssertionEvidence("The public agent guide does not advertise white labeling",
+    "llms.txt retains Team and Enterprise pricing without promising selected-organization branding to everyone.", true);
 });
 
 test("visitors can read the trust badge and access every footer link at responsive widths", async ({ evidence }) => {
@@ -118,7 +161,7 @@ test("visitors can read the trust badge and access every footer link at responsi
     until: (text) => typeof text === "string" && text.includes("OpenWork Enterprise"),
   });
   expect(hero).not.toMatch(/SOC 2 Type I\b/);
-  for (const badge of ["SOC 2 Type II", "SAML SSO + SCIM", "Audit logs", "Self-host or managed", "White labeling"]) {
+  for (const badge of ["SOC 2 Type II", "SAML SSO + SCIM", "Audit logs", "Self-host or managed"]) {
     expect(hero).toContain(badge);
   }
   evidence.recordAssertionEvidence("Enterprise hero shows the completed SOC 2 Type II status and retains the other badges", hero, true);

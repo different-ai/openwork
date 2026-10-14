@@ -36,6 +36,7 @@ export type ConnectLinkClaims = {
   v: typeof CONNECT_LINK_VERSION;
   org: ConnectLinkOrg;
   brand: ConnectLinkBrand;
+  whiteLabelEnabled: boolean;
   den: ConnectLinkDenTarget;
   requireSignin: boolean;
 };

@@ -4,6 +4,7 @@ import { createHeadlessRunnerClient } from "@openwork-ee/headless-protocol"
 import {
   editWorkbotMessage,
   retryWorkbotMessage,
+  readWorkbotThread,
   sendWorkbotMessage,
   startWorkbotGreeting,
   type WorkbotActor,
@@ -14,7 +15,6 @@ import { denSessionSchema } from "../src/server/den.js"
 const actor: WorkbotActor = {
   organizationId: "org_test",
   organizationName: "Test Org",
-  organizationMetadata: {},
   memberId: "member_test",
   userId: "user_test",
   firstName: "Test",
@@ -83,6 +83,22 @@ test("every turn Workbot sends carries the organization's default model", async 
   assert.ok(asked.every((id) => id === "org_test"))
 })
 
+test("Workbot keeps its product name and ordinary organization identity", async () => {
+  const runner = fakeRunner()
+  const legacyActor = { ...actor, organizationMetadata: { brandAppName: "Retired custom name" } }
+  const thread = await readWorkbotThread(legacyActor, {}, { client: runner.client, canSchedule: async () => false })
+  assert.equal(thread.name, "Workbot")
+  assert.equal(thread.organizationName, actor.organizationName)
+})
+
+test("an enabled white-label organization keeps its Workbot name", async () => {
+  const runner = fakeRunner()
+  const brandedActor = { ...actor, whiteLabelEnabled: true, organizationMetadata: { brandAppName: "Example assistant" } }
+  const thread = await readWorkbotThread(brandedActor, {}, { client: runner.client, canSchedule: async () => false })
+  assert.equal(thread.name, "Example assistant")
+  assert.equal(thread.organizationName, actor.organizationName)
+})
+
 test("without a default model, turns leave the model to the runner", async () => {
   for (const model of [undefined, async () => null, async (): Promise<string | null> => { throw new Error("den_unreachable") }]) {
     const runner = fakeRunner()
@@ -95,7 +111,7 @@ test("without a default model, turns leave the model to the runner", async () =>
 test("a Den from before the default model reads as the runner's default", () => {
   const base = {
     user: { id: "user_test", name: null, email: "person@example.test" },
-    organization: { id: "org_test", name: "Test Org", brandAppName: null },
+    organization: { id: "org_test", name: "Test Org" },
     memberId: "member_test",
     enabled: true,
     canSchedule: false,

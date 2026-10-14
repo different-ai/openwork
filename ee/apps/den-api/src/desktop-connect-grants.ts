@@ -9,6 +9,7 @@ import {
 } from "@openwork/connect-link"
 import { and, eq, gt, isNull, lt } from "@openwork-ee/den-db/drizzle"
 import { DesktopConnectGrantTable, InstallLinkTable } from "@openwork-ee/den-db/schema"
+import { projectConnectClaims } from "./white-label.js"
 import { db } from "./db.js"
 import type { DesktopConnectLinkInput } from "./desktop-connect-link.js"
 
@@ -112,6 +113,7 @@ export async function mintDesktopConnectGrant(
     jti: codeHash,
     v: CONNECT_LINK_VERSION,
     org: { name: input.organizationName },
+    whiteLabelEnabled: input.whiteLabelEnabled,
     brand: {
       appName: input.appName,
       logoUrl: input.logoUrl,
@@ -151,7 +153,8 @@ export async function previewDesktopConnectGrant(code: string): Promise<DesktopC
     .innerJoin(InstallLinkTable, eq(DesktopConnectGrantTable.installLinkId, InstallLinkTable.id))
     .where(eq(DesktopConnectGrantTable.codeHash, hashConnectGrantCode(code)))
     .limit(1)
-  return validateGrantRow(row, now)
+  const result = validateGrantRow(row, now)
+  return result.ok ? { ...result, claims: await projectConnectClaims(result.claims, result.organizationId) } : result
 }
 
 export async function inspectDesktopConnectGrant(code: string): Promise<DesktopConnectGrantStatusResult> {
@@ -162,7 +165,8 @@ export async function inspectDesktopConnectGrant(code: string): Promise<DesktopC
     .innerJoin(InstallLinkTable, eq(DesktopConnectGrantTable.installLinkId, InstallLinkTable.id))
     .where(eq(DesktopConnectGrantTable.codeHash, hashConnectGrantCode(code)))
     .limit(1)
-  return inspectGrantRow(row, now)
+  const result = inspectGrantRow(row, now)
+  return result.ok ? { ...result, claims: await projectConnectClaims(result.claims, result.organizationId) } : result
 }
 
 export async function consumeDesktopConnectGrant(code: string): Promise<DesktopConnectGrantResult> {
@@ -204,6 +208,6 @@ export async function consumeDesktopConnectGrant(code: string): Promise<DesktopC
       )
       .limit(1)
 
-    return claimed ? available : { ok: false, code: "replayed" }
+    return claimed ? { ...available, claims: await projectConnectClaims(available.claims, available.organizationId) } : { ok: false, code: "replayed" }
   })
 }

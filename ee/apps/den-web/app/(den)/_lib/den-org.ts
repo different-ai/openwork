@@ -1,5 +1,6 @@
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
+import { parseOrganizationBrand, type OrganizationBrand } from "./organization-brand";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
 
 export type DenOrgSummary = {
@@ -77,11 +78,8 @@ export type DenInvitationPreview = {
     name: string;
     slug: string;
     allowedEmailDomains: string[] | null;
-    branding: {
-      appName: string;
-      logoUrl: string | null;
-      iconUrl: string | null;
-    };
+    whiteLabelEnabled: boolean;
+    branding: OrganizationBrand;
   };
 };
 
@@ -1308,11 +1306,8 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
       name: organizationName,
       slug: organizationSlug,
       allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
-      branding: {
-        appName: asString(branding?.appName) ?? "OpenWork",
-        logoUrl: asString(branding?.logoUrl),
-        iconUrl: asString(branding?.iconUrl),
-      },
+      whiteLabelEnabled: organization.whiteLabelEnabled === true,
+      branding: parseOrganizationBrand(branding, organization.whiteLabelEnabled),
     },
   };
 }

@@ -75,7 +75,8 @@ export function ConnectConfirmDialog({
 }: ConnectConfirmDialogProps) {
   const targetHost = claims ? formatControlPlaneHost(claims.den.baseUrl) : null;
   const switching = Boolean(currentHost && targetHost && currentHost !== targetHost);
-  const trustedBrandUrl = transport ? claims?.brand.iconUrl ?? claims?.brand.logoUrl : null;
+  const trustedBrandUrl = transport && claims?.whiteLabelEnabled === true
+    ? claims.brand.iconUrl ?? claims.brand.logoUrl : null;
   const logoUrl = trustedBrandUrl && isHttpsUrl(trustedBrandUrl) ? trustedBrandUrl : null;
 
   return (
@@ -109,7 +110,7 @@ export function ConnectConfirmDialog({
                   <img src={logoUrl} alt="" className="size-10 rounded-lg" />
                 ) : null}
                 <DialogTitle data-testid="connect-confirm-org">
-                  {t("connect.confirm_title", { appName: claims.brand.appName, org: claims.org.name })}
+                  {t("connect.confirm_title", { appName: claims.whiteLabelEnabled === true ? claims.brand.appName : "OpenWork", org: claims.org.name })}
                 </DialogTitle>
               </div>
               <DialogDescription data-testid="connect-confirm-host">

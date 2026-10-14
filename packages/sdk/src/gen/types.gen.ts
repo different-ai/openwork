@@ -163,6 +163,7 @@ export type NotFoundError = {
 
 export type AdminFeature = {
   key:
+    | "whiteLabel"
     | "teamMembershipCache"
     | "managedDeploymentsGcp"
     | "managedDeployments"
@@ -216,6 +217,7 @@ export type AdminUsersPageResponse = {
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
     capabilities: {
+      whiteLabel: boolean;
       teamMembershipCache: boolean;
       managedDeploymentsGcp: boolean;
       managedDeployments: boolean;
@@ -242,6 +244,15 @@ export type AdminOrganizationsPageResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      whiteLabel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       teamMembershipCache: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -440,6 +451,7 @@ export type AdminOverviewResponse = {
   }>;
   organizations: Array<{
     capabilities: {
+      whiteLabel: boolean;
       teamMembershipCache: boolean;
       managedDeploymentsGcp: boolean;
       managedDeployments: boolean;
@@ -466,6 +478,15 @@ export type AdminOverviewResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      whiteLabel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       teamMembershipCache: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -781,6 +802,7 @@ export type CurrentUserDesktopConfigResponse = {
     blockBrowserUploads?: boolean;
   };
   allowedDesktopVersions?: Array<string>;
+  whiteLabelEnabled?: boolean;
   brandAppName?: string;
   brandLogoUrl?: string;
   brandIconUrl?: string;
@@ -1088,6 +1110,7 @@ export type InvitationPreviewResponse = {
     name: string;
     slug: string;
     allowedEmailDomains: Array<string> | null;
+    whiteLabelEnabled: boolean;
     branding: {
       appName: string;
       logoUrl: string | null;
@@ -1938,24 +1961,26 @@ export type CreateInstallLinkRequest = {
 };
 
 export type AuthenticatedInstallConfig = {
+  whiteLabelEnabled?: boolean;
   appName?: string;
   clientName: string;
   webUrl: string;
   apiUrl: string;
   requireSignin: boolean;
-  logoUrl: string | null;
+  logoUrl?: string | null;
   iconUrl?: string | null;
   desktopVersion: string;
   distribution: "cloud" | "enterprise";
 };
 
 export type InstallExperienceConfig = {
+  whiteLabelEnabled?: boolean;
   appName?: string;
   clientName: string;
   webUrl: string;
   apiUrl: string;
   requireSignin: boolean;
-  logoUrl: string | null;
+  logoUrl?: string | null;
   iconUrl?: string | null;
   connectUrl: string;
   connectExpiresAt: string;
@@ -1979,7 +2004,7 @@ export type ConnectLinkClaims = {
   org: {
     name: string;
   };
-  brand: {
+  brand?: {
     appName: string;
     logoUrl: string | null;
     iconUrl: string | null;
@@ -1988,6 +2013,7 @@ export type ConnectLinkClaims = {
     baseUrl: string;
     apiBaseUrl?: string | null;
   };
+  whiteLabelEnabled?: boolean;
   requireSignin: boolean;
 };
 
@@ -5561,6 +5587,7 @@ export type WorkbotSession = {
     id: string;
     name: string;
     brandAppName: string | null;
+    whiteLabelEnabled: boolean;
   };
   memberId: string;
   enabled: boolean;
@@ -6317,6 +6344,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
+      whiteLabel: boolean;
       teamMembershipCache: boolean;
       managedDeploymentsGcp: boolean;
       managedDeployments: boolean;
@@ -6343,6 +6371,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      whiteLabel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       teamMembershipCache: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -6529,6 +6566,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
+      whiteLabel: boolean;
       teamMembershipCache: boolean;
       managedDeploymentsGcp: boolean;
       managedDeployments: boolean;
@@ -6555,6 +6593,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      whiteLabel: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       teamMembershipCache: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -7606,6 +7653,12 @@ export type PostV1BootstrapWorkspaceResponses = {
    * Workspace bootstrap completed.
    */
   200: {
+    whiteLabelEnabled: boolean;
+    brand: {
+      appName: string;
+      logoUrl: string | null;
+      iconUrl: string | null;
+    };
     ok: true;
     organization: {
       /**

@@ -49,7 +49,7 @@ the spec calls real HTTP boundaries rather than importing product source.
 10. Approved explicit-false unset restores the original key and records the actor,
     previous state, new state, and reason.
 11. A real audit-storage failure rolls back the DPA update.
-12. Concurrent branding, capability, and DPA updates preserve the marker and nested
+12. Concurrent organization settings, capability, and DPA updates preserve the marker and nested
     unrelated metadata.
 13. Legacy serialized true denies; malformed documents, all tested non-boolean
     flags, and a real policy-storage read failure return 503 with zero dispatch.

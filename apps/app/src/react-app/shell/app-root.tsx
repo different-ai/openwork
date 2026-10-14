@@ -332,6 +332,8 @@ function BrandThemeControlActions() {
       description: "Inject brand theme (logo, icon, accent color) via desktop config for eval testing.",
       sideEffect: "mutation",
       args: [
+        { name: "whiteLabelEnabled", type: "boolean", description: "Explicit backend feature projection (missing is off)" },
+        { name: "brandAppName", type: "string", description: "Workspace app name" },
         { name: "brandLogoUrl", type: "string", description: "Logo URL" },
         { name: "brandIconUrl", type: "string", description: "Icon URL" },
         { name: "brandAccentColor", type: "string", description: "Radix color family" },
@@ -347,7 +349,11 @@ function BrandThemeControlActions() {
     };
   }, []);
   useControlAction(applyAction);
+  return null;
+}
 
+/** Recovery hooks stay separate from optional branding controls and their stack. */
+function AppRecoveryControlActions() {
   const relaunchAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
     return {
@@ -444,6 +450,7 @@ export function AppRoot() {
           <OpenworkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
+          <AppRecoveryControlActions />
           <EnterpriseActivationGate>
             <DenSigninGate>
               <OpenWorkWebAccessGate>

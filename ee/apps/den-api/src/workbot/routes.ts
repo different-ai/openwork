@@ -34,7 +34,7 @@ const describeWorkbotRoute = (options: WorkbotRouteOptions) => describeRoute(opt
 
 const sessionSchema = z.object({
   user: z.object({ id: z.string(), name: z.string().nullable(), email: z.string() }),
-  organization: z.object({ id: z.string(), name: z.string(), brandAppName: z.string().nullable() }),
+  organization: z.object({ id: z.string(), name: z.string(), brandAppName: z.string().nullable(), whiteLabelEnabled: z.boolean() }),
   memberId: z.string(),
   /** A platform admin turned Workbot on for this organization. */
   enabled: z.boolean(),
@@ -230,7 +230,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       }).catch(() => null)
       return c.json({
         user,
-        organization: { id: organization.id, name: organization.name, brandAppName: readBrandAppName(organization.metadata) },
+        organization: { id: organization.id, name: organization.name, brandAppName: features.whiteLabel ? readBrandAppName(organization.metadata) : null, whiteLabelEnabled: features.whiteLabel },
         memberId,
         enabled: features.workbot,
         canSchedule,

@@ -7,7 +7,6 @@ import {
   Database,
   Globe,
   Monitor,
-  Paintbrush,
   Server,
   ShieldCheck
 } from "lucide-react";
@@ -40,11 +39,6 @@ const sovereignPillars = [
     title: "Your infrastructure",
     body: "Run a managed private instance we operate for you, or self-host the whole stack. It’s open source — audit it, fork it, and leave anytime.",
     icon: Server
-  },
-  {
-    title: "Your brand",
-    body: "White-label the whole experience: your name, your logo, your domain. Roll it out to your workforce — or to your own customers.",
-    icon: Paintbrush
   }
 ];
 
@@ -160,13 +154,12 @@ export function LandingEnterprise(props: Props) {
               <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">SAML SSO + SCIM</span>
               <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">Audit logs</span>
               <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">Self-host or managed</span>
-              <span className="lp-pill-secondary lp-pill-sm !h-9 !text-[13px]">White labeling</span>
             </div>
           </section>
 
           <section className="mt-[120px]">
             <LpSectionHeader label="What sovereign means here" heading="Nothing about your AI belongs to us." />
-            <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-10 grid gap-8 sm:grid-cols-3">
               {sovereignPillars.map((pillar) => {
                 const Icon = pillar.icon;
                 return (

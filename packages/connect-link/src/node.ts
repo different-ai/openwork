@@ -44,7 +44,7 @@ function base64UrlDecode(value: string): string | null {
 }
 
 export type SignConnectLinkTokenInput = {
-  claims: ConnectLinkClaims
+  claims: Omit<ConnectLinkClaims, "brand" | "whiteLabelEnabled"> & { brand?: ConnectLinkClaims["brand"]; whiteLabelEnabled?: boolean }
   privateKeyPem: string
   kid: string
   /** Permit non-https den/logo URLs (local development and evals only). */

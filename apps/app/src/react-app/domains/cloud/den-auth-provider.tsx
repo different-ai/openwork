@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import {
+  clearDenBootstrapHandoff,
   clearDenSession,
   createDenClient,
   ensureDenActiveOrganization,
@@ -19,7 +20,6 @@ import {
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
-  setDenBootstrapConfig,
   type DenBootstrapConfig,
   type DenOrgSummary,
   type DenUser,
@@ -441,18 +441,10 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   // relaunch never re-exchanges it. Persisting is best-effort: a failure here
   // must NOT be reported as an auth failure, since the user is already signed
   // in at this point.
-  const clearConsumedBootstrapHandoff = useCallback((bootstrap: DenBootstrapConfig, denBaseUrl: string) => {
-    void setDenBootstrapConfig({
-      baseUrl: denBaseUrl,
-      requireSignin: bootstrap.requireSignin,
-      requireActivation: bootstrap.requireActivation,
-      ...(bootstrap.brandAppName ? { brandAppName: bootstrap.brandAppName } : {}),
-      ...(bootstrap.brandLogoUrl ? { brandLogoUrl: bootstrap.brandLogoUrl } : {}),
-      ...(bootstrap.brandIconUrl ? { brandIconUrl: bootstrap.brandIconUrl } : {}),
-      ...(bootstrap.claimLinks ? { claimLinks: bootstrap.claimLinks } : {}),
-      handoff: null,
-      ...(bootstrap.prepared ? { prepared: bootstrap.prepared } : {}),
-    }).catch(() => undefined);
+  const clearConsumedBootstrapHandoff = useCallback((bootstrap: DenBootstrapConfig) => {
+    // Cleanup can run after a different org/target has committed. Never replay
+    // the enrollment or security fields captured before authentication.
+    void clearDenBootstrapHandoff(bootstrap).catch(() => undefined);
   }, []);
 
   const consumeBootstrapHandoff = useCallback(() => {
@@ -465,7 +457,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     // Already signed in: just drop the now-unused grant from disk.
     if (readDenSettings().authToken?.trim()) {
       handledGrantsRef.current.add(handoff.grant);
-      clearConsumedBootstrapHandoff(bootstrap, bootstrap.baseUrl);
+      clearConsumedBootstrapHandoff(bootstrap);
       return;
     }
 
@@ -488,7 +480,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // The one-time grant is spent but the enrollment did not commit. Drop
       // the grant from disk (best effort) so restarts do not retry it forever;
       // the user needs a fresh handoff link.
-      clearConsumedBootstrapHandoff(bootstrap, bootstrap.baseUrl);
+      clearConsumedBootstrapHandoff(bootstrap);
     });
   }, [clearConsumedBootstrapHandoff]);
 

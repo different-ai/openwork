@@ -6,8 +6,6 @@ import { createContext, useCallback, use, useMemo, useState, type ReactNode } fr
 /* ------------------------------------------------------------------ */
 
 export type ShellConfig = {
-  /** Display name shown in the title bar, sidebar, and welcome page. */
-  appName: string;
   /** Show live connection status inside the sidebar account menu. */
   statusBar: boolean;
   /** Show the left sidebar with workspace/session list. */
@@ -37,7 +35,6 @@ export type ShellConfig = {
 /* ------------------------------------------------------------------ */
 
 export const DEFAULT_SHELL_CONFIG: ShellConfig = {
-  appName: "OpenWork",
   statusBar: true,
   sidebar: true,
   docsButton: true,

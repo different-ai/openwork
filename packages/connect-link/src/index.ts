@@ -41,13 +41,14 @@ export const connectLinkClaimsSchema = z.object({
     appName: z.string().trim().min(1).max(64),
     logoUrl: z.string().trim().url().nullable(),
     iconUrl: z.string().trim().url().nullable(),
-  }),
+  }).default({ appName: "OpenWork", logoUrl: null, iconUrl: null }),
   den: z.object({
     baseUrl: z.string().trim().url(),
     apiBaseUrl: z.string().trim().url().nullish(),
   }),
+  whiteLabelEnabled: z.boolean().default(false),
   requireSignin: z.boolean(),
-}).meta({ ref: "ConnectLinkClaims" }) satisfies z.ZodType<ConnectLinkClaims>
+}).meta({ ref: "ConnectLinkClaims" }) satisfies z.ZodType<ConnectLinkClaims, unknown>
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"])
 

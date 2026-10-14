@@ -119,6 +119,7 @@ export async function applyWindowsTaskbarIcon(window, {
   appIconPath,
   relaunchCommand,
   relaunchDisplayName,
+  isCurrent = () => true,
 }, waitForRefresh = waitForWindowsTaskbarRefresh) {
   const refreshVisibleButton = window.isVisible() && typeof window.setSkipTaskbar === "function";
 
@@ -129,6 +130,7 @@ export async function applyWindowsTaskbarIcon(window, {
 
   try {
     if (refreshVisibleButton) await waitForRefresh();
+    if (!isCurrent()) return;
     // Chromium's SetAppDetailsForWindow writes AppUserModel.ID before the
     // relaunch properties. Windows treats the ID write as the taskbar refresh
     // event, so a single call refreshes too early and can keep the EXE icon.

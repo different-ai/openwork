@@ -28,6 +28,7 @@ import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/
 import { db } from "../../db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../../desktop-policies.js"
 import { env } from "../../env.js"
+import { bootstrapWorkspaceBrandingSchema, resolveBootstrapWorkspaceBranding } from "../../workspace-bootstrap-branding.js"
 import { jsonValidator, paramValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import {
   JWT_BEARER_GRANT_TYPE,
@@ -92,7 +93,7 @@ const claimLinkSchema = z.object({
   expiresAt: z.string().datetime(),
 })
 
-const bootstrapWorkspaceResponseSchema = z.object({
+const bootstrapWorkspaceResponseSchema = bootstrapWorkspaceBrandingSchema.extend({
   ok: z.literal(true),
   organization: z.object({
     id: denTypeIdSchema("organization"),
@@ -605,7 +606,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         expiresAt: expiresAt.toISOString(),
         claimEndpoint: `${(env.apiPublicUrl ?? env.betterAuthUrl).replace(/\/$/, "")}/v1/bootstrap/workspace/${result.setup.id}/claim`,
       }
-      const response = { organization: result.organization, setup: result.setup, skill: result.skill, claimLinks: result.claimLinks, identity }
+      const branding = await resolveBootstrapWorkspaceBranding(result.organization.id)
+      const response = { organization: result.organization, setup: result.setup, skill: result.skill, claimLinks: result.claimLinks, identity, ...branding }
       c.header("Cache-Control", "no-store")
       return c.json({ ok: true, ...response })
     },

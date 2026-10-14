@@ -66,6 +66,7 @@ const ALLOWLIST = new Set([
   "mcp-oauth-approval-page.png",
   "ollama-added-as-provider.png",
   "ollama-custom-provider.png",
+  // Brand appearance is available for selected organizations and self-hosted deployments.
   "on-prem-branding/brand-assets-saved-in-den.png",
   "on-prem-branding/windows-taskbar-and-alt-tab.png",
   "openwork-providers.png",

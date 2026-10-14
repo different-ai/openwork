@@ -26,7 +26,7 @@ configuration are not deleted automatically.
   built-in web fetching/search restrictions when approved sites are configured.
 - Native built-in browser request, origin, and upload gates.
 - Local engine approvals, Den authorization and model assignment, and desktop
-  capability and branding controls.
+  capability controls.
 
 Command and browser controls remain visible because their enforcement does not
 depend solely on the removed plugin.

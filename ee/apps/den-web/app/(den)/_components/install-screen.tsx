@@ -12,8 +12,10 @@ import { isMobileUserAgent } from "../_lib/platform";
 import { InstallVisual } from "./install-visual";
 import { OnboardingShell } from "./onboarding-shell";
 import { OrganizationBrandIdentity } from "./organization-brand-identity";
+import { parseOrganizationBrand } from "../_lib/organization-brand";
 
 type InstallConfig = {
+  whiteLabelEnabled: boolean;
   appName: string;
   clientName: string;
   webUrl: string;
@@ -115,12 +117,10 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   }
 
   const clientName = typeof value.clientName === "string" ? value.clientName.trim() : "";
-  const appName = typeof value.appName === "string" && value.appName.trim() ? value.appName.trim() : "OpenWork";
+  const { appName, logoUrl, iconUrl, whiteLabelEnabled } = parseOrganizationBrand(value, value.whiteLabelEnabled);
   const webUrl = typeof value.webUrl === "string" ? value.webUrl.trim() : "";
   const apiUrl = typeof value.apiUrl === "string" ? value.apiUrl.trim() : "";
   const requireSignin = value.requireSignin;
-  const logoUrl = value.logoUrl;
-  const iconUrl = value.iconUrl ?? null;
   const desktopVersion = typeof value.desktopVersion === "string" ? value.desktopVersion.trim() : "";
   const distribution = value.distribution;
 
@@ -141,6 +141,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   }
 
   return {
+    whiteLabelEnabled,
     appName,
     clientName,
     webUrl,
@@ -463,7 +464,7 @@ export function InstallScreen() {
             <span className="text-[13px] font-medium text-slate-500">
               <OrganizationBrandIdentity
                 organizationName={config.clientName}
-                brand={{ appName: config.appName, logoUrl: config.logoUrl, iconUrl: config.iconUrl }}
+                brand={config}
               />
             </span>
             <h1 className="m-0 text-[1.5rem] font-semibold leading-tight tracking-[-0.03em] text-slate-950 sm:text-[1.7rem]">

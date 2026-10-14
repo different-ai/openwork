@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { OnboardingShell } from "./onboarding-shell";
+import { parseOrganizationBrand } from "../_lib/organization-brand";
 import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
 
 const CONNECT_CODE_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
@@ -30,14 +31,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseActivationDetails(value: unknown): ActivationDetails | null {
   if (!isRecord(value) || (value.status !== "pending" && value.status !== "connected")) return null;
-  if (!isRecord(value.claims) || !isRecord(value.claims.org) || !isRecord(value.claims.brand) || !isRecord(value.claims.den)) {
+  if (!isRecord(value.claims) || !isRecord(value.claims.org) || !isRecord(value.claims.den)) {
     return null;
   }
 
   const organizationName = value.claims.org.name;
-  const appName = value.claims.brand.appName;
-  const logoUrl = value.claims.brand.logoUrl;
-  const iconUrl = value.claims.brand.iconUrl;
+  const brand = parseOrganizationBrand(value.claims.brand, value.claims.whiteLabelEnabled);
+  const { appName, logoUrl, iconUrl } = brand;
   const apiBaseUrl = value.claims.den.apiBaseUrl;
   const expiresAt = value.expiresAt;
   if (
@@ -63,7 +63,7 @@ function parseActivationDetails(value: unknown): ActivationDetails | null {
   return {
     status: value.status,
     organizationName,
-    brand: { appName, logoUrl, iconUrl },
+    brand,
     apiBaseUrl,
     expiresAt,
   };

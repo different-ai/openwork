@@ -840,6 +840,7 @@
           "key": {
             "type": "string",
             "enum": [
+              "whiteLabel",
               "teamMembershipCache",
               "managedDeploymentsGcp",
               "managedDeployments",
@@ -1029,6 +1030,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "whiteLabel": {
+                      "type": "boolean"
+                    },
                     "teamMembershipCache": {
                       "type": "boolean"
                     },
@@ -1082,6 +1086,7 @@
                     }
                   },
                   "required": [
+                    "whiteLabel",
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
@@ -1103,6 +1108,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "whiteLabel": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "teamMembershipCache": {
                       "type": "object",
                       "properties": {
@@ -1945,6 +2006,7 @@
                     }
                   },
                   "required": [
+                    "whiteLabel",
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
@@ -2333,6 +2395,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "whiteLabel": {
+                      "type": "boolean"
+                    },
                     "teamMembershipCache": {
                       "type": "boolean"
                     },
@@ -2386,6 +2451,7 @@
                     }
                   },
                   "required": [
+                    "whiteLabel",
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
@@ -2407,6 +2473,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "whiteLabel": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "teamMembershipCache": {
                       "type": "object",
                       "properties": {
@@ -3249,6 +3371,7 @@
                     }
                   },
                   "required": [
+                    "whiteLabel",
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
@@ -4022,6 +4145,9 @@
               "minLength": 1,
               "maxLength": 32
             }
+          },
+          "whiteLabelEnabled": {
+            "type": "boolean"
           },
           "brandAppName": {
             "type": "string",
@@ -5425,6 +5551,9 @@
                   }
                 ]
               },
+              "whiteLabelEnabled": {
+                "type": "boolean"
+              },
               "branding": {
                 "type": "object",
                 "properties": {
@@ -5466,6 +5595,7 @@
               "name",
               "slug",
               "allowedEmailDomains",
+              "whiteLabelEnabled",
               "branding"
             ]
           }
@@ -8999,6 +9129,10 @@
       "AuthenticatedInstallConfig": {
         "type": "object",
         "properties": {
+          "whiteLabelEnabled": {
+            "default": false,
+            "type": "boolean"
+          },
           "appName": {
             "default": "OpenWork",
             "type": "string",
@@ -9021,6 +9155,7 @@
             "type": "boolean"
           },
           "logoUrl": {
+            "default": null,
             "anyOf": [
               {
                 "type": "string",
@@ -9060,7 +9195,6 @@
           "webUrl",
           "apiUrl",
           "requireSignin",
-          "logoUrl",
           "desktopVersion",
           "distribution"
         ]
@@ -9068,6 +9202,10 @@
       "InstallExperienceConfig": {
         "type": "object",
         "properties": {
+          "whiteLabelEnabled": {
+            "default": false,
+            "type": "boolean"
+          },
           "appName": {
             "default": "OpenWork",
             "type": "string",
@@ -9090,6 +9228,7 @@
             "type": "boolean"
           },
           "logoUrl": {
+            "default": null,
             "anyOf": [
               {
                 "type": "string",
@@ -9147,7 +9286,6 @@
           "webUrl",
           "apiUrl",
           "requireSignin",
-          "logoUrl",
           "connectUrl",
           "connectExpiresAt",
           "activationUrl",
@@ -9211,6 +9349,11 @@
             ]
           },
           "brand": {
+            "default": {
+              "appName": "OpenWork",
+              "logoUrl": null,
+              "iconUrl": null
+            },
             "type": "object",
             "properties": {
               "appName": {
@@ -9270,6 +9413,10 @@
               "baseUrl"
             ]
           },
+          "whiteLabelEnabled": {
+            "default": false,
+            "type": "boolean"
+          },
           "requireSignin": {
             "type": "boolean"
           }
@@ -9282,7 +9429,6 @@
           "jti",
           "v",
           "org",
-          "brand",
           "den",
           "requireSignin"
         ]
@@ -23902,12 +24048,16 @@
                     "type": "null"
                   }
                 ]
+              },
+              "whiteLabelEnabled": {
+                "type": "boolean"
               }
             },
             "required": [
               "id",
               "name",
-              "brandAppName"
+              "brandAppName",
+              "whiteLabelEnabled"
             ]
           },
           "memberId": {
@@ -25943,6 +26093,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "whiteLabel": {
+                          "type": "boolean"
+                        },
                         "teamMembershipCache": {
                           "type": "boolean"
                         },
@@ -25996,6 +26149,7 @@
                         }
                       },
                       "required": [
+                        "whiteLabel",
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
@@ -26017,6 +26171,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "whiteLabel": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "teamMembershipCache": {
                           "type": "object",
                           "properties": {
@@ -26859,6 +27069,7 @@
                         }
                       },
                       "required": [
+                        "whiteLabel",
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
@@ -26992,6 +27203,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "whiteLabel": {
+                          "type": "boolean"
+                        },
                         "teamMembershipCache": {
                           "type": "boolean"
                         },
@@ -27045,6 +27259,7 @@
                         }
                       },
                       "required": [
+                        "whiteLabel",
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
@@ -27066,6 +27281,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "whiteLabel": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "teamMembershipCache": {
                           "type": "object",
                           "properties": {
@@ -27908,6 +28179,7 @@
                         }
                       },
                       "required": [
+                        "whiteLabel",
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
@@ -29617,6 +29889,44 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "whiteLabelEnabled": {
+                      "type": "boolean"
+                    },
+                    "brand": {
+                      "type": "object",
+                      "properties": {
+                        "appName": {
+                          "type": "string"
+                        },
+                        "logoUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "iconUrl": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "appName",
+                        "logoUrl",
+                        "iconUrl"
+                      ]
+                    },
                     "ok": {
                       "type": "boolean",
                       "const": true
@@ -29771,6 +30081,8 @@
                     }
                   },
                   "required": [
+                    "whiteLabelEnabled",
+                    "brand",
                     "ok",
                     "organization",
                     "setup",

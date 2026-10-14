@@ -1,3 +1,4 @@
+import { organizationFeatureEnabled } from "../../features.js"
 import { createHash } from "node:crypto"
 import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
 import { permissionKeySchema } from "@openwork/types/den/permissions"
@@ -40,7 +41,7 @@ import {
 } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
-import type { OrgRouteVariables } from "./shared.js"
+import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission, type OrgRouteVariables } from "./shared.js"
 
 const createOrganizationSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -146,6 +147,7 @@ const invitationPreviewResponseSchema = z.object({
     name: z.string(),
     slug: z.string(),
     allowedEmailDomains: z.array(z.string()).nullable(),
+    whiteLabelEnabled: z.boolean(),
     branding: z.object({
       appName: z.string(),
       logoUrl: z.string().url().nullable(),
@@ -339,7 +341,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       .where(eq(OrganizationTable.id, organizationId))
       .limit(1)
 
-    return c.json({ organization: organization[0] ?? null }, 201)
+    const created = organization[0]
+    const whiteLabelEnabled = await organizationFeatureEnabled(organizationId, "whiteLabel")
+    return c.json({ organization: created ? { ...created, logo: whiteLabelEnabled ? created.logo : null, metadata: serializeMemberFacingOrganizationMetadata(created.metadata, whiteLabelEnabled) } : null }, 201)
     },
   )
 
@@ -521,6 +525,15 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }
       }
 
+      const changesBranding = input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandAccentColor !== undefined
+      if (changesBranding) {
+        if (!await organizationFeatureEnabled(payload.organization.id, "whiteLabel")) {
+          return c.json({ error: "feature_disabled", feature: "whiteLabel" }, 404)
+        }
+        const permission = await requirePermission(c, "branding.update")
+        if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
+      }
+
       const enablesBranding = (typeof input.brandAppName === "string") || (typeof input.brandLogoUrl === "string") || (typeof input.brandIconUrl === "string") || (typeof input.brandAccentColor === "string")
       if (enablesBranding) {
         const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
@@ -556,7 +569,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         return c.json({ error: "organization_not_found" }, 404)
       }
 
-      return c.json({ organization: updated })
+      const whiteLabelEnabled = await organizationFeatureEnabled(updated.id, "whiteLabel")
+      return c.json({ organization: { ...updated, logo: whiteLabelEnabled ? updated.logo : null, metadata: serializeMemberFacingOrganizationMetadata(updated.metadata, whiteLabelEnabled) } })
     },
   )
 
@@ -713,7 +727,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         },
         organization: {
           ...payload.organization,
-          metadata: serializeMemberFacingOrganizationMetadata(payload.organization.metadata),
+          metadata: serializeMemberFacingOrganizationMetadata(payload.organization.metadata, payload.features.whiteLabel),
+          logo: payload.features.whiteLabel ? payload.organization.logo : null,
           owner: owner
             ? {
               memberId: owner.id,

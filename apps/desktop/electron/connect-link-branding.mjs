@@ -5,6 +5,7 @@ import { desktopBootstrapFromConnectClaims } from "./connect-link.mjs";
  * @param {(iconUrl: string) => Promise<unknown>} applyBrandIconUrl
  */
 export async function applyDesktopBootstrapBrandIcon(config, applyBrandIconUrl) {
+  if (config.whiteLabelEnabled !== true) return null;
   const iconUrl = typeof config.brandIconUrl === "string" ? config.brandIconUrl.trim() : "";
   if (!iconUrl) return null;
   return applyBrandIconUrl(iconUrl);

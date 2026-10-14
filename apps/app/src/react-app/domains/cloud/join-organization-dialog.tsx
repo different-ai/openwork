@@ -150,7 +150,8 @@ export function JoinOrganizationDialog({
 
     const config = result.data;
     const host = hostFromUrl(config.webUrl);
-    setStatus({ phase: "connecting", clientName: config.clientName, host });
+    const clientName = config.whiteLabelEnabled === true ? config.clientName : "OpenWork";
+    setStatus({ phase: "connecting", clientName, host });
     await setDenBootstrapConfig({
       baseUrl: config.webUrl,
       requireSignin: config.requireSignin,
@@ -158,11 +159,14 @@ export function JoinOrganizationDialog({
       // either direction — dropping this re-gates an enterprise app an admin
       // unlocked, and clears a gate an admin turned on for a public artifact.
       requireActivation: readDenBootstrapConfig().requireActivation,
-      brandAppName: config.appName,
-      ...(config.logoUrl ? { brandLogoUrl: config.logoUrl } : {}),
-      ...(config.iconUrl ? { brandIconUrl: config.iconUrl } : {}),
+      whiteLabelEnabled: config.whiteLabelEnabled === true,
+      ...(config.whiteLabelEnabled === true ? {
+        brandAppName: config.appName,
+        ...(config.logoUrl ? { brandLogoUrl: config.logoUrl } : {}),
+        ...(config.iconUrl ? { brandIconUrl: config.iconUrl } : {}),
+      } : {}),
     });
-    setStatus({ phase: "success", clientName: config.clientName, host });
+    setStatus({ phase: "success", clientName, host });
     finishConnected();
     return true;
   }, [finishConnected]);

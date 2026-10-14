@@ -22,7 +22,7 @@ const metadataSchema = z.object({
 const tokenSchema = z.object({ access_token: z.string(), refresh_token: z.string().optional(), expires_in: z.number().optional() })
 export const denSessionSchema = z.object({
   user: z.object({ id: z.string(), name: z.string().nullable(), email: z.string() }),
-  organization: z.object({ id: z.string(), name: z.string(), brandAppName: z.string().nullable() }),
+  organization: z.object({ id: z.string(), name: z.string(), brandAppName: z.string().nullable().default(null), whiteLabelEnabled: z.boolean().default(false) }),
   memberId: z.string(),
   enabled: z.boolean(),
   canSchedule: z.boolean(),

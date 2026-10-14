@@ -60,6 +60,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
             rowHeight: row.height,
             clipped: box.x < view.x || box.y < view.y || box.x + box.width > view.x + view.width || box.y + box.height > view.y + view.height,
             labelClipped: label.scrollWidth > label.clientWidth,
+            labelScrollWidth: label.scrollWidth, labelClientWidth: label.clientWidth,
             contained: left >= slot.left && top >= slot.top && left + width <= slot.right && top + height <= slot.bottom,
             filter: getComputedStyle(image).filter, fit: getComputedStyle(image).objectFit,
             objectPosition: getComputedStyle(image).objectPosition,
@@ -102,7 +103,7 @@ test("sidebar brand painted bounds align with the action rail without changing c
   const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" fill="#25262b"/><text x="12" y="22" fill="white">Studio</text></svg>');
   await evalIn(app, browserScript(logo => {
     document.documentElement.style.fontSize = "16px";
-    const config = { brandAppName: "Studio", brandLogoUrl: logo };
+    const config = { whiteLabelEnabled: true, brandAppName: "Studio", brandLogoUrl: logo };
     window.__openworkApplyDesktopConfig(config);
     window.__openworkSetDesktopConfigRefreshResult(config);
   }, [logo]));

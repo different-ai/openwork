@@ -13,9 +13,7 @@ function AppBadge({ iconUrl, size = "size-14" }: { iconUrl: string | null; size?
     );
   }
   return (
-    <span className={`grid ${size} place-items-center rounded-[22%] bg-[#101828] shadow-[0_4px_12px_rgba(16,24,40,0.18)]`}>
-      <span className="size-1/3 rounded-md bg-white" />
-    </span>
+    <img src="/openwork-mark.svg" alt="" className={`${size} rounded-[22%] object-contain shadow-[0_4px_12px_rgba(16,24,40,0.18)]`} />
   );
 }
 

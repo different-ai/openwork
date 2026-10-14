@@ -21,6 +21,7 @@ import {
 import {
   createDenClient,
   DenApiError,
+  denOriginComparisonKey,
   ensureDenActiveOrganization,
   getDenDesktopConfigCacheKey,
   normalizeDenDesktopConfig,
@@ -48,7 +49,6 @@ import {
 import { useDenAuth } from "./den-auth-provider";
 import {
   bootstrapBrandingFromDesktopConfig,
-  bootstrapBrandingNeedsSync,
   brandIconReconcileAction,
 } from "./workspace-branding-restart";
 
@@ -81,6 +81,7 @@ const DESKTOP_CONFIG_REFRESH_MS = 60 * 60 * 1000;
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
   "allowedDesktopVersions",
+  "whiteLabelEnabled",
   "brandAppName",
   "brandLogoUrl",
   "brandIconUrl",
@@ -152,10 +153,6 @@ type DesktopConfigAction = {
   previousValue: DenDesktopConfig[DesktopConfigItem];
 };
 
-function isBootstrapBrandingActionItem(item: DesktopConfigItem): boolean {
-  return item === "brandAppName" || item === "brandLogoUrl" || item === "brandIconUrl";
-}
-
 function desktopConfigItemMatches(
   previousValue: DenDesktopConfig[DesktopConfigItem],
   nextValue: DenDesktopConfig[DesktopConfigItem],
@@ -208,20 +205,21 @@ type DesktopConfigProviderProps = {
 // Rewrites desktop-bootstrap.json branding to match `normalizedConfig` so a
 // cleared wordmark/icon cannot resurrect from the install/connect snapshot on
 // the next relaunch. No-op when the bootstrap already matches.
-function syncBootstrapBranding(normalizedConfig: DenDesktopConfig): void {
-  if (!isDesktopRuntime()) return;
+async function syncBootstrapBranding(normalizedConfig: DenDesktopConfig, isCurrent: () => boolean): Promise<void> {
+  if (!isDesktopRuntime() || !isCurrent()) return;
   const bootstrap = readDenBootstrapConfig();
-  if (!bootstrapBrandingNeedsSync(bootstrap, normalizedConfig)) return;
-  const branding = bootstrapBrandingFromDesktopConfig(normalizedConfig);
-  void setDenBootstrapConfig(
+  // Compare only inside the persistence queue: an earlier shell write may
+  // still be committing even when the renderer snapshot already looks OFF.
+  await setDenBootstrapConfig(
     {
       ...bootstrap,
-      brandAppName: branding.brandAppName,
-      brandLogoUrl: branding.brandLogoUrl,
-      brandIconUrl: branding.brandIconUrl,
+      whiteLabelEnabled: normalizedConfig.whiteLabelEnabled === true,
+      // A rollout rollback must not erase the stored source settings.
+      ...(normalizedConfig.whiteLabelEnabled === true
+        ? bootstrapBrandingFromDesktopConfig(normalizedConfig) : {}),
     },
-    { dispatchSettingsChanged: false },
-  ).catch(() => undefined);
+    { dispatchSettingsChanged: false, isCurrent },
+  );
 }
 
 // Level-based safety net behind the edge-triggered config diff: the shell
@@ -231,12 +229,17 @@ function syncBootstrapBranding(normalizedConfig: DenDesktopConfig): void {
 // shell to reset and the branded icon would persist forever. After every
 // fresh config fetch, compare the shell's applied state to the config and
 // re-assert the expected icon plus the bootstrap branding snapshot.
-async function reconcileShellBranding(latestConfig: DenDesktopConfig): Promise<void> {
-  if (!isDesktopRuntime()) return;
-  const normalizedConfig = normalizeDenDesktopConfig(latestConfig);
-  syncBootstrapBranding(normalizedConfig);
+export async function reconcileShellBranding(latestConfig: DenDesktopConfig, isCurrent: () => boolean): Promise<void> {
+  if (!isDesktopRuntime() || !isCurrent()) return;
+  const normalizedConfig = desktopCapabilityConfig(normalizeDenDesktopConfig(latestConfig));
+  await syncBootstrapBranding(normalizedConfig, isCurrent);
+  if (!isCurrent()) return;
+  const appName = normalizedConfig.whiteLabelEnabled === true ? normalizedConfig.brandAppName ?? null : null;
+  document.title = appName ?? "OpenWork";
+  await applyBrandAppName(appName);
+  if (!isCurrent()) return;
   const action = brandIconReconcileAction(normalizedConfig, await getBrandIconState());
-  if (!action) return;
+  if (!isCurrent() || !action) return;
   const result = await applyBrandIcon(action.apply);
   if (!result.ok) {
     console.warn(`[brand-icon] Desktop icon reconcile was not applied: ${result.reason ?? "unknown failure"}`);
@@ -349,14 +352,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       void applyBrandAppName(appName).catch(() => null);
     }
 
-    // Keep desktop-bootstrap.json aligned so a cleared wordmark/icon cannot
-    // resurrect from the install/connect snapshot on the next relaunch.
-    const shouldSyncBootstrapBranding = actions.some((action) =>
-      isBootstrapBrandingActionItem(action.item),
-    );
-    if (shouldSyncBootstrapBranding) {
-      syncBootstrapBranding(normalizedConfig);
-    }
+    // Only a fresh server response may update the durable bootstrap flag.
+    // Cache/default projections may reset appearance but never erase settings.
 
     currentDesktopConfigRef.current = normalizedConfig;
     setDesktopConfigState((current) => ({
@@ -367,19 +364,27 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   }, []);
 
   const desktopConfigHandler = useCallback(async (requireFresh = false): Promise<DenDesktopConfig> => {
+    const currentRun = ++refreshRunRef.current;
     if (import.meta.env.DEV && requireFresh && devRefreshDesktopConfigRef.current) {
       const nextConfig = desktopCapabilityConfig(devRefreshDesktopConfigRef.current);
       applyDesktopConfigActions(nextConfig);
       setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready", known: true }));
-      void reconcileShellBranding(nextConfig).catch(() => undefined);
-      return nextConfig;
+      await reconcileShellBranding(nextConfig, () => currentRun === refreshRunRef.current).catch(() => undefined);
+      return currentRun === refreshRunRef.current ? nextConfig : currentDesktopConfigRef.current;
     }
 
-    const currentRun = ++refreshRunRef.current;
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const activeOrgId = settings.activeOrgId?.trim() ?? "";
     const cacheKey = getDenDesktopConfigCacheKey();
+    const brandingIsCurrent = () => {
+      const current = readDenSettings();
+      return currentRun === refreshRunRef.current
+        && denOriginComparisonKey(current.baseUrl) === denOriginComparisonKey(settings.baseUrl)
+        && denOriginComparisonKey(current.apiBaseUrl) === denOriginComparisonKey(settings.apiBaseUrl)
+        && current.activeOrgId === settings.activeOrgId
+        && current.authToken === settings.authToken;
+    };
 
     if (!isSignedIn || !token || !activeOrgId) {
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
@@ -415,8 +420,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       rememberCachedConfigMember(cacheKey, userId);
       applyDesktopConfigActions(nextConfig);
       setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready", known: true }));
-      void reconcileShellBranding(nextConfig).catch(() => undefined);
-      return nextConfig;
+      await reconcileShellBranding(nextConfig, brandingIsCurrent).catch(() => undefined);
+      return brandingIsCurrent() ? nextConfig : currentDesktopConfigRef.current;
     } catch (error) {
       if (currentRun !== refreshRunRef.current) {
         if (requireFresh) throw error;
@@ -466,12 +471,19 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     [desktopConfigHandler],
   );
 
+  useEffect(() => () => {
+    // An old provider must not persist a late ON response after a replacement
+    // provider has already observed OFF for the same enrollment.
+    refreshRunRef.current += 1;
+  }, []);
+
   // Re-run whenever auth flips or Den settings change. Read the cache
   // synchronously so gated UI never flickers through "unrestricted" just
   // because we haven't finished the HTTP call yet.
   useEffect(() => {
     // settingsVersion is read to tie this effect to settings-change events.
     void settingsVersion;
+    refreshRunRef.current += 1;
 
     if (denAuth.status === "checking") {
       setDesktopConfigState((current) => ({
@@ -510,6 +522,9 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     if (typeof window === "undefined") return;
 
     const handleSettingsChanged = () => {
+      // Invalidate in the event, not a later React effect: a pending bootstrap
+      // discovery must never commit between enrollment change and rendering.
+      refreshRunRef.current += 1;
       bumpSettingsVersion();
     };
 

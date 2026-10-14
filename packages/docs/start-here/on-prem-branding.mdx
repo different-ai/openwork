@@ -7,6 +7,14 @@ Organization branding lets an owner customize the OpenWork experience for everyo
 
 No separate asset PVC, public object store, or public image CDN is required.
 
+## Availability
+
+White-label appearance is enabled by default on self-hosted deployments. New OpenWork Cloud organizations start with it off; Cloud organizations with existing branding keep it enabled when the feature flag is introduced.
+
+Platform administrators control `whiteLabel` in `/admin`. Self-hosted operators can set `config.features.whiteLabel` in Helm. The kill switch and explicit organization overrides still apply. Turning the flag off hides customization and uses stock OpenWork identity without deleting saved settings or uploaded assets.
+
+The existing Enterprise plan and organization permissions are still required to change branding.
+
 ## What branding changes
 
 | Setting | Where members see it |

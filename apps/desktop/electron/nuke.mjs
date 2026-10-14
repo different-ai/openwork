@@ -5,6 +5,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { dormantDesktopBrandSettings } from "./dormant-desktop-brand.mjs";
 import {
   desktopBootstrapPath as resolveDesktopBootstrapPath,
   globalOpencodeConfigDir,
@@ -478,16 +479,11 @@ export function sanitizeDesktopBootstrapConfig(input, writtenAt = new Date().toI
   const baseUrl = typeof input.baseUrl === "string" ? input.baseUrl.trim() : "";
   if (!baseUrl) return null;
   const apiBaseUrl = typeof input.apiBaseUrl === "string" ? input.apiBaseUrl.trim() : "";
-  const brandAppName = typeof input.brandAppName === "string" ? input.brandAppName.trim().slice(0, 64) : "";
-  const brandLogoUrl = typeof input.brandLogoUrl === "string" ? input.brandLogoUrl.trim() : "";
-  const brandIconUrl = typeof input.brandIconUrl === "string" ? input.brandIconUrl.trim() : "";
   return {
     baseUrl,
     ...(apiBaseUrl ? { apiBaseUrl } : {}),
     requireSignin: input.requireSignin === true,
-    ...(brandAppName ? { brandAppName } : {}),
-    ...(brandLogoUrl ? { brandLogoUrl } : {}),
-    ...(brandIconUrl ? { brandIconUrl } : {}),
+    ...dormantDesktopBrandSettings(input),
     writtenAt,
   };
 }
@@ -733,7 +729,7 @@ async function bestEffort(errors, label, task, timeoutMs) {
   }
 }
 
-async function quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, errors, options = {}) {
+async function quiesceForNuke({ runtimeManager, uiControlServer, cleanupLegacyNativeIdentity }, errors, options = {}) {
   await bestEffort(errors, "ui-control-server", () => uiControlServer.stop(), 3000);
   await bestEffort(errors, "runtime-dispose", () => runtimeManager.dispose(), 12_000);
   await bestEffort(errors, "packaged-sidecar-reaper", () => runtimeManager.prepareFreshRuntime(), 16_000);
@@ -744,7 +740,7 @@ async function quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBr
   if (!options.scopeToProfile) {
     await bestEffort(errors, "sandbox-docker-cleanup", () => runtimeManager.sandboxCleanupOpenworkContainers(), 24_000);
   }
-  await bestEffort(errors, "windows-brand-shortcut", removeWindowsBrandShortcut, 5000);
+  await bestEffort(errors, "legacy-native-identity", cleanupLegacyNativeIdentity, 5000);
 }
 
 /** @returns {"cleanup_worker" | "direct"} */
@@ -794,7 +790,7 @@ export async function runPendingNukeCleanup(input, options = {}) {
 }
 
 /** @returns {Promise<import("@openwork/types/desktop-ipc").NukeReceipt>} */
-export async function executeNukeFreshStart({ app, session, runtimeManager, uiControlServer, removeWindowsBrandShortcut }, options = {}) {
+export async function executeNukeFreshStart({ app, session, runtimeManager, uiControlServer, cleanupLegacyNativeIdentity }, options = {}) {
   const input = {
     ...(options.input ?? {
       env: process.env,
@@ -807,7 +803,7 @@ export async function executeNukeFreshStart({ app, session, runtimeManager, uiCo
   const plan = resolveNukePlan(input);
   const phaseErrors = [];
 
-  await quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBrandShortcut }, phaseErrors, {
+  await quiesceForNuke({ runtimeManager, uiControlServer, cleanupLegacyNativeIdentity }, phaseErrors, {
     scopeToProfile: plan.scopeToProfile,
   });
   await bestEffort(phaseErrors, "chromium-storage", () => clearChromiumStorage(session), 8000);

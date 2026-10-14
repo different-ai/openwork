@@ -3,12 +3,13 @@ import { z } from "zod"
 export const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json"
 
 export const installConfigSchema = z.object({
+  whiteLabelEnabled: z.boolean().default(false),
   appName: z.string().trim().min(1).max(64).default("OpenWork"),
   clientName: z.string().trim().min(1),
   webUrl: z.string().trim().url(),
   apiUrl: z.string().trim().url(),
   requireSignin: z.boolean(),
-  logoUrl: z.string().trim().url().nullable(),
+  logoUrl: z.string().trim().url().nullable().default(null),
   iconUrl: z.string().trim().url().nullable().default(null),
 }).meta({ ref: "InstallConfig" })
 
@@ -26,6 +27,7 @@ export const installExperienceConfigSchema = installConfigSchema.extend({
 export type InstallExperienceConfig = z.infer<typeof installExperienceConfigSchema>
 
 export const desktopBootstrapConfigSchema = z.object({
+  whiteLabelEnabled: z.boolean().default(false),
   baseUrl: z.string().trim().url(),
   apiBaseUrl: z.string().trim().url().optional(),
   requireSignin: z.boolean(),

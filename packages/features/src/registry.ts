@@ -17,8 +17,8 @@
  *
  * The entry only declares what is fixed in code. The on/off state, kill
  * switches and per-organization overrides live in the database of each
- * deployment, and start from `default`. Run `pnpm features:sync` after
- * editing this file.
+ * deployment, and start from `defaultByDeployment[deployment]` or `default`.
+ * Run `pnpm features:sync` after editing this file.
  *
  * Keys are permanent: the same name is the Helm values key, the
  * DEN_FEATURE_<KEY> environment variable, the API field, and the stored rows.
@@ -38,6 +38,8 @@ export type FeatureDefinition = {
   deployments: readonly FeatureDeployment[]
   /** On or off for everyone on a fresh deployment: false for new work, true once everyone has it. */
   default: boolean
+  /** Explicit deployment defaults for established features; admin state still wins. */
+  defaultByDeployment?: Partial<Record<FeatureDeployment, boolean>>
   /**
    * The switch is part of the product (e.g. platform admins turn Connect off for
    * one organization), not a temporary rollout. Rollouts are deleted once done;
@@ -53,6 +55,15 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  whiteLabel: {
+    label: "White-label appearance",
+    description: "Customize organization app names, logos, icons, and colors.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+    defaultByDeployment: { self_hosted: true },
+    permanent: true,
+  },
   teamMembershipCache: {
     label: "Team membership cache",
     description: "Reduce repeated team lookups while keeping access changes immediate. Enable only after every API instance runs revision-aware team writes.",

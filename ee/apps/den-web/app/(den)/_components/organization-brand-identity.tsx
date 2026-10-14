@@ -2,21 +2,19 @@
 
 import { useState } from "react";
 
-export type OrganizationBrand = {
-  appName: string;
-  logoUrl: string | null;
-  iconUrl: string | null;
-};
+import { parseOrganizationBrand, type OrganizationBrand } from "../_lib/organization-brand";
+export type { OrganizationBrand } from "../_lib/organization-brand";
 
 export function OrganizationBrandIdentity({
   organizationName,
-  brand,
+  brand: suppliedBrand,
   className = "",
 }: {
   organizationName: string;
   brand: OrganizationBrand;
   className?: string;
 }) {
+  const brand = parseOrganizationBrand(suppliedBrand, suppliedBrand.whiteLabelEnabled);
   const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
   const showLogo = Boolean(brand.logoUrl && brand.logoUrl !== failedLogoUrl);

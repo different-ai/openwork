@@ -20,14 +20,13 @@ import {
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
-  setDenBootstrapConfig,
   writeDenSettings,
   type DenDesktopConfig,
   type DenOrgLlmProvider,
   type DenOrgMarketplace,
   type DenOrgSummary,
 } from "@/app/lib/den";
-import { applyBrandAppName, applyBrandIcon, relaunchDesktopApp } from "@/app/lib/desktop";
+import { getBrandIconState, relaunchDesktopApp } from "@/app/lib/desktop";
 import {
   isAlphaChannelAllowedByDesktopConfig,
   isAlphaUpdateAllowed,
@@ -470,6 +469,7 @@ export function OrgOnboardingPage() {
     if (!authToken || !orgId) return;
     if (window.localStorage.getItem(BRANDING_RESTART_RESUME_KEY) !== orgId) return;
     window.localStorage.removeItem(BRANDING_RESTART_RESUME_KEY);
+    if (readDenBootstrapConfig().whiteLabelEnabled !== true) return;
     navigate("/session", { replace: true });
   }, [authToken, navigate, orgId]);
 
@@ -614,7 +614,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
   const platform = usePlatform();
   const { markRouteReady } = useBootState();
   const { authToken, denClient, orgId, orgName, settings } = useDenClient();
-  const { refreshFresh } = useDesktopConfig();
+  const { config: currentDesktopConfig, refreshFresh } = useDesktopConfig();
 
   const prepared = usePreparedBootstrap();
 
@@ -707,20 +707,13 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
         return;
       }
 
-      const bootstrap = readDenBootstrapConfig();
-      await setDenBootstrapConfig({
-        ...bootstrap,
-        brandAppName: desktopConfig.brandAppName ?? null,
-        brandLogoUrl: desktopConfig.brandLogoUrl ?? null,
-        brandIconUrl: desktopConfig.brandIconUrl ?? null,
-      });
-      const [, iconResult] = await Promise.all([
-        applyBrandAppName(desktopConfig.brandAppName ?? null),
-        applyBrandIcon(desktopConfig.brandIconUrl ?? null),
-      ]);
+      // refreshFresh waits for the provider's revision-scoped reconciliation.
+      // Do not persist or reapply this captured response here: a newer OFF or
+      // enrollment switch may have superseded it while onboarding was waiting.
+      const iconState = await getBrandIconState();
 
       let updateReady = false;
-      let warning = desktopConfig.brandIconUrl && !iconResult.ok
+      let warning = desktopConfig.brandIconUrl && !iconState?.applied
         ? "The workspace app icon could not be prepared."
         : null;
       try {
@@ -729,12 +722,10 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
         warning ??= error instanceof Error ? error.message : "The application update could not be prepared.";
       }
       setBrandingRestart({ fingerprint, updateReady, warning });
-    } catch (error) {
-      setBrandingRestart({
-        fingerprint: workspaceBrandingFingerprint(orgId, {}),
-        updateReady: false,
-        warning: error instanceof Error ? error.message : "Workspace branding could not be prepared.",
-      });
+    } catch {
+      // A failed/missing feature projection must not create a branding restart
+      // path or block ordinary onboarding and updates.
+      finishOnboarding({ requestReload: optionsArg?.requestReload });
     } finally {
       setPreparingBranding(false);
     }
@@ -750,6 +741,12 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
 
   const restartWithBranding = useCallback(async () => {
     if (!brandingRestart) return;
+    const latestConfig = await refreshFresh();
+    if (latestConfig.whiteLabelEnabled !== true) {
+      setBrandingRestart(null);
+      finishOnboarding();
+      return;
+    }
     window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
     window.localStorage.setItem(BRANDING_RESTART_RESUME_KEY, orgId);
     if (brandingRestart.updateReady) {
@@ -757,7 +754,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
       if (result?.ok) return;
     }
     await relaunchDesktopApp();
-  }, [brandingRestart, orgId]);
+  }, [brandingRestart, finishOnboarding, orgId, refreshFresh]);
 
   const continueWithoutRestart = useCallback(() => {
     if (brandingRestart) {
@@ -796,7 +793,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     );
   }
 
-  if (brandingRestart) {
+  if (brandingRestart && currentDesktopConfig.whiteLabelEnabled === true) {
     return (
       <Page>
         <PageBackground />

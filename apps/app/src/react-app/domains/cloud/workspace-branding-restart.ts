@@ -15,7 +15,7 @@ const BOOTSTRAP_BRANDING_KEYS = [
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
 
 export function hasWorkspaceBranding(config: DenDesktopConfig): boolean {
-  return BRANDING_KEYS.some((key) => {
+  return config.whiteLabelEnabled === true && BRANDING_KEYS.some((key) => {
     const value = config[key];
     return typeof value === "string" && value.trim().length > 0;
   });
@@ -44,18 +44,22 @@ export function bootstrapBrandingFromDesktopConfig(
   config: DenDesktopConfig,
 ): BootstrapBrandingFields {
   return {
-    brandAppName: typeof config.brandAppName === "string" ? config.brandAppName : null,
+    // Reserve the all-null destructive clear for an organization switch.
+    brandAppName: typeof config.brandAppName === "string" ? config.brandAppName : "OpenWork",
     brandLogoUrl: typeof config.brandLogoUrl === "string" ? config.brandLogoUrl : null,
     brandIconUrl: typeof config.brandIconUrl === "string" ? config.brandIconUrl : null,
   };
 }
 
 export function bootstrapBrandingNeedsSync(
-  bootstrap: Pick<DenBootstrapConfig, "brandAppName" | "brandLogoUrl" | "brandIconUrl">,
+  bootstrap: Pick<DenBootstrapConfig, "whiteLabelEnabled" | "brandAppName" | "brandLogoUrl" | "brandIconUrl">,
   config: DenDesktopConfig,
 ): boolean {
+  // Disabled rollout changes appearance, never the stored rollback identity.
+  if (config.whiteLabelEnabled !== true) return bootstrap.whiteLabelEnabled !== false;
   const next = bootstrapBrandingFromDesktopConfig(config);
-  return BOOTSTRAP_BRANDING_KEYS.some((key) => (bootstrap[key] ?? null) !== next[key]);
+  return bootstrap.whiteLabelEnabled !== true
+    || BOOTSTRAP_BRANDING_KEYS.some((key) => (bootstrap[key] ?? null) !== next[key]);
 }
 
 /**
@@ -67,16 +71,18 @@ export function bootstrapBrandingNeedsSync(
  *
  * Returns the URL to apply (`{ apply: string | null }`, where null means
  * "reset to the stock icon"), or null when the shell already matches. A
- * mismatch between two applied URLs is left to the edge diff, which owns
- * config-change transitions.
+ * mismatch between two applied URLs is retried too: an edge can run before
+ * the freshly enabled bootstrap flag has reached the native process.
  */
 export function brandIconReconcileAction(
-  config: Pick<DenDesktopConfig, "brandIconUrl">,
-  state: Pick<BrandIconState, "applied"> | null,
+  config: Pick<DenDesktopConfig, "whiteLabelEnabled" | "brandIconUrl">,
+  state: Pick<BrandIconState, "applied"> & Partial<Pick<BrandIconState, "sourceUrl">> | null,
 ): { apply: string | null } | null {
   if (!state) return null;
-  const configuredIconUrl = typeof config.brandIconUrl === "string" ? config.brandIconUrl : null;
-  if (configuredIconUrl !== null && !state.applied) return { apply: configuredIconUrl };
+  const configuredIconUrl = config.whiteLabelEnabled === true && typeof config.brandIconUrl === "string"
+    ? config.brandIconUrl : null;
+  if (configuredIconUrl !== null && (!state.applied
+    || (state.sourceUrl !== undefined && state.sourceUrl !== configuredIconUrl))) return { apply: configuredIconUrl };
   if (configuredIconUrl === null && state.applied) return { apply: null };
   return null;
 }

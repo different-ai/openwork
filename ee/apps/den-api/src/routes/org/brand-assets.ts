@@ -15,6 +15,7 @@ import {
 import { attributeAuditRequest } from "../../audit/request-capture.js"
 import { databaseBrandAssetStorage } from "../../brand-asset-storage.js"
 import { checkEntitlement } from "../../entitlements.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { env } from "../../env.js"
 import { binaryResponse, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationSettings } from "../../orgs.js"
@@ -138,6 +139,7 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
         version: c.req.param("version"),
       })
       if (!key) return c.json({ error: "not_found" }, 404)
+      if (!await organizationFeatureEnabled(key.organizationId, "whiteLabel")) return c.json({ error: "not_found" }, 404)
       const signature = c.req.query("signature") ?? ""
       if (!verifyBrandAssetSignature(key, signature, signingSecret)) {
         return c.json({ error: "not_found" }, 404)
@@ -176,6 +178,7 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       },
     }),
     orgPermissionRoute("branding.update"),
+    requireFeature("whiteLabel"),
     bodyLimit({
       maxSize: BRAND_ASSET_REQUEST_MAX_BYTES,
       onError: (c) => c.json({

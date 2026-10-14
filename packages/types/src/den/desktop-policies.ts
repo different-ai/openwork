@@ -36,8 +36,15 @@ export function desktopPolicyKeyEnforced(key: string): boolean {
 
 /** Runtime-only projection; never persist this over the control-plane config. */
 export function desktopCapabilityConfig(config: DesktopConfig): DesktopConfig {
-  if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) return config;
-  const { execution: _execution, ...effective } = config;
+  const effective = { ...config };
+  if (effective.whiteLabelEnabled !== true) {
+    delete effective.brandAppName;
+    delete effective.brandLogoUrl;
+    delete effective.brandIconUrl;
+    delete effective.brandAccentColor;
+  }
+  if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) return effective;
+  delete effective.execution;
   for (const key of desktopPolicyKeys) {
     if (key !== "showWelcomePage" && !desktopPolicyKeyEnforced(key)) delete effective[key];
   }
@@ -415,6 +422,8 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     allowedDesktopVersions: z
       .array(z.string().trim().min(1).max(32))
       .optional(),
+    // Backend projection of the central whiteLabel feature decision. Missing is off.
+    whiteLabelEnabled: z.boolean().optional(),
     brandAppName: z.string().trim().min(1).max(64).optional(),
     brandLogoUrl: z.string().url().max(2048).optional(),
     brandIconUrl: z.string().url().max(2048).optional(),
@@ -827,6 +836,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...policy,
     ...(execution !== undefined ? { execution } : {}),
     ...(allowedDesktopVersions !== undefined ? { allowedDesktopVersions } : {}),
+    ...(typeof raw?.whiteLabelEnabled === "boolean" ? { whiteLabelEnabled: raw.whiteLabelEnabled } : {}),
     ...(brandAppName !== undefined ? { brandAppName } : {}),
     ...(brandLogoUrl !== undefined ? { brandLogoUrl } : {}),
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),

@@ -1,6 +1,6 @@
 "use client";
 
-import { Laptop, Palette, Store } from "lucide-react";
+import { Laptop, Lock, Palette, Store } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
@@ -8,6 +8,7 @@ import {
   getBrandAppearanceRoute,
   getDesktopPoliciesRoute,
   getMarketplacesRoute,
+  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -27,7 +28,11 @@ const ADVANCED_DESCRIPTIONS: Record<AdvancedTab, string> = {
 
 export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; children: React.ReactNode }) {
   const router = useRouter();
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const whiteLabelEnabled = orgFeatureEnabled(orgContext, "whiteLabel");
+  const tabs = ADVANCED_TABS.map((item) => item.value === "brand-appearance" && !whiteLabelEnabled
+    ? { ...item, icon: Lock, label: "Brand appearance (locked)" }
+    : item);
 
   function routeFor(next: AdvancedTab) {
     const routes: Record<AdvancedTab, string> = {
@@ -45,7 +50,7 @@ export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; chil
     >
       <div data-testid="advanced-tabs" className="mb-6">
         <UnderlineTabs
-          tabs={ADVANCED_TABS}
+          tabs={tabs}
           activeTab={tab}
           onChange={(next) => router.push(routeFor(next))}
         />

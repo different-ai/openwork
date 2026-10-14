@@ -50,7 +50,8 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const initial = readDenSettings();
   const bootstrap = readDenBootstrapConfig();
-  const appName = bootstrap.brandAppName?.trim() || "OpenWork";
+  const appName = bootstrap.whiteLabelEnabled === true
+    ? bootstrap.brandAppName?.trim() || "OpenWork" : "OpenWork";
   const initialBaseUrl =
     bootstrap.enterpriseActivation?.denBaseUrl ||
     initial.baseUrl ||
@@ -275,8 +276,9 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   return (
     <DenSignInSurface
       variant="fullscreen"
+      whiteLabelEnabled={bootstrap.whiteLabelEnabled === true}
       appName={appName}
-      logoUrl={bootstrap.brandLogoUrl ?? null}
+      logoUrl={bootstrap.whiteLabelEnabled === true ? bootstrap.brandLogoUrl ?? null : null}
       developerMode={developerMode}
       baseUrl={baseUrl}
       baseUrlDraft={baseUrlDraft}

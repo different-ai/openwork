@@ -92,9 +92,6 @@ function bootstrapRestorePayload(previous: DenBootstrapConfig) {
     ...(typeof previous.requireActivation === "boolean"
       ? { requireActivation: previous.requireActivation }
       : {}),
-    ...(previous.brandAppName ? { brandAppName: previous.brandAppName } : {}),
-    ...(previous.brandLogoUrl ? { brandLogoUrl: previous.brandLogoUrl } : {}),
-    ...(previous.brandIconUrl ? { brandIconUrl: previous.brandIconUrl } : {}),
     ...(previous.claimLinks ? { claimLinks: previous.claimLinks } : {}),
     ...(previous.handoff ? { handoff: previous.handoff } : {}),
     ...(previous.prepared ? { prepared: previous.prepared } : {}),
@@ -212,9 +209,16 @@ export async function exchangeHandoffAndSignIn(
     const previousBootstrap = readDenBootstrapConfig();
     const bootstrapChangesOrigin =
       denOriginComparisonKey(previousBootstrap.baseUrl) !== destinationKey;
-    const needsBootstrapCommit = bootstrapChangesOrigin || options.bootstrap !== undefined;
+    const previousOrganizationId = storedSettings.activeOrgId
+      ?? previousBootstrap.prepared?.orgId
+      ?? previousBootstrap.handoff?.orgId;
+    const changesOrganization = plan.kind !== "await-user-selection"
+      && plan.organization !== null
+      && Boolean(previousOrganizationId)
+      && plan.organization.id !== previousOrganizationId;
+    const needsBootstrapCommit = bootstrapChangesOrigin || changesOrganization || options.bootstrap !== undefined;
     if (needsBootstrapCommit) {
-      // Branding, claim links, and prepared-workspace state belong to the
+      // Claim links and prepared-workspace state belong to the
       // origin that wrote them; they carry through same-origin commits only.
       const carryOriginScopedFields = !bootstrapChangesOrigin;
       const clearHandoff = options.bootstrap?.clearHandoff === true || bootstrapChangesOrigin;
@@ -225,15 +229,6 @@ export async function exchangeHandoffAndSignIn(
           requireSignin: options.bootstrap?.requireSignin ?? previousBootstrap.requireSignin,
           ...(typeof previousBootstrap.requireActivation === "boolean"
             ? { requireActivation: previousBootstrap.requireActivation }
-            : {}),
-          ...(carryOriginScopedFields && previousBootstrap.brandAppName
-            ? { brandAppName: previousBootstrap.brandAppName }
-            : {}),
-          ...(carryOriginScopedFields && previousBootstrap.brandLogoUrl
-            ? { brandLogoUrl: previousBootstrap.brandLogoUrl }
-            : {}),
-          ...(carryOriginScopedFields && previousBootstrap.brandIconUrl
-            ? { brandIconUrl: previousBootstrap.brandIconUrl }
             : {}),
           ...(carryOriginScopedFields && previousBootstrap.claimLinks
             ? { claimLinks: previousBootstrap.claimLinks }
@@ -251,6 +246,9 @@ export async function exchangeHandoffAndSignIn(
             : carryOriginScopedFields && previousBootstrap.enterpriseActivation
               ? previousBootstrap.enterpriseActivation
               : null,
+        }, {
+          clearDormantBranding: changesOrganization,
+          ...(changesOrganization && plan.organization ? { organizationId: plan.organization.id } : {}),
         });
       } catch (error) {
         // Nothing was activated: the previous enrollment (origin, token, and
@@ -263,7 +261,7 @@ export async function exchangeHandoffAndSignIn(
       // promoting the credential. A divergent read-back means the durable
       // state is not what this transaction validated.
       if (denOriginComparisonKey(readDenBootstrapConfig().baseUrl) !== destinationKey) {
-        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap)).catch(() => undefined);
+        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap), { restoreSnapshot: previousBootstrap }).catch(() => undefined);
         return fail(fallback, { grantConsumed: true });
       }
     }
@@ -322,7 +320,7 @@ export async function exchangeHandoffAndSignIn(
       }
     } catch (error) {
       if (needsBootstrapCommit) {
-        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap)).catch(() => undefined);
+        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap), { restoreSnapshot: previousBootstrap }).catch(() => undefined);
       }
       const message = error instanceof Error ? error.message : fallback;
       return fail(message, { grantConsumed: true });

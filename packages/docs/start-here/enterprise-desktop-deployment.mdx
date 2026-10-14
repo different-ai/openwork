@@ -38,7 +38,6 @@ If you manage the fleet with MDM (Jamf, Intune, or similar), distribute the ente
   "baseUrl": "https://openwork.example.com",
   "apiBaseUrl": "https://openwork.example.com/api/den",
   "requireSignin": true,
-  "brandAppName": "Example Corp OpenWork",
   "writtenAt": "2026-08-20T12:00:00.000Z"
 }
 ```
@@ -49,7 +48,8 @@ If you manage the fleet with MDM (Jamf, Intune, or similar), distribute the ente
 | `apiBaseUrl` | No | Separate Den API base, only if you publish one. In a single-origin topology, omit it or use the `/api/den` proxy path. |
 | `requireSignin` | Yes | Whether the app requires organization sign-in before use. Enterprise builds enforce sign-in regardless of this value. |
 | `requireActivation` | No | Ignored by enterprise builds, which always require activation. Lets a public build opt into the activation gate. |
-| `brandAppName`, `brandLogoUrl`, `brandIconUrl` | No | Organization branding shown in the app. |
+| `whiteLabelEnabled` | No | Cached effective appearance flag, normally written by a verified Den handoff or desktop configuration refresh. Missing means stock appearance until Den confirms availability. |
+| `brandAppName`, `brandLogoUrl`, `brandIconUrl` | No | Saved organization appearance. Applied only while the effective white-label flag is on. |
 | `writtenAt` | Yes | ISO 8601 timestamp. When more than one bootstrap file exists, the valid configuration with the newest `writtenAt` wins. |
 
 Deployment details worth knowing:
