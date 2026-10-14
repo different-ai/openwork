@@ -47,13 +47,15 @@ export async function takeCheckpoint(surface: Surface, capability: CheckpointCap
     const started = await capability.capture({ imageHash: before.hash, capturedAt: before.at });
     const checkpoint = parseEvidenceCheckpoint(started.checkpoint);
     if (checkpoint.imageHash !== before.hash) throw new Error("the checkpoint does not match its image");
-    started.saved.catch((error: unknown) => {
+    if (!started.deferred) started.saved.catch((error: unknown) => {
       console.warn(`[openwork/test-evidence] Checkpoint ${checkpoint.id} failed to save (${error instanceof Error ? error.message : "unknown error"}); its image is kept.`);
     });
     await pause(options.holdMs ?? CHECKPOINT_HOLD_MS);
     const after = await captureFrame(surface);
     const still = after.route === before.route && after.visibleText === before.visibleText;
-    artifact = { ...before, checkpoint, checkpointMatch: still ? "exact" : "approximate" };
+    artifact = started.deferred
+      ? { ...before, checkpointError: `Preview saving pending: ${checkpoint.id}; match=${still ? "exact" : "approximate"}` }
+      : { ...before, checkpoint, checkpointMatch: still ? "exact" : "approximate" };
   } catch (error) {
     console.warn(`[openwork/test-evidence] Checkpoint skipped: ${error instanceof Error ? error.message : "unknown error"}. The screenshot is kept and the test continues.`);
     artifact = { ...before, checkpointError: "Checkpoint unavailable; screenshot retained." };

@@ -75,6 +75,8 @@ jobs:
       OPENWORK_EVIDENCE_PROVIDER: ${{ vars.OPENWORK_EVIDENCE_PROVIDER || 'freestyle' }}
       # Disposable Core PR worlds skip template saves; dev warm-up is unchanged.
       OPENWORK_DAYTONA_EPHEMERAL_WORLD: '1'
+      # Provider-labelled ownership survives producer exit and missing artifacts.
+      OPENWORK_DAYTONA_PREVIEW_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}-core
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.coreMatrix) }}
@@ -101,6 +103,10 @@ jobs:
         run: |
           pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
           pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
+      - name: Verify durable Core preview lifecycle
+        run: |
+          pnpm --filter @openwork/daytona-evidence test
+          node --test .github/scripts/core-preview-handoff.test.mjs
       - name: Prepare this commit's evidence world
         timeout-minutes: 35
         env:
@@ -109,7 +115,7 @@ jobs:
           OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
           OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/prepare-evidence-web.ts
-      - name: Run the core journey and save its end state as the preview
+      - name: Run Core assertions and capture the final preview fork
         timeout-minutes: 15
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
@@ -129,6 +135,71 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: error
+
+  # Optional preview persistence is not the mandatory Core verdict. The whole
+  # workflow (and Evidence review's completion trigger) still waits for this job.
+  core-preview:
+    name: Optional Core preview finalization
+    needs: [select, core]
+    if: >-
+      always() && needs.core.result != 'skipped' &&
+      vars.OPENWORK_EVIDENCE_PROVIDER == 'daytona' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.fork == false
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    environment:
+      name: >-
+        ${{ github.event.repository.owner.type == 'Organization' &&
+            github.event.pull_request.user.type == 'User' &&
+            contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association) &&
+            needs.select.outputs.internalContributor == 'true' &&
+            'pr-internal-specs' || 'pr-slow-specs' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.coreMatrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Install finalizer tools
+        run: |
+          pnpm --filter @openwork/daytona-evidence... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --dir evals --filter @openwork/test-artifacts... --filter @openwork/env... install --frozen-lockfile --ignore-scripts --prefer-offline
+      - name: Restore immutable Core verdict and screenshots
+        id: records
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: evals/results
+      - name: Save the captured preview and release fork before source
+        id: finalize
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENWORK_DAYTONA_PREVIEW_OWNER: ${{ github.run_id }}-${{ github.run_attempt }}-core
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          OPENWORK_PREVIEW_CLEANUP_ONLY: ${{ steps.records.outcome != 'success' && '1' || '0' }}
+        run: node evals/scripts/finalize-core-preview.ts
+      - name: Replace records with verified preview annotations only
+        if: always() && steps.records.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-proof-${{ github.run_attempt }}-${{ matrix.key }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
 
   proof:
     needs: select

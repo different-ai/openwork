@@ -5,7 +5,7 @@ import type { EvidenceCheckpoint } from "@openwork/evidence-provider/checkpoint"
  * Starts a snapshot of the world behind a surface. Resolves once the provider has
  * begun it; `saved` settles when the snapshot is fully stored.
  */
-export type CheckpointCapture = (input: { imageHash: string; capturedAt: string }) => Promise<{ checkpoint: EvidenceCheckpoint; saved: Promise<void> }>;
+export type CheckpointCapture = (input: { imageHash: string; capturedAt: string }) => Promise<{ checkpoint: EvidenceCheckpoint; saved: Promise<void>; deferred?: false } | { checkpoint: EvidenceCheckpoint; deferred: true }>;
 
 export interface CheckpointCapability {
   /** The surface whose world is snapshotted. Other surfaces cannot be checkpointed. */
@@ -13,6 +13,8 @@ export interface CheckpointCapability {
   capture: CheckpointCapture;
   /** False once the world is gone, e.g. after a spec deletes its VM. */
   available(): boolean;
+  /** Core keeps its opening screenshot, but only its final state is reopenable. */
+  finalOnly?: boolean;
 }
 
 /**

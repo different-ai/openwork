@@ -9,6 +9,7 @@
     "./builder": "./src/builder.ts",
     "./cleanup": "./src/cleanup.ts",
     "./checkpoints": "./src/checkpoints.ts",
+    "./handoff": "./src/handoff.ts",
     "./credentials": "./src/credentials.ts",
     "./review-provider": "./src/review-provider.ts"
   },

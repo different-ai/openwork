@@ -1,0 +1,43 @@
+name: Core preview recovery
+
+on:
+  workflow_run:
+    workflows: [PR change proof]
+    types: [completed]
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: core-preview-recovery
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Recover abandoned Core preview resources
+    if: vars.OPENWORK_EVIDENCE_PROVIDER == 'daytona'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Install trusted cleanup tools
+        run: pnpm --filter @openwork/daytona-evidence... install --frozen-lockfile --ignore-scripts --prefer-offline
+      - name: Release only completed producers' labelled resources
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          RECOVERY_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: node scripts/recover-core-previews.ts

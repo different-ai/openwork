@@ -50,6 +50,17 @@ for (const state of ["missing", "snapshotting", "error"]) {
   });
 }
 
+test("Core ownership is present in the creation request even if its response is lost", async () => {
+  const api = fakeApi({ getSnapshot: async () => null, createSandbox: async input => {
+    assert.equal(input.labels.previewOwner, "123-1-core");
+    assert.equal(input.labels.previewSource, input.name);
+    assert.equal(input.labels.sourceSha, sha);
+    throw new Error("creation response lost");
+  } });
+  await assert.rejects(prepareWorldLayer(api, layer([]), sha, "123-1-core"), /creation response lost/);
+  await assert.rejects(launchDaytonaEvidenceWorld({ name: "cached", runtimeFingerprint: fingerprint }, sha, api, "123-1-core"), /creation response lost/);
+});
+
 test("failed preparation deletes only its owned VM before surfacing the error", async () => {
   const events: string[] = [];
   const api = fakeApi({ getSnapshot: async () => null, createSandbox: async () => sandbox,
@@ -82,6 +93,19 @@ test("a prepared source marker mismatch deletes the owned world", async () => {
     deleteSandbox: async (id) => { deleted.push(id); } });
   await assert.rejects(launchDaytonaEvidenceWorld({ sandbox, runtimeFingerprint: fingerprint }, sha, api), /Prepared world source mismatch/);
   assert.deepEqual(deleted, [sandbox.id]);
+});
+
+test("Core launch diagnostics emit only fixed status fields, never provider output or credentials", async () => {
+  const messages: string[] = [];
+  const warn = console.warn;
+  console.warn = message => { messages.push(String(message)); };
+  const api = fakeApi({ waitForSandbox: async () => sandbox, readFile: async () => "wrong-sha",
+    exec: async () => ({ exitCode: 0, output: JSON.stringify({ browser: 200, gateway: 502, token: "must-not-be-logged" }) }),
+    deleteSandbox: async () => {} });
+  try {
+    await assert.rejects(launchDaytonaEvidenceWorld({ sandbox, runtimeFingerprint: fingerprint }, sha, api, "123-1-core"), /Prepared world source mismatch/);
+    assert.deepEqual(messages, [JSON.stringify({ stage: "core-browser-health", browser: 200, gateway: 502 })]);
+  } finally { console.warn = warn; }
 });
 
 test("a prepared world uses the normal private access handshake without allocating a second VM", async () => {

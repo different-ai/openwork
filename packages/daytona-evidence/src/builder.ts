@@ -56,6 +56,8 @@ export interface DaytonaBuildOptions {
   diagnostic?: (stage: string, log: string) => Promise<void>;
   /** The dev commit whose warm image to start from; defaults to the dev head. */
   imageSha?: string;
+  /** CI-only ownership of disposable worlds, including interrupted creation/build. */
+  previewOwner?: string;
 }
 
 export interface DaytonaEvidenceTemplate { name: string; runtimeFingerprint: string }
@@ -310,11 +312,11 @@ export type DaytonaEvidenceLaunch = DaytonaEvidenceTemplate | { sandbox: Sandbox
  * builder or save a disposable template. Base/image builds retain their locks.
  */
 export async function prepareEvidenceWorld(sha: string, api = new DaytonaApi(), options: DaytonaBuildOptions = {}): Promise<DaytonaEvidenceLaunch> {
-  const built = await buildEvidenceWorld(sha, api, options, (input) => prepareWorldLayer(api, input, sha));
+  const built = await buildEvidenceWorld(sha, api, options, (input) => prepareWorldLayer(api, input, sha, options.previewOwner));
   return { ...built.result, runtimeFingerprint: built.runtimeFingerprint };
 }
 
-export async function prepareWorldLayer(api: DaytonaApi, input: LayerInput, sourceSha: string): Promise<{ name: string } | { sandbox: Sandbox }> {
+export async function prepareWorldLayer(api: DaytonaApi, input: LayerInput, sourceSha: string, previewOwner?: string): Promise<{ name: string } | { sandbox: Sandbox }> {
   const start = performance.now();
   const existing = await api.getSnapshot(input.name);
   if (existing?.state === "active") {
@@ -324,8 +326,9 @@ export async function prepareWorldLayer(api: DaytonaApi, input: LayerInput, sour
   // A concurrent warm-up owns its builder and snapshot. Do not wait on, adopt,
   // delete, or change either: this run gets an independent VM from its parent.
   const parent = await input.parent();
-  const created = await api.createSandbox({ name: `ow-dy-evidence-${randomUUID().replaceAll("-", "")}`, snapshot: parent,
-    labels: { kind: EVIDENCE_KIND, sourceSha }, autoStopMinutes: 30, autoDeleteMinutes: 0 });
+  const name = `ow-dy-evidence-${randomUUID().replaceAll("-", "")}`;
+  const created = await api.createSandbox({ name, snapshot: parent,
+    labels: { kind: EVIDENCE_KIND, sourceSha, ...(previewOwner ? { previewOwner, previewSource: name } : {}) }, autoStopMinutes: 30, autoDeleteMinutes: 0 });
   try {
     const sandbox = await api.waitForSandbox(created.id, ["started"]);
     const prepareStart = performance.now();

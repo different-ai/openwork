@@ -6,6 +6,8 @@ import { expect, test } from "vitest";
 import type { Surface } from "@openwork/cdp";
 import { CHECKPOINT_HOLD_MS, createTestEvidence, screenshot, takeCheckpoint, withTestEvidence, type CheckpointCapability } from "@openwork/test-evidence";
 import { assembleReview } from "@openwork/test-artifacts/review";
+import { readTestRunFile } from "@openwork/test-artifacts";
+import { annotateCorePreview } from "../scripts/core-preview-record.ts";
 
 function surface(screen: { text: string }): Surface {
   return { handle: { kind: "chrome", hostKind: "synthetic", name: "unit", cdpUrl: "http://127.0.0.1:1" }, client: {
@@ -81,5 +83,36 @@ test("a capture failure keeps the image, never fails the proof, and records no p
     const { report } = await assembleReview({ testRunDirs: [directory] });
     expect(report.evidence.some((entry) => entry.kind === "image" && entry.checkpointError)).toBe(true);
     expect(report.evidence.some((entry) => entry.judgments.some((judgment) => judgment.state === "failed"))).toBe(false);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("durable preview annotations require verified readiness and cannot soften a failed assertion", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-handoff-test-"));
+  const app = surface({ text: "Final chat reply" });
+  const normal = capability(app);
+  let captured: Awaited<ReturnType<typeof normal.capture>> | undefined;
+  const deferred: CheckpointCapability = { surface: app, available: () => true, async capture(input) {
+    captured = await normal.capture(input);
+    return { checkpoint: captured.checkpoint, deferred: true };
+  } };
+  try {
+    const record = createTestEvidence({ name: "Deferred Core preview", outDir: directory });
+    await withTestEvidence(record, () => takeCheckpoint(app, deferred, { caption: "End state", pause: async () => undefined }));
+    record.setOutcome("failed", "mandatory assertion failed"); await record.close();
+    const stored = await readTestRunFile(join(directory, "test-run.json"));
+    expect(stored).not.toBeNull();
+    if (!stored || !captured) throw new Error("Expected finalized evidence record");
+    expect(stored.artifacts[0]?.checkpoint).toBeUndefined();
+    expect(stored.artifacts[0]?.checkpointError).toContain("Preview saving pending");
+    const snapshot = structuredClone(stored);
+    annotateCorePreview(stored, sourceSha, [{ checkpoint: captured.checkpoint, ready: true }]);
+    expect(stored.artifacts[0]?.checkpoint).toEqual(captured.checkpoint);
+    expect(stored.outcome).toBe("failed"); expect(stored.failure).toBe("mandatory assertion failed");
+    expect(stored.summary).toEqual(snapshot.summary); expect(stored.trace).toEqual(snapshot.trace);
+    expect(() => annotateCorePreview(snapshot, "c".repeat(40), [])).toThrow(/SHA mismatch/);
+    annotateCorePreview(snapshot, sourceSha, [{ checkpoint: captured.checkpoint, ready: false }]);
+    expect(snapshot.artifacts[0]?.checkpoint).toBeUndefined();
+    expect(snapshot.artifacts[0]?.checkpointError).toContain("unavailable");
+    expect(snapshot.outcome).toBe("failed");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

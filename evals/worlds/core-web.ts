@@ -16,5 +16,6 @@ export async function coreWebWorld() {
   // CI sets the PR head (the checkout); the world check passes throwaway commits.
   const sourceSha = process.env.OPENWORK_EVIDENCE_SOURCE_SHA || execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   if (!/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error("OPENWORK_EVIDENCE_SOURCE_SHA must be a full commit SHA");
-  return { ...(await evidenceWeb(sourceSha)), sourceSha };
+  // This opt-in is confined to Core; other checkpoint journeys keep both states.
+  return { ...(await evidenceWeb(sourceSha, undefined, { corePreview: true })), sourceSha };
 }

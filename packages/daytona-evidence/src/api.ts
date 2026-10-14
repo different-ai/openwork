@@ -99,7 +99,7 @@ export class DaytonaApi {
     return { authorization: `Bearer ${this.config.apiKey}`, ...extra };
   }
 
-  async call(method: string, path: string, body?: unknown): Promise<unknown> {
+  async call(method: string, path: string, body?: unknown, options: { retry?: boolean } = {}): Promise<unknown> {
     for (let attempt = 1; ; attempt++) {
       let response: Response;
       try {
@@ -108,7 +108,7 @@ export class DaytonaApi {
           body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(60_000),
         });
       } catch (error) {
-        if (attempt >= 3) throw error;
+        if (options.retry === false || attempt >= 3) throw error;
         await delay(1_000 * attempt);
         continue;
       }
@@ -117,7 +117,7 @@ export class DaytonaApi {
       try { parsed = raw ? JSON.parse(raw) : null; } catch { /* plain text body */ }
       if (response.ok) return parsed;
       // Retry gateway hiccups only; client errors are real answers.
-      if ([502, 503, 504].includes(response.status) && attempt < 3) { await delay(1_000 * attempt); continue; }
+      if (options.retry !== false && [502, 503, 504].includes(response.status) && attempt < 3) { await delay(1_000 * attempt); continue; }
       throw new DaytonaApiError(response.status, `Daytona ${method} ${path.split("?")[0]} failed: ${errorMessage(parsed, response.status)}`);
     }
   }
@@ -200,6 +200,17 @@ export class DaytonaApi {
     catch (error) { if (!(error instanceof DaytonaApiError && error.status === 404)) throw error; }
   }
 
+  /** DELETE acknowledges a request; fork parents must wait for actual release. */
+  async waitForSandboxDeleted(id: string, timeoutMs = 60_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const sandbox = await this.getSandbox(id);
+      if (!sandbox || sandbox.state === "destroyed") return;
+      if (Date.now() >= deadline) throw new Error("Daytona sandbox deletion did not finish before the deadline");
+      await delay(Math.min(1_000, Math.max(1, deadline - Date.now())));
+    }
+  }
+
   /** Saves a sandbox as a snapshot. With memory (hot), the sandbox must be running and new sandboxes resume its processes. */
   async snapshotSandbox(id: string, name: string, includeMemory: boolean, options?: SnapshotRetryOptions): Promise<void> {
     const save = async () => { await this.call("POST", `/sandbox/${encodeURIComponent(id)}/snapshot`, { name, includeMemory }); };
@@ -207,6 +218,11 @@ export class DaytonaApi {
     // capture fork for a full cleanup interval. Required build layers can wait.
     if (name.startsWith("ow-dy-checkpoint-v1-")) await save();
     else await this.withSnapshotQuotaRetry(save, options);
+  }
+
+  /** Durable handoffs reconcile ambiguous saves by name, never replay the POST. */
+  async snapshotSandboxOnce(id: string, name: string, includeMemory: boolean): Promise<void> {
+    await this.call("POST", `/sandbox/${encodeURIComponent(id)}/snapshot`, { name, includeMemory }, { retry: false });
   }
 
   private async withSnapshotQuotaRetry(operation: () => Promise<void>, options?: SnapshotRetryOptions): Promise<void> {
@@ -247,8 +263,8 @@ export class DaytonaApi {
   }
 
   /** Copies a running VM sandbox, memory included, into a new independent sandbox. */
-  async forkSandbox(id: string, name: string): Promise<Sandbox> {
-    return asSandbox(await this.call("POST", `/sandbox/${encodeURIComponent(id)}/fork`, { name }));
+  async forkSandbox(id: string, name: string, options?: { retry?: boolean }): Promise<Sandbox> {
+    return asSandbox(await this.call("POST", `/sandbox/${encodeURIComponent(id)}/fork`, { name }, options));
   }
 
   async setLabels(id: string, value: Record<string, string>): Promise<void> {

@@ -378,6 +378,7 @@ export class SpecRuntime {
 
   /** Tagged tests keep the world as launched, before the body acts, so it can be reopened as a clean start. */
   async checkpointStartState(): Promise<void> {
+    if (this.#capability?.finalOnly) return; // Core's body still records its opening screenshot.
     await this.checkpoint(this.primary, "Start state", true);
   }
 

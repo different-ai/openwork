@@ -20,11 +20,11 @@ function surface(name: string): Surface {
   } };
 }
 
-function capableWorld(label: string) {
+function capableWorld(label: string, finalOnly = false) {
   const app = surface("capable-app");
   let captured = 0;
   const capability: CheckpointCapability = {
-    surface: app, available: () => true,
+    surface: app, available: () => true, finalOnly,
     async capture({ imageHash }) {
       captured++;
       captureLog.push(label);
@@ -38,6 +38,7 @@ function capableWorld(label: string) {
 const capable = spec.world(async () => capableWorld("capable"));
 const tagged = spec.world(async () => capableWorld("tagged"));
 const taggedIdle = spec.world(async () => capableWorld("tagged-idle"));
+const finalOnly = spec.world(async () => capableWorld("final-only", true));
 const plain = spec.world(async () => ({ app: surface("plain-app") }));
 
 let warn: ReturnType<typeof vi.spyOn>;
@@ -80,7 +81,16 @@ taggedIdle("a tagged test that just checkpointed does not save the same state tw
   await user.checkpoint("Last moment");
 });
 
+finalOnly("Core keeps its opening screenshot without capturing an initial fork", { tags: ["checkpoints"] }, async ({ world, user }) => {
+  expect(world.captures()).toBe(0);
+  const start = await user.screenshot();
+  expect(start.png.length).toBeGreaterThan(0);
+  expect(start.checkpoint).toBeUndefined();
+  expect(world.captures()).toBe(0);
+});
+
 capable("start and end states were saved around the tagged tests above", async () => {
+  expect(captureLog.filter((label) => label === "final-only")).toHaveLength(1);
   expect(captureLog.filter((label) => label === "tagged")).toHaveLength(2);
   // Start state and "Last moment"; the end state matched the last checkpoint.
   expect(captureLog.filter((label) => label === "tagged-idle")).toHaveLength(2);
