@@ -150,6 +150,9 @@ jobs:
       - uses: ./.github/actions/setup-browser
         with:
           oauth-handoff: "true"
+      - name: Check CDP input safety
+        timeout-minutes: 2
+        run: pnpm exec node --test evals/packages/cdp/test/*.test.ts
       - name: Build local Den dependencies
         shell: bash
         run: |

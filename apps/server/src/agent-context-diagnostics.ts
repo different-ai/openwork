@@ -1013,20 +1013,32 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
       details: { connectionCount: 0, reportedConnectionCount: 0, truncated: false, notReadyCount: 0 },
     });
   }
+  const policyBlockedCount = request.organizationConnections.filter((connection) => connection.policyBlocked).length;
+  const allPolicyBlocksOwnedByOpenwork = policyBlockedCount > 0 && request.organizationConnections.every((connection) =>
+    !connection.policyBlocked || connection.policyOwner === "openwork",
+  );
+  const limitedAccessCount = request.organizationConnections.filter((connection) =>
+    connection.limitedAccess
+    && !connection.policyBlocked
+    && !connection.needsReconnect
+    && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe),
+  ).length;
   const needsAttention = request.organizationConnections.filter((connection) => {
-    if (connection.needsReconnect || connection.missingFeatureCount > 0) return true;
+    if (connection.policyBlocked) return false;
+    if (connection.needsReconnect || (connection.missingFeatureCount > 0 && !connection.limitedAccess)) return true;
     return connection.credentialMode === "shared"
       ? !connection.connected
       : !connection.connectedForMe;
   });
   const memberActionCount = needsAttention.filter((connection) => connection.credentialMode === "per_member").length;
   const organizationAdminActionCount = needsAttention.length - memberActionCount;
-  const notReadyCount = needsAttention.length;
+  const notReadyCount = needsAttention.length + policyBlockedCount;
   const memberAndAdminAction = memberActionCount > 0 && organizationAdminActionCount > 0;
+  const hasNonActionableConnections = policyBlockedCount > 0 || limitedAccessCount > 0;
   const truncated = request.organizationConnectionsProbe.truncated;
   return diagnosticCheck({
     id: "organization-connections",
-    status: notReadyCount > 0 || truncated ? "warning" : "passed",
+    status: needsAttention.length > 0 || truncated ? "warning" : policyBlockedCount > 0 ? "skipped" : "passed",
     evidenceKind: "client-observed",
     code: truncated
       ? "organization_connections_truncated"
@@ -1036,7 +1048,11 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
         ? "organization_member_action_required"
         : organizationAdminActionCount > 0
           ? "organization_admin_action_required"
-          : "organization_connections_ready",
+          : policyBlockedCount > 0
+            ? "organization_connections_policy_blocked"
+            : limitedAccessCount > 0
+              ? "organization_connections_limited_access"
+              : "organization_connections_ready",
     message: truncated
       ? "The client reported the first 200 organization connections; additional connections were omitted from this bounded report."
       : memberAndAdminAction
@@ -1045,7 +1061,11 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
         ? "One or more per-member organization connections need your sign-in or reconnection."
         : organizationAdminActionCount > 0
           ? "One or more shared organization connections need organization administrator setup or repair."
-          : "The client-observed organization connections are ready.",
+          : policyBlockedCount > 0
+            ? "One or more organization connections are blocked by policy."
+            : limitedAccessCount > 0
+              ? "The client-observed organization connections are usable; one or more have limited access."
+              : "The client-observed organization connections are ready.",
     owner: truncated
       ? "openwork-client"
       : memberAndAdminAction
@@ -1054,21 +1074,35 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
         ? "member"
         : organizationAdminActionCount > 0
           ? "organization-admin"
-          : "openwork-client",
+          : policyBlockedCount > 0
+            ? allPolicyBlocksOwnedByOpenwork ? "openwork-support" : "member"
+            : "openwork-client",
     action: truncated
       ? "Review organization connection readiness in Den for the complete inventory."
       : memberAndAdminAction
-      ? "Connect or reconnect your per-member accounts in Settings > Connect, and ask an organization administrator to repair the listed shared connections in Den."
+      ? hasNonActionableConnections
+        ? "Connect or reconnect only per-member connections marked as needing sign-in or reconnection in Settings > Connect, and ask an organization administrator to repair shared connections marked as not ready in Den."
+        : "Connect or reconnect your per-member accounts in Settings > Connect, and ask an organization administrator to repair the listed shared connections in Den."
       : memberActionCount > 0
-        ? "Connect or reconnect your account for the listed per-member connections in Settings > Connect."
+        ? hasNonActionableConnections
+          ? "Connect or reconnect only per-member connections marked as needing sign-in or reconnection in Settings > Connect."
+          : "Connect or reconnect your account for the listed per-member connections in Settings > Connect."
         : organizationAdminActionCount > 0
-          ? "Ask an organization administrator to repair the listed shared connections in Den, then rerun diagnostics."
-          : "No action is required.",
+          ? hasNonActionableConnections
+            ? "Ask an organization administrator to repair only shared connections marked as not ready in Den, then rerun diagnostics."
+            : "Ask an organization administrator to repair the listed shared connections in Den, then rerun diagnostics."
+          : policyBlockedCount > 0
+            ? allPolicyBlocksOwnedByOpenwork
+              ? "Ask an OpenWork administrator to review connection availability. Signing in again cannot remove a policy block."
+              : "The policy controller was not identified for every blocked connection. Review each blocked connection's availability explanation in Settings > Connect to find who can change access. Signing in again cannot remove a policy block."
+            : "No action is required.",
     details: {
       connectionCount: request.organizationConnectionsProbe.totalCount,
       reportedConnectionCount: request.organizationConnections.length,
       truncated,
       notReadyCount,
+      policyBlockedCount,
+      limitedAccessCount,
       memberActionCount,
       organizationAdminActionCount,
     },

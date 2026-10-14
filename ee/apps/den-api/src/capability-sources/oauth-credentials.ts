@@ -1,5 +1,6 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import {
+  AuthSessionTable,
   ConnectedAccountTable,
   MemberTable,
   OrgOAuthClientTable,
@@ -17,6 +18,7 @@ import { requestRead } from "../request-reads.js"
 
 export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect
 export type ConnectedAccountRow = typeof ConnectedAccountTable.$inferSelect
+export type ConnectedAccountBrowserSession = Pick<typeof AuthSessionTable.$inferSelect, "id" | "token" | "userId">
 
 type OrganizationId = DenTypeId<"organization">
 type OrgMembershipId = DenTypeId<"member">
@@ -203,11 +205,12 @@ async function updateExistingConnectedAccountForActiveMember(
     expectedAccessToken?: string
     expectedPendingCodeVerifier?: string
     expectedRefreshToken?: string
+    browserSession?: ConnectedAccountBrowserSession
   },
 ): Promise<ConnectedAccountRow | null> {
   return db.transaction(async (tx) => {
     const activeMembers = await tx
-      .select({ id: MemberTable.id })
+      .select({ id: MemberTable.id, userId: MemberTable.userId })
       .from(MemberTable)
       .where(and(
         eq(MemberTable.id, input.orgMembershipId),
@@ -216,7 +219,8 @@ async function updateExistingConnectedAccountForActiveMember(
       ))
       .limit(1)
       .for("update")
-    if (!activeMembers[0]) return null
+    const activeMember = activeMembers[0]
+    if (!activeMember || (input.browserSession && activeMember.userId !== input.browserSession.userId)) return null
 
     const existingRows = await tx
       .select()
@@ -236,6 +240,23 @@ async function updateExistingConnectedAccountForActiveMember(
       || (input.expectedPendingCodeVerifier !== undefined && existing.pendingCodeVerifier !== input.expectedPendingCodeVerifier)
       || (input.expectedRefreshToken !== undefined && existing.refreshToken !== input.expectedRefreshToken)
     ) return null
+
+    // The remote token exchange can outlive browser sign-out or session expiry.
+    // Recheck the same signed-cookie session under lock before saving any grant.
+    if (input.browserSession) {
+      const [liveSession] = await tx
+        .select({ expiresAt: AuthSessionTable.expiresAt })
+        .from(AuthSessionTable)
+        .where(and(
+          eq(AuthSessionTable.id, input.browserSession.id),
+          eq(AuthSessionTable.token, input.browserSession.token),
+          eq(AuthSessionTable.userId, input.browserSession.userId),
+          gt(AuthSessionTable.expiresAt, new Date()),
+        ))
+        .limit(1)
+        .for("update")
+      if (!liveSession || liveSession.expiresAt.getTime() <= Date.now()) return null
+    }
 
     await tx
       .update(ConnectedAccountTable)
@@ -266,13 +287,17 @@ async function updateExistingConnectedAccountForActiveMember(
  * A late callback can only finish the exact pending request it exchanged. A
  * disconnect, client rotation, newer connect attempt, or member removal wins
  * by deleting/changing the row before this update-only transaction commits.
+ * Slack also requires the initiating member's live authorizing browser session;
+ * signed OAuth state alone must never authorize storing the returned grant.
  */
 export async function completeConnectedAccountForActiveMember(
   input: ConnectedAccountUpsertInput & {
     expectedAccountId: ConnectedAccountRow["id"]
     expectedPendingCodeVerifier: string
+    browserSession?: ConnectedAccountBrowserSession
   },
 ): Promise<ConnectedAccountRow | null> {
+  if (input.providerId === "slack" && !input.browserSession) return null
   return updateExistingConnectedAccountForActiveMember(input)
 }
 

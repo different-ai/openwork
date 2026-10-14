@@ -1,10 +1,11 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { DenBadge } from "../../_components/ui/badge";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import {
   getLibraryAddConnectorRoute,
@@ -33,8 +34,10 @@ import {
   parseLibraryFilter,
   parseNeedsSignIn,
 } from "./library-view";
-import { useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
+import { type ExternalMcpConnection, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
+import { connectorAccountReady, connectorDisplayName, connectorLimitedAccess, isManagedSlackConnection } from "./connector-detail";
+import { ManagedSlackAccountAction } from "./managed-slack";
 import { useMemberSignIn } from "./connector-setup";
 import { matchesModelQuery } from "./library-models";
 import { useLibraryModels, useModelSignIn } from "./library-models-data";
@@ -55,9 +58,10 @@ function ItemLogo({ item }: { item: LibraryItem }) {
   return <PluginLogo name={item.name} />;
 }
 
-function LibraryItemRow({ item, mine, signIn }: {
+function LibraryItemRow({ item, mine, connection, signIn }: {
   item: LibraryItem;
   mine: boolean;
+  connection: ExternalMcpConnection | undefined;
   signIn: ReturnType<typeof useMemberSignIn>;
 }) {
   const router = useRouter();
@@ -79,9 +83,16 @@ function LibraryItemRow({ item, mine, signIn }: {
     toast({ title: `${item.name} is removed`, description: "Nobody can use it anymore." });
   }
 
-  const needsSignIn = item.type === "connection" && item.state === "needs_signin";
+  const policyMessage = connection?.policyBlocked
+    ? connection.policyMessage ?? "An administrator controls access to this connection."
+    : undefined;
+  const managedSlack = connection && isManagedSlackConnection(connection);
+  const limitedAccess = connection ? connectorLimitedAccess(connection) : null;
+  const needsSignIn = !connection?.policyBlocked && item.type === "connection" && item.state === "needs_signin";
   const apiKeyStatus = item.type === "connection" ? signIn.apiKeyStatus(item.id) : null;
-  const action = needsSignIn && item.type === "connection" ? (
+  const action = managedSlack && connection && !connection.policyBlocked && (!connectorAccountReady(connection) || limitedAccess) ? (
+    <ManagedSlackAccountAction connection={connection} />
+  ) : needsSignIn && item.type === "connection" ? (
     item.transport === "native" ? (
       <DenButton variant="secondary" size="xs" aria-label="Sign in" href={`${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`}>Sign in</DenButton>
     ) : (
@@ -94,23 +105,23 @@ function LibraryItemRow({ item, mine, signIn }: {
       label={`More for ${item.name}`}
       entries={[
         { label: "Open", onSelect: () => router.push(href) },
-        ...(mine && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
+        ...(mine && !connection?.policyBlocked && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type === "plugin" ? [{ label: "Share", onSelect: () => router.push(getLibraryPluginShareRoute(orgSlug, item.id)) }] : []),
-        ...(mine && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
+        ...(mine && !connection?.policyBlocked && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
       ]}
     />
   );
 
   return (
-    <div data-library-item={item.name} data-library-kind={item.type} title={libraryItemDescription(item)}>
+    <div data-library-item={item.name} data-library-kind={item.type} title={policyMessage ?? libraryItemDescription(item)}>
       <ItemRow
         compact
-        wideAction={needsSignIn}
+        wideAction={Boolean(managedSlack) || needsSignIn}
         href={href}
         logo={<ItemLogo item={item} />}
         title={item.name}
-        description={libraryItemDescription(item)}
-        status={needsSignIn ? undefined : libraryItemReady(item) ? "Ready" : item.type !== "plugin" && item.state === "needs_signin" ? "Sign in" : "Set up"}
+        description={policyMessage ?? (managedSlack ? "Provided by OpenWork" : libraryItemDescription(item))}
+        status={connection?.policyBlocked ? <DenBadge icon={Lock}>Blocked</DenBadge> : limitedAccess ? "Limited access" : needsSignIn ? undefined : libraryItemReady(item) ? "Ready" : item.type !== "plugin" && item.state === "needs_signin" ? "Sign in" : "Set up"}
         action={action}
       />
     </div>
@@ -158,7 +169,21 @@ function LibraryContent() {
 
   const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
   const viewerId = orgContext?.currentMember.id ?? null;
-  const items = library.data ?? [];
+  const connectionsById = new Map((usable.data ?? []).map((connection) => [connection.id, connection]));
+  const listedItems = (library.data ?? []).map((item): LibraryItem => item.type === "connection" && item.transport === "native" && item.id === "slack"
+    ? { ...item, name: "Slack search", description: "Provided by OpenWork" }
+    : item);
+  // The capability-backed Library omits blocked native providers. Preserve only
+  // accounts the server explicitly retained for this member's management.
+  const retainedAccounts: LibraryItem[] = (usable.data ?? [])
+    .filter((connection) => connection.policyBlocked && connection.connectedForMe && connection.nativeProviderKey === "slack"
+      && !listedItems.some((item) => item.type === "connection" && item.id === connection.id))
+    .map((connection) => ({
+      type: "connection", id: connection.id, name: connectorDisplayName(connection), url: connection.url,
+      description: connection.policyMessage ?? null, transport: "native", provider: connection.nativeProviderKey ?? null,
+      state: "blocked", connectedAt: connection.connectedAt, edges: [],
+    }));
+  const items = [...listedItems, ...retainedAccounts];
   const groups = groupLibrary({
     items,
     filter,
@@ -265,7 +290,7 @@ function LibraryContent() {
             <ItemSection title="Added by you" testId="library-section-mine" variant="rule">
               <ItemPanel>
                 {groups.mine.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine signIn={signIn} />
+                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine connection={item.type === "connection" ? connectionsById.get(item.id) : undefined} signIn={signIn} />
                 ))}
               </ItemPanel>
             </ItemSection>
@@ -275,7 +300,7 @@ function LibraryContent() {
             <ItemSection title="From OpenWork" testId="library-section-received" variant="rule">
               <ItemPanel>
                 {groups.received.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} signIn={signIn} />
+                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} connection={item.type === "connection" ? connectionsById.get(item.id) : undefined} signIn={signIn} />
                 ))}
                 {modelRows.map((provider) => (
                   <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />

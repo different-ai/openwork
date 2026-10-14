@@ -3,6 +3,8 @@ import type { ExternalMcpConnection, ExternalMcpPreset } from "./mcp-connections
 /** Native provider connections keep fixed ids in Den. */
 export const GOOGLE_WORKSPACE_QUICK_ADD_ID = "google-workspace";
 export const MICROSOFT_365_QUICK_ADD_ID = "microsoft-365";
+/** UI target only: the managed member account is still provider/connection `slack`. */
+export const SLACK_SEARCH_QUICK_ADD_ID = "slack-search";
 
 export type NativeProviderKey = typeof GOOGLE_WORKSPACE_QUICK_ADD_ID | typeof MICROSOFT_365_QUICK_ADD_ID;
 
@@ -74,8 +76,8 @@ export const POPULAR_CONNECTORS: PopularConnector[] = [
   },
   {
     id: "slack",
-    displayName: "Slack",
-    description: "Messages and search — requires an internal or Marketplace-published Slack app",
+    displayName: "Slack (custom app)",
+    description: "Your organization's Slack app",
     icon: { simpleIconSlug: "slack", serviceUrl: "https://mcp.slack.com/mcp" },
     target: { kind: "preset", presetId: "slack" },
     chatPrompt: "Explain how I can catch up on Slack. If access is available, ask which channels or topics to search and summarize the messages found. Otherwise, help me plan a catch-up routine without accessing Slack.",

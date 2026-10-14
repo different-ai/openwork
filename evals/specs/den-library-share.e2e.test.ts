@@ -11,6 +11,7 @@ const names = (items: { name: string }[]) => items.map((item) => item.name);
 
 test("a member: I want Maya and the Support team to use Slack so they can search messages without asking me", async ({ world, user, probe, step, evidence }) => {
   const library = `${world.den.ref.webUrl}/dashboard/library`;
+  const customSlackName = "Slack";
 
   await step("1. I open My Library: it keeps its shape while it loads, then it is empty and the sidebar only shows my own work", async () => {
     await user.see({ testId: "library-empty" }, { timeoutMs: 120_000 });
@@ -51,7 +52,7 @@ test("a member: I want Maya and the Support team to use Slack so they can search
     await user.screenshot();
   });
 
-  await step("4. I find Slack in the list and add it", async () => {
+  await step("4. organization app setup stays locked while I add my personal connector by address", async () => {
     await user.click({ role: "button", label: "Continue" });
     await user.see({ role: "heading", label: "Add a connector" }, { timeoutMs: 60_000 });
     await user.see({ role: "button", label: "Add another MCP" });
@@ -64,17 +65,29 @@ test("a member: I want Maya and the Support team to use Slack so they can search
     await user.screenshot();
     await user.click({ role: "button", label: "Cancel" });
     await user.type({ label: "Filter by name" }, "", { replace: true });
-    await user.click({ role: "link", label: "Add Slack" });
-    await user.see({ role: "heading", label: "Connect Slack" }, { timeoutMs: 60_000 });
-    await user.see({ role: "button", label: "Sign in with Slack" }, { timeoutMs: 60_000 });
+    expect((await probe.dom('[data-testid="slack-custom-app-disclosure"][open]')).elements).toHaveLength(0);
+    await user.click({ testId: "slack-custom-app-disclosure" });
+    expect((await probe.dom('[data-testid="slack-custom-app-disclosure"][open]')).elements).toHaveLength(1);
+    await user.see({ testId: "slack-custom-app-disclosure" }, { text: /Organization admin required/ });
+    await user.notSee({ role: "link", label: "Set up your app Slack (custom app)" });
+    await user.screenshot();
+    // This fixture advertises dynamic OAuth registration. A personal MCP
+    // connection is separate from configuring the organization's Slack app.
+    await user.click({ role: "button", label: "Add another MCP" });
+    await user.see({ testId: "connector-picker-custom" });
+    await user.type({ label: "Address" }, world.slack.mcpUrl);
+    await user.type({ label: "Name" }, customSlackName, { replace: true });
+    await user.click({ role: "button", label: "Continue" });
+    await user.see({ role: "heading", label: `Connect ${customSlackName}` }, { timeoutMs: 60_000 });
+    await user.see({ role: "button", label: `Sign in with ${customSlackName}` }, { timeoutMs: 60_000 });
     await user.see({ testId: "step-footer-note" }, { text: "Step 3 of 4" });
     expect(await world.servedPinnedCatalog(), "the catalog and checks came from the mock, not a real provider").toBe(true);
     await user.screenshot();
   });
 
   await step("5. I sign in with my own Slack account", async () => {
-    await user.click({ role: "button", label: "Sign in with Slack" });
-    await user.see({ role: "heading", label: "Slack is ready" }, { timeoutMs: 120_000 });
+    await user.click({ role: "button", label: `Sign in with ${customSlackName}` });
+    await user.see({ role: "heading", label: `${customSlackName} is ready` }, { timeoutMs: 120_000 });
     await user.see({ text: "Only you can use it. Share it when your team needs it too." });
     await user.see({ testId: "step-footer-note" }, { text: "All 4 steps done" });
     const tab = await world.signInTab({ timeoutMs: 1_000 });
@@ -84,7 +97,7 @@ test("a member: I want Maya and the Support team to use Slack so they can search
 
   await step("6. I share Slack with Maya and the Support team", async () => {
     await user.click({ role: "link", label: "Share" });
-    await user.see({ role: "heading", label: "Share Slack" }, { timeoutMs: 60_000 });
+    await user.see({ role: "heading", label: `Share ${customSlackName}` }, { timeoutMs: 60_000 });
     await user.see({ testId: "access-owner" }, { text: /Sam K\. \(you\)/ });
     await user.click({ role: "button", label: "Add person" });
     await user.type({ placeholder: "Search people" }, "Maya");
@@ -110,9 +123,9 @@ test("a member: I want Maya and the Support team to use Slack so they can search
     await user.see({ testId: "library-connector" }, { timeoutMs: 60_000 });
     await user.see({ text: "Shared with Maya and Support" });
     for (const person of ["maya", "ana", "lee", "noor"] as const) {
-      expect(names(await world.library(world.den.members[person])), `${person} has Slack`).toContain("Slack");
+      expect(names(await world.library(world.den.members[person])), `${person} has Slack`).toContain(customSlackName);
     }
-    expect(names(await world.library(world.den.members.kai)), "Kai is outside Support").not.toContain("Slack");
+    expect(names(await world.library(world.den.members.kai)), "Kai is outside Support").not.toContain(customSlackName);
     await user.screenshot();
   });
 });

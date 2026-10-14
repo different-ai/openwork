@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, MessageCircle, Share2 } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, Loader2, Lock, MessageCircle, Share2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -103,6 +103,8 @@ export type ExtensionDetailModalProps = {
   onShare?: () => void;
   /** Remove/disconnect handler. Shown when connected. */
   onUninstall?: () => void;
+  /** Account removal may remain available when policy prevents use. Defaults to connected. */
+  uninstallAvailable?: boolean;
   uninstallLabel?: string;
   closeOnUninstall?: boolean;
   /** Hide from the normal catalog view. */
@@ -248,6 +250,7 @@ export function ExtensionDetailModal({
   onChat,
   onShare,
   onUninstall,
+  uninstallAvailable = connected,
   uninstallLabel,
   closeOnUninstall = true,
   onHide,
@@ -270,20 +273,32 @@ export function ExtensionDetailModal({
       ? [trigger]
       : [];
   const instructionBody = contentPreview ? stripSkillFrontmatter(contentPreview) : "";
+  const headerState = disabledReason
+    ? disconnectedLabel ?? "Blocked"
+    : connected
+      ? savedKeyOnly ? t("extensions.detail_key_saved") : connectedLabel ?? t("extensions.detail_ready")
+      : connecting
+        ? connectingLabel
+        : disconnectedLabel ?? (oauth ? "Sign in" : "Set up");
 
   const taxonomyPills = (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
         {extensionTaxonomyLabel(taxonomy)}
       </span>
-      {connected && savedKeyOnly ? (
+      {disabledReason ? (
+        <span className="flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          <Lock size={16} strokeWidth={1.5} aria-hidden />
+          {headerState}
+        </span>
+      ) : connected && savedKeyOnly ? (
         <span className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-          {t("extensions.detail_key_saved")}
+          {headerState}
         </span>
       ) : connected ? (
         <span className="flex items-center gap-1 rounded-md bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">
           <CheckCircle2 size={10} strokeWidth={3} />
-          {t("extensions.detail_ready")}
+          {headerState}
         </span>
       ) : null}
       {preview ? (
@@ -318,7 +333,7 @@ export function ExtensionDetailModal({
           <>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="min-w-0 break-words text-xl font-semibold tracking-tight text-foreground">{name}</h2>
-              <span className="text-[13px] font-normal text-muted-foreground" data-library-detail-state>{connected ? savedKeyOnly ? t("extensions.detail_key_saved") : t("extensions.detail_ready") : oauth ? "Sign in" : "Set up"}</span>
+              <span className="flex items-center gap-1 text-[13px] font-normal text-muted-foreground" data-library-detail-state>{disabledReason ? <Lock className="shrink-0" size={16} strokeWidth={1.5} aria-hidden /> : null}{headerState}</span>
             </div>
           </>
         ) : (
@@ -333,13 +348,13 @@ export function ExtensionDetailModal({
       {onShare || onChat ? (
         <div className="flex shrink-0 items-center gap-2">
           {onShare ? (
-            <Button variant="outline" size="sm" onClick={onShare}>
+            <Button variant="outline" size="sm" onClick={onShare} disabled={Boolean(disabledReason)} title={disabledReason ?? undefined}>
               <Share2 data-icon="inline-start" />
               {t("extensions.detail_share")}
             </Button>
           ) : null}
           {onChat ? (
-            <Button size="sm" onClick={onChat}>
+            <Button size="sm" onClick={onChat} disabled={Boolean(disabledReason)}>
               <MessageCircle data-icon="inline-start" />
               {t("extensions.detail_chat")}
             </Button>
@@ -537,12 +552,15 @@ export function ExtensionDetailModal({
 
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Status</span>
-                <span className={cn("font-medium", connected && !savedKeyOnly ? "text-green-11" : "text-muted-foreground")}>
-                  {connected
-                    ? connectedLabel ?? (taxonomy === "plugin" ? "Installed" : "Connected")
-                    : connecting
-                      ? connectingLabel
-                      : disconnectedLabel ?? (taxonomy === "plugin" ? "Not installed" : "Not connected")}
+                <span className={cn("flex items-center gap-1 font-medium", connected && !disabledReason && !savedKeyOnly ? "text-green-11" : "text-muted-foreground")}>
+                  {disabledReason ? <Lock size={16} strokeWidth={1.5} aria-hidden /> : null}
+                  {disabledReason
+                    ? headerState
+                    : connected
+                      ? connectedLabel ?? (taxonomy === "plugin" ? "Installed" : "Connected")
+                      : connecting
+                        ? connectingLabel
+                        : disconnectedLabel ?? (taxonomy === "plugin" ? "Not installed" : "Not connected")}
                 </span>
               </div>
 
@@ -565,10 +583,10 @@ export function ExtensionDetailModal({
                 </div>
               ) : null}
 
-              {disabledReason ? (
+              {disabledReason && disabledReason !== description ? (
                 <div className="flex items-center justify-between gap-4 text-sm">
                   <span className="text-muted-foreground">Availability</span>
-                  <span className="text-right font-medium text-amber-11">{disabledReason}</span>
+                  <span className="text-right font-medium text-muted-foreground">{disabledReason}</span>
                 </div>
               ) : null}
             </div>
@@ -599,7 +617,7 @@ export function ExtensionDetailModal({
                     index < contents.length - 1 ? "border-b border-border" : "",
                   )}
                 >
-                  <span className="w-20 shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                  <span className="w-20 shrink-0 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
                     {item.kindLabel}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-card-foreground">{item.name}</span>
@@ -672,7 +690,7 @@ export function ExtensionDetailModal({
             variant="outline"
             size="sm"
             onClick={onReconnect}
-            disabled={connecting}
+            disabled={connecting || Boolean(disabledReason)}
           >
             {connecting ? (
               <>
@@ -684,7 +702,7 @@ export function ExtensionDetailModal({
             )}
           </Button>
         ) : null}
-        {connected && onUninstall ? (
+        {uninstallAvailable && onUninstall ? (
           <Button
             variant="destructive"
             size="sm"
@@ -700,7 +718,7 @@ export function ExtensionDetailModal({
         {!connected && onConnect ? (
           <Button
             onClick={onConnect}
-            disabled={connecting}
+            disabled={connecting || Boolean(disabledReason)}
           >
             {connecting ? (
               <>

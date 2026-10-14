@@ -16,4 +16,7 @@ await withContractDatabase(async (databaseUrl) => {
   pnpm(["--filter", "@openwork-ee/den-db", "exec", "node", "--conditions=development", "--import", "tsx", "./node_modules/drizzle-kit/bin.cjs", "push", "--force"], env);
   pnpm(["api:snapshot"], env);
   pnpm(["--filter", "@openwork/sdk", "generate", "--input", fileURLToPath(new URL("../packages/docs/openapi.json", import.meta.url))], env);
+  // Coverage imports the live app too. Keep it inside the prepared database's
+  // lifetime instead of letting an eager auth initializer read an empty CI DB.
+  pnpm(["--filter", "@openwork-ee/den-api", "audit:coverage"], env);
 });

@@ -2,13 +2,14 @@
 
 import { Globe, Plus, Server } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { FilterInput, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import type { ExternalMcpPreset } from "./mcp-connections-data";
 import { classifySmartAddInput, pastedMcpAddress } from "./mcp-connection-smart-add";
+import { SlackCustomAppDisclosure } from "./managed-slack";
 
 /** Catalog copy is written for admins; members get the first plain clause. */
 export function shortDescription(text: string): string {
@@ -23,15 +24,18 @@ export type CatalogEntry = {
   url: string;
   /** Where the row goes when this is already set up. */
   openHref?: string;
-  addLabel?: "Add another";
+  addLabel?: "Add another" | "Set up your app";
+  action?: ReactNode;
+  customSlackApp?: boolean;
 };
 
 export function catalogEntriesFromPresets(presets: readonly ExternalMcpPreset[]): CatalogEntry[] {
-  return presets.map((preset) => ({
+  return presets.map((preset): CatalogEntry => ({
     id: preset.presetId,
-    name: preset.displayName,
-    description: shortDescription(preset.description),
+    name: preset.presetId === "slack" ? "Slack (custom app)" : preset.displayName,
+    description: preset.presetId === "slack" ? "Organization-owned app" : shortDescription(preset.description),
     url: preset.url,
+    ...(preset.presetId === "slack" ? { customSlackApp: true, addLabel: "Set up your app" } : {}),
   }));
 }
 
@@ -127,7 +131,7 @@ export function ConnectorPicker({ entries, loading, addHref, customHref, mode, c
   const [query, setQuery] = useState("");
   const admin = mode === "admin";
   const needle = query.trim().toLowerCase();
-  const visible = entries.filter((entry) => !needle || `${entry.name} ${entry.description}`.toLowerCase().includes(needle));
+  const visible = entries.filter((entry) => !needle || `${entry.id} ${entry.name} ${entry.description} ${entry.url}`.toLowerCase().includes(needle));
   const inputKind = classifySmartAddInput(query);
   const urlInput = inputKind === "url" || inputKind === "domain";
   const pasted = admin ? pastedMcpAddress(query) : null;
@@ -172,20 +176,22 @@ export function ConnectorPicker({ entries, loading, addHref, customHref, mode, c
             <DenButton size="sm" onClick={addPasted} data-testid="connector-picker-url-add">Add MCP</DenButton>
           </div>
         ) : null}
-        {visible.map((entry) => (
-          <ItemRow
+        {visible.map((entry) => {
+          const row = <ItemRow
             key={entry.id}
             testId={`connector-picker-${entry.id}`}
             logo={<ConnectorLogo name={entry.name} url={entry.url} />}
             title={entry.name}
             description={entry.description}
-            action={entry.openHref ? (
+            wideAction={Boolean(entry.action) || entry.customSlackApp}
+            action={entry.action ?? (entry.openHref ? (
               <LinkButton size="xs" href={entry.openHref} aria-label={`Open ${entry.name}`}>Open</LinkButton>
             ) : (
               <LinkButton size="xs" href={addHref(entry)} aria-label={`${entry.addLabel ?? "Add"} ${entry.name}`}>{entry.addLabel ?? "Add"}</LinkButton>
-            )}
-          />
-        ))}
+            ))}
+          />;
+          return entry.customSlackApp ? <SlackCustomAppDisclosure key={entry.id}>{row}</SlackCustomAppDisclosure> : row;
+        })}
         {noMatch && !pasted ? (
           <div className="flex flex-col items-center gap-1.5 px-6 pb-8 pt-10 text-center" data-testid="connector-picker-no-match">
             <ServerTile />

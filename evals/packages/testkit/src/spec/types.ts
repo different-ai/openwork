@@ -99,6 +99,10 @@ export interface Probe {
   has(text: string): Promise<boolean>;
   composer(): ReturnType<typeof import("@openwork/behaviors").readComposerState>;
   connectorCatalog(): ReturnType<typeof import("@openwork/behaviors").readConnectorCatalog>;
+  /** Fixed browser navigation facts; current URLs and OAuth parameters are never returned. */
+  documentState(targetUrl: string): ReturnType<typeof import("@openwork/behaviors").readDocumentState>;
+  /** Fixed readiness flags from the product's public route inspector. */
+  workspaceReadiness(workspaceId: string): ReturnType<typeof import("@openwork/behaviors").readWorkspaceReadiness>;
   storage(key: string): Promise<unknown>;
   storage<T>(key: string, pick: (value: unknown) => T): Promise<T>;
   /** The app route as "#/workspace/...": the hash on the desktop, the path on the app in a browser. */

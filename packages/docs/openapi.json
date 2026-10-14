@@ -843,6 +843,7 @@
               "teamMembershipCache",
               "managedDeploymentsGcp",
               "managedDeployments",
+              "nativeSlack",
               "slackAssistant",
               "slackWorkbotReplies",
               "workbot",
@@ -1038,6 +1039,9 @@
                     "managedDeployments": {
                       "type": "boolean"
                     },
+                    "nativeSlack": {
+                      "type": "boolean"
+                    },
                     "slackAssistant": {
                       "type": "boolean"
                     },
@@ -1085,6 +1089,7 @@
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
+                    "nativeSlack",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "workbot",
@@ -1271,6 +1276,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "nativeSlack": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "slackAssistant": {
                       "type": "object",
                       "properties": {
@@ -1948,6 +2009,7 @@
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
+                    "nativeSlack",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "workbot",
@@ -2342,6 +2404,9 @@
                     "managedDeployments": {
                       "type": "boolean"
                     },
+                    "nativeSlack": {
+                      "type": "boolean"
+                    },
                     "slackAssistant": {
                       "type": "boolean"
                     },
@@ -2389,6 +2454,7 @@
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
+                    "nativeSlack",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "workbot",
@@ -2575,6 +2641,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "nativeSlack": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "slackAssistant": {
                       "type": "object",
                       "properties": {
@@ -3252,6 +3374,7 @@
                     "teamMembershipCache",
                     "managedDeploymentsGcp",
                     "managedDeployments",
+                    "nativeSlack",
                     "slackAssistant",
                     "slackWorkbotReplies",
                     "workbot",
@@ -15063,6 +15186,26 @@
               "type": "string"
             }
           },
+          "nativeProviderKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policyBlocked": {
+            "type": "boolean"
+          },
+          "policyMessage": {
+            "type": "string"
+          },
+          "policyOwner": {
+            "type": "string",
+            "const": "openwork"
+          },
           "externalAccountId": {
             "anyOf": [
               {
@@ -16120,6 +16263,26 @@
               "type": "string"
             }
           },
+          "nativeProviderKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policyBlocked": {
+            "type": "boolean"
+          },
+          "policyMessage": {
+            "type": "string"
+          },
+          "policyOwner": {
+            "type": "string",
+            "const": "openwork"
+          },
           "externalAccountId": {
             "anyOf": [
               {
@@ -16543,6 +16706,26 @@
             "items": {
               "type": "string"
             }
+          },
+          "nativeProviderKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policyBlocked": {
+            "type": "boolean"
+          },
+          "policyMessage": {
+            "type": "string"
+          },
+          "policyOwner": {
+            "type": "string",
+            "const": "openwork"
           },
           "externalAccountId": {
             "anyOf": [
@@ -25952,6 +26135,9 @@
                         "managedDeployments": {
                           "type": "boolean"
                         },
+                        "nativeSlack": {
+                          "type": "boolean"
+                        },
                         "slackAssistant": {
                           "type": "boolean"
                         },
@@ -25999,6 +26185,7 @@
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
+                        "nativeSlack",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "workbot",
@@ -26185,6 +26372,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "nativeSlack": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "slackAssistant": {
                           "type": "object",
                           "properties": {
@@ -26862,6 +27105,7 @@
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
+                        "nativeSlack",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "workbot",
@@ -27001,6 +27245,9 @@
                         "managedDeployments": {
                           "type": "boolean"
                         },
+                        "nativeSlack": {
+                          "type": "boolean"
+                        },
                         "slackAssistant": {
                           "type": "boolean"
                         },
@@ -27048,6 +27295,7 @@
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
+                        "nativeSlack",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "workbot",
@@ -27234,6 +27482,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "nativeSlack": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "slackAssistant": {
                           "type": "object",
                           "properties": {
@@ -27911,6 +28215,7 @@
                         "teamMembershipCache",
                         "managedDeploymentsGcp",
                         "managedDeployments",
+                        "nativeSlack",
                         "slackAssistant",
                         "slackWorkbotReplies",
                         "workbot",
@@ -71349,7 +71654,7 @@
           "Authentication"
         ],
         "summary": "Begin connecting the calling member's account for a provider",
-        "description": "Returns an authorize URL to redirect the member's browser to. Requires the org to have already saved an OAuth client for this provider.",
+        "description": "Returns an authorize URL to redirect the member's browser to, using the provider's platform-managed app or a saved organization OAuth client.",
         "responses": {
           "200": {
             "description": "Authorize URL to redirect to.",
@@ -71381,6 +71686,16 @@
               }
             }
           },
+          "403": {
+            "description": "The provider is blocked by rollout or organization policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "The org has not configured an OAuth client for this provider yet.",
             "content": {
@@ -71404,6 +71719,76 @@
             "required": true
           }
         ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/mcp-connections/slack/connect/start": {
+      "get": {
+        "operationId": "getV1McpConnectionsSlackConnectStart",
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Begin connecting the calling member to Slack",
+        "description": "Native-provider twin of the external MCP connect/start route: returns an authorize URL for the browser, using the OAuth client the org saved for this provider.",
+        "responses": {
+          "200": {
+            "description": "Authorize URL, or already connected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NativeProviderConnectStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The OAuth client configuration is incomplete.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller must be signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The provider is blocked by rollout or organization policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The org has not configured an OAuth client for this provider yet.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthClientNotConfiguredError"
+                }
+              }
+            }
+          }
+        },
         "security": [
           {
             "denApiKey": []
@@ -71449,6 +71834,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The provider is blocked by rollout or organization policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
                 }
               }
             }
@@ -71513,6 +71908,16 @@
               }
             }
           },
+          "403": {
+            "description": "The provider is blocked by rollout or organization policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "The org has not configured an OAuth client for this provider yet.",
             "content": {
@@ -71542,7 +71947,7 @@
         ],
         "security": [],
         "summary": "OAuth callback for a provider",
-        "description": "The provider redirects here with code+state after the member consents. Identity is carried entirely by the signed state token, not a session cookie, since the redirect may arrive in a fresh browser context. Serves a small static HTML page that deep-links back to OpenWork.",
+        "description": "Public OAuth callback transport for provider code+state. Signed state identifies the initiating organization and member. Slack returns through the configured Den web callback adapter and additionally requires a signed browser cookie backed by a live session for that exact active member's user before token exchange; bearer tokens, API keys and state alone cannot satisfy that check. Slack persistence rechecks the browser session and membership. Other native providers retain their existing signed-state flow. Serves a small static HTML page that deep-links back to OpenWork.",
         "responses": {
           "200": {
             "description": "Connected — a static success page.",
@@ -71555,11 +71960,26 @@
             }
           },
           "400": {
-            "description": "Missing or invalid code/state.",
+            "description": "Invalid code/state, failed connection, or missing/mismatched Slack browser sign-in.",
             "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The provider is blocked by rollout or organization policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
                 }
               }
             }
@@ -71604,6 +72024,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The provider is blocked by rollout or organization policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
                 }
               }
             }
@@ -79642,6 +80072,945 @@
         ]
       }
     },
+    "/v1/capabilities/slack/threads": {
+      "get": {
+        "operationId": "getV1CapabilitiesSlackThreads",
+        "tags": [
+          "Capability Sources"
+        ],
+        "summary": "Read a Slack thread excerpt with source links as the calling member",
+        "description": "Read one bounded page of a Slack thread using channelId and ts from search. Slack enforces this member's access and the conversation's history permission. Always report this as an excerpt, include source links, and surface hasMore, nextCursor, historyLimited, and truncation. No background paging or history import.",
+        "responses": {
+          "200": {
+            "description": "Bounded Slack thread excerpt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "channelId": {
+                            "type": "string",
+                            "pattern": "^[CGD][A-Z0-9]{2,63}$"
+                          },
+                          "ts": {
+                            "type": "string",
+                            "pattern": "^\\d{1,16}\\.\\d{1,16}$"
+                          },
+                          "threadTs": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{1,16}\\.\\d{1,16}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "userId": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "permalink": {
+                            "type": "string"
+                          },
+                          "truncated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "channelId",
+                          "ts",
+                          "threadTs",
+                          "userId",
+                          "text",
+                          "permalink",
+                          "truncated"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "hasMore": {
+                      "type": "boolean",
+                      "description": "Whether Slack advertised another page. False does not establish complete context."
+                    },
+                    "partial": {
+                      "type": "boolean",
+                      "const": true,
+                      "description": "A bounded live excerpt, never a complete conversation or archive."
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "Message count or text was trimmed by OpenWork's bounds."
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "context": {
+                      "type": "string",
+                      "const": "thread_excerpt"
+                    },
+                    "channelId": {
+                      "type": "string",
+                      "pattern": "^[CGD][A-Z0-9]{2,63}$"
+                    },
+                    "ts": {
+                      "type": "string",
+                      "pattern": "^\\d{1,16}\\.\\d{1,16}$"
+                    },
+                    "historyLimited": {
+                      "type": "boolean",
+                      "description": "Slack reported a history/plan limit. Absent accessible older messages cannot be recovered by paging."
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "messages",
+                    "nextCursor",
+                    "hasMore",
+                    "partial",
+                    "truncated",
+                    "warnings",
+                    "context",
+                    "channelId",
+                    "ts",
+                    "historyLimited"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Slack is unavailable for this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation or message unavailable to this member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect Slack or grant the requested permissions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Slack rate limit; no automatic retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Slack could not complete the lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Bounded Slack lookup timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channelId",
+            "schema": {
+              "type": "string",
+              "pattern": "^[CGD][A-Z0-9]{2,63}$"
+            },
+            "required": true,
+            "description": "Slack conversation ID from a search result."
+          },
+          {
+            "in": "query",
+            "name": "ts",
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,16}\\.\\d{1,16}$"
+            },
+            "required": true,
+            "description": "Timestamp of a parent message or reply returned by Slack."
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "description": "nextCursor from the same thread lookup. Reads one page only."
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/capabilities/slack/search": {
+      "get": {
+        "operationId": "getV1CapabilitiesSlackSearch",
+        "tags": [
+          "Capability Sources"
+        ],
+        "summary": "Search Slack messages with source links as the calling member",
+        "description": "Read-only live Slack RTS lookup using only this member's connected Slack account. One bounded page, no file search, legacy fallback, or complete-thread claim. Omitted conversationTypes searches only granted categories; explicit ungranted categories return missing_permission. Surface scope omissions, truncation, and source links in the answer.",
+        "responses": {
+          "200": {
+            "description": "Bounded Slack search excerpts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "channelId": {
+                            "type": "string",
+                            "pattern": "^[CGD][A-Z0-9]{2,63}$"
+                          },
+                          "ts": {
+                            "type": "string",
+                            "pattern": "^\\d{1,16}\\.\\d{1,16}$"
+                          },
+                          "threadTs": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{1,16}\\.\\d{1,16}$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "userId": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "permalink": {
+                            "type": "string"
+                          },
+                          "truncated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "channelId",
+                          "ts",
+                          "threadTs",
+                          "userId",
+                          "text",
+                          "permalink",
+                          "truncated"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "hasMore": {
+                      "type": "boolean",
+                      "description": "Whether Slack advertised another page. False does not establish complete context."
+                    },
+                    "partial": {
+                      "type": "boolean",
+                      "const": true,
+                      "description": "A bounded live excerpt, never a complete conversation or archive."
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "Message count or text was trimmed by OpenWork's bounds."
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "context": {
+                      "type": "string",
+                      "const": "search_results"
+                    },
+                    "searchedConversationTypes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "public_channel",
+                          "private_channel",
+                          "im",
+                          "mpim"
+                        ]
+                      }
+                    },
+                    "omittedConversationTypes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "public_channel",
+                          "private_channel",
+                          "im",
+                          "mpim"
+                        ]
+                      },
+                      "description": "Categories not searched because the connected member has not granted their search scopes."
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "messages",
+                    "nextCursor",
+                    "hasMore",
+                    "partial",
+                    "truncated",
+                    "warnings",
+                    "context",
+                    "searchedConversationTypes",
+                    "omittedConversationTypes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidRequestError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Slack is unavailable for this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation or message unavailable to this member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect Slack or grant the requested permissions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Slack rate limit; no automatic retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Slack could not complete the lookup.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Bounded Slack lookup timed out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "needs_connection",
+                        "missing_permission",
+                        "policy_blocked",
+                        "rate_limited",
+                        "slack_api_error",
+                        "invalid_request",
+                        "not_found"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "missingScopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retryAfterSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "required": true,
+            "description": "Live Slack message search. Slack query filters are supported; file search is not."
+          },
+          {
+            "in": "query",
+            "name": "conversationTypes",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "description": "Comma-separated public_channel,private_channel,im,mpim. Omit to search granted categories. Explicit ungranted categories return missing_permission, never empty results."
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "description": "nextCursor from the same search. Reads one page only."
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "security": [
+          {
+            "denApiKey": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/mcp-connections/discover": {
       "post": {
         "operationId": "postV1McpConnectionsDiscover",
@@ -79943,7 +81312,7 @@
           "Capability Sources"
         ],
         "summary": "List External MCP Connections",
-        "description": "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.",
+        "description": "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. A saved native account may be included with policyBlocked=true for account management and disconnection only; it is not a callable capability. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.",
         "responses": {
           "200": {
             "description": "Connections.",

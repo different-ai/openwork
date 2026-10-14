@@ -20,15 +20,26 @@ test("an admin sees the whole catalog, sets up Microsoft 365 on its own page, an
   const authBefore = (await world.connector.requests()).filter((entry) => entry.path === "/authorize" || entry.path === "/token");
   const catalogRows = async () => (await page.dom('[data-testid^="connector-picker-"]')).elements.map((row) => row.text);
 
-  await step("the add page lists every catalog connector plus Google Workspace and Microsoft 365", async () => {
+  await step("the whole catalog is available, with custom Slack setup behind its own disclosure", async () => {
     await admin.see({ role: "heading", label: "Add a connector" }, { timeoutMs: 90_000 });
     await admin.see({ role: "link", label: "Add Microsoft 365" }, { timeoutMs: 90_000 });
     // An existing org client must not hide the way to create another connector.
     await admin.see({ role: "link", label: "Add another Google Workspace" }, { timeoutMs: 60_000 });
-    for (const name of presetNames) await admin.see({ role: "link", label: new RegExp(`^(Add|Open) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+    for (const preset of presets.filter((entry) => entry.presetId !== "slack")) {
+      const name = String(preset.displayName);
+      await admin.see({ role: "link", label: new RegExp(`^(Add|Open) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+    }
+    await admin.see({ testId: "slack-custom-app-disclosure" }, { text: /Use your own Slack app/ });
+    expect((await page.dom('[data-testid="slack-custom-app-disclosure"][open]')).elements).toHaveLength(0);
+    await admin.screenshot();
+    await admin.click({ text: "Use your own Slack app" });
+    expect((await page.dom('[data-testid="slack-custom-app-disclosure"][open]')).elements).toHaveLength(1);
+    await admin.see({ testId: "connector-picker-slack" }, { text: /Slack \(custom app\).*Organization-owned app/s });
+    await admin.see({ role: "link", label: "Set up your app Slack (custom app)" }, { text: "Set up your app" });
+    await admin.notSee({ role: "link", label: "Add Slack" });
     const rows = await catalogRows();
     expect(rows).toHaveLength(presetNames.length + 2);
-    evidence.recordAssertionEvidence("the catalog shows every preset and both suites", `${rows.length} rows: Google Workspace, Microsoft 365 and ${presetNames.length} presets (${presetNames.join(", ")})`, true);
+    evidence.recordAssertionEvidence("the catalog shows every preset and both suites, with explicit custom Slack setup", `${rows.length} rows: Google Workspace, Microsoft 365 and ${presetNames.length} presets (${presetNames.join(", ")}); Slack starts collapsed, then shows Slack (custom app), Organization-owned app and Set up your app`, true);
     await admin.screenshot();
   });
 

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useState, type ReactNode } from "react";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import type { EnablementResult } from "../../app/extensions";
@@ -23,6 +23,10 @@ export type ExtensionCardProps = {
   taxonomy?: ExtensionTaxonomy;
   /** Whether the extension is already installed/connected. */
   connected?: boolean;
+  /** Specific connected account state, including limited access. */
+  connectedLabel?: string;
+  /** Recorded server-check state, independent of whether an account is signed in. */
+  stateLabel?: string;
   /** Per-condition enablement results. When provided, overrides `connected`. */
   enablement?: EnablementResult[];
   /** Whether a connect operation is in progress. */
@@ -39,8 +43,8 @@ export type ExtensionCardProps = {
   onNextAction?: () => void;
   /** Click handler. */
   onClick?: () => void;
-  /** A short state for assistive tech and filters, e.g. Sign in or Set up. */
-  statusChip?: { label: string; tone: "attention" | "setup" };
+  /** A short state for the status slot; blocked states also show a lock. */
+  statusChip?: { label: string; tone: "attention" | "setup" | "blocked" };
   /** A control after the row, outside its button, e.g. a ⋯ menu. */
   trailing?: ReactNode;
 };
@@ -76,6 +80,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     url,
     taxonomy = "mcp",
     connected: connectedProp = false,
+    connectedLabel = "Connected",
     enablement,
     connecting = false,
     disabled = false,
@@ -91,7 +96,11 @@ export function ExtensionCard(props: ExtensionCardProps) {
   const someMet = enablement ? enablement.some((r) => r.met) && !allMet : false;
   const readiness: ReadinessState = allMet ? "ready" : someMet ? "partial" : "none";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url }) ?? null;
-  const summary = disabledReason ?? description;
+  // Specific account states must stay visible, not only in an accessible label.
+  const connectedState = !props.stateLabel && readiness === "ready" && connectedLabel !== "Connected" ? connectedLabel : null;
+  const summary = disabledReason ?? connectedState ?? description;
+  const blocked = Boolean(disabledReason) || props.statusChip?.tone === "blocked";
+  const state = blocked ? "Blocked" : hidden ? "Hidden" : props.stateLabel ?? props.statusChip?.label ?? connectedState ?? (readiness === "ready" ? "Ready" : "Set up");
 
   return (
     <div className="group flex h-[52px] w-full items-center gap-3" data-library-integrated-row>
@@ -102,9 +111,11 @@ export function ExtensionCard(props: ExtensionCardProps) {
           <span data-library-description className="truncate text-xs text-muted-foreground">{summary || extensionTaxonomyLabel(taxonomy)}</span>
         </span>
       </button>
-      <span data-library-status className="w-14 shrink-0 whitespace-nowrap text-right text-xs text-muted-foreground">{hidden ? "Hidden" : disabledReason ? "Blocked" : props.statusChip?.label ?? (readiness === "ready" ? "Ready" : "Set up")}</span>
+      <span data-library-status title={state} className="w-28 shrink-0 text-right text-xs text-muted-foreground">
+        <span className="line-clamp-2">{blocked ? <Lock className="mr-1 inline" size={16} strokeWidth={1.5} aria-hidden /> : null}{state}</span>
+      </span>
       <span data-library-action className="flex min-w-[72px] shrink-0 items-center justify-end gap-1">
-        {!disabledReason && !connecting && nextActionLabel ? <Button variant="outline" size="icon-sm" aria-label={nextActionLabel} onClick={() => (onNextAction ? onNextAction() : onClick?.())}><ArrowRight data-icon="inline-start" /></Button> : null}
+        {!blocked && !connecting && nextActionLabel ? <Button variant="outline" size="icon-sm" aria-label={nextActionLabel} onClick={() => (onNextAction ? onNextAction() : onClick?.())}><ArrowRight data-icon="inline-start" /></Button> : null}
         {props.trailing}
       </span>
     </div>

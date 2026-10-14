@@ -9,6 +9,7 @@ export * from "./engine-session-probe.ts";
 export * from "./onboarding.ts";
 export * from "./composer.ts";
 export * from "./connector-catalog.ts";
+export * from "./readiness.ts";
 export * from "./models.ts";
 export * from "./skills.ts";
 export * from "./sessions.ts";

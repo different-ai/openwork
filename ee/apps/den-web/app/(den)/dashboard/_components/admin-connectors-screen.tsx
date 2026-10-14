@@ -1,14 +1,16 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import { useState } from "react";
 import { DenPageHeader } from "../../_components/ui/page-header";
+import { DenBadge } from "../../_components/ui/badge";
 import { getAddConnectorRoute, getMcpConnectionRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
-import { connectorAccountReady, displayedConnectorConnections } from "./connector-detail";
+import { connectorAccountReady, connectorDisplayName, connectorLimitedAccess, displayedConnectorConnections, isManagedSlackConnection } from "./connector-detail";
+import { ManagedSlackAccountAction } from "./managed-slack";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
 import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemRowsSkeleton, LinkButton } from "./item-list";
@@ -53,7 +55,8 @@ export function AdminConnectorsScreen() {
   const prefetchCatalog = usePrefetchConnectorCatalog();
   const [query, setQuery] = useState("");
   const viewerId = orgContext?.currentMember.id ?? null;
-  const all = displayedConnectorConnections(connections.data ?? [], usable.data ?? []);
+  const all = displayedConnectorConnections(connections.data ?? [], usable.data ?? [])
+    .map((connection) => ({ ...connection, name: connectorDisplayName(connection) }));
   const needle = query.trim().toLowerCase();
   const visible = needle ? all.filter((connection) => connection.name.toLowerCase().includes(needle)) : all;
   const empty = !connections.isLoading && !connections.error && all.length === 0;
@@ -95,14 +98,16 @@ export function AdminConnectorsScreen() {
             <ItemPanel>
               {visible.map((connection) => {
                 const href = getMcpConnectionRoute(orgSlug, connection.id);
-                const readinessState = connectorReadinessState(connection);
-                const unfinished = connectorSetupUnfinished(connection);
-                const status = unfinished
-                  ? "Setup not finished"
+                const readinessState = connection.policyBlocked ? null : connectorReadinessState(connection);
+                const unfinished = !connection.policyBlocked && connectorSetupUnfinished(connection);
+                const managedSlack = isManagedSlackConnection(connection);
+                const status = connection.policyBlocked ? <DenBadge icon={Lock}>Blocked</DenBadge> : managedSlack
+                  ? connectorLimitedAccess(connection) ? "Limited access" : connectorAccountReady(connection) ? "Connected" : connection.needsReconnect ? "Reconnect required" : "Not connected"
+                  : unfinished ? "Setup not finished"
                   : !connection.access && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey)
                     ? "Everyone"
                     : orgContext ? managedAccessStatus(connection.access, orgContext, viewerId) : "";
-                const signInNote = connection.credentialMode === "per_member" && connection.authType === "oauth"
+                const signInNote = managedSlack ? "Provided by OpenWork" : connection.credentialMode === "per_member" && connection.authType === "oauth"
                   ? "Each person signs in"
                   : connection.authType === "none" ? "No sign-in needed" : connectorAccountReady(connection) ? "One account for everyone" : undefined;
                 return (
@@ -111,12 +116,12 @@ export function AdminConnectorsScreen() {
                       href={href}
                       logo={<ConnectorLogo name={connection.name} url={connection.url} />}
                       title={connection.name}
-                      description={readinessState ? connectorReadinessNote(connection) ?? signInNote : signInNote}
+                      description={connection.policyBlocked ? connection.policyMessage : readinessState ? connectorReadinessNote(connection) ?? signInNote : signInNote}
                       status={readinessState ?? status}
-                      statusOnNarrow={readinessState !== null}
-                      wideAction={readinessState !== null}
-                      wrapDescription={readinessState === "Couldn't verify"}
-                      action={readinessState === "Couldn't verify" ? (
+                      statusOnNarrow={connection.policyBlocked || readinessState !== null}
+                      wideAction={managedSlack || readinessState !== null}
+                      wrapDescription={connection.policyBlocked || readinessState === "Couldn't verify"}
+                      action={managedSlack && !connection.policyBlocked ? <ManagedSlackAccountAction connection={connection} /> : readinessState === "Couldn't verify" ? (
                         <DenButton size="xs" variant="secondary" disabled={!canCheck || checkConnection.isPending} title={!canCheck ? "An admin can check this connection." : undefined}
                           onClick={() => void checkConnection.mutateAsync(connection.id).catch(() => toast({ title: "Could not check this connection", description: "Try again." }))}>Check again</DenButton>
                       ) : unfinished ? (
@@ -127,7 +132,7 @@ export function AdminConnectorsScreen() {
                           entries={[
                             { label: "Open", href },
                             ...(readinessState && canCheck ? [{ label: "Check again", onSelect: () => void checkConnection.mutateAsync(connection.id).catch(() => toast({ title: "Could not check this connection", description: "Try again." })) }] : []),
-                            ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID
+                            ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "slack"
                               ? []
                               : [removeEntry(connection.name, () => remove(connection))]),
                           ]}

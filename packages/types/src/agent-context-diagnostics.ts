@@ -317,6 +317,12 @@ export const agentContextOrganizationConnectionSummarySchema = z.object({
   connected: z.boolean(),
   connectedForMe: z.boolean(),
   needsReconnect: z.boolean(),
+  // Optional for reports from clients predating policy-aware diagnostics.
+  policyBlocked: z.boolean().optional(),
+  // Only an explicit controller is carried; older rows leave ownership unknown.
+  policyOwner: z.literal("openwork").optional(),
+  // Missing optional permissions do not require reconnecting an otherwise usable account.
+  limitedAccess: z.boolean().optional(),
   missingFeatureCount: z.number().int().nonnegative().max(100),
 }).strict()
 export type AgentContextOrganizationConnectionSummary = z.infer<typeof agentContextOrganizationConnectionSummarySchema>

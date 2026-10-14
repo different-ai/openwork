@@ -29,6 +29,7 @@ config:
     teamMembershipCache: ""   # default off · Reduce repeated team lookups while keeping access changes immediate. Enable only after every API instance runs revision-aware team writes.
     managedDeploymentsGcp: "" # default off (cloud only) · Organization admins approve OpenWork installations in their own Google Cloud project and track health and updates.
     managedDeployments: ""    # default off (cloud only) · Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork.
+    nativeSlack: ""           # default off (cloud only) · Members connect their own Slack account to search messages and read threads through the OpenWork-provided app.
     slackAssistant: ""        # default off · Answers Slack mentions and DMs for the organization after the Slack connector is set up.
     slackWorkbotReplies: ""   # default off · OpenWork in Slack writes its reply as it works, reacts to messages with an emoji, and takes bigger jobs into the background, posting the result in the thread when done.
     workbot: ""               # default off · Members can use Workbot, with side chats, a Calendar tab of its scheduled work and the option to run stopped tasks again, and organization admins choose the default model Workbot, the Slack assistant and cloud Automations answer with. Needs the deployment's Workbot app.

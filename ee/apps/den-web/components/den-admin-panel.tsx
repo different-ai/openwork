@@ -1571,10 +1571,7 @@ export function DenAdminPanel() {
 
     try {
       const { response, payload: nextPayload } = await requestJson("/v1/admin/overview");
-      if (requestId !== overviewRequestIdRef.current) {
-        return;
-      }
-
+      // A newer data read can fail or be aborted, so it cannot supersede a denial.
       if (response.status === 401) {
         clearAdminOverviewCache();
         setAccessState("signed-out");
@@ -1586,6 +1583,10 @@ export function DenAdminPanel() {
         clearAdminOverviewCache();
         setAccessState("forbidden");
         setPayload(null);
+        return;
+      }
+
+      if (requestId !== overviewRequestIdRef.current) {
         return;
       }
 
@@ -1702,6 +1703,10 @@ export function DenAdminPanel() {
   }, []);
 
   const loadOrganizations = useCallback(async (search: string, offset: number, signal?: AbortSignal, existingRequestId?: number) => {
+    // A cached overview can make this tab usable before its refresh finishes.
+    // An older successful overview must not erase this read's newer rows.
+    overviewRequestIdRef.current += 1;
+    setRefreshing(false);
     const requestId = existingRequestId ?? organizationRequestIdRef.current + 1;
     organizationRequestIdRef.current = requestId;
     setOrganizationsLoading(true);

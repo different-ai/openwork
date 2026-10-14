@@ -70,6 +70,17 @@ const DEFAULT_REQUEST_BODY_MAX_BYTES = 32 * 1024 * 1024;
  */
 const DEN_API_ROUTE_PREFIX = "/api/den";
 const BROWSER_API_ROUTE_PREFIX = "/api/browser/v1";
+export const SLACK_OAUTH_CALLBACK_ROUTE_PREFIX = "/oauth/slack/callback";
+const SLACK_OAUTH_CALLBACK_UPSTREAM_PATH = "v1/oauth-providers/slack/connect/callback";
+// This one navigation endpoint accepts only browser session cookies as authority.
+// In particular, do not forward bearer/API keys or internal principal headers.
+const SLACK_CALLBACK_REQUEST_HEADERS = new Set(["accept", "accept-language", "cookie"]);
+const SLACK_CALLBACK_QUERY_LIMITS = {
+  state: 8192,
+  code: 4096,
+  error: 512,
+  error_description: 512,
+};
 const DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES = [".daytonaproxy01.net"];
 const CORS_ALLOW_HEADERS = "authorization,content-type,x-openwork-org-id,x-openwork-legacy-org-id,x-openwork-audit-correlation,x-request-id,accept";
 const CORS_ALLOW_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
@@ -219,6 +230,17 @@ function buildTargetUrl(
   return upstream.toString();
 }
 
+function slackCallbackQuery(request: NextRequest): URLSearchParams | null {
+  const incoming = new URL(request.url).searchParams;
+  const query = new URLSearchParams();
+  for (const [name, maxLength] of Object.entries(SLACK_CALLBACK_QUERY_LIMITS)) {
+    const values = incoming.getAll(name);
+    if (values.length > 1 || (values[0]?.length ?? 0) > maxLength) return null;
+    if (values.length === 1) query.set(name, values[0]);
+  }
+  return query;
+}
+
 function shouldSkipRequestHeader(name: string): boolean {
   const normalized = name.toLowerCase();
   return HOP_BY_HOP_HEADERS.has(normalized) || REQUEST_ONLY_HEADERS.has(normalized) || SPOOFABLE_FORWARDING_HEADERS.has(normalized);
@@ -278,16 +300,27 @@ async function cloneRequestHeaders(
   stripCookies = false,
 ): Promise<Headers> {
   const headers = new Headers();
+  const slackCallback = routePrefix === SLACK_OAUTH_CALLBACK_ROUTE_PREFIX;
   request.headers.forEach((value, name) => {
     if (shouldSkipRequestHeader(name)) return;
+    if (slackCallback && !SLACK_CALLBACK_REQUEST_HEADERS.has(name.toLowerCase())) return;
     // Bearer-only for reflected instance origins - see the note above
     // isCloudInstanceOrigin. This is what makes reflection safe.
     if (stripCookies && name.toLowerCase() === "cookie") return;
-    if ((routePrefix === "/api/auth" || routePrefix === BROWSER_API_ROUTE_PREFIX) && name.toLowerCase() === "cookie") {
+    if ((routePrefix === "/api/auth" || routePrefix === BROWSER_API_ROUTE_PREFIX || slackCallback) && name.toLowerCase() === "cookie") {
       const authCookies = value
         .split(";")
         .map((cookie) => cookie.trim())
-        .filter((cookie) => AUTH_COOKIE_PREFIXES.some((prefix) => cookie.startsWith(prefix)));
+        .filter((cookie) => AUTH_COOKIE_PREFIXES.some((prefix) => cookie.startsWith(prefix)))
+        .filter((cookie) => {
+          if (!slackCallback) return true;
+          const separator = cookie.indexOf("=");
+          if (separator < 1) return false;
+          const cookieName = cookie.slice(0, separator);
+          // Forward the opaque signed token, not cached session/user data.
+          // Den API verifies its signature, live session and OAuth state owner.
+          return cookieName.endsWith(".session_token") || cookieName === "better-auth-session_token";
+        });
       if (authCookies.length > 0) {
         headers.append(name, authCookies.join("; "));
       }
@@ -664,6 +697,21 @@ export async function proxyUpstream(
   if (browserSession && !isSameOriginBrowserRequest(request)) {
     return Response.json({ error: "forbidden_origin" }, { status: 403 });
   }
+  const slackCallback = options.routePrefix === SLACK_OAUTH_CALLBACK_ROUTE_PREFIX;
+  if (slackCallback) {
+    if (request.method !== "GET") {
+      return Response.json({ error: "method_not_allowed" }, { status: 405, headers: { allow: "GET" } });
+    }
+    // A fixed Slack top-level cross-site GET is not the generic browser proxy.
+    // No path segments or alternate upstream prefix may expand this exception.
+    if (new URL(request.url).pathname !== SLACK_OAUTH_CALLBACK_ROUTE_PREFIX || segments.length > 0 || options.upstreamPathPrefix) {
+      return Response.json({ error: "invalid_callback_path" }, { status: 400 });
+    }
+  }
+  const callbackQuery = slackCallback ? slackCallbackQuery(request) : null;
+  if (slackCallback && callbackQuery === null) {
+    return Response.json({ error: "invalid_callback_query" }, { status: 400 });
+  }
   const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
   if (!apiBase) {
     denWebLogger.error("den-web upstream proxy misconfigured", {
@@ -678,8 +726,14 @@ export async function proxyUpstream(
     });
   }
 
-  const targetPath = getTargetPath(request, segments, options.routePrefix);
-  const targetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
+  const targetPath = slackCallback
+    ? SLACK_OAUTH_CALLBACK_UPSTREAM_PATH
+    : getTargetPath(request, segments, options.routePrefix);
+  // DEN_API_BASE alone selects the server. Callback path and query are fixed or
+  // allowlisted; Host, forwarding headers and target/redirect args cannot select it.
+  const callbackTarget = callbackQuery === null ? null : new URL(joinBaseUrl(apiBase, SLACK_OAUTH_CALLBACK_UPSTREAM_PATH));
+  if (callbackTarget && callbackQuery) callbackTarget.search = callbackQuery.toString();
+  const targetUrl = callbackTarget?.toString() ?? buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
   if (browserSession && !isBrowserApiTarget(apiBase, targetUrl, targetPath)) {
     return Response.json({ error: "invalid_api_path" }, { status: 400 });
   }
@@ -761,7 +815,7 @@ export async function proxyUpstream(
         headers: requestHeaders,
         body: bodyRead.body,
         redirect: "manual",
-        ...(browserSession ? { cache: "no-store" } : {}),
+        ...(browserSession || slackCallback ? { cache: "no-store" } : {}),
         signal: upstreamAbort.signal,
       });
     } catch (error) {

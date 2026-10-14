@@ -39,8 +39,8 @@ export type FeatureDefinition = {
   /** On or off for everyone on a fresh deployment: false for new work, true once everyone has it. */
   default: boolean
   /**
-   * The switch is part of the product (e.g. platform admins turn Connect off for
-   * one organization), not a temporary rollout. Rollouts are deleted once done;
+   * The switch is part of the product (e.g. operators keep a feature off for
+   * their installation), not a temporary rollout. Rollouts are deleted once done;
    * `pnpm features:check` asks for a decision six months after `since`.
    */
   permanent?: boolean
@@ -70,6 +70,13 @@ export const FEATURES = defineFeatures({
   managedDeployments: {
     label: "Managed deployments",
     description: "Organization admins install OpenWork in their own cloud account (AWS first) and see its health and updates in OpenWork.",
+    since: "2026-10",
+    deployments: ["cloud"],
+    default: false,
+  },
+  nativeSlack: {
+    label: "Slack search",
+    description: "Members connect their own Slack account to search messages and read threads through the OpenWork-provided app.",
     since: "2026-10",
     deployments: ["cloud"],
     default: false,

@@ -55,7 +55,7 @@ test("an owner gives the Sales team the Admin role from its team page, and only 
     await owner.see({ testId: "team-role-choice" }, { timeoutMs: 15_000 });
     await owner.click({ testId: "team-role-option-admin" });
     await owner.see({ role: "button", label: "Change to Admin" });
-    await owner.notSee({ role: "dialog" });
+    expect((await probe.on(world.ownerWeb).dom('[role="dialog"], dialog[open]')).elements).toHaveLength(0);
     evidence.recordAssertionEvidence("Member, Admin and Custom open in place under the current role, no dialog", "Admin selected; the action names the change", true);
     await owner.screenshot();
   });

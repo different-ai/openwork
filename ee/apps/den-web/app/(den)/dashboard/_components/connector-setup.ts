@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { connectorAccountReady } from "./connector-detail";
+import { connectorAccountLabel, connectorAccountReady } from "./connector-detail";
 import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
 import { credentialModeForAuth, personalApiKeyStatus, usesMemberApiKey } from "./member-api-key";
@@ -311,7 +311,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     if (signedIn) {
       if (connection?.authType === "none") return "Nothing to sign in to.";
       if (connection?.authType === "apikey") return usesIndividualKeys ? "Each person can now add their own key in My Library." : "Uses the key you added.";
-      return connection?.externalAccountId ? `As ${connection.externalAccountId}.` : "You are signed in.";
+      const account = connection ? connectorAccountLabel(connection) : null;
+      if (connection?.nativeProviderKey === "slack") return "You are signed in to Slack.";
+      return account ? `As ${account}.` : "You are signed in.";
     }
     if (usesIndividualKeys) return "Each person adds their own key.";
     if (signIn.kind === "failed") return signIn.message;
@@ -411,8 +413,10 @@ export function useMemberSignIn() {
     name: string;
     authType?: ExternalMcpConnection["authType"];
     credentialMode?: ExternalMcpConnection["credentialMode"];
+    policyBlocked?: boolean;
   }) {
     const connection = usable.data?.find((entry) => entry.id === item.id);
+    if (item.policyBlocked || connection?.policyBlocked) return;
     const authType = item.authType ?? connection?.authType;
     const credentialMode = item.credentialMode ?? connection?.credentialMode;
     if (authType === "apikey" && credentialMode === "per_member") {

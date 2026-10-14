@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { requestJson } from "../../_lib/den-flow";
+import { orgFeatureEnabled } from "../../_lib/den-org";
+import { DashboardManagedSlack } from "./managed-slack";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DashboardActivity } from "../_features/activity/dashboard-activity";
@@ -112,6 +114,7 @@ export function DashboardOverviewScreen() {
         <StatCard icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />} title="Pending invites" value={`${pending}`} sub="Awaiting activation" tone="blue" />
       </div>
 
+      {orgFeatureEnabled(orgContext, "nativeSlack") ? <DashboardManagedSlack /> : null}
       <DashboardActivity />
     </div>
   );

@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Lock, Plug, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenBadge } from "../../_components/ui/badge";
+import { connectorAccountLabel, connectorDisplayName, connectorLimitedAccess, isManagedSlackConnection } from "./connector-detail";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getLibraryConnectorRoute, getMcpConnectionRoute, getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -62,7 +64,7 @@ export function YourConnectionsScreen() {
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
   const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
   const visibleConnections = useMemo(
-    () => sortConnectionsForFocus(connections, focusConnectionId),
+    () => sortConnectionsForFocus(connections.map((connection) => ({ ...connection, name: connectorDisplayName(connection) })), focusConnectionId),
     [connections, focusConnectionId],
   );
 
@@ -86,6 +88,7 @@ export function YourConnectionsScreen() {
   }
 
   function handleConnect(connection: ExternalMcpConnection) {
+    if (connection.policyBlocked) return;
     if (usesMemberApiKey(connection)) {
       setApiKeyTarget({ id: connection.id, name: connection.name, replacing: personalApiKeyStatus(connection) !== "missing" });
       return;
@@ -200,26 +203,29 @@ function YourConnectionRow({
   const { orgContext, orgSlug } = useOrgDashboard();
   const isPerMember = connection.credentialMode === "per_member";
   const apiKeyStatus = personalApiKeyStatus(connection);
-  const needsAdminRecovery = !needsAdminSetup
+  const needsAdminRecovery = !connection.policyBlocked && !needsAdminSetup
     && connection.needsReconnect === true
     && connection.reconnectActionOwner === "organization_admin";
-  const needsReconnect = !needsAdminSetup
+  const needsReconnect = !connection.policyBlocked && !needsAdminSetup
     && !needsAdminRecovery
     && (connection.needsReconnect === true || apiKeyStatus === "reconnect_required");
-  const needsMyConnect = !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
-  const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && canManageConnections && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
-  const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
+  const needsMyConnect = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
+  const needsAdminConnect = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && canManageConnections && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
+  const canDisconnect = (connection.policyBlocked || !needsAdminSetup) && canDisconnectMyConnectionAccount(connection);
   // A saved personal key keeps one visible action (Replace key); removal lives in the row menu.
   const keyInMenu = canDisconnect && apiKeyStatus !== null && apiKeyStatus !== "missing";
   const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
-  const canTestTools = !needsAdminSetup && !needsAdminRecovery && canManageConnections
+  const canTestTools = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && canManageConnections
     && !isNativeProvider && connection.connectedForMe && !needsReconnect;
   const microsoftScopes = (connection.nativeProviderKey === "microsoft-365" || connection.id === "microsoft-365")
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
   const requiredByLabel = formatRequiredBy(connection.requiredBy);
+  const limitedAccess = connectorLimitedAccess(connection);
+  const accountLabel = connectorAccountLabel(connection);
+  const tenantId = connection.nativeProviderKey === "slack" ? null : connection.tenantId;
   const checkConnection = useCheckMcpConnection();
-  const state = connectorReadinessState(connection);
+  const state = connection.policyBlocked ? null : connectorReadinessState(connection);
   if (state) return (
     <div data-connector-row={connection.name} ref={rowRef}>
       <ItemRow href={getLibraryConnectorRoute(orgSlug, connection.id)} logo={<IntegrationIcon name={connection.name} serviceUrl={connection.url} />} title={connection.name}
@@ -243,7 +249,9 @@ function YourConnectionRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-              {needsAdminSetup ? (
+              {connection.policyBlocked ? (
+                <DenBadge icon={Lock}>Blocked</DenBadge>
+              ) : needsAdminSetup ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Waiting for an admin to finish setup
                 </span>
@@ -261,6 +269,8 @@ function YourConnectionRow({
                 <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
                   {personalApiKeyStatusLabel(apiKeyStatus)}
                 </span>
+              ) : limitedAccess ? (
+                <DenBadge>Connected with limited access</DenBadge>
               ) : connection.connectedForMe ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   <Check className="h-3 w-3" />
@@ -285,16 +295,18 @@ function YourConnectionRow({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
+            <p className="mt-0.5 truncate text-[12px] text-gray-500">{isManagedSlackConnection(connection) ? "Provided by OpenWork" : connection.url}</p>
             {requiredByLabel ? (
               <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
             ) : null}
-            {isNativeProvider && (connection.tenantId || connection.externalAccountId) ? (
+            {connection.policyBlocked ? <p className="mt-1 text-sm text-muted-foreground">{connection.policyMessage ?? "An administrator controls access to this connection."}</p> : null}
+            {limitedAccess ? <p className="mt-1 text-sm text-muted-foreground">{limitedAccess}</p> : null}
+            {isNativeProvider && (tenantId || accountLabel) ? (
               <p className="mt-1 text-[11px] text-gray-500">
-                {connection.tenantId ? (
-                  <>Tenant <span className="font-mono text-gray-700">{connection.tenantId}</span>{connection.externalAccountId ? <> · {connection.externalAccountId}</> : null}</>
+                {tenantId ? (
+                  <>Tenant <span className="font-mono text-gray-700">{tenantId}</span>{accountLabel ? <> · {accountLabel}</> : null}</>
                 ) : (
-                  <span className="font-mono text-gray-700">{connection.externalAccountId}</span>
+                  <span>{accountLabel}</span>
                 )}
               </p>
             ) : null}
@@ -315,7 +327,7 @@ function YourConnectionRow({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {setupTarget ? (
+          {setupTarget && !connection.policyBlocked ? (
             <MarketplaceConfigureButton
               connection={connection}
               target={setupTarget}
@@ -340,17 +352,17 @@ function YourConnectionRow({
           ) : null}
           {canDisconnect && !keyInMenu ? (
             <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect} data-testid={`disconnect-my-mcp-account-${connection.id}`}>
-              Disconnect
+              {isManagedSlackConnection(connection) ? "Disconnect your account" : "Disconnect"}
             </DenButton>
           ) : null}
-          {!needsReconnect && (apiKeyStatus === "saved_unverified" || apiKeyStatus === "ready") ? (
+          {!connection.policyBlocked && !needsReconnect && (apiKeyStatus === "saved_unverified" || apiKeyStatus === "ready") ? (
             <DenButton variant="secondary" size="sm" loading={connecting} onClick={onConnect} data-testid={`replace-my-mcp-key-${connection.id}`}>
               Replace key
             </DenButton>
           ) : null}
-          {needsReconnect || needsMyConnect || needsAdminConnect ? (
+          {needsReconnect || limitedAccess || needsMyConnect || needsAdminConnect ? (
             <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect} data-testid={`connect-my-mcp-account-${connection.id}`}>
-              {apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : needsReconnect ? "Reconnect" : "Connect"}
+              {apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : needsReconnect || limitedAccess ? "Reconnect" : isManagedSlackConnection(connection) ? "Connect Slack" : "Connect"}
             </DenButton>
           ) : null}
           {keyInMenu ? (

@@ -33,7 +33,7 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
     if (!preset) return { target: null, loading: presets.isLoading, missing: !presets.isLoading, failed: false };
     return {
       target: {
-        name: preset.displayName,
+        name: preset.presetId === "slack" ? "Slack (custom app)" : preset.displayName,
         url: preset.url,
         description: shortDescription(preset.description),
         preset: { authType: preset.authType, requiresOAuthClient: preset.requiresOAuthClient, defaultOAuthClientId: preset.defaultOAuthClientId },

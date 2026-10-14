@@ -1,4 +1,5 @@
 import {
+  readFeatureRollouts,
   readFeatures,
   readOrganizationFeatureOverridesForMany,
   setFeatureRollout,
@@ -8,7 +9,7 @@ import {
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { FeatureRolloutTable, OrganizationFeatureTable, OrganizationTable } from "@openwork-ee/den-db/schema"
-import { resolveFeature, resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
+import { resolveFeature, resolveFeatures, type FeatureKey, type FeatureMap, type ResolvedFeature } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
@@ -35,7 +36,7 @@ import type { OrganizationContextVariables } from "./middleware/organization-con
 export type { FeatureKey, FeatureMap }
 
 type ReadOptions = {
-  /** A transaction: always read from it, never from the cache. */
+  /** A database pool or transaction: always read from it, never from the cache. */
   database?: FeatureDatabase
   /** Locks the override rows until the transaction commits; never cached. */
   lock?: "share"
@@ -134,6 +135,18 @@ export async function organizationFeatureEnabled(organizationId: string, key: Fe
   }
   const { rollouts, overrides } = await cache.features.state(id)
   return resolveFeature(key, { ...env.features, rollouts, overrides }).enabled
+}
+
+/**
+ * Deployment constraints for app-level plumbing that has no organization.
+ * This excludes organization overrides and is never organization authorization.
+ */
+export async function getDeploymentFeatureState(key: FeatureKey, options: ReadOptions = {}): Promise<ResolvedFeature> {
+  return resolveFeature(key, {
+    ...env.features,
+    rollouts: await readFeatureRollouts(options.database ?? db),
+    overrides: {},
+  })
 }
 
 /**

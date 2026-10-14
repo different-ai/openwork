@@ -23,6 +23,14 @@ export type ConnectorToolIdentity = {
 
 const NATIVE_CONNECTOR_IDENTITIES: ConnectorToolIdentity[] = [
   {
+    id: "native:slack",
+    name: "Slack",
+    iconUrl: resolveExtensionIconSrc("/ext-slack.svg"),
+    serviceUrl: null,
+    toolNamespace: null,
+    connectionId: null,
+  },
+  {
     id: "native:google-workspace",
     name: "Google Workspace",
     iconUrl: resolveExtensionIconSrc("/ext-google-workspace.svg"),
