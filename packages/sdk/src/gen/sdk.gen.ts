@@ -10292,7 +10292,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read a Google Drive file's text or binary content as the calling member
    *
-   * Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit.
+   * Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit. To analyze or edit a whole file (Office, PDF, large CSV), pull it into the workspace with the drive_pull_file tool instead.
    */
   public getV1CapabilitiesGoogleWorkspaceDriveFileByFileId<ThrowOnError extends boolean = false>(
     parameters: {

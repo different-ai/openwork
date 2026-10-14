@@ -314,6 +314,15 @@
       "requirement": "optional",
       "blockedEffect": "Favicons may be missing and the browser panel's new tab page may not load.",
       "override": null
+    },
+    {
+      "host": "www.googleapis.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Google Drive resumable upload sessions prepared by OpenWork Cloud: the desktop server sends a workspace file's bytes directly to Google when uploading or saving a pulled file back to Drive.",
+      "requirement": "opt-in",
+      "blockedEffect": "Drive uploads larger than 4 MiB and saving pulled files back to Drive fail; smaller uploads through OpenWork Cloud still work.",
+      "override": null
     }
   ]
 }

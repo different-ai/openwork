@@ -16,6 +16,7 @@ export const BUILTIN_CREATE_SKILL_CAPABILITY = "skill:create-skill"
 export const BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY = "skill:add-to-marketplace"
 export const BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY = "skill:add-user-to-marketplace"
 export const BUILTIN_SHARE_PLUGIN_CAPABILITY = "skill:share-plugin"
+export const BUILTIN_DRIVE_FILES_CAPABILITY = "skill:drive-files"
 
 const CREATE_SKILL_SOURCE = `---
 name: create-skill
@@ -203,6 +204,52 @@ The recipient is the named person or team. NEVER invent ids. Resolve a person or
 7. Stop. Do not attach marketplaces in this flow.
 `
 
+const DRIVE_FILES_SOURCE = `---
+name: drive-files
+description: |
+  Read, analyze or edit whole Google Drive files (Excel, Word, PowerPoint, PDF, CSV, images,
+  and Docs, Sheets or Slides as Office files) without loading them into the conversation.
+
+  Triggers when the user wants to:
+  - open, analyze or summarize a Drive file that is not short plain text
+  - change an .xlsx, .docx, .pptx, .csv or other Drive file and save it back
+---
+
+# Drive files
+
+Work on a local copy with shell tools; never paste file bytes or base64 into a tool call or reply.
+
+## Pick the tool
+
+| Need | Use |
+|---|---|
+| Summarize a short Google Doc or text file | The Drive file read capability (small inline text) |
+| Analyze or edit Office, PDF, CSV, images, or any large file | Pull it, then work on it with bash |
+| Change a few cells in a native Google Sheet | The Sheets values capabilities (keeps formulas, comments, history) |
+| Create a new file | Make it locally, then upload it |
+
+## In OpenWork (the drive_pull_file, drive_file_status and drive_push_file tools)
+
+1. \`drive_pull_file\` with the Drive file ID or link. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
+2. Inspect and edit the file with bash (recipes below). Load only the part you need.
+3. \`drive_file_status\` shows what changed locally and in Drive.
+4. Only when the user asked to save to Drive: \`drive_push_file\`, which the person approves. A stored file is replaced in place: same link and sharing, with the previous version in Drive's version history for 30 days. A Google Docs, Sheets or Slides file is saved as a new Google file next to the original unless the user asked for something else.
+5. On \`drive_conflict\`, someone changed the file in Drive. Pull it again (\`overwrite: true\` replaces only your local copy) and reapply your edits, or save as a copy. Newer Drive changes are never overwritten.
+
+## Bash recipes
+
+- What is it: \`file <f>; ls -l <f>\`
+- Spreadsheet overview: \`python3 -c "import openpyxl,sys; wb=openpyxl.load_workbook(sys.argv[1], read_only=True); [print(ws.title, ws.max_row, ws.max_column) for ws in wb]" <f>\`
+- Read a sheet: pandas \`read_excel(f, sheet_name=..., nrows=20)\`; print only what you need.
+- Edit cells and keep formatting: openpyxl \`load_workbook(f)\`, set cells, \`save(f)\`. openpyxl drops charts, images and pivot tables from files it saves: check first, and use LibreOffice (\`soffice --headless --convert-to\`) or the Sheets values capabilities for those files.
+- CSV: \`head\`, \`wc -l\`, csvkit or pandas.
+- Word: \`python-docx\`, or \`pandoc <f> -t markdown\` to read.
+- PDF: \`pdftotext -layout <f> - | head -100\`, \`pdfinfo <f>\`.
+- Install a missing tool with pip or apt when the computer allows it.
+
+Tell the user what changed and where it was saved, with the Drive link from the push result.
+`
+
 export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
   {
     descriptor: { name: "slack-assistant", title: "Slack assistant", description: "Respond to Slack requests as the invoking member, with audience and thread isolation.", capability: "skill:slack-assistant", location: "skill://slack-assistant/SKILL.md" },
@@ -264,6 +311,17 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
     source: BUILD_AN_APP_SKILL_SOURCE,
     searchExtraTokens: "app apps build make create edit update dashboard tracker calculator form lookup interactive view mcp artifact",
     available: () => env.appMcpServersEnabled,
+  },
+  {
+    descriptor: {
+      name: "drive-files",
+      title: "Drive Files",
+      description: "Pull Google Drive files into a local copy, edit them with shell tools, and save them back without loading them into context.",
+      capability: BUILTIN_DRIVE_FILES_CAPABILITY,
+      location: "skill://drive-files/SKILL.md",
+    },
+    source: DRIVE_FILES_SOURCE,
+    searchExtraTokens: "google drive file files download pull push sync edit excel xlsx docx pptx pdf csv spreadsheet bash shell workspace",
   },
 ]
 

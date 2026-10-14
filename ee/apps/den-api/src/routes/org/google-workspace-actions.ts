@@ -74,7 +74,7 @@ function googleFailureMessage(status: number, google: ReturnType<typeof parseGoo
   } else if (google.reasons.has("exportSizeLimitExceeded")) {
     hint = " Google exports Docs, Sheets and Slides files only up to 10 MB. Export a smaller format such as csv or txt, or split the file."
   } else if (google.status === "FAILED_PRECONDITION" && url.pathname.includes("/v4/spreadsheets/")) {
-    hint = " Sheets actions only work on native Google Sheets. Save Office files such as .xlsx as Google Sheets in Drive first (File > Save as Google Sheets), then use the new spreadsheet."
+    hint = " Sheets actions only work on native Google Sheets. To work on an Office file such as .xlsx, pull it into the workspace with the drive_pull_file tool and edit it there, or save it as a Google Sheet in Drive first."
   } else if (status === 404 || (status === 403 && google.reasons.size === 0)) {
     hint = " The connected Google account may not have access to this item, or the ID may be wrong."
   }

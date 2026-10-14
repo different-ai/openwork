@@ -91,19 +91,19 @@ function pushUniqueResolvedPath(paths: string[], path: string) {
   if (!paths.includes(resolved)) paths.push(resolved);
 }
 
-function isWithinRoot(path: string, root: string) {
+export function isWithinRoot(path: string, root: string) {
   const child = relative(root, path);
   return child === "" || (!!child && !child.startsWith("..") && !isAbsolute(child));
 }
 
-function allowedRoots(config: ServerConfig) {
+export function allowedRoots(config: ServerConfig) {
   const roots: string[] = [];
   for (const workspace of config.workspaces) pushUniqueResolvedPath(roots, workspace.path);
   for (const root of config.authorizedRoots) pushUniqueResolvedPath(roots, root);
   return roots;
 }
 
-function searchRoots(config: ServerConfig, context: Record<string, unknown>, roots: string[]) {
+export function searchRoots(config: ServerConfig, context: Record<string, unknown>, roots: string[]) {
   const candidates: string[] = [];
   const directory = readString(context, "directory");
   const worktree = readString(context, "worktree");
@@ -114,7 +114,7 @@ function searchRoots(config: ServerConfig, context: Record<string, unknown>, roo
   return candidates.filter((candidate) => roots.some((root) => isWithinRoot(candidate, root)));
 }
 
-async function resolveAuthorizedFile(config: ServerConfig, context: Record<string, unknown>, requested: string, maxBytes = DIRECT_UPLOAD_MAX_BYTES) {
+export async function resolveAuthorizedFile(config: ServerConfig, context: Record<string, unknown>, requested: string, maxBytes = DIRECT_UPLOAD_MAX_BYTES) {
   const roots = allowedRoots(config);
   if (!roots.length) throw new ApiError(400, "invalid_payload", "No authorized workspace roots are available.");
   const realRoots: string[] = [];
@@ -150,7 +150,7 @@ async function resolveAuthorizedFile(config: ServerConfig, context: Record<strin
   throw new ApiError(404, "file_not_found", "File was not found inside an authorized workspace root.", { path: requested });
 }
 
-function mimeTypeForPath(path: string) {
+export function mimeTypeForPath(path: string) {
   const lower = path.toLowerCase();
   if (lower.endsWith(".mp4")) return "video/mp4";
   if (lower.endsWith(".mov")) return "video/quicktime";
@@ -162,13 +162,14 @@ function mimeTypeForPath(path: string) {
   if (lower.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   if (lower.endsWith(".csv")) return "text/csv";
   if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".md")) return "text/markdown";
   if (lower.endsWith(".json")) return "application/json";
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   return "application/octet-stream";
 }
 
-async function cloudUploadEndpoint(config: ServerConfig, suffix: string, dependencies: CloudUploadDependencies) {
+export async function cloudUploadEndpoint(config: ServerConfig, suffix: string, dependencies: CloudUploadDependencies) {
   const cloud = await (dependencies.readCloudMcp ?? readConnectCloudMcp)(config);
   const endpoint = readString(cloud, "url");
   const headers = isRecord(cloud?.headers) ? cloud.headers : null;

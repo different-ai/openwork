@@ -15,11 +15,14 @@ import {
   OPENWORK_CLOUD_UPLOAD_ACTIONS,
   OPENWORK_CLOUD_UPLOADS_EXTENSION_ID,
 } from "./cloud-uploads.js";
+import { callDriveFileAction, OPENWORK_DRIVE_FILE_ACTIONS } from "./drive-files.js";
 
 const OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS = [
   ...OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
   ...OPENWORK_CLOUD_UPLOAD_ACTIONS,
 ];
+// Callable by OpenWork's own Drive tools, which ask before writes, but never listed for direct calls.
+const OPENWORK_CALLABLE_EXTENSION_ACTIONS = [...OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS, ...OPENWORK_DRIVE_FILE_ACTIONS];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -52,7 +55,7 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
   if (extensionId === "google-workspace") {
     return googleWorkspaceCloudRequired(connectSnapshot?.cloudHealth ?? null);
   }
-  const registered = OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS.find((item) => item.extensionId === extensionId && item.action === action);
+  const registered = OPENWORK_CALLABLE_EXTENSION_ACTIONS.find((item) => item.extensionId === extensionId && item.action === action);
   if (!registered) {
     throw new ApiError(404, "extension_action_not_found", "OpenWork extension action not found");
   }
@@ -63,7 +66,8 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
   }
 
   if (extensionId === OPENWORK_CLOUD_UPLOADS_EXTENSION_ID) {
-    const result = await callOpenWorkCloudUploadAction(config, action, args, context, { signal });
+    const result = await callOpenWorkCloudUploadAction(config, action, args, context, { signal })
+      ?? await callDriveFileAction(config, action, args, context, { signal });
     if (result) return result;
   }
 

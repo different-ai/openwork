@@ -99,6 +99,33 @@ support return `file_input_requires_host` and create no draft. Do not retry
 without the requested attachments. If an upload's result is uncertain, check
 Gmail Drafts before attempting creation again.
 
+### Work on whole Drive files
+
+Ask for the outcome, for example: “Fill in row 12 of the supplier workbook in
+Drive and save it.” In OpenWork Desktop the agent pulls the file into your
+workspace (by default `drive/<file name>`), works on that copy with shell tools
+such as Python, and saves it back only when you ask. OpenWork asks you to
+approve each save to Drive, following your allow, ask and deny rules, the same
+way it asks before other changes. The file's content never passes through the
+conversation, so Excel, Word, PowerPoint, PDF, large CSV, and image files work
+the same way.
+
+- Google Docs, Sheets, and Slides are pulled as Word, Excel, and PowerPoint
+  files unless you ask for another format (CSV, which holds only a sheet's first
+  tab, Markdown, text, or PDF). Saving one back creates a new Google file next to
+  the original instead of replacing it; to change a few cells in a Google Sheet
+  in place, ask for that directly.
+- Other files are replaced in place: same link and sharing, with the previous
+  version kept in Drive's version history for 30 days.
+- If someone changed the file in Drive after it was pulled, saving stops instead
+  of overwriting their change. The agent pulls the newer version and reapplies
+  your edits, or saves your edits as a copy.
+- Pulls support files up to 250 MB. Google exports Docs, Sheets, and Slides files
+  up to about 10 MB.
+
+Pulling needs **Read all Drive files**; replacing a file OpenWork did not create
+needs **Full Drive access**.
+
 ## Manage connected services
 
 Google Workspace and Microsoft 365 connections can perform service actions, not
@@ -111,7 +138,7 @@ access does not automatically enable sending.
 | --- | --- |
 | Gmail | Search/read messages and attachments; create/read/update drafts; send an existing draft, including its reply threading and attachments; archive/unarchive, mark read/unread, star, trash/restore, and manage user labels. |
 | Google Calendar | List/create events; read, edit/reschedule, and cancel events in a selected calendar; add Meet to an existing event. |
-| Drive | Search/list with date, folder, and pagination controls; read files, upload/share, create folders, rename/move, and trash/restore. |
+| Drive | Search/list with date, folder, and pagination controls; read files, pull files into the workspace and save edits back, upload/share, create folders, rename/move, and trash/restore. |
 | Sheets | Create spreadsheets, inspect their tabs, read cell ranges, write cells, and append rows. Writes default to literal values; formula parsing requires explicit approval. |
 | Outlook | Read mail, create drafts and reply drafts, send existing drafts, change read status/categories, and move messages between inbox/archive/deleted items. |
 | Outlook Calendar | List/create, edit/reschedule, cancel, and delete events. |

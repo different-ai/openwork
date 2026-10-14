@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ApiError } from "../errors.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
+import { createDriveFileTools, DRIVE_FILE_ACTIONS } from "./drive-file-tools.js";
 import { createGmailAttachmentFulfillment, type GmailAttachmentDependencies } from "./gmail-attachment-fulfillment.js";
 import { z } from "zod";
 import { sessionActivityFrom, type SessionActivity } from "./session-activity.js";
@@ -476,6 +477,9 @@ async function executeOpenworkAffordance(
   }
   if (request.id === "extension.call") {
     const args = callArgsSchema.parse(request.args ?? {});
+    if (args.extensionId === "openwork-cloud-uploads" && (DRIVE_FILE_ACTIONS as readonly string[]).includes(args.action)) {
+      return unavailableAffordance(request.id, `Use the ${args.action} tool, which asks the person before changing files.`);
+    }
     return affordanceResult(
       request.id,
       await postJson("/experimental/extensions/call", {
@@ -1324,6 +1328,12 @@ async function postJson(path: string, body: ExtensionActionPayload | Record<stri
   return payload;
 }
 
+// Pulls of large files stream through OpenWork Cloud, so they get more time than other extension calls.
+function driveToolSignal(context: unknown) {
+  const timeout = AbortSignal.timeout(15 * 60 * 1000);
+  return isRecord(context) && context.abort instanceof AbortSignal ? AbortSignal.any([context.abort, timeout]) : timeout;
+}
+
 function contextPayload(context: OpenCodeContext) {
   return {
     agent: context.agent,
@@ -1376,6 +1386,12 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
     );
   },
   tool: {
+    ...createDriveFileTools((action, args, context) => postJson("/experimental/extensions/call", {
+      extensionId: "openwork-cloud-uploads",
+      action,
+      args,
+      context: contextPayload({ ...factoryContext, ...normalizeOpenCodeContext(context) }),
+    }, driveToolSignal(context))),
     openwork_context: {
       description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},
