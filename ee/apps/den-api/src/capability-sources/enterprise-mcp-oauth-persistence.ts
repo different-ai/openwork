@@ -37,7 +37,7 @@ import {
   isSdkRegisteredOAuthClient,
   type ExternalMcpConnectionRow,
 } from "./external-mcp-connections.js"
-import { externalMcpCompatibleCallbackUrl } from "./external-mcp-oauth-contract.js"
+import { externalMcpCallbackOriginChanged, externalMcpCompatibleCallbackUrl } from "./external-mcp-oauth-contract.js"
 import { normalizeConnectedAccountScopes, normalizeOAuthClientExtra, parseGrantedOAuthScopes } from "./oauth-credentials.js"
 import {
   externalMcpDiagnosticForLog,
@@ -211,6 +211,9 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     connection: ExternalMcpConnectionRow,
     member?: ExternalMcpMemberContext,
     private readonly diagnosticTracker?: ExternalMcpDiagnosticTracker,
+    // Only an explicit connect attempt may replace a registration. Ordinary
+    // tool calls and refreshes keep using their still-valid original client.
+    private readonly recoverPublicOrigin = false,
   ) {
     this.connection = connection
     this.identityBinding = externalMcpIdentityBinding(connection)
@@ -309,9 +312,19 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         callbackMode: this.connection.oauthConfiguration?.callbackMode ?? "legacy-v1",
         createdAt: this.connection.createdAt,
         registeredRedirectUri,
+        recoverPublicOrigin: this.recoverPublicOrigin,
       })
+      if (this.recoverPublicOrigin && externalMcpCallbackOriginChanged({
+        connectionId: this.connection.id,
+        callbackMode: this.connection.oauthConfiguration?.callbackMode ?? "legacy-v1",
+        registeredRedirectUri,
+      }) && isSdkRegisteredOAuthClient(extra)) {
+        // Do not delete the old registration until its replacement is saved:
+        // discovery/DCR failures must not strand existing refresh credentials.
+        return undefined
+      }
       if (
-        extra?.enterpriseMcpRegistrationSource === "pre-registered"
+        !isSdkRegisteredOAuthClient(extra)
         && registeredRedirectUri !== undefined
         && registeredRedirectUri !== currentRedirectUri
       ) {
@@ -372,12 +385,18 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             eq(OrgOAuthClientTable.providerId, this.connection.id),
           ))
           .limit(1)
-        if (existing[0]) return existing[0]
-        const id = createDenTypeId("orgOAuthClient")
-        await tx.insert(OrgOAuthClientTable).values({
-          id,
-          organizationId: this.connection.organizationId,
-          providerId: this.connection.id,
+        const previous = existing[0]
+        const previousExtra = normalizeOAuthClientExtra(previous?.extra)
+        const replacingObsoleteClient = this.recoverPublicOrigin
+          && isSdkRegisteredOAuthClient(previousExtra)
+          && externalMcpCallbackOriginChanged({
+            connectionId: this.connection.id,
+            callbackMode: connections[0].oauthConfiguration?.callbackMode ?? "legacy-v1",
+            registeredRedirectUri: typeof previousExtra?.registeredRedirectUri === "string" ? previousExtra.registeredRedirectUri : null,
+          })
+        if (previous && !replacingObsoleteClient) return previous
+        const id = previous?.id ?? createDenTypeId("orgOAuthClient")
+        const values = {
           clientId: input.clientInformation.client_id,
           clientSecret: input.clientInformation.client_secret ?? null,
           extra: {
@@ -387,8 +406,34 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             registeredRedirectUri: input.redirectUri,
             authorizationServerIssuer: this.connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
           },
-          createdByOrgMembershipId: this.connection.createdByOrgMembershipId,
-        })
+        }
+        if (previous) {
+          await tx.update(OrgOAuthClientTable).set({
+            ...values,
+            updatedAt: new Date(Math.max(Date.now(), previous.updatedAt.getTime() + 1)),
+          }).where(eq(OrgOAuthClientTable.id, id))
+          // Refresh grants and pending PKCE transactions belong to the old
+          // client. Access tokens may still work: retain them, account rows,
+          // scopes, policies, grants and bindings. Never try an old refresh
+          // grant with the replacement client (including another member's).
+          await tx.update(ExternalMcpConnectionTable).set({
+            refreshToken: null, pendingCodeVerifier: null,
+          }).where(eq(ExternalMcpConnectionTable.id, this.connection.id))
+          await tx.update(ConnectedAccountTable).set({
+            refreshToken: null, pendingCodeVerifier: null,
+          }).where(and(
+            eq(ConnectedAccountTable.organizationId, this.connection.organizationId),
+            eq(ConnectedAccountTable.providerId, this.connection.id),
+          ))
+        } else {
+          await tx.insert(OrgOAuthClientTable).values({
+            id,
+            organizationId: this.connection.organizationId,
+            providerId: this.connection.id,
+            ...values,
+            createdByOrgMembershipId: this.connection.createdByOrgMembershipId,
+          })
+        }
         const inserted = await tx
           .select()
           .from(OrgOAuthClientTable)

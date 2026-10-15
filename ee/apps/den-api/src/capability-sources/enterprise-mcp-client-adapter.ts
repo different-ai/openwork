@@ -40,6 +40,7 @@ function toEnterpriseConnection(
   member: ExternalMcpMemberContext | undefined,
   tracker: ExternalMcpDiagnosticTracker,
   memberApiKey: MemberApiKeyCredential | undefined,
+  recoverPublicOrigin = false,
 ): EnterpriseMcpConnection {
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
@@ -51,7 +52,7 @@ function toEnterpriseConnection(
       serverUrl: connection.url,
       authorization: {
         type: "oauth",
-        persistence: new DenEnterpriseMcpOAuthPersistence(connection, member, tracker),
+        persistence: new DenEnterpriseMcpOAuthPersistence(connection, member, tracker, recoverPublicOrigin),
         configuration: {
           applicationType: "web",
           // CIMD client identifiers must be HTTPS URLs. Local HTTP development
@@ -202,6 +203,7 @@ function translateEnterpriseMcpError(
 }
 
 type OperationInput = {
+  recoverPublicOrigin?: boolean
   connection: ExternalMcpConnectionRow
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
@@ -271,7 +273,7 @@ async function runEnterpriseMcpOperation<T>(input: OperationInput & {
       memberApiKey = await resolveMemberApiKey(input.connection, input.member.orgMembershipId)
     }
     const client = createOperationClient(input, tracker, memberApiKey)
-    return await input.operation(client, toEnterpriseConnection(input.connection, input.member, tracker, memberApiKey))
+    return await input.operation(client, toEnterpriseConnection(input.connection, input.member, tracker, memberApiKey, input.recoverPublicOrigin))
   } catch (error) {
     throw translateEnterpriseMcpError(error, tracker)
   }
@@ -283,11 +285,15 @@ export async function connectExternalMcp(
   signedState?: string,
   member?: ExternalMcpMemberContext,
   diagnosticReferenceId?: string,
+  recoverPublicOrigin = false,
 ): Promise<ExternalMcpConnectResult> {
   return runEnterpriseMcpOperation({
     connection,
     member,
     diagnosticReferenceId,
+    // The route resolves the rollout once for callback selection and
+    // persistence together. Runtime calls never opt in without signed state.
+    recoverPublicOrigin: Boolean(signedState) && recoverPublicOrigin,
     operation: (client, connection) => client.connect({
       connection,
       redirectUri,

@@ -28,6 +28,7 @@ import { cache, type CachedOrgMember } from "../../cache.js"
 import { db } from "../../db.js"
 import { requestReadFor } from "../../request-reads.js"
 import { env } from "../../env.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import { memberSignInLink } from "../../agent-links.js"
 import { appLogger } from "../../observability/logger.js"
 import {
@@ -90,6 +91,7 @@ import { getConnectedAccount, getConnectedAccountForListing, getOrgOAuthClient, 
 import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import {
   externalMcpCallbackUrl,
+  externalMcpCallbackOriginChanged,
   externalMcpCompatibleCallbackUrl,
   externalMcpClientMetadataUrl,
   externalMcpSharedCallbackUrl,
@@ -1153,6 +1155,7 @@ function registeredRedirectUriForClient(oauthClient: Awaited<ReturnType<typeof g
 function callbackRedirectUriWithClient(
   connection: ExternalMcpConnectionRow,
   oauthClient: Awaited<ReturnType<typeof getOrgOAuthClient>>,
+  recoverPublicOrigin = false,
 ) {
   if (connection.authType !== "oauth") return "http://127.0.0.1/unused-mcp-oauth-callback"
   return externalMcpCompatibleCallbackUrl({
@@ -1160,14 +1163,15 @@ function callbackRedirectUriWithClient(
     callbackMode: connection.oauthConfiguration?.callbackMode ?? "legacy-v1",
     createdAt: connection.createdAt,
     registeredRedirectUri: registeredRedirectUriForClient(oauthClient),
+    recoverPublicOrigin,
   })
 }
 
-async function callbackRedirectUri(connection: ExternalMcpConnectionRow) {
+async function callbackRedirectUri(connection: ExternalMcpConnectionRow, recoverPublicOrigin = false) {
   const oauthClient = connection.authType === "oauth"
     ? await getOrgOAuthClient(connection.organizationId, connection.id)
     : null
-  return callbackRedirectUriWithClient(connection, oauthClient)
+  return callbackRedirectUriWithClient(connection, oauthClient, recoverPublicOrigin)
 }
 
 async function toConnectionResponse(
@@ -1304,7 +1308,7 @@ async function toConnectionResponse(
       oauthCallbackUrl: row.authType === "oauth"
         ? row.kind === "native_provider" && row.nativeProviderKey
           ? nativeProviderCallbackUrl(row.nativeProviderKey)
-          : callbackRedirectUriWithClient(row, oauthClient)
+          : callbackRedirectUriWithClient(row, oauthClient, await organizationFeatureEnabled(row.organizationId, "mcpOauthDomainRecovery"))
         : null,
       oauthSharedCallbackUrl: row.kind === "external_mcp" && row.authType === "oauth" ? externalMcpSharedCallbackUrl() : null,
       oauthClientMetadataUrl: row.kind === "external_mcp" && row.authType === "oauth" ? externalMcpClientMetadataUrl() : null,
@@ -3380,6 +3384,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ status: "needs_auth", authorizeUrl: started.authorizeUrl })
       }
 
+      const recoverPublicOrigin = await organizationFeatureEnabled(connection.organizationId, "mcpOauthDomainRecovery")
       let issuerRepairRequiresAdmin = false
       try {
         // Our own signed state token identifies which connection AND which
@@ -3409,6 +3414,26 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             })
           }
         }
+        const oauthClient = recoverPublicOrigin ? await getOrgOAuthClient(connection.organizationId, connection.id) : null
+        if (oauthClient && oauthRegistrationSourceForClient(oauthClient) === "pre-registered"
+          && externalMcpCallbackOriginChanged({
+            connectionId: connection.id,
+            callbackMode: connection.oauthConfiguration?.callbackMode ?? "legacy-v1",
+            registeredRedirectUri: registeredRedirectUriForClient(oauthClient),
+          })) {
+          const callbackUrl = callbackRedirectUriWithClient(connection, oauthClient, true)
+          return c.json({
+            error: "mcp_oauth_configuration_required",
+            message: `The deployment callback URL changed. An organization admin must allowlist ${callbackUrl} in the provider's developer console, then save the existing OAuth client in Connections and reconnect.`,
+            callbackUrl,
+            clientMetadataUrl: externalMcpClientMetadataUrl(),
+            manualRequirements: [
+              "Update the existing provider OAuth application's allowed redirect URI to the callback URL shown here.",
+              "Save the existing client ID in Connections to confirm the provider update; the saved secret is preserved when omitted.",
+              "Reconnect without deleting the connection or changing its access grants and tool policies.",
+            ],
+          }, 409)
+        }
         const beginAuthorization = async (target: ExternalMcpConnectionRow) => {
           const callbackMode = target.oauthConfiguration?.callbackMode ?? "legacy-v1"
           const responseIssuerRequired = authorizationResponseIssuerRequired(target)
@@ -3425,10 +3450,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           })
           const result = await connectExternalMcp(
             target,
-            await callbackRedirectUri(target),
+            await callbackRedirectUri(target, recoverPublicOrigin),
             signedState,
             member,
             c.get("requestId"),
+            recoverPublicOrigin,
           )
           return {
             result,
@@ -3571,7 +3597,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           return c.json({
             error: "mcp_oauth_configuration_required",
             message: "This authorization server requires a pre-registered OAuth client before OpenWork can connect.",
-            callbackUrl: await callbackRedirectUri(connection),
+            callbackUrl: await callbackRedirectUri(connection, recoverPublicOrigin),
             clientMetadataUrl: externalMcpClientMetadataUrl(),
             manualRequirements: [
               "Create an OAuth application in the external provider.",
@@ -3595,7 +3621,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           message: `Could not connect "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
           diagnostic,
           ...(diagnostic.code === "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED"
-            ? { callbackUrl: await callbackRedirectUri(connection) }
+            ? { callbackUrl: await callbackRedirectUri(connection, recoverPublicOrigin) }
             : {}),
         }, 424)
       }

@@ -71,12 +71,26 @@ function validAbsoluteUrl(value: string | null | undefined): string | null {
   }
 }
 
+/** Keep the intentional hosted proxy compatibility route, not arbitrary obsolete hosts. */
+export function externalMcpCallbackOriginChanged(input: {
+  connectionId: string
+  callbackMode: ExternalMcpOAuthCallbackMode
+  registeredRedirectUri?: string | null
+}): boolean {
+  const registered = validAbsoluteUrl(input.registeredRedirectUri)
+  if (!registered) return false
+  if (usesHostedDirectApiMigration() && registered === externalMcpHostedWebProxyCallbackUrl(input)) return false
+  return new URL(registered).origin !== new URL(configuredPublicApiBaseUrl()).origin
+}
+
 export function externalMcpCompatibleCallbackUrl(input: {
   connectionId: string
   callbackMode: ExternalMcpOAuthCallbackMode
   createdAt: Date
   registeredRedirectUri?: string | null
+  recoverPublicOrigin?: boolean
 }): string {
+  if (input.recoverPublicOrigin && externalMcpCallbackOriginChanged(input)) return externalMcpCallbackUrl(input)
   // The provider's OAuth app registration is authoritative for reconnects: if
   // Den recorded the redirect URI used when the client was registered, keep
   // sending that exact URI through authorize and token exchange.

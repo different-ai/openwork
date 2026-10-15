@@ -53,6 +53,13 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  mcpOauthDomainRecovery: {
+    label: "MCP OAuth domain recovery",
+    description: "Reconnect external MCP connections after the deployment public domain changes without recreating the connection.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   memberListToolbars: {
     label: "Members: consistent list toolbars",
     description: "Filter members, teams and roles beside their add action, with compact member rows and secondary actions in the list menu.",

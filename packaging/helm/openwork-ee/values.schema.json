@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "mcpOauthDomainRecovery": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "MCP OAuth domain recovery: Reconnect external MCP connections after the deployment public domain changes without recreating the connection. Renders DEN_FEATURE_MCP_OAUTH_DOMAIN_RECOVERY."
+            },
             "memberListToolbars": {
               "enum": [
                 "",
