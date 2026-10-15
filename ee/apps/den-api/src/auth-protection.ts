@@ -7,6 +7,7 @@ import { adjacencyGraphs, dictionary as commonPasswordDictionary } from "@zxcvbn
 import { dictionary as englishPasswordDictionary, translations as englishPasswordTranslations } from "@zxcvbn-ts/language-en"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { appLogger } from "./observability/logger.js"
 
 export const EMAIL_PASSWORD_SIGN_IN_PATH = "/api/auth/sign-in/email"
 export const EMAIL_PASSWORD_SIGN_UP_PATH = "/api/auth/sign-up/email"
@@ -19,6 +20,8 @@ export const LOGIN_LOCKOUT_FAILURE_THRESHOLD = 5
 export const LOGIN_LOCKOUT_FAILURE_WINDOW_MS = 60 * 60 * 1000
 export const LOGIN_LOCKOUT_BASE_MS = 5 * 60 * 1000
 export const LOGIN_LOCKOUT_MAX_MS = 60 * 60 * 1000
+const PASSWORD_SCREENING_TIMEOUT_MS = 5_000
+const PASSWORD_SCREENING_MAX_ATTEMPTS = 2
 
 type LoginAttempt = {
   email: string
@@ -303,24 +306,48 @@ export async function isPasswordCompromised(password: string, fetchPasswordRange
   const hash = hashPasswordForRangeLookup(password)
   const prefix = hash.slice(0, 5)
   const suffix = hash.slice(5)
-  const response = await fetchPasswordRange(`https://api.pwnedpasswords.com/range/${prefix}`, {
-    headers: {
-      "add-padding": "true",
-      "user-agent": "OpenWork den-api password screening",
-    },
-  })
+  for (let attempt = 1; attempt <= PASSWORD_SCREENING_MAX_ATTEMPTS; attempt += 1) {
+    let response: Response
+    let body = ""
+    try {
+      response = await fetchPasswordRange(`https://api.pwnedpasswords.com/range/${prefix}`, {
+        headers: {
+          "add-padding": "true",
+          "user-agent": "OpenWork den-api password screening",
+        },
+        signal: AbortSignal.timeout(PASSWORD_SCREENING_TIMEOUT_MS),
+      })
+      if (response.ok) body = await response.text()
+    } catch (error) {
+      const cause = error instanceof Error && isRecord(error.cause) ? error.cause : null
+      const code = cause?.code
+      appLogger.warn("Password breach screening connection failed", {
+        component: "auth",
+        attempt,
+        retrying: attempt < PASSWORD_SCREENING_MAX_ATTEMPTS,
+        error_name: error instanceof Error && ["Error", "TypeError", "TimeoutError", "AbortError"].includes(error.name) ? error.name : "Error",
+        error_code: typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code) ? code : undefined,
+      })
+      if (attempt < PASSWORD_SCREENING_MAX_ATTEMPTS) continue
+      throw new Error("password_screening_unavailable")
+    }
 
-  if (!response.ok) {
-    throw new Error("password_screening_unavailable")
-  }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {})
+      const retrying = attempt < PASSWORD_SCREENING_MAX_ATTEMPTS && [500, 502, 503, 504].includes(response.status)
+      appLogger.warn("Password breach screening HTTP request failed", {
+        component: "auth", attempt, retrying, upstream_status: response.status,
+      })
+      if (retrying) continue
+      throw new Error("password_screening_unavailable")
+    }
 
-  const body = await response.text()
-  return body
-    .split(/\r?\n/g)
-    .some((line) => {
+    return body.split(/\r?\n/g).some((line) => {
       const [entry] = line.trim().split(":")
       return entry === suffix
     })
+  }
+  throw new Error("password_screening_unavailable")
 }
 
 export async function getBreachedPasswordResponse(
