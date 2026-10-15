@@ -1,4 +1,5 @@
 import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
+import type { ModelAttribution } from "./attribution.js"
 import type { ResumeExchange, ResumeExchangeResult } from "./den-resume.js"
 import type { ErrorReporter } from "./error-reporting.js"
 import type { GrantVault } from "./resume-grants.js"
@@ -20,7 +21,7 @@ import type { Store } from "./store.js"
 /** Why a turn stopped, for the turns the runner resumes itself. */
 export const SELF_RESUMED_ERRORS = ["runner_restarted", "runner_shutdown", "credentials_refresh"] as const
 
-export type FreshCredentials = { mcpToken: string; readOnly: boolean; modelAccess?: HeadlessModelAccess }
+export type FreshCredentials = { mcpToken: string; readOnly: boolean; modelAccess?: HeadlessModelAccess; modelAttribution?: ModelAttribution }
 /** What the sweep needs from the runner: the caller's own re-send. */
 export type ResumeSend = (input: { sessionId: string; messageId: string; credentials: FreshCredentials & { resumeGrant: string } }) => { ok: boolean; state?: string }
 export type SweepResult = { resumed: number; waiting: number; failed: number }
@@ -107,7 +108,7 @@ export class SelfResume {
     }
     if (modelAccessRequired && !result.modelAccess) return null
     this.retries.delete(keyOf(sessionId, messageId))
-    return { mcpToken: result.mcpToken, readOnly: result.readOnly, ...(result.modelAccess ? { modelAccess: result.modelAccess } : {}) }
+    return { mcpToken: result.mcpToken, readOnly: result.readOnly, ...(result.modelAccess ? { modelAccess: result.modelAccess } : {}), ...(result.modelAttribution ? { modelAttribution: result.modelAttribution } : {}) }
   }
 
   /**
@@ -160,7 +161,7 @@ export class SelfResume {
       // A caller may have resumed or stopped it while Den answered; only a turn still waiting is resumed.
       const current = store.getTurn(sessionId, messageId)
       if (current?.status !== "interrupted" || !isSelfResumed(current.error)) continue
-      const sent = send({ sessionId, messageId, credentials: { mcpToken: exchanged.mcpToken, readOnly: exchanged.readOnly, resumeGrant: grant, ...(exchanged.modelAccess ? { modelAccess: exchanged.modelAccess } : {}) } })
+      const sent = send({ sessionId, messageId, credentials: { mcpToken: exchanged.mcpToken, readOnly: exchanged.readOnly, resumeGrant: grant, ...(exchanged.modelAccess ? { modelAccess: exchanged.modelAccess } : {}), ...(exchanged.modelAttribution ? { modelAttribution: exchanged.modelAttribution } : {}) } })
       if (sent.ok && sent.state === "resumed") {
         result.resumed += 1
         console.log(`[headless-runner] turn resumed by the runner ${JSON.stringify({ sessionId, messageId, reason: turn.error })}`)

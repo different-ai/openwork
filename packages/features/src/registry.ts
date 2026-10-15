@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  headlessModelAttribution: {
+    label: "Headless model attribution",
+    description: "Attribute headless inference requests to the authenticated member through an operator-configured gateway header.",
+    category: "workbot",
+    added: "2026-10-17",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/features/headless-model-attribution/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   webPerMember: {
     label: "OpenWork Web per member",
     description: "Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it.",

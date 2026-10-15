@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+import { modelAttributionSchema } from "./attribution.js"
 export { headlessModelAccessSchema, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 
 /** A saved file as messages refer to it. */
@@ -96,6 +97,7 @@ export const turnCredentialsSchema = z
   .object({
     modelApiKey: z.string().min(1).max(4096).optional(),
     modelAccess: headlessModelAccessSchema.optional(),
+    modelAttribution: modelAttributionSchema.optional(),
     mcpToken: z.string().min(1).max(16_384).optional(),
     /** Trusted caller policy, also enforced for the runner's local tools. */
     readOnly: z.boolean().optional(),

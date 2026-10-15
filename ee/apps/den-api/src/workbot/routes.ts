@@ -11,6 +11,7 @@ import { db } from "../db.js"
 import { attributeAuditRequest, auditUserPrincipalKey } from "../audit/request-capture.js"
 import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
+import { modelAttributionSchema } from "@openwork-ee/headless-protocol"
 import { mintHeadlessTurnCredentials } from "../headless-runner/resume-grants.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
@@ -140,6 +141,7 @@ const runTokenSchema = z.object({
   resumeGrant: z.string().optional(),
   /** Server-to-server only; never returned in Workbot's browser session or transcript. */
   modelAccess: headlessModelAccessSchema.optional(),
+  modelAttribution: modelAttributionSchema.optional(),
   /**
    * When the request names the session: a capability the headless runner presents to report that conversation's
    * content-free sizes and state to Den's session index. Server-to-server only.
@@ -737,7 +739,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
           model = await workbotIncludedDefaultModel(principal, chosen) ?? undefined
         }
         // Credential minting still reauthorizes the exact model for this member on every turn.
-        const { token, resumeGrant, modelAccess, indexCapability } = await mintHeadlessTurnCredentials({
+        const { token, resumeGrant, modelAccess, indexCapability, modelAttribution } = await mintHeadlessTurnCredentials({
           ...principal, ttlMs, readOnly, sessionId, messageId, model, indexKind: "workbot", memberId: resolved.memberId,
         })
         return c.json({
@@ -746,6 +748,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
           ...(resumeGrant ? { resumeGrant } : {}),
           ...(modelAccess ? { modelAccess } : {}),
           ...(indexCapability ? { indexCapability } : {}),
+          ...(modelAttribution ? { modelAttribution } : {}),
         })
       } catch (error) {
         return c.json({ error: "workbot_turn_access_denied", reason: error instanceof CloudAgentGatewayAccessError ? error.reason : "model_access_unavailable" }, 403)

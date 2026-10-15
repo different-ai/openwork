@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { headlessModelAccessSchema, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
+import { modelAttributionSchema, type ModelAttribution } from "./attribution.js"
 
 /**
  * Den's resume-token exchange: a turn's resume grant for a fresh member-scoped MCP token for that turn (or one of its
@@ -8,7 +9,7 @@ import { headlessModelAccessSchema, type HeadlessModelAccess } from "@openwork-e
  */
 export type ResumeExchangeInput = { grant: string; sessionId: string; messageId: string; model?: string; modelAccessRequired?: boolean }
 export type ResumeExchangeResult =
-  | { ok: true; mcpToken: string; expiresAt: string; readOnly: boolean; modelAccess?: HeadlessModelAccess }
+  | { ok: true; mcpToken: string; expiresAt: string; readOnly: boolean; modelAccess?: HeadlessModelAccess; modelAttribution?: ModelAttribution }
   /** This grant will never work again (revoked, expired, member left, feature off): stop trying it. */
   | { ok: false; kind: "permanent"; code: string; status: number }
   /** Den is busy or unreachable: try again later, not before `retryAfterMs` when Den says so. */
@@ -21,7 +22,7 @@ export const RESUME_EXCHANGE_PATH = "/v1/headless/resume-token"
 const DEFAULT_TIMEOUT_MS = 10_000
 const PERMANENT_CODES = new Set(["grant_invalid", "grant_expired", "grant_revoked", "grant_mismatch", "membership_inactive", "feature_disabled"])
 
-const issued = z.object({ mcpToken: z.string().min(1), expiresAt: z.string().min(1), readOnly: z.boolean(), modelAccess: headlessModelAccessSchema.optional() })
+const issued = z.object({ mcpToken: z.string().min(1), expiresAt: z.string().min(1), readOnly: z.boolean(), modelAccess: headlessModelAccessSchema.optional(), modelAttribution: modelAttributionSchema.optional() })
 const refused = z.object({ error: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), retryAfterMs: z.number().nonnegative().optional() })
 
 export function denResumeClient(input: { url: string; token: string; fetch?: typeof fetch; timeoutMs?: number }): ResumeExchange {

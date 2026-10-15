@@ -132,13 +132,13 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
     store,
     model:
       config.model.protocol === "anthropic"
-        ? anthropicModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, fetch: modelFetch })
+        ? anthropicModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, userHeader: config.model.userHeader, fetch: modelFetch })
         : config.model.protocol === "openai-responses"
-          ? openAIResponsesModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, fetch: modelFetch })
-          : openAIModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, fetch: modelFetch }),
+          ? openAIResponsesModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, userHeader: config.model.userHeader, fetch: modelFetch })
+          : openAIModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, userHeader: config.model.userHeader, fetch: modelFetch }),
     defaultModel: config.model.model,
     defaultModelApiKey: config.model.defaultApiKey,
-    modelForAccess: (access) => createModelAdapter(access, { maxOutputTokens: config.model.maxOutputTokens, fetch: modelFetch }),
+    modelForAccess: (access) => createModelAdapter(access, { maxOutputTokens: config.model.maxOutputTokens, userHeader: config.model.userHeader, fetch: modelFetch }),
     mcp: config.mcp
       ? remoteMcpConnector({
           url: config.mcp.url,

@@ -237,6 +237,8 @@ jobs:
         run: |
           pnpm --filter @openwork-ee/headless-runner test:conversation
           pnpm --filter @openwork-ee/headless-runner test:transfer
+      - name: Test headless inference attribution and identity isolation
+        run: pnpm --filter @openwork-ee/headless-runner test:attribution
 
   openwork-tests-workbot:
     name: Unit tests (Workbot, Den web and sandboxes)
