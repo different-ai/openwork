@@ -104,7 +104,7 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
-  mcpOAuthDomainRecovery: {
+  mcpOauthDomainRecovery: {
     label: "MCP OAuth domain recovery",
     description: "Reconnect external MCP connections after the deployment public domain changes without recreating the connection.",
     category: "connections",

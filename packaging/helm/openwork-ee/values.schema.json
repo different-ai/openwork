@@ -61,7 +61,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "mcpOAuthDomainRecovery": {
+            "mcpOauthDomainRecovery": {
               "enum": [
                 "",
                 "true",

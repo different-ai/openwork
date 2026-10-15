@@ -40,7 +40,7 @@ transactions signed with the stale mode keep failing closed.
 
 ## Public-domain changes
 
-`mcpOAuthDomainRecovery` is available on Cloud and self-hosted deployments and
+`mcpOauthDomainRecovery` is available on Cloud and self-hosted deployments and
 starts **off**. Enable it through the feature registry rollout controls (or the
 self-hosted operator lock) after updating `DEN_API_PUBLIC_URL`. Request hosts
 never select the replacement callback. Turning it off stops further automatic

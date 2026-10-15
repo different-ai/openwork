@@ -1538,7 +1538,7 @@ async function toConnectionResponse(
       oauthCallbackUrl: row.authType === "oauth"
         ? row.kind === "native_provider" && row.nativeProviderKey
           ? nativeProviderCallbackUrl(row.nativeProviderKey)
-          : callbackRedirectUriWithClient(row, oauthClient, await organizationFeatureEnabled(row.organizationId, "mcpOAuthDomainRecovery"))
+          : callbackRedirectUriWithClient(row, oauthClient, await organizationFeatureEnabled(row.organizationId, "mcpOauthDomainRecovery"))
         : null,
       oauthSharedCallbackUrl: row.kind === "external_mcp" && row.authType === "oauth" ? externalMcpSharedCallbackUrl() : null,
       oauthClientMetadataUrl: row.kind === "external_mcp" && row.authType === "oauth" ? externalMcpClientMetadataUrl() : null,
@@ -4135,7 +4135,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ status: "needs_auth", authorizeUrl: started.authorizeUrl })
       }
 
-      const recoverPublicOrigin = await organizationFeatureEnabled(connection.organizationId, "mcpOAuthDomainRecovery")
+      const recoverPublicOrigin = await organizationFeatureEnabled(connection.organizationId, "mcpOauthDomainRecovery")
       let issuerRepairRequiresAdmin = false
       try {
         // Our own signed state token identifies which connection AND which
