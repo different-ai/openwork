@@ -1,7 +1,7 @@
 import { openDesktopUrl } from "../../../app/lib/desktop";
 import { isDesktopRuntime } from "../../../app/utils";
 
-export async function tryOpenBrowserAuthUrl(url: string): Promise<boolean> {
+export async function tryOpenBrowserAuthUrl(url: string, sameTab = false): Promise<boolean> {
   if (isDesktopRuntime()) {
     try {
       await openDesktopUrl(url);
@@ -12,5 +12,13 @@ export async function tryOpenBrowserAuthUrl(url: string): Promise<boolean> {
     }
   }
 
+  if (sameTab) {
+    try {
+      window.location.assign(url);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   return window.open(url, "_blank") !== null;
 }

@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "webSigninRedirect": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenWork Web sign-in redirect: Send signed-out gateway visitors to their configured Den sign-in in the same tab, with a manual fallback if sign-in does not complete. Renders DEN_FEATURE_WEB_SIGNIN_REDIRECT."
+            },
             "memberListToolbars": {
               "enum": [
                 "",

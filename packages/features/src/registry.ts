@@ -53,6 +53,13 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  webSigninRedirect: {
+    label: "OpenWork Web sign-in redirect",
+    description: "Send signed-out gateway visitors to their configured Den sign-in in the same tab, with a manual fallback if sign-in does not complete.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   memberListToolbars: {
     label: "Members: consistent list toolbars",
     description: "Filter members, teams and roles beside their add action, with compact member rows and secondary actions in the list menu.",

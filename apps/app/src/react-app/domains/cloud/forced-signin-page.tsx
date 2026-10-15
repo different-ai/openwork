@@ -27,6 +27,10 @@ import { useDesktopConfig } from "./desktop-config-provider";
 import { applyBrandAppName, readDesktopDistributionInfo } from "../../../app/lib/desktop";
 import { DenSignInSurface } from "./den-signin-surface";
 import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
+import { useWebSigninRedirectEnabled } from "./use-web-signin-redirect";
+import { beginWebSigninRedirect, hasWebSigninRedirect, webSigninTarget } from "./web-signin-redirect";
+import { isOpenworkGatewayRuntime } from "../../../app/lib/gateway-runtime";
+import { isDesktopRuntime } from "../../../app/utils";
 import { saveControlPlaneUrl } from "../settings/cloud/control-plane-url";
 
 export type ForcedSigninPageProps = {
@@ -45,6 +49,7 @@ export type ForcedSigninPageProps = {
 export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const platform = usePlatform();
   const denAuth = useDenAuth();
+  const webSigninRedirectEnabled = useWebSigninRedirectEnabled(denAuth.status === "signed_out");
   const desktopConfig = useDesktopConfig();
   const { markRouteReady } = useBootState();
 
@@ -78,25 +83,36 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
-      const url = buildDenAuthUrl(baseUrl, mode);
+      const authMode = webSigninRedirectEnabled ? "sign-in" : mode;
+      const url = buildDenAuthUrl(baseUrl, authMode);
       markDesktopSignInInitiated();
       setSigninFallbackUrl(url);
       setStatusMessage(
-        mode === "sign-up"
+        authMode === "sign-up"
           ? t("den.status_browser_signup")
           : t("den.status_browser_signin"),
       );
       setAuthError(null);
-      void tryOpenBrowserAuthUrl(url).then((opened) => {
+      const sameTab = webSigninRedirectEnabled && webSigninTarget(url, window.location.href) !== null;
+      if (sameTab) {
+        try {
+          // An explicit retry is always allowed, even after the one automatic
+          // attempt. Keep the callback in the web (not desktop org-picker) flow.
+          beginWebSigninRedirect(window.sessionStorage, url, window.location.pathname, window.location.origin);
+        } catch {
+          // Manual navigation still works when tab storage is blocked.
+        }
+      }
+      void tryOpenBrowserAuthUrl(url, sameTab).then((opened) => {
         if (opened) return;
         setStatusMessage(null);
         setManualAuthOpen(true);
       });
     },
-    [baseUrl],
+    [baseUrl, webSigninRedirectEnabled],
   );
 
-  const exchangeGrant = useCallback(async (grant: string, nextBaseUrl: string) => {
+  const exchangeGrant = useCallback(async (grant: string, nextBaseUrl: string, desktopInitiated = true) => {
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));
@@ -107,8 +123,9 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       // commit as the enrollment it locks in.
       const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl: nextBaseUrl,
-        // Pasted one-time codes are desktop-initiated sign-ins.
-        desktopInitiated: true,
+        // Pasted codes keep the desktop org chooser; automatic gateway
+        // callbacks adopt the organization approved by Den's web handoff.
+        desktopInitiated,
         fallbackErrorMessage: t("den.error_no_token"),
         ...(readDesktopDistributionInfo().flavor === "enterprise"
           ? {
@@ -185,7 +202,15 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       `${url.pathname}${url.search}${url.hash}`,
     );
 
-    void exchangeGrant(grant, baseUrl);
+    let webRedirect = false;
+    if (isOpenworkGatewayRuntime() && !isDesktopRuntime()) {
+      try {
+        webRedirect = hasWebSigninRedirect(window.sessionStorage, baseUrl);
+      } catch {
+        // No redirect state means the existing explicit sign-in flow.
+      }
+    }
+    void exchangeGrant(grant, baseUrl, !webRedirect);
   }, [authBusy, baseUrl, exchangeGrant]);
 
   const applyBaseUrl = useCallback(async (value?: string) => {

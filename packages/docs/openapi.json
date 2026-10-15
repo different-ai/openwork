@@ -840,6 +840,7 @@
           "key": {
             "type": "string",
             "enum": [
+              "webSigninRedirect",
               "memberListToolbars",
               "appBuildProgress",
               "modelsAnalyticsUi",
@@ -1039,6 +1040,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "webSigninRedirect": {
+                      "type": "boolean"
+                    },
                     "memberListToolbars": {
                       "type": "boolean"
                     },
@@ -1122,6 +1126,7 @@
                     }
                   },
                   "required": [
+                    "webSigninRedirect",
                     "memberListToolbars",
                     "appBuildProgress",
                     "modelsAnalyticsUi",
@@ -1153,6 +1158,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "webSigninRedirect": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "memberListToolbars": {
                       "type": "object",
                       "properties": {
@@ -2555,6 +2616,7 @@
                     }
                   },
                   "required": [
+                    "webSigninRedirect",
                     "memberListToolbars",
                     "appBuildProgress",
                     "modelsAnalyticsUi",
@@ -2953,6 +3015,9 @@
                 "capabilities": {
                   "type": "object",
                   "properties": {
+                    "webSigninRedirect": {
+                      "type": "boolean"
+                    },
                     "memberListToolbars": {
                       "type": "boolean"
                     },
@@ -3036,6 +3101,7 @@
                     }
                   },
                   "required": [
+                    "webSigninRedirect",
                     "memberListToolbars",
                     "appBuildProgress",
                     "modelsAnalyticsUi",
@@ -3067,6 +3133,62 @@
                 "featureStates": {
                   "type": "object",
                   "properties": {
+                    "webSigninRedirect": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "memberListToolbars": {
                       "type": "object",
                       "properties": {
@@ -4469,6 +4591,7 @@
                     }
                   },
                   "required": [
+                    "webSigninRedirect",
                     "memberListToolbars",
                     "appBuildProgress",
                     "modelsAnalyticsUi",
@@ -27427,6 +27550,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "webSigninRedirect": {
+                          "type": "boolean"
+                        },
                         "memberListToolbars": {
                           "type": "boolean"
                         },
@@ -27510,6 +27636,7 @@
                         }
                       },
                       "required": [
+                        "webSigninRedirect",
                         "memberListToolbars",
                         "appBuildProgress",
                         "modelsAnalyticsUi",
@@ -27541,6 +27668,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "webSigninRedirect": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "memberListToolbars": {
                           "type": "object",
                           "properties": {
@@ -28943,6 +29126,7 @@
                         }
                       },
                       "required": [
+                        "webSigninRedirect",
                         "memberListToolbars",
                         "appBuildProgress",
                         "modelsAnalyticsUi",
@@ -29086,6 +29270,9 @@
                     "capabilities": {
                       "type": "object",
                       "properties": {
+                        "webSigninRedirect": {
+                          "type": "boolean"
+                        },
                         "memberListToolbars": {
                           "type": "boolean"
                         },
@@ -29169,6 +29356,7 @@
                         }
                       },
                       "required": [
+                        "webSigninRedirect",
                         "memberListToolbars",
                         "appBuildProgress",
                         "modelsAnalyticsUi",
@@ -29200,6 +29388,62 @@
                     "featureStates": {
                       "type": "object",
                       "properties": {
+                        "webSigninRedirect": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "memberListToolbars": {
                           "type": "object",
                           "properties": {
@@ -30602,6 +30846,7 @@
                         }
                       },
                       "required": [
+                        "webSigninRedirect",
                         "memberListToolbars",
                         "appBuildProgress",
                         "modelsAnalyticsUi",

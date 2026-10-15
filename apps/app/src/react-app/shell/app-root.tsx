@@ -27,6 +27,8 @@ import {
   prefetchCloudInventory,
 } from "../domains/connections/cloud-inventory-cache";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
+import { useWebSigninRedirect } from "../domains/cloud/use-web-signin-redirect";
+import { finishWebSigninRedirect } from "../domains/cloud/web-signin-redirect";
 import { EnterpriseActivationGate } from "../domains/cloud/enterprise-activation-gate";
 import { OpenWorkWebAccessGate } from "../domains/cloud/openwork-web-access-gate";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
@@ -106,6 +108,7 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   // Enterprise and cloud builds always persist requireSignin: true; the
   // bootstrap file can only raise it (apps/desktop/electron/workspace-store.mjs).
   const requireSignin = bootstrap.requireSignin;
+  useWebSigninRedirect(denAuth.status === "signed_out", requireSignin);
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
@@ -135,8 +138,16 @@ function DenSigninGate({ children }: DenSigninGateProps) {
       orgSelectionPending: denAuth.isSignedIn && readOrgSelectionPending().pending,
     });
     if (redirect === "signed-in-home") {
+      let returnPath: string | null = null;
+      if (isOpenworkGatewayRuntime() && !isDesktopRuntime() && !readOrgSelectionPending().pending) {
+        try {
+          returnPath = finishWebSigninRedirect(window.sessionStorage, window.location.origin);
+        } catch {
+          // Storage may be disabled; the signed-in home remains usable.
+        }
+      }
       navigate(
-        signedInRoute(readDenSettings().activeOrgId, {
+        returnPath ?? signedInRoute(readDenSettings().activeOrgId, {
           orgSelectionPending: readOrgSelectionPending().pending,
         }),
         { replace: true },
