@@ -22,6 +22,12 @@ The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
 inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
 even before a dedicated UI exists.
 
+Self-hosted installation authentication via environment-configured OIDC lives in
+`docs/environment-oidc.md`. Den API owns discovery and policy; Den web consumes
+public metadata only. It is separate from organization SSO and cannot bypass
+organization SSO, allowed email domains, or SCIM deprovisioning. The
+`environmentOidc` feature is self-hosted only, default off.
+
 Customer-cloud managed installation architecture lives in
 `infra/managed-deployments/README.md` and `docs/managed-deployments.md`. AWS
 uses CloudFormation/CodeBuild; GCP uses customer-approved Cloud Shell and

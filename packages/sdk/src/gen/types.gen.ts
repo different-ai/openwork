@@ -163,6 +163,7 @@ export type NotFoundError = {
 
 export type AdminFeature = {
   key:
+    | "environmentOidc"
     | "memberListToolbars"
     | "appBuildProgress"
     | "modelsAnalyticsUi"
@@ -226,6 +227,7 @@ export type AdminUsersPageResponse = {
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
     capabilities: {
+      environmentOidc: boolean;
       memberListToolbars: boolean;
       appBuildProgress: boolean;
       modelsAnalyticsUi: boolean;
@@ -262,6 +264,15 @@ export type AdminOrganizationsPageResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      environmentOidc: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       memberListToolbars: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -550,6 +561,7 @@ export type AdminOverviewResponse = {
   }>;
   organizations: Array<{
     capabilities: {
+      environmentOidc: boolean;
       memberListToolbars: boolean;
       appBuildProgress: boolean;
       modelsAnalyticsUi: boolean;
@@ -586,6 +598,15 @@ export type AdminOverviewResponse = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      environmentOidc: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       memberListToolbars: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -6596,6 +6617,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
+      environmentOidc: boolean;
       memberListToolbars: boolean;
       appBuildProgress: boolean;
       modelsAnalyticsUi: boolean;
@@ -6632,6 +6654,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      environmentOidc: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       memberListToolbars: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -6908,6 +6939,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
+      environmentOidc: boolean;
       memberListToolbars: boolean;
       appBuildProgress: boolean;
       modelsAnalyticsUi: boolean;
@@ -6944,6 +6976,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
      * Per feature for this organization: whether it is on and why (not part of this deployment, kill switch, operator lock, organization override, or the deployment-wide on/off state), and whether an organization override would take effect.
      */
     featureStates: {
+      environmentOidc: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       memberListToolbars: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -8018,6 +8059,28 @@ export type PostV1AuthBootstrapVerifyResponses = {
 
 export type PostV1AuthBootstrapVerifyResponse =
   PostV1AuthBootstrapVerifyResponses[keyof PostV1AuthBootstrapVerifyResponses];
+
+export type GetV1AuthEnvironmentOidcData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/auth/environment-oidc";
+};
+
+export type GetV1AuthEnvironmentOidcResponses = {
+  /**
+   * Installation sign-in provider.
+   */
+  200: {
+    provider: {
+      id: string;
+      name: string;
+    } | null;
+  };
+};
+
+export type GetV1AuthEnvironmentOidcResponse =
+  GetV1AuthEnvironmentOidcResponses[keyof GetV1AuthEnvironmentOidcResponses];
 
 export type GetV1AuthLoginOptionsData = {
   body?: never;

@@ -10,6 +10,7 @@ import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { parseFeatureEnvironment } from "@openwork/features"
+import { readEnvironmentOidcConfig } from "./environment-oidc-config.js"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -724,6 +725,7 @@ export const env = {
   },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
+  oidc: readEnvironmentOidcConfig(process.env, devMode),
   github: {
     clientId: optionalString(parsed.GITHUB_CLIENT_ID),
     clientSecret: optionalString(parsed.GITHUB_CLIENT_SECRET),

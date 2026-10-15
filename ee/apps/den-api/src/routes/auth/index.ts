@@ -8,6 +8,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth, DEN_MCP_OAUTH_RESOURCE, normalizeMcpOAuthResource } from "../../auth.js"
 import { buildLoginOptionsSessionCookieClearHeaders, normalizeLoginEmail, resolveLoginOptionKind } from "../../auth-login-options.js"
+import { environmentOidcAvailable } from "../../environment-oidc-policy.js"
 import { verifyBotProtection } from "../../bot-protection.js"
 import {
   EMAIL_PASSWORD_SIGN_UP_PATH,
@@ -927,6 +928,25 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
           : c.json({ error: "bootstrap_verification_failed", message: result.message }, 403)
       }
       return c.json({ grant: result.grant, expiresAt: result.expiresAt.toISOString() })
+    },
+  )
+
+  app.get(
+    "/v1/auth/environment-oidc",
+    describeRoute({
+      tags: ["Authentication"],
+      security: [],
+      summary: "Get the installation sign-in provider",
+      description: "Returns public presentation metadata only when the self-hosted installation provider is available. Never returns credentials or discovery endpoints.",
+      responses: {
+        200: jsonResponse("Installation sign-in provider.", z.object({ provider: z.object({ id: z.string(), name: z.string() }).nullable() })),
+      },
+    }),
+    publicRoute,
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const available = await environmentOidcAvailable()
+      return c.json({ provider: available && env.oidc ? { id: env.oidc.providerId, name: env.oidc.name } : null })
     },
   )
 

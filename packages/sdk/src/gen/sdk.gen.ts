@@ -207,6 +207,7 @@ import type {
   GetV1AppsResponses,
   GetV1AppVersionResponses,
   GetV1AuthBootstrapStatusResponses,
+  GetV1AuthEnvironmentOidcResponses,
   GetV1AuthLoginOptionsErrors,
   GetV1AuthLoginOptionsResponses,
   GetV1BootstrapWorkspaceByBootstrapIdClaimErrors,
@@ -1871,6 +1872,18 @@ export class DenClient extends HeyApiClient {
       PostV1AuthBootstrapVerifyErrors,
       ThrowOnError
     >({ url: "/v1/auth/bootstrap/verify", ...options });
+  }
+
+  /**
+   * Get the installation sign-in provider
+   *
+   * Returns public presentation metadata only when the self-hosted installation provider is available. Never returns credentials or discovery endpoints.
+   */
+  public getV1AuthEnvironmentOidc<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1AuthEnvironmentOidcResponses, unknown, ThrowOnError>({
+      url: "/v1/auth/environment-oidc",
+      ...options,
+    });
   }
 
   /**

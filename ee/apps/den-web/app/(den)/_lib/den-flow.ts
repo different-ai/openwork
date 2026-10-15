@@ -6,7 +6,7 @@ import { getRuntimeConfig } from "./runtime-config";
 import { getSafeMemberReturnTo } from "./member-auth-routing";
 
 export type AuthMode = "sign-in" | "sign-up";
-export type SocialAuthProvider = "github" | "google";
+export type SocialAuthProvider = "github" | "google" | `env-oidc-${string}`;
 
 export type OrgLimitError = {
   error: "org_limit_reached";
@@ -178,7 +178,7 @@ export function normalizeAuthIntentParam(value: string | null | undefined): Auth
 }
 
 export function getSocialProviderLabel(provider: SocialAuthProvider): string {
-  return provider === "github" ? "GitHub" : "Google";
+  return provider === "github" ? "GitHub" : provider === "google" ? "Google" : "SSO";
 }
 
 export function getSocialCallbackUrl(authCallbackBaseUrl = "", requestedReturnTo?: string | null): string {

@@ -362,6 +362,7 @@ OpenWork Cloud. Don't change it on a customer install.
 <!-- BEGIN GENERATED features (pnpm features:sync) -->
 | `config.features.*` | Environment variable | Default | What it does |
 | --- | --- | --- | --- |
+| `environmentOidc` | `DEN_FEATURE_ENVIRONMENT_OIDC` | default off | Sign in through the self-hosted installation's configured identity provider. |
 | `memberListToolbars` | `DEN_FEATURE_MEMBER_LIST_TOOLBARS` | default off | Filter members, teams and roles beside their add action, with compact member rows and secondary actions in the list menu. |
 | `appBuildProgress` | `DEN_FEATURE_APP_BUILD_PROGRESS` | default off | While an agent creates or changes an MCP App, the chat shows each stage it goes through (finding and checking tools, writing the App, building and verifying it) as a checklist with a progress bar. |
 | `modelsAnalyticsUi` | `DEN_FEATURE_MODELS_ANALYTICS_UI` | default off | Organization admins can view Models & usage analytics and shared model usage limits. Deprecated 2026-10-14: UI hidden behind modelsAnalyticsUi (default off). Most likely delete within 4 weeks (by 2026-11-11) unless an org depends on it. |
@@ -907,6 +908,17 @@ need uploaded artifacts. `packaging/docker/Dockerfile.den-web` accepts optional
 BuildKit secret IDs `sentry_auth_token`, `sentry_org`, `sentry_project`,
 `sentry_url`, `sentry_release`, and `sentry_dist`; the EE image publish workflow
 wires these IDs from GitHub Secrets when present.
+
+## Installation OIDC sign-in
+
+Self-hosted operators can configure an installation-wide OIDC provider without
+creating an organization SSO record or a local password first. See
+[environment OIDC configuration](../../../docs/environment-oidc.md) for issuer,
+credentials, callback registration, verified-email requirements, and a
+`denApi.env`/Kubernetes Secret example. Enable
+`config.features.environmentOidc: "true"` after configuring the provider.
+Organization SSO, email-domain restrictions and SCIM policies still take
+precedence; this does not replace the organization SSO lifecycle below.
 
 ## GitHub Connector
 

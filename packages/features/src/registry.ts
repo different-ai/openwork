@@ -53,6 +53,13 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  environmentOidc: {
+    label: "Environment-configured OIDC",
+    description: "Sign in through the self-hosted installation's configured identity provider.",
+    since: "2026-10",
+    deployments: ["self_hosted"],
+    default: false,
+  },
   memberListToolbars: {
     label: "Members: consistent list toolbars",
     description: "Filter members, teams and roles beside their add action, with compact member rows and secondary actions in the list menu.",

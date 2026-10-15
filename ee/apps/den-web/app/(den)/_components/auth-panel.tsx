@@ -11,6 +11,7 @@ import { signsInInPlace } from "../_lib/auth-resume";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
 import { useDenFlow } from "../_providers/den-flow-provider";
+import { EnvironmentOidcButton } from "./environment-oidc-button";
 
 type PanelContent = {
   title: string;
@@ -749,6 +750,8 @@ export function AuthPanel({
           </div>
         ) : null}
 
+        {!hideSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep !== "sso" && !isSingleOrgSsoMode ? <EnvironmentOidcButton /> : null}
+
         {!waitingForPrefilledLoginOption && emailFirstStep === "email" ? (
           <form className="grid gap-4" onSubmit={resolveEmailFirstStep}>
             <label className="grid gap-2">
@@ -1022,6 +1025,8 @@ export function AuthPanel({
             ) : null}
           </>
         ) : null}
+
+        {!hideSocialAuth && !verificationRequired && !isPasswordResetRequest && !showSingleOrgSso ? <EnvironmentOidcButton /> : null}
 
         {showSocialAuth ? (
           <>

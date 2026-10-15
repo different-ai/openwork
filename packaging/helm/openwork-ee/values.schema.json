@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "environmentOidc": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Environment-configured OIDC: Sign in through the self-hosted installation's configured identity provider. Renders DEN_FEATURE_ENVIRONMENT_OIDC."
+            },
             "memberListToolbars": {
               "enum": [
                 "",

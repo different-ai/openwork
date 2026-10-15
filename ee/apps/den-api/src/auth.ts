@@ -6,6 +6,8 @@ import { getInitialActiveOrganizationIdForUser } from "./active-organization.js"
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
 import { env } from "./env.js";
+import { environmentOidcPlugin } from "./environment-oidc.js";
+import { authorizeEnvironmentOidcIdentity, environmentOidcAvailable } from "./environment-oidc-policy.js";
 import { appLogger } from "./observability/logger.js";
 import {
   deleteMcpOAuthGrantFamilyForSession,
@@ -909,6 +911,19 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      const requestedProvider = readStringProperty(ctx.body, "provider")
+        ?? readStringProperty(ctx.params, "id")
+        ?? readStringProperty(ctx.body, "providerId");
+      if (requestedProvider?.startsWith("env-oidc-")) {
+        if (requestedProvider !== env.oidc?.providerId || !await environmentOidcAvailable()) {
+          throw new APIError("FORBIDDEN", { message: "This sign-in provider is not available." });
+        }
+        // Only the server-created authorization-code flow is supported. Do not
+        // let clients inject an ID token or override nonce/PKCE/issuer parameters.
+        if (ctx.body?.idToken || ctx.body?.additionalParams || ctx.body?.scopes) {
+          throw new APIError("BAD_REQUEST", { message: "Use the installation provider's configured authorization-code flow." });
+        }
+      }
       if (ctx.path === "/device/token") {
         const deviceCode = readStringProperty(ctx.body, "device_code");
         if (deviceCode) {
@@ -1348,6 +1363,9 @@ export const auth = betterAuth({
     },
   },
   plugins: [
+    ...(env.oidc && env.features.deployment === "self_hosted"
+      ? [environmentOidcPlugin(env.oidc, authorizeEnvironmentOidcIdentity)]
+      : []),
     jwt(getDenJwtOptions({ issuer: getDenAuthIssuer(env.betterAuthUrl) })),
     emailOTP({
       overrideDefaultEmailVerification: true,

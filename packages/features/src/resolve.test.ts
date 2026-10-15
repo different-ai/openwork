@@ -16,11 +16,14 @@ import {
 const base: FeatureContext = { deployment: "cloud", locks: {}, rollouts: {}, overrides: {} }
 
 test("without stored state, every feature follows its registry default", () => {
-  for (const key of FEATURE_KEYS) {
-    const resolved = resolveFeature(key, base)
-    assert.equal(resolved.enabled, FEATURES[key].default)
-    assert.equal(resolved.source, "everyone")
-    assert.equal(resolved.overrideApplies, true)
+  for (const deployment of ["cloud", "self_hosted"] as const) {
+    for (const key of FEATURE_KEYS) {
+      const available = FEATURES[key].deployments.some((value) => value === deployment)
+      const resolved = resolveFeature(key, { ...base, deployment })
+      assert.equal(resolved.enabled, available && FEATURES[key].default)
+      assert.equal(resolved.source, available ? "everyone" : "unavailable")
+      assert.equal(resolved.overrideApplies, available)
+    }
   }
 })
 
@@ -35,6 +38,14 @@ test("precedence: unavailable, kill switch, lock, override, everyone", () => {
   assert.equal(killed.enabled, false)
   assert.equal(killed.source, "killed")
   assert.equal(killed.overrideApplies, false)
+})
+
+test("installation OIDC is off by default, unavailable in cloud, and killable despite an operator lock", () => {
+  const selfHosted: FeatureContext = { ...base, deployment: "self_hosted" }
+  assert.equal(resolveFeature("environmentOidc", selfHosted).enabled, false)
+  assert.equal(resolveFeature("environmentOidc", { ...selfHosted, locks: { environmentOidc: true } }).enabled, true)
+  assert.equal(resolveFeature("environmentOidc", { ...base, locks: { environmentOidc: true }, overrides: { environmentOidc: true } }).enabled, false)
+  assert.equal(resolveFeature("environmentOidc", { ...selfHosted, locks: { environmentOidc: true }, rollouts: { environmentOidc: { enabled: true, killed: true } } }).enabled, false)
 })
 
 test("an organization override can turn a feature off while it is on for everyone", () => {

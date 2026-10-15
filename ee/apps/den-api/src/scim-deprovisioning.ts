@@ -31,18 +31,19 @@ export async function isScimDeprovisionedEmailForSsoProvider(input: {
 
 export async function isScimDeprovisionedIdentity(input: {
   organizationId: OrganizationId
-  userId: UserId
+  userId: UserId | null
   email: string | null
 }) {
   const email = input.email?.trim().toLowerCase() ?? null
+  if (!input.userId && !email) return false
   const tombstoneRows = await db
     .select({ id: ScimUserTombstoneTable.id })
     .from(ScimUserTombstoneTable)
     .where(and(
       eq(ScimUserTombstoneTable.organizationId, input.organizationId),
       or(
-        eq(ScimUserTombstoneTable.deprovisionedUserId, input.userId),
-        email ? eq(ScimUserTombstoneTable.email, email) : eq(ScimUserTombstoneTable.deprovisionedUserId, input.userId),
+        input.userId ? eq(ScimUserTombstoneTable.deprovisionedUserId, input.userId) : undefined,
+        email ? eq(ScimUserTombstoneTable.email, email) : undefined,
       ),
     ))
     .limit(1)
@@ -50,6 +51,7 @@ export async function isScimDeprovisionedIdentity(input: {
     return true
   }
 
+  if (!input.userId) return false
   const inactiveRows = await db
     .select({ id: ExternalIdentityTable.id })
     .from(ExternalIdentityTable)
