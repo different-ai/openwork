@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto"
+import { headlessModelAttribution } from "../headless-runner/attribution.js"
 import { and, eq, lt } from "@openwork-ee/den-db/drizzle"
 import { OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -13,6 +14,7 @@ import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS }
  * token is handed to the headless runner for that run and never stored.
  */
 export async function mintHeadlessRunMcpToken(input: { userId: string; organizationId: string; ttlMs?: number; readOnly?: boolean }) {
+  const modelAttribution = await headlessModelAttribution(input)
   const ttlMs = Math.min(input.ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
   const secret = crypto.randomBytes(32).toString("base64url")
   const now = new Date()
@@ -33,7 +35,7 @@ export async function mintHeadlessRunMcpToken(input: { userId: string; organizat
     expiresAt,
     scopes: JSON.stringify(input.readOnly ? ["mcp:read"] : ["mcp:read", "mcp:write"]),
   })
-  return { token: `${DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX}${secret}`, tokenId: id, expiresAt }
+  return { token: `${DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX}${secret}`, tokenId: id, expiresAt, ...(modelAttribution ? { modelAttribution } : {}) }
 }
 
 export async function revokeHeadlessRunMcpToken(tokenId: string) {

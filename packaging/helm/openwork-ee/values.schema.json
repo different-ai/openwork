@@ -18,6 +18,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "headlessModelAttribution": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Headless model attribution: Attribute headless inference requests to the authenticated member through an operator-configured gateway header. Renders DEN_FEATURE_HEADLESS_MODEL_ATTRIBUTION."
+            },
             "memberListToolbars": {
               "enum": [
                 "",

@@ -18,6 +18,7 @@
     "worker:typecheck": "wrangler types && tsc -p tsconfig.worker.json --noEmit",
     "worker:e2e": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts",
     "worker:e2e:celld": "pnpm --filter @openwork-ee/headless-protocol build && tsx scripts/owner-cells-e2e.ts --celld",
+    "test:attribution": "pnpm --filter @openwork-ee/headless-protocol build && tsx --test scripts/attribution.test.ts",
     "test:conversation": "tsx --test scripts/conversation.test.ts"
   },
   "dependencies": {
@@ -31,6 +32,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@openwork-ee/headless-protocol": "workspace:*",
     "@types/node": "^24.0.0",
     "esbuild": "0.25.12",
     "tsx": "^4.23.1",

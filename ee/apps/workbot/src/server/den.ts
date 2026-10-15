@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { z } from "zod"
+import { modelAttributionSchema } from "@openwork-ee/headless-protocol"
 import type { Tokens } from "./sealed.js"
 
 /**
@@ -158,11 +159,11 @@ export function createDen(options: { apiUrl: string; publicUrl: string }) {
       if (status !== 200 || !parsed.success) throw new Error(`den_session_${status}`)
       return parsed.data
     },
-    async runToken(accessToken: string, input: { readOnly?: boolean } = {}): Promise<string> {
+    async runToken(accessToken: string, input: { readOnly?: boolean } = {}) {
       const { status, payload } = await authorized("POST", "/v1/workbot/run-token", accessToken, input)
-      const parsed = z.object({ token: z.string() }).safeParse(payload)
+      const parsed = z.object({ token: z.string(), modelAttribution: modelAttributionSchema.optional() }).safeParse(payload)
       if (status !== 200 || !parsed.success) throw new Error(`den_run_token_${status}`)
-      return parsed.data.token
+      return parsed.data
     },
     /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
     async connections(accessToken: string) {

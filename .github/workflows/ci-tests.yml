@@ -93,6 +93,8 @@ jobs:
           pnpm --filter @openwork-ee/headless-runner test:computer-config
       - name: Test headless conversations (follow-ups, read-only lookups, waiting messages)
         run: pnpm --filter @openwork-ee/headless-runner test:conversation
+      - name: Test headless inference attribution and identity isolation
+        run: pnpm --filter @openwork-ee/headless-runner test:attribution
       - name: Boot the app provider tree
         run: pnpm test:boot
       - name: Check desktop links open real Den pages

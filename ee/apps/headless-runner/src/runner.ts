@@ -333,8 +333,9 @@ export class Runner {
    * Names a conversation that asked for it (Session.autoTitle) once it has an answer: a few words from the model,
    * or the person's first words when the model can't. Never replaces a title the caller set.
    */
-  private async nameConversation(sessionId: string, messageId: string, apiKey: string | undefined) {
+  private async nameConversation(sessionId: string, messageId: string, credentials: TurnCredentials) {
     const { store, model, defaultModel } = this.options
+    const apiKey = credentials.modelApiKey ?? this.options.defaultModelApiKey
     const session = store.getSession(sessionId)
     if (!session?.autoTitle || session.title.trim() || this.naming.has(sessionId)) return
     this.naming.add(sessionId)
@@ -351,6 +352,7 @@ export class Runner {
             tools: [],
             model: defaultModel,
             apiKey,
+            attribution: credentials.modelAttribution,
             signal: AbortSignal.timeout(30_000),
           })
           title = cleanTitle(named.text)
@@ -720,6 +722,7 @@ export class Runner {
             tools: toolSpecs,
             model: turn?.model ?? this.options.defaultModel,
             apiKey,
+            attribution: credentials.modelAttribution,
             signal: AbortSignal.any([signal, writing.signal]),
             ...(events
               ? {
@@ -870,7 +873,7 @@ export class Runner {
       if (turn && ["completed", "failed", "aborted"].includes(turn.status)) store.stripAttachments(sessionId, messageId)
       if (turn?.status === "completed" && kind === "message") {
         // In the background: naming never holds up the conversation, and a failure (even at shutdown) only leaves it unnamed.
-        void this.nameConversation(sessionId, messageId, credentials.modelApiKey ?? this.options.defaultModelApiKey).catch((error: unknown) => {
+        void this.nameConversation(sessionId, messageId, credentials).catch((error: unknown) => {
           console.warn(`[headless-runner] naming failed ${JSON.stringify({ sessionId, error: error instanceof Error ? error.message : "unknown" })}`)
         })
       }

@@ -1045,6 +1045,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@openwork-ee/headless-protocol':
+        specifier: workspace:*
+        version: link:../../packages/headless-protocol
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3

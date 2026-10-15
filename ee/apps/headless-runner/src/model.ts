@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { attributionHeaders, type AttributionPolicy, type ModelAttribution } from "./attribution.js"
 import type { Message, ToolCall, ToolSpec } from "./types.js"
 
 export type ModelRequest = {
@@ -7,6 +8,8 @@ export type ModelRequest = {
   tools: ToolSpec[]
   model: string
   apiKey: string
+  /** Trusted per-turn identity, not arbitrary HTTP headers. */
+  attribution?: ModelAttribution
   signal: AbortSignal
   /** Streams the model's text as it is written. Without it the call is not streamed. */
   onText?: (delta: string) => void
@@ -104,6 +107,8 @@ async function openResponse(input: {
     try {
       response = await input.fetch(input.url, {
         method: "POST",
+        // Custom attribution headers must never follow a redirect to another origin.
+        redirect: "error",
         headers: { "content-type": "application/json", ...input.headers },
         body: JSON.stringify(input.body),
         signal: AbortSignal.any([input.signal, AbortSignal.timeout(CALL_TIMEOUT_MS)]),
@@ -448,6 +453,7 @@ async function readAnthropicStream(
 export function anthropicModel(options: {
   baseUrl: string
   maxOutputTokens: number
+  userHeader?: AttributionPolicy
   fetch?: Fetch
   sleep?: Sleep
 }): ModelClient {
@@ -456,7 +462,7 @@ export function anthropicModel(options: {
     fetch: options.fetch ?? fetch,
     sleep,
     url: `${options.baseUrl}/messages`,
-    headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01" },
+    headers: { ...attributionHeaders(options.userHeader, request.attribution), "x-api-key": request.apiKey, "anthropic-version": "2023-06-01" },
     signal: request.signal,
     body: {
       model: request.model,
@@ -692,7 +698,7 @@ async function readOpenAIStream(
   }
 }
 
-export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep }): ModelClient {
+export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; userHeader?: AttributionPolicy; fetch?: Fetch; sleep?: Sleep }): ModelClient {
   return {
     async complete(request) {
       const sleep = options.sleep ?? defaultSleep
@@ -700,7 +706,7 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/chat/completions`,
-        headers: { authorization: `Bearer ${request.apiKey}` },
+        headers: { ...attributionHeaders(options.userHeader, request.attribution), authorization: `Bearer ${request.apiKey}` },
         signal: request.signal,
         body: {
           model: request.model,

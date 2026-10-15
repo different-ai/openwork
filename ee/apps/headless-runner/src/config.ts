@@ -1,6 +1,7 @@
 import type { ComputerProviderConfig } from "@openwork-ee/headless-computer"
 import { dirname, join } from "node:path"
 import { z } from "zod"
+import { attributionFormatSchema, validAttributionHeader, type AttributionPolicy } from "./attribution.js"
 
 /** Allow https anywhere, and plain http only for loopback development hosts. */
 function isSafeUrl(value: string) {
@@ -26,6 +27,8 @@ const configSchema = z.object({
   HEADLESS_MODEL_BASE_URL: safeUrl,
   HEADLESS_MODEL: z.string().min(1),
   HEADLESS_MODEL_API_KEY: z.string().min(1).optional(),
+  HEADLESS_MODEL_USER_HEADER: z.string().refine((name) => name === "" || validAttributionHeader(name), "must be a safe, non-reserved HTTP header name").optional(),
+  HEADLESS_MODEL_USER_HEADER_FORMAT: attributionFormatSchema.default("member_id"),
   HEADLESS_MCP_URL: safeUrl.optional(),
   HEADLESS_MCP_TOOL_ALLOWLIST: csv,
   HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
@@ -93,6 +96,7 @@ export type Config = {
     baseUrl: string
     model: string
     defaultApiKey?: string
+    userHeader?: AttributionPolicy
     maxOutputTokens: number
   }
   mcp?: { url: string; toolAllowlist: string[] }
@@ -129,6 +133,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       baseUrl: value.HEADLESS_MODEL_BASE_URL,
       model: value.HEADLESS_MODEL,
       defaultApiKey: value.HEADLESS_MODEL_API_KEY,
+      userHeader: value.HEADLESS_MODEL_USER_HEADER ? { name: value.HEADLESS_MODEL_USER_HEADER, format: value.HEADLESS_MODEL_USER_HEADER_FORMAT } : undefined,
       maxOutputTokens: value.HEADLESS_MAX_OUTPUT_TOKENS,
     },
     mcp: value.HEADLESS_MCP_URL

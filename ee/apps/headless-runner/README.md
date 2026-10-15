@@ -95,6 +95,43 @@ The model sees a conversation in whole turns (a message and everything that answ
 
 A caller with more than one conversation per person (Workbot's side chats) sets `owner` (its key for the person) and `ref` (its id for the conversation) on each, and lists them with `GET /v1/sessions?owner=`. `autoTitle: true` names a conversation after its first answer, in a few words from the model (or the person's first words when the model can't), while its title is empty; such a session starts with an empty title. `memoryOf` points at another of the person's conversations: this one reads and writes that one's `memory/`, so they remember together; its other files stay its own.
 
+## Inference attribution
+
+Attribution requires **both** an operator-configured `HEADLESS_MODEL_USER_HEADER` on the runner
+and Den's `headlessModelAttribution` feature enabled for the organization (cloud and self-hosted,
+default off). For example, set `HEADLESS_MODEL_USER_HEADER=X-User-Id` and leave
+`HEADLESS_MODEL_USER_HEADER_FORMAT=member_id`. On Helm installs the rollout can be locked with
+`config.features.headlessModelAttribution: "true"` on Den; set the two `HEADLESS_MODEL_*`
+variables in your separately deployed runner's environment. Node and owner-cell hosts load the same settings.
+Restart the runner after changing its configuration. Configure only a gateway you trust to receive the identity;
+this does not automatically configure that gateway's quotas, analytics, or downstream header forwarding.
+
+Den checks the feature at each run-token issuance and resolves the active membership from its authenticated
+organization/user pair. Workbot receives the optional `modelAttribution` with its run token; Slack and cloud
+Automations use the same minter and shared headless protocol. Only trusted services holding `HEADLESS_API_TOKEN`
+may submit `credentials.modelAttribution: { memberId, userId, organizationId, email? }`. It is **not** a browser input,
+a signature, or an independent authorization mechanism. Protect the private runner and its bearer token as before.
+Never infer attribution by parsing an opaque MCP token, a session owner, a prompt, or a caller-selected model.
+
+The runner holds this identity only in the turn's in-memory credentials. Every model step, retry, inherited task/report,
+and automatic title request receives that turn's identity. Credentials, identity and arbitrary extra headers are never
+added to the transcript or session responses. A missing identity or missing configured header sends no attribution.
+Non-ASCII/unsafe email is omitted; `email` format then sends no header rather than substituting another identifier.
+Opaque IDs are the default; choose `email` only when your privacy policy permits sending PII to the gateway.
+Header names cannot override credentials, protocol versions, organization/project routing, cookies or transport
+headers. Values cannot contain whitespace, control characters or non-ASCII bytes. Inference POSTs refuse redirects,
+so an upstream redirect cannot forward identity or keys to another origin. Model catalog requests are not attributed.
+
+Turning the rollout off stops identity on **newly issued turns/resumes**; admitted/in-flight turns and their inherited
+background work keep their already-issued identity until completion or credential refresh. No session data or work is
+deleted. For immediate disclosure shutdown, stop active turns and restart the runner with the header unset.
+Deploy the updated runner before enabling the feature: older strict runners reject attribution-bearing turns, and
+callers intentionally do not retry by silently stripping a configured attribution policy.
+
+Regression proof: `pnpm --filter @openwork-ee/headless-runner test:attribution` runs the shared client, authenticated
+HTTP API and configured runtime against an actual local inference HTTP server for both protocols, including
+concurrent identities, disabled turns, model aliases, streaming and title calls.
+
 ## Isolation
 
 The runner is a private service with one caller (Den), which authorizes each person before it reaches a session. Within the runner:
@@ -135,6 +172,8 @@ in an S3 bucket instead of a disk: [OWNER-CELLS.md](./OWNER-CELLS.md).
 | `HEADLESS_MODEL_BASE_URL` | required | e.g. `https://gateway.openworklabs.com/api/v1/providers/ipr_…` |
 | `HEADLESS_MODEL` | required | Default model alias (`gwm_…`) |
 | `HEADLESS_MODEL_API_KEY` | unset | Fallback key for single-tenant use; callers normally send their own |
+| `HEADLESS_MODEL_USER_HEADER` | unset (disabled) | Optional end-user attribution header, e.g. `X-User-Id`, `X-Member-Id`, `x-portkey-user-id`. Safe, non-reserved HTTP header name only |
+| `HEADLESS_MODEL_USER_HEADER_FORMAT` | `member_id` | `member_id`, `user_id`, `owner` (`organizationId:memberId`), or `email` (explicit PII disclosure). No fallback to a different identifier |
 | `HEADLESS_MCP_URL` | unset | e.g. `https://api.openworklabs.com/mcp/agent` |
 | `HEADLESS_MCP_TOOL_ALLOWLIST` | all | Comma-separated MCP tool names |
 | `HEADLESS_DB_PATH` | `./data/headless.sqlite` | Put it on a persistent volume |

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { modelAttributionSchema } from "./attribution.js"
 
 /** A saved file as messages refer to it. */
 export const attachmentSchema = z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number() })
@@ -79,6 +80,7 @@ export const ACTIVE: ReadonlySet<TurnStatus> = new Set(["queued", "running"])
 export const turnCredentialsSchema = z
   .object({
     modelApiKey: z.string().min(1).max(4096).optional(),
+    modelAttribution: modelAttributionSchema.optional(),
     mcpToken: z.string().min(1).max(16_384).optional(),
     /** Trusted caller policy, also enforced for the runner's local tools. */
     readOnly: z.boolean().optional(),

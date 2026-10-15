@@ -42,8 +42,8 @@ export async function createRuntime(config: Config, store: Store) {
     store,
     model:
       config.model.protocol === "anthropic"
-        ? anthropicModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, fetch: modelFetch })
-        : openAIModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, fetch: modelFetch }),
+        ? anthropicModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, userHeader: config.model.userHeader, fetch: modelFetch })
+        : openAIModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens, userHeader: config.model.userHeader, fetch: modelFetch }),
     defaultModel: config.model.model,
     defaultModelApiKey: config.model.defaultApiKey,
     mcp: config.mcp

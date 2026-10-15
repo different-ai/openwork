@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    headlessModelAttribution: ""   # default off · Attribute headless inference requests to the authenticated member through an operator-configured gateway header.
     memberListToolbars: ""         # default off · Filter members, teams and roles beside their add action, with compact member rows and secondary actions in the list menu.
     appBuildProgress: ""           # default off · While an agent creates or changes an MCP App, the chat shows each stage it goes through (finding and checking tools, writing the App, building and verifying it) as a checklist with a progress bar.
     modelsAnalyticsUi: ""          # default off · Organization admins can view Models & usage analytics and shared model usage limits. Deprecated 2026-10-14: UI hidden behind modelsAnalyticsUi (default off). Most likely delete within 4 weeks (by 2026-11-11) unless an org depends on it.

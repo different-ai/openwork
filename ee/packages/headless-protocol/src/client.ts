@@ -47,11 +47,20 @@ function withoutTrailingSlashes(value: string) {
 
 export type HeadlessRunnerActor = { userId: string; organizationId: string }
 
+/** Issued by Den after authenticating the member and checking the attribution rollout. Never caller input. */
+export const modelAttributionSchema = z.object({
+  memberId: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/),
+  userId: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/),
+  organizationId: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/),
+  email: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+}).strict()
+export type ModelAttribution = z.infer<typeof modelAttributionSchema>
+
 export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
   /** `messageId` is the turn the token is minted for, so a caller can remember which run it belongs to. */
-  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string; readOnly?: boolean }) => Promise<{ token: string }>
+  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string; readOnly?: boolean }) => Promise<{ token: string; modelAttribution?: ModelAttribution }>
   /** The longest a minted MCP token may live; a turn asking for longer gets this. */
   maxTokenTtlMs: number
 }
@@ -307,14 +316,14 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[]; readOnly?: boolean; interrupt?: boolean },
     ): Promise<RunnerResult<{ state: string }>> {
       const ttlMs = Math.min(input.ttlMs ?? deps.maxTokenTtlMs, deps.maxTokenTtlMs)
-      const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
+      const { token, modelAttribution } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
       const { status, payload } = await request(deps, "POST", `${sessionPath(input.sessionId)}/turns`, {
         messageId: input.messageId,
         prompt: input.prompt,
         ...(input.model ? { model: input.model } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.interrupt ? { interrupt: true } : {}),
-        credentials: { mcpToken: token, ...(input.readOnly ? { readOnly: true } : {}) },
+        credentials: { mcpToken: token, ...(modelAttribution ? { modelAttribution: modelAttributionSchema.parse(modelAttribution) } : {}), ...(input.readOnly ? { readOnly: true } : {}) },
       })
       if (status !== 202) return { ok: false, status, error: errorCode(payload, `headless_send_${status}`) }
       const accepted = z.object({ state: z.string() }).safeParse(payload)

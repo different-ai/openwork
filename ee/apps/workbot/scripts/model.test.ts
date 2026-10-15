@@ -9,7 +9,9 @@ import {
   type WorkbotActor,
   type WorkbotDeps,
 } from "@openwork-ee/workbot-server"
-import { denSessionSchema } from "../src/server/den.js"
+import { createDen, denSessionSchema } from "../src/server/den.js"
+import { createServer } from "node:http"
+import { once } from "node:events"
 
 const actor: WorkbotActor = {
   organizationId: "org_test",
@@ -25,7 +27,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** A runner that accepts everything and records the body of every turn it is sent. */
-function fakeRunner() {
+function fakeRunner(mintToken = async () => ({ token: "mcp-token" })) {
   const turns: Record<string, unknown>[] = []
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
   const runnerFetch: typeof fetch = async (input, init) => {
@@ -53,7 +55,7 @@ function fakeRunner() {
   const client = createHeadlessRunnerClient({
     config: { url: "http://runner", token: "t".repeat(32) },
     fetch: runnerFetch,
-    mintToken: async () => ({ token: "mcp-token" }),
+    mintToken,
     maxTokenTtlMs: 60_000,
   })
   return { client, turns }
@@ -89,6 +91,50 @@ test("without a default model, turns leave the model to the runner", async () =>
     await sendEveryKind({ client: runner.client, canSchedule: async () => false, ...(model ? { model } : {}) })
     assert.equal(runner.turns.length, 5)
     for (const turn of runner.turns) assert.equal("model" in turn, false)
+  }
+})
+
+test("Workbot forwards only Den-issued attribution for greetings, side chats, sends, edits and retries, and drops it after rollout off", async () => {
+  const modelAttribution = { memberId: "mem_authenticated", userId: "usr_authenticated", organizationId: "org_authenticated", email: "member@example.test" }
+  let enabled = true
+  let issued = 0
+  const server = createServer(async (request, response) => {
+    assert.equal(request.url, "/v1/workbot/run-token")
+    assert.equal(request.headers.authorization, "Bearer member-access-token")
+    let body = ""
+    for await (const chunk of request) body += chunk
+    assert.equal(body.includes("modelAttribution"), false, "identity is never submitted as caller input")
+    issued++
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify({ token: "mcp-token", ...(enabled ? { modelAttribution } : {}) }))
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+  try {
+    const den = createDen({ apiUrl: `http://127.0.0.1:${address.port}`, publicUrl: "https://workbot.example.test" })
+    const runner = fakeRunner(() => den.runToken("member-access-token"))
+    await sendEveryKind({ client: runner.client, canSchedule: async () => false, model: async () => "selected-alias" })
+    assert.equal(issued, 5)
+    for (const turn of runner.turns) {
+      assert.ok(isRecord(turn.credentials))
+      assert.equal(turn.credentials.mcpToken, "mcp-token")
+      assert.deepEqual(turn.credentials.modelAttribution, modelAttribution)
+    }
+    assert.ok(isRecord(runner.turns[0].credentials) && runner.turns[0].credentials.readOnly === true, "the greeting stays read-only")
+    enabled = false
+    const before = runner.turns.length
+    await sendEveryKind({ client: runner.client, canSchedule: async () => false })
+    assert.equal(issued, 10)
+    for (const turn of runner.turns.slice(before)) {
+      assert.ok(isRecord(turn.credentials))
+      assert.equal(turn.credentials.mcpToken, "mcp-token")
+      assert.equal("modelAttribution" in turn.credentials, false)
+    }
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
 

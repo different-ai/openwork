@@ -10,6 +10,7 @@ import { db } from "../db.js"
 import { attributeAuditRequest, auditUserPrincipalKey } from "../audit/request-capture.js"
 import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
+import { modelAttributionSchema } from "@openwork-ee/headless-protocol"
 import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
@@ -51,7 +52,7 @@ const sessionSchema = z.object({
   model: z.string().nullable().optional(),
 }).meta({ ref: "WorkbotSession" })
 
-const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
+const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime(), modelAttribution: modelAttributionSchema.optional() }).meta({ ref: "WorkbotRunToken" })
 const signedOutSchema = z.object({ error: z.string(), message: z.string().optional() })
 
 /** Plenty for one person's turns (each send and resume needs one); stops a runaway client minting in a loop. */
@@ -378,8 +379,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const retryAfter = await checkRateLimit(`workbot-run-token:${principal.organizationId}:${principal.userId}`, RUN_TOKENS_PER_WINDOW, RUN_TOKEN_WINDOW_MS, Date.now())
       if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
       const ttlMs = c.req.valid("json").ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
-      const { token } = await mintHeadlessRunMcpToken({ ...principal, ttlMs, readOnly })
-      return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString() })
+      const { token, modelAttribution } = await mintHeadlessRunMcpToken({ ...principal, ttlMs, readOnly })
+      return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString(), ...(modelAttribution ? { modelAttribution } : {}) })
     },
   )
 }
