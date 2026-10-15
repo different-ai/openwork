@@ -63,7 +63,15 @@ test("background tasks and reports inherit the originating identity; a resumed t
 for (const protocol of ["openai", "anthropic"] as const) {
   test(`${protocol}: protocol → API → runtime → real inference HTTP isolates members, model aliases, title calls and disabled turns`, async () => {
     const captured: Array<{ headers: import("node:http").IncomingHttpHeaders; model: string; stream?: boolean; body: string }> = []
+    let catalogReceived = 0
     const server = createServer(async (req, res) => {
+      if (req.method === "GET") {
+        assert.equal(req.headers["x-user-id"], undefined, "model catalog requests carry no user identity")
+        catalogReceived++
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify({ data: [{ id: "selected-provider-alias" }] }))
+        return
+      }
       let body = ""
       for await (const chunk of req) body += chunk
       const parsed = z.object({ model: z.string(), stream: z.boolean().optional() }).parse(JSON.parse(body))
@@ -95,6 +103,7 @@ for (const protocol of ["openai", "anthropic"] as const) {
           maxTokenTtlMs: 60_000,
           mintToken: async (actor) => ({ token: "private-mcp-token", ...(actor.userId === "disabled" ? {} : { modelAttribution: { ...identity, userId: actor.userId, memberId: `mem_${actor.userId}` } }) }),
         })
+        assert.ok(await client.listModels())
         const sessions = ["first", "second", "disabled"].map((user) => ({ user, session: store.createSession({ autoTitle: true, owner: "untrusted-owner-not-used" }).id }))
         const start = captured.length
         await Promise.all(sessions.map(async ({ user, session }) => {
@@ -129,6 +138,7 @@ for (const protocol of ["openai", "anthropic"] as const) {
         const unauthorized = await runtime.app.request(`/v1/sessions/${sessions[0].session}/turns`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messageId: "bad", prompt: "hello", credentials: { modelAttribution: identity } }) })
         assert.equal(unauthorized.status, 401)
       }
+      assert.equal(catalogReceived, 2, "both configured and disabled runtimes exercised the live catalog")
     } finally {
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -170,7 +180,10 @@ for (const protocol of ["openai", "anthropic"] as const) {
     await model.complete(request)
     assert.equal(calls.length, 2)
     for (const call of calls) {
-      assert.equal(new Headers(call.headers).get("x-member-id"), "mem_first")
+      const headers = new Headers(call.headers)
+      assert.equal(headers.get("x-member-id"), "mem_first")
+      assert.equal(headers.get(protocol === "openai" ? "authorization" : "x-api-key"), protocol === "openai" ? "Bearer provider-key" : "provider-key")
+      if (protocol === "anthropic") assert.equal(headers.get("anthropic-version"), "2023-06-01")
       assert.equal(call.redirect, "error")
     }
     const invalid = (protocol === "openai" ? openAIModel : anthropicModel)({ baseUrl: "https://gateway.example.test", maxOutputTokens: 1024, userHeader: { name: "Authorization", format: "member_id" }, fetch: async () => { assert.fail("unsafe policy must fail before network") } })
