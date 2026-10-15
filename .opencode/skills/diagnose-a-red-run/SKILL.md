@@ -3,65 +3,47 @@ name: diagnose-a-red-run
 description: Test is red, typecheck failed, CI job failed, flaky, timed out, was this already broken. Use to classify any failing check before changing code or calling it pre-existing.
 ---
 
-# Skill: Diagnose a Red Run
+# Diagnose a Red Run
 
-## Capture the branch failure
+Classify before changing code. Report per **Honest Verdict**.
 
-- Record the exact command, commit SHA, exit code, and passed/failed/skipped
-  counts. Quote the first actionable failure; do not summarize it away.
-- Classify the check: testkit spec, typecheck, build, lint, or CI job.
+## 1. Capture
 
-## Run a clean control
+- Exact command, commit SHA, exit code, passed/failed/skipped counts. Quote the first actionable failure.
+- Kind: testkit spec, typecheck, build, lint, or CI job. For CI, run the first failing job's exact command locally before widening scope.
+- For a testkit failure, read the run's last unvalidated artifacts before touching code.
 
-Never call a failure pre-existing from memory or from a modified checkout.
+## 2. Control
+
+Per **Clean Control**, run the exact command in a clean baseline with equal tools, env, services, flags and secrets:
 
 ```bash
 git fetch origin dev
 git worktree add /tmp/openwork-dev-control --detach origin/dev
-# In that clean worktree, prepare the same prerequisites and run the exact command.
+# prepare the same prerequisites, run the exact command, quote SHA, exit code, counts, failure text
 git worktree remove /tmp/openwork-dev-control
 ```
 
-- Keep tool versions, environment, services, flags, and secrets equivalent.
-- Quote the control command, `origin/dev` SHA, exit code, counts, and matching
-  failure text.
-- Classify as pre-existing only when the clean control demonstrates the same
-  failure. Otherwise classify it as introduced, environment-specific, or
-  unresolved. A non-reproducing control is not proof of flakiness; repeat both
-  sides before using that label.
+Then label it: pre-existing (control fails the same way), introduced, environment-specific, or unresolved. Flaky needs repeats on both sides.
 
-## Classify by signature
+## 3. Known signatures
 
-- Unit/type/CI-only failure: inspect the first failing job and run its exact
-  command locally before broadening scope.
-- Vision disagreement on identical pixels: claim wording or product ambiguity.
-  Make the product unambiguous or make the claim factual.
-- Timeout with an On-screen dump: read it. It names the state; for example,
-  `/session` can expose a steer-back race.
-- Auth `403 INVALID_ORIGIN`: inspect Den trusted origins.
-- Authorize URL points at the real provider: Den booted without mock env.
-- Teardown `403 fresh_auth_required`: the session aged; a `freshSession` retry
-  exists.
+| Signature | Meaning |
+|---|---|
+| Vision disagreement on identical pixels | Claim wording or product ambiguity. Make one unambiguous |
+| Timeout with an On-screen dump | Read it. It names the state (e.g. `/session` steer-back race) |
+| `403 INVALID_ORIGIN` | Den trusted origins |
+| Authorize URL hits the real provider | Den booted without mock env |
+| Teardown `403 fresh_auth_required` | Session aged. A `freshSession` retry exists |
+| `EADDRINUSE` in logs while `/health` is 200 | A zombie kept the port. `tsx watch` orphans its Node child |
 
 ## Red core journey (`pr-proof.yml` "Core journey")
 
-- Open the job summary's "Freestyle world" table first: it names the path
-  (reused, fast, full build) and its reason.
-- World preparation failed: read the "builder log" group in the job log; it is
-  the VM's own build or boot output. A fast path that fails falls back to a full
-  build by itself, so a red here is a real build or boot failure.
-- Journey failed: the timeout prints the on-screen state. Reproduce with the
-  `run-tests` core journey command on the same pushed commit.
+- Open the job summary's "Freestyle world" table. It names the path (reused, fast, full build) and why.
+- World preparation failed: read the "builder log" group. A failed fast path already fell back to a full build, so this is a real build or boot failure.
+- Journey failed: read the printed on-screen state, then rerun the `run-tests` core journey command on the same pushed commit.
 
-## Environment forensics
+## Environment hygiene
 
-- Kill by port, not process name. `tsx watch` can orphan its Node child, which
-  keeps the port while `/health` lies.
-- `EADDRINUSE` in logs while health returns 200 means a zombie survived.
-- Electron zombies can respawn from a root process; kill the process group.
-- Leaked state pollutes organizations; delete leftover connectors between runs.
-
-For a testkit failure, read the test run's last unvalidated artifacts before touching
-code. Name the verdict as CI posted it: `Passed` only when every claim has an
-observable assertion; a skip or a pending `looks()` judgment is `Incomplete`,
-never `Passed`. Red evidence is useful evidence; never soften or omit it.
+- Kill by port or process group, never by name. Electron zombies respawn from a root process.
+- Leaked state pollutes organizations. Delete leftover connectors between runs.

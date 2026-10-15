@@ -1,12 +1,14 @@
 ---
 name: validate-a-release
-description: Validate the release, check the released binaries, is 0.18.x safe to roll out, prove a published desktop release. Boots the RELEASED mac-arm64 enterprise and cloud binaries through the packaged journeys, checks updater manifests and notarization, and publishes evidence.
+description: "Validate a published release: is 0.18.x safe to roll out? Boots the released mac-arm64 enterprise and cloud binaries through the packaged journeys, checks updater manifests and notarization, publishes evidence."
 ---
 
-# Skill: validate-a-release
+# Validate a release
 
-Run after `release` reports the GitHub release published. Every check runs on
-the artifacts users download, never on a local build. macOS arm64 host, MySQL
+Run after `release` reports the GitHub release published. Per **Prove It on
+the Real Thing**, every check runs on the artifacts users download, never on a
+local build. Verdicts follow **Honest Verdict**; the negative control follows
+**Clean Control**. macOS arm64 host, MySQL
 on `127.0.0.1:3306` (`pnpm dev:den:mysql`), `gh` authenticated. Work from a
 clean checkout (evidence is bound to its `git HEAD`): `origin/dev` today; from
 the first release that ships these specs, the tag's own checkout

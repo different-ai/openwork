@@ -26,8 +26,18 @@ const result = {
   reproInDefault: countMatchingSubjects(bundled),
 };
 
+// Optional: also check a PEM bundle such as the app's system-ca-bundle.pem.
+// Its subjects are base64-encoded, so a text search cannot find them.
+const bundlePath = process.argv[2];
+if (bundlePath) {
+  const text = require("node:fs").readFileSync(bundlePath, "utf8");
+  const pems = text.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
+  result.bundleCount = pems.length;
+  result.reproInBundle = countMatchingSubjects(pems);
+}
+
 console.log(JSON.stringify(result, null, 2));
 
-if (result.reproInSystem === 0) {
+if (result.reproInSystem === 0 || result.reproInBundle === 0) {
   process.exitCode = 1;
 }

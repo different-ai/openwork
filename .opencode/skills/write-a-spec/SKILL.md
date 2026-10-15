@@ -3,95 +3,66 @@ name: write-a-spec
 description: Write or extend an E2E journey spec in evals/specs that proves a PR's change to a human reviewer. Use when a PR changes user-visible behaviour, when a reviewer asks "show me", or when the coverage decision says a journey is missing.
 ---
 
-# Skill: Write a Spec
+# Write a Spec
 
-Every `evals/specs/**/*.e2e.test.ts` a PR adds or changes runs in CI on the PR
-head and is published as that PR's proof (private report + one PR comment).
-Write the spec for the person who will read that report in thirty seconds,
-not for the machine that runs it.
+Every `evals/specs/**/*.e2e.test.ts` a PR adds or changes runs in CI on the PR head and is published as its proof (private report plus one PR comment).
+Per **Prove It on the Real Thing**, this spec is the verdict. Per **Thirty-Second Reader**, write it for the person reading the report.
 
-## Map: from change to reviewed proof
+Siblings: `run-tests` (run and read the record), `preview-my-work` (sandbox link), `open-a-pr` (`## Evidence` line), `diagnose-a-red-run` (red proof), `record-a-demo` (attachments and recordings, not proof).
 
-| Moment | Skill | Output |
-| --- | --- | --- |
-| Decide whether a journey is needed and design it | `write-a-spec` (this) | a spec whose titles, steps, and evidence read as the report |
-| Run it and read your own record | `run-tests` | `evals/results/test-runs/<latest>/` with the captions in order |
-| Let a reviewer click through the change | `preview-my-work` | a sandbox link in the report's **Show sandbox** panel |
-| Describe it on the PR | `open-a-pr` | an `## Evidence` line naming the spec and its before → after |
-| A proof or check is red | `diagnose-a-red-run` | classification before any code change |
-| Extra screenshots or a video outside the spec | `record-a-demo`, `upload-photo` | PR attachments (these are not proof) |
+## Pick the lane first
 
-### Which lane runs your spec (and when to tag)
-
-CI picks the lane from the file name and tags alone. Pick the lane first:
-it decides the world you can build.
+CI picks the lane from the file name and tags alone. The lane decides the world you can build.
 
 | If the spec… | Name / tag | CI lane |
 | --- | --- | --- |
 | runs in a browser or local world with no secrets (default) | `evals/specs/<journey>.e2e.test.ts` | PR change proof, unprotected |
 | must boot the packaged desktop binary | `evals/specs/packaged-<journey>.e2e.test.ts` | packaged smoke runner |
-| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle |
+| needs a reviewer to reopen the *running* browser at a screenshot | `{ tags: ["checkpoints"] }` in `test(...)` options | protected checkpoint lane on Freestyle |
 | needs Windows and a published installer | the existing `windows-published-preview` spec only | Daytona Windows, protected |
 
-Tag `checkpoints` only when a still image cannot show what the reviewer has to
-check: an open stream, a populated workspace to explore, a state that costs
-minutes to reach. The tag moves the spec to a protected lane that uses a
-secret, where fork PRs cannot run. It saves each tagged test's world as
-launched for the commit (before the body acts) and its end state, plus every `user.checkpoint("caption")` and every `step(..., { checkpoint: true })`.
-Plain `user.screenshot()` never saves one. Say why in a comment beside the
-tag. Checkpoints cost VM snapshots, so capture the one or two moments a
-reviewer would open, not every step. Run it locally with
-`pnpm evals:e2e <slug> --local --checkpoints` (needs `FREESTYLE_API_KEY`).
+Tag `checkpoints` only when a still image cannot show it: an open stream, a populated workspace, a state that takes minutes to reach. Say why in a comment beside the tag.
+The lane uses a secret, so fork PRs cannot run it.
+It saves the world as launched, the end state, every `user.checkpoint("caption")`, and every `step(..., { checkpoint: true })`. Plain `user.screenshot()` never saves one.
+Each checkpoint is a VM snapshot. Capture only the one or two moments a reviewer would open.
+Run locally: `pnpm evals:e2e <slug> --local --checkpoints` (needs `FREESTYLE_API_KEY`, per **Scope Secrets**).
 
-## Do not write one when…
+## Do not write one when
 
-- An existing journey covers the behaviour: extend it. One spec per user
-  journey, not per PR; bug fixes add a step to the journey they escaped from.
-- The change is a pure function: write a colocated unit test, not evidence.
-- You would import `../../apps|packages|ee`, read source files, or spawn another
-  runner. That is a unit test in disguise; the boundary ratchet rejects it.
+- An existing journey covers it. Extend it. One spec per journey, not per PR. Bug fixes add a step to the journey they escaped from.
+- The change is a pure function. Write a colocated unit test.
+- You would import `../../apps|packages|ee`, read source, or spawn another runner. That is a unit test in disguise; the boundary ratchet rejects it.
 
-No UI does not mean no spec. A server, proxy, or protocol bug gets a
-browser-less world (see `evals/specs/session-title-recovery.test.ts`); the
-steps still read as one person's before → after.
+No UI does not mean no spec. A server, proxy, or protocol bug gets a browser-less world (see `evals/specs/session-title-recovery.test.ts`) whose steps still read as one person's before and after.
 
 ## The proof shape
 
-A proof answers: **who** can now do **what** they could not before, and who
-still cannot. Structure every spec as that story. Each beat is one `step()`
-with a claim-sized name; each visual beat ends in `user.screenshot()`.
+A proof answers: **who** can now do **what** they could not before, and who still cannot.
+Each beat is one `step()` with a claim-sized name. Each visual beat ends in `user.screenshot()`.
 
 ```
 persona  → the test title names a person: "an owner", "a teammate", "a member without access"
 before   → what that person sees or cannot do today (features only)
-action   → the person does the thing, through the UI, as they would
+action   → the person does the thing, through the UI
 after    → what they now see; screenshot at that moment
-boundary → who else is affected, and the negative half: who is not
+boundary → who else is affected, and who is not
 ```
 
-The review app is generated from the spec. It shows exactly four strings, and
-each comes from one place in your code; write those strings for the reviewer:
+The report shows exactly four strings. Write each for the reviewer.
 
 | Reviewer sees | Comes from | Rule |
 | --- | --- | --- |
 | Section heading | the `test("…")` title | names the persona and what they can now do |
-| Caption under a screenshot | the `step("…")` the `user.screenshot()` ran inside | the old state starts `before:`, the new state `after:`; otherwise a plain claim |
+| Caption under a screenshot | the `step("…")` the `user.screenshot()` ran inside | old state starts `before:`, new state `after:`; otherwise a plain claim |
 | Caption + judgment on a `looks()` image | the first expectation in `user.looks([...])` | judged later; pending until then, so CI proof stays `Incomplete` |
 | Assertion line | `recordAssertionEvidence(claim, evidence, ok)` | `claim` is the caption, `evidence` the text under it |
 
-Each test is one section, marked with a status icon. Its checks collapse to
-"N of M checks passed" and open only when one fails. Its screenshots form a
-numbered gallery in capture order, so the captions have to tell the story on
-their own. A section with no `recordAssertionEvidence` shows as Incomplete.
-
-A screenshot taken outside any `step()` is captioned "<title> artifact N",
-which tells the reviewer nothing. No verbs like "assert", no selectors, no
-internal names anywhere in those strings.
-
-Example title and steps:
+Each test is one section; checks collapse to "N of M checks passed" and open only on failure.
+Screenshots form a numbered gallery, so captions must tell the story alone. One outside any `step()` is captioned "<title> artifact N".
+A section with no `recordAssertionEvidence` shows as Incomplete. No "assert", selectors, or internal names in these strings.
 
 ```ts
-test("an owner enables Code Mode and a teammate turns one chat into a shared Workflow", async ({ user, probe, step }) => {
+test("an owner enables Code Mode and a teammate turns one chat into a shared Workflow", async ({ user, step }) => {
   await step("before: the teammate's agent has no script tool", …);        // screenshot
   await step("the owner enables Code Mode with one switch", …);             // screenshot
   await step("after: the teammate's request runs as one script", …);        // screenshot
@@ -100,156 +71,51 @@ test("an owner enables Code Mode and a teammate turns one chat into a shared Wor
 });
 ```
 
-Assertions still live inside each step; they just hang off user-visible
-moments. A spec whose assertions are RPC responses collected in the world and
-compared in one block is a mechanism check, not a proof. It is still allowed;
-it just tells the reviewer nothing.
+The spec, report, and PR body tell one story in the same words. A bug fix with no screen keeps this shape, with one evidence line per step instead of a screenshot.
 
-## Same story in three places
+## Step rules
 
-The spec, the report, and the PR body tell one story in the same words. Write
-the report you want to read first, then make the code produce those lines.
-A bug fix with no screen still gets this shape; the "screenshot" is one
-`recordAssertionEvidence` line per step whose `evidence` is the observed fact.
-
-Report the reviewer reads (every line comes from the spec):
-
-```
-▶ a member's conversation stays readable while OpenWork is still checking who owns it
-  ✔ given an engine where the ownership check is slow and the messages read is fast
-      GET /session/:id answers in 150 ms; GET /session/:id/message in 2 ms
-  ✔ when the member opens the conversation and memory is reclaimed mid-check
-      three reads sent as the app sends them; gc() ran three times
-  ✔ then the runtime really reclaimed the engine's response
-      WeakRef → undefined  (witness; without it a pass means "nothing happened")
-  ✔ after: all three reads return the conversation, none say internal_error
-      200 / 200 / 200; body {"id":"ses_x", …}
-```
-
-Spec that produces it:
-
-```ts
-test("a member's conversation stays readable while OpenWork is still checking who owns it", async ({ world, step, evidence }) => {
-  await step("given an engine where the ownership check is slow and the messages read is fast", async () => {
-    evidence.recordAssertionEvidence("engine timings", `GET /session/:id ${world.ownershipMs} ms; GET /session/:id/message ${world.messagesMs} ms`, true);
-  });
-  await step("when the member opens the conversation and memory is reclaimed mid-check", async () => { /* act; gc(); */ });
-  await step("then the runtime really reclaimed the engine's response", async () => {
-    const collected = world.engineResponse.deref() === undefined;
-    evidence.recordAssertionEvidence("engine response reclaimed", collected ? "WeakRef → undefined" : "WeakRef still alive: window not exercised", collected);
-    expect(collected).toBe(true);
-  });
-  await step("after: all three reads return the conversation, none say internal_error", async () => {
-    evidence.recordAssertionEvidence("reads", `${statuses.join(" / ")}; body ${body.slice(0, 40)}`, statuses.every((s) => s === 200));
-    expect(bodies.join()).not.toContain("internal_error");
-  });
-});
-```
-
-PR body line that names it (`open-a-pr`):
-
-```markdown
-## Evidence
-`evals/specs/conversation-stays-readable.e2e.test.ts` — before: the read fails
-with "Response body object should not be disturbed or locked"; after: all
-three reads return the conversation and the reclaim witness is true.
-```
-
-Rules that make this parseable:
-
-- Step names are `given / when / then / after:` (or `before: / after:` with
-  screenshots). One clause each, the person's words, no function names.
-- Every step records exactly one evidence line: the observed fact, with the
-  numbers in it. The reviewer never opens the code to learn what happened.
-- A **witness** step proves the risky condition actually occurred. If it did
-  not, that step fails; a pass without the witness is not a proof.
-- The quoted "before:" string in the PR body is the exact error the user or
-  Sentry saw. CI shows it red on `dev` and green on the head; never narrate it.
-
-Rules of thumb:
-
-- At least three steps. Zero steps renders as "no claims declared".
-- Every step has at least one `user.*` act or `user.see`. `probe.*` observes;
-  it does not carry a step alone.
-- One screenshot per visual beat. Non-visual work records `recordAssertionEvidence`
-  with the command or response excerpt as the evidence text.
-- For features, show the before state in the same world. Base-vs-head runs are
-  expensive; a step that starts with the switch off is not.
+- Name steps `given / when / then / after:`, or `before: / after:` with screenshots. One clause, the person's words, no function names.
+- Every step records exactly one evidence line: the observed fact, numbers included. The reviewer never opens the code.
+- Add a **witness** step that proves the risky condition occurred (e.g. `WeakRef → undefined` after `gc()`). If it did not occur, that step fails.
+- The quoted `before:` string in the PR body is the exact error the user or Sentry saw.
+- At least three steps; zero renders as "no claims declared". Every step has at least one `user.*` act or `user.see`. `probe.*` observes; it never carries a step alone.
+- One screenshot per visual beat. Non-visual work records the command or response excerpt as evidence.
+- Show the before state in the same world. A step that starts with the switch off is cheap; base-vs-head runs are not.
 - For permissions, sharing, or scopes, always include the negative persona.
-- The world runs the code on the runtime it ships on. A spec that passes on
-  the wrong runtime proves nothing (`run-tests` → Match the runtime).
-- Prefer `seed.appWeb` (headless Chrome, real app). Use `seed.desktop` only for
-  a native capability a browser cannot show, and say why in `nativeReason`:
-  the titlebar and window controls, native menus and dialogs, `openwork://`
-  links and the OAuth hand-off, the built-in browser pane, the updater, quit
-  and relaunch, the desktop runtime's own settings, or packaged builds. A
-  desktop world opens a window on whoever runs it locally.
-- Signed in to a Den: `denForAppWeb` then `signedInAppWeb`
-  (`evals/worlds/signed-in-app-web.ts`) replace `seed.desktop({ den, as })`.
-- Extending a journey whose world uses `seed.desktop` for none of those
-  reasons? Move that world to `seed.appWeb` rather than adding to it. The app
-  in a browser routes by path, not hash: use `go()` and `probe.hash()`, which
-  handle both.
-- No `seed.evalIn` / `probe.eval` in new specs. If you need one, comment why.
+- Run on the shipping runtime (`run-tests` → Match the runtime).
+- Assert on user-visible moments. RPC responses compared in one block are a mechanism check, not a proof.
 
-## Use the testkit channels
+## Testkit
 
-Import `spec` (and `expect`) from `@openwork/testkit`; bind the world:
+Channels (`seed`, `user`, `agent`, `probe`, `step`), world binding, `seed.appWeb` as the default surface, `nativeReason` for `seed.desktop`, and the raw-eval ratchet are in `evals/README.md` › Writing specs. Import only from `@openwork/testkit`. Target `"composer"` for the editor, otherwise role, label, text, placeholder or test id. Bound every wait. Declare external requirements in `needs()` so a missing dependency skips loudly.
 
-```ts
-const test = spec.world(myWorld, {
-  resources: { surfaces: ["appWeb"], services: ["den"] },
-});
-```
-
-| Channel | Use it for |
-| --- | --- |
-| `seed` | Arrange the world: Den, orgs, members, workspaces, sessions, mocks, faults. Only `seed` writes state. All `seed.*` goes in the world, before the first act. |
-| `user` | Act as the person: `click`, `type`, `press`, `reload`, `see`, `notSee`, `looks`, `screenshot`. Trusted CDP input; no JS evaluation. |
-| `agent` | Drive the product's automation rail (`window.__openworkControl`): sends, session actions. |
-| `probe` | Observe without changing state: `text`, `hash`, `storage`, `api` (GET), `dom`, `eventually`. |
-| `step` | Name a claim. Nests. A failed step is recorded and rethrown; later steps show `not-reached`. |
-
-Well-known targets: `"composer"` for the editor; otherwise role, label, text,
-placeholder, or test id. Bound every wait; declare external requirements in
-`needs()` so a missing dependency skips loudly.
+- Use `seed.desktop` only for the titlebar and window controls, native menus and dialogs, `openwork://` links and the OAuth hand-off, the built-in browser pane, the updater, quit and relaunch, the desktop runtime's own settings, or packaged builds. Name it in `nativeReason`. A desktop world opens a window on whoever runs it locally.
+- Signed in to a Den: `denForAppWeb` then `signedInAppWeb` (`evals/worlds/signed-in-app-web.ts`) replace `seed.desktop({ den, as })`.
+- Extending a journey whose world uses `seed.desktop` for none of those reasons? Move it to `seed.appWeb` first. The browser app routes by path, not hash: use `go()` and `probe.hash()`, which handle both.
 
 ## Claims and witnesses
 
-- Every claim is machine-checkable with an observable assertion and its
-  negative half: what must not happen to another identity, account, or state.
-- Prose is never proof. Screenshots explain an assertion; they cannot replace it.
-- Describe product behaviour, not incidental layout.
-- If product and claim diverge, change one explicitly; never bend the claim.
-- Never smuggle the answer into the prompt: assert the user-facing request
-  carries no connector or resource IDs.
-- Use `mcpMock()` witnesses under `evals/packages/labs/src/`; never call real
-  providers. Witnesses are deterministic, identity-scoped, and queryable.
+- Every claim has an observable assertion and its negative half: what must not happen to another identity, account, or state.
+- Screenshots explain an assertion; they never replace it. Describe product behaviour, not incidental layout.
+- Per **Fix the Product, Not the Gate**, never bend a claim to match the product.
+- Never smuggle the answer into the prompt. Assert the user-facing request carries no connector or resource IDs.
+- Use `mcpMock()` witnesses under `evals/packages/labs/src/`. Never call real providers. Witnesses are deterministic, identity-scoped, and queryable.
 
 ## Evidence contract
 
-- Evidence is ambient: `user.screenshot()` records an artifact, `user.looks()`
-  records a visual validation (judged later; pending until then),
-  `recordAssertionEvidence()` records a witness assertion. Never create or
-  pass recorder handles.
-- Run it once before pushing and read your own record:
+- Evidence is ambient. `user.screenshot()` records an artifact, `user.looks()` a pending visual validation, `recordAssertionEvidence()` a witness assertion. Never create or pass recorder handles.
+- Run once before pushing and read your own record:
 
   ```sh
   pnpm evals:e2e <slug> --local
   ls evals/results/test-runs/<latest>/   # index.html, test-run.json, NN-*.png
   ```
 
-  If the screenshots would not convince you, they will not convince the reviewer.
-  Read the captions in `index.html` top to bottom: they should tell the
-  before → after story on their own.
-- Your own eye passes what you designed. Run the design review on the same
-  record before pushing and fix its `medium` notes, or say in the PR why the
-  screen is right (`evals/design-review/README.md`; on a PR, the
-  `fix-design-notes` skill reads the notes from the Evidence preview check):
+  Read the captions in `index.html` top to bottom. They must tell the before and after story alone.
+- Run the design review on the same record. Fix its `medium` notes or say in the PR why the screen is right (`evals/design-review/README.md`; on a PR use `fix-design-notes`):
 
   ```sh
   pnpm --dir evals design:review -- --test-run latest
   ```
-- In CI the spec runs on `PR change proof`, one job per spec; the trusted
-  publisher aggregates every changed spec's records into one report. Failed,
-  skipped, and cancelled runs stay visible as such; nothing substitutes for them.
+- In CI each changed spec runs as one `PR change proof` job. The trusted publisher aggregates them into one report. Per **Honest Verdict**, failed, skipped, and cancelled runs stay visible as such.

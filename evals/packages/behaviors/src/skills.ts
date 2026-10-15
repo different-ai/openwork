@@ -3,7 +3,7 @@ import type { Surface } from "@openwork/cdp";
 import { evalIn, waitFor } from "./desktop.ts";
 
 const PLUG_BUTTON = 'button[title="Commands, skills, and MCPs"]';
-const SKILL_MARKERS = ["/browser-automation"];
+const SKILL_MARKERS = ["/add-a-feature"];
 
 export interface SkillFacts {
   name: string;

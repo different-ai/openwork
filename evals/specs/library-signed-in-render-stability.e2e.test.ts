@@ -68,7 +68,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
   await clickText(desktopApp, "Skills", { selector: '[aria-label="Library filters"] button[aria-pressed]' });
   await waitFor(
     desktopApp,
-    () => (document.body.innerText.includes("browser-automation")
+    () => (document.body.innerText.includes("add-a-feature")
       && document.body.innerText.includes("create-plugin")
       && !document.body.innerText.includes("OpenWork Browser")),
     { timeoutMs: 120_000, label: "signed-in Library inventory" },
@@ -82,7 +82,7 @@ test.skipIf(!enabled)(title, { timeout: 10 * 60_000 }, async ({ evidence, place 
     window.__libraryStability.sampler = window.setInterval(() => {
       window.__libraryStability.samples.push({
         buttons: document.querySelectorAll("button").length,
-        contentVisible: document.body.innerText.includes("browser-automation")
+        contentVisible: document.body.innerText.includes("add-a-feature")
           && document.body.innerText.includes("create-plugin"),
       });
     }, 50);

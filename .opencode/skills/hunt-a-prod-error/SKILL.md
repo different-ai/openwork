@@ -3,7 +3,7 @@ name: hunt-a-prod-error
 description: A user saw internal_error, "Unexpected server error", a 500, or an opaque failure in a shipped OpenWork build. Find the cause from local logs and Sentry, name the regressing PR, file the issue, and reply where it was reported.
 ---
 
-# Skill: Hunt a Prod Error
+# Hunt a Prod Error
 
 An opaque error has two halves. Local logs say **where** (route, status,
 timing, burst shape). Sentry says **what** (the exception and stack). You need
@@ -19,18 +19,13 @@ Desktop server log (OTLP JSON, one record per request):
 
 Engine log: `~/.local/share/opencode/log/opencode.log`.
 
-Tally 5xx by route, then compare against the same route family that did
-**not** fail. A failure rate on one route and zero on its siblings isolates the
-code path; a burst of failures in the same millisecond points at a shared
-event (GC, rollover, socket), not per-request data.
+Tally 5xx by route and look for bursts:
 
 ```bash
-rg '"status":5' ~/Library/Application\ Support/com.differentai.openwork/logs/openwork-server.log* \
-  | python3 -c 'import sys,json,re,collections; c=collections.Counter()
-for l in sys.stdin:
-  a=json.loads(l)["attributes"]; c[(a["method"], re.sub(r"(ses|ws|msg)_[A-Za-z0-9]+", r"\1_*", a["path"]), a.get("error.code"))]+=1
-[print(v,k) for k,v in c.most_common()]'
+python3 .opencode/skills/hunt-a-prod-error/scripts/tally-status.py      # or: tally-status.py 4 <files>
 ```
+
+Compare against the same route family that did **not** fail. A failure rate on one route and zero on its siblings isolates the code path. A burst in the same millisecond points at a shared event (GC, rollover, socket), not per-request data.
 
 Know the blind spot: the OpenCode proxy catch blocks in
 `apps/server/src/server.ts` forward the real exception to Sentry only; the
@@ -60,8 +55,7 @@ npx --yes @electron/asar extract-file /Applications/OpenWork.app/Contents/Resour
 ## 4. Reproduce on the shipping runtime
 
 Reduce the mechanism to a script and run it on the runtime the error occurred
-in (`run-tests` → Match the runtime). A repro that passes on Bun for a
-Node/undici bug has proven nothing.
+in (`run-tests` → Match the runtime), per **Prove It on the Real Thing**.
 
 ## 5. File and reply
 

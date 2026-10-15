@@ -78,7 +78,7 @@ focus. Check app UI in headless Chrome instead:
 * Specs: `seed.appWeb` (`write-a-spec`); `run-tests` explains which placement
   tests your working tree.
 * By hand: `pnpm world up dev-app-web --detach -- --browser`, then drive the
-  printed `cdp` address (`drive-desktop-cdp`).
+  printed `cdp` address.
 * Use the desktop app (`seed.desktop`, `pnpm dev`, `preview-desktop`,
   `live-desktop`) only when the user asks or the change needs the desktop
   shell: titlebar and window controls, native menus and dialogs, `openwork://`
@@ -86,3 +86,18 @@ focus. Check app UI in headless Chrome instead:
   relaunch, or packaged builds. Prefer `--daytona` for those so the window
   opens in a sandbox; Daytona builds a pushed commit, not your working tree.
 
+## Principles
+
+Short rules that the workflow skills in `.opencode/skills/` build on. Before
+applying one, read it in full: load the `principle-<name>` skill, or open
+`.opencode/skills/principle-<name>/SKILL.md`. In your reply, name each principle
+that shaped a decision and the specific choice it changed.
+
+* **Prove It on the Real Thing.** Before saying something works: a spec on the shipping runtime and bytes, not a proxy.
+* **Honest Verdict.** Reporting results: Passed, Incomplete, or Failed, bound to a SHA; a skip is never a pass.
+* **Clean Control.** Before calling a failure pre-existing, flaky, or fixed: rerun on a clean baseline.
+* **Scope Secrets.** A command needs a key: load it inline for that one command, never print it.
+* **Fix the Product, Not the Gate.** A check disagrees with the product: fix the product or change the claim on purpose.
+* **Touch Only What You Own.** Sessions, sandboxes, worlds, processes, logins: act only on what you made, by exact ID.
+* **Use the Maintained Lever.** A multi-step procedure: use the repo's script or helper; write one if you repeat it.
+* **Thirty-Second Reader.** Anything a human reviews: who can now do what, in product words, then stop.

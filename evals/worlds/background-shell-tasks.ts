@@ -77,9 +77,9 @@ export async function backgroundShellTasks(seed: Seed) {
   return {
     app, den, workspace, session, before, report, images,
     /**
-     * Layout-jump witness (the measure-chat-flicker method): sample the chat's
-     * bottom status line every 50ms in the page, then read its path. A probe
-     * cannot sample at that rate from outside the page.
+     * Layout-jump witness: sample the chat's bottom status line every 50ms in
+     * the page, then read its path. A probe cannot sample at that rate from
+     * outside the page.
      */
     armJumpSampler: () => seed.evalIn(app, () => {
       const previous: unknown = Reflect.get(window, "__backgroundTaskJumps");

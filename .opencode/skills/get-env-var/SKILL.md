@@ -3,93 +3,48 @@ name: get-env-var
 description: "get an env var, fetch a secret, missing env var, missing token/API key, load secrets from Infisical, infisical. Fetch secrets from the team's Infisical workspace into the shell environment so subsequent commands can use them."
 ---
 
-# Skill: get-env-var
+# get-env-var
 
-Fetch a secret from the team's Infisical workspace into the current shell so the next command can use it.
-
-## When to use
-
-- A command or script needs an env var that is not set, such as `BLOB_READ_WRITE_TOKEN`.
-- A token, API key, or other secret is missing from the environment.
-- The user asks to load secrets from Infisical.
+Load a secret from the team's Infisical workspace for the next command. Follow **Scope Secrets** throughout.
 
 ## Setup (once per machine)
 
-- Install the CLI on macOS: `brew install infisical/get-cli/infisical`.
-- Check `infisical --version`. The commands below need a current CLI: 0.28.x has no `user get` and no `--output json`, and behind `2>/dev/null` those fail silently with empty output. Upgrade with `brew upgrade infisical`.
-- Check auth with `infisical user get`; if it fails or a command reports you are not logged in, run `infisical login` and complete the browser flow.
-- For CI or other non-interactive runs, set `INFISICAL_TOKEN` from a machine identity; the CLI skips login when it is present.
-- This repo is already project-linked via tracked `.infisical.json` (`workspaceId: "e9f4542a-8714-46c3-a8fd-99d8cb370aeb"`, empty `defaultEnvironment`). From the repo root, `infisical` defaults to the `dev` environment slug when `--env` is omitted.
+- Install with `brew install infisical/get-cli/infisical`. Upgrade with `brew upgrade infisical`. CLI 0.28.x has no `user get` and no `--output json`, and fails silently behind `2>/dev/null`.
+- Check auth with `infisical user get`. If it fails, run `infisical login`.
+- CI uses `INFISICAL_TOKEN` from a machine identity and skips login.
+- The repo is linked by tracked `.infisical.json`. From the repo root, `--env` defaults to `dev`. Outside the root, `infisical` prints an empty stdout that a downstream consumer will happily store.
 
-## Fetch one secret into the environment
-
-Run from the repo root:
+## Fetch
 
 ```bash
-export NAME="$(infisical secrets get NAME --plain --silent)"
+NAME="$(infisical secrets get NAME --plain --silent)" <command>        # preferred: one command
+export NAME="$(infisical secrets get NAME --plain --silent)"           # when several commands need it
 ```
 
-- Replace `NAME` with the secret name.
-- Add `--env <slug>` for a non-default environment; this repo defaults to `dev`.
-- Add `--path /some/folder` when secrets are organized in folders. A folder's secrets do not appear at the root path.
+Add `--env <slug>` for another environment and `--path /folder` for foldered secrets. Folder secrets do not appear at the root.
 
 ## Known locations
 
-| Secret | Environment | Path | Used by |
+| Secret | Env | Path | Used by |
 |---|---|---|---|
-| `FREESTYLE_API_KEY` | `dev` | `/openwork-ops` | Freestyle placements of `pnpm world` (`preview-desktop`, `preview-app-web`, `acme-web`) |
-| `DAYTONA_API_KEY` | `dev` | `/openwork-ops` | Daytona placements of `pnpm world`, in the team organization. The `dev` root path has one for the same organization. Only works together with `DAYTONA_API_URL=https://app.daytona.io/api` (not a secret, not in Infisical); without it the Daytona CLI silently ignores the key. |
-
-Scope a world secret to the one command that needs it instead of exporting it:
+| `FREESTYLE_API_KEY` | `dev` | `/openwork-ops` | Freestyle placements of `pnpm world` and the core journey |
+| `DAYTONA_API_KEY` | `dev` | `/openwork-ops` | Daytona placements in the team org. Needs `DAYTONA_API_URL=https://app.daytona.io/api` (not a secret) or the CLI ignores it |
 
 ```bash
-FREESTYLE_API_KEY="$(infisical secrets get FREESTYLE_API_KEY --env dev --path /openwork-ops --plain --silent)" pnpm world up preview-desktop --place freestyle --stage <stage> --detach
-DAYTONA_API_URL=https://app.daytona.io/api DAYTONA_API_KEY="$(infisical secrets get DAYTONA_API_KEY --env dev --path /openwork-ops --plain --silent)" pnpm world up preview-desktop --place daytona --stage <stage> --detach
+DAYTONA_API_URL=https://app.daytona.io/api DAYTONA_API_KEY="$(infisical secrets get DAYTONA_API_KEY --env dev --path /openwork-ops --plain --silent)" pnpm world up <world> --place daytona --stage <stage> --detach
 ```
 
-Never feed a key to `daytona login --api-key`: that replaces the person's
-Daytona CLI login for every tool on the machine.
+`pnpm world plan <world> --place <place>` reports a missing world secret before anything is created.
 
-`pnpm world plan <world> --place <place>` reports a missing world secret, with this fix, before anything is created.
+`infisical run -- <command>` injects every project secret into one process. Never use it for `pnpm world`.
 
-## Inject everything into a command
-
-Run the command through Infisical so all project secrets are available only to that process:
+## Discover, check, forward without seeing a value
 
 ```bash
-infisical run -- <command>
+infisical secrets --env dev --output json --silent 2>/dev/null | jq -r '.[].secretKey'                 # names only
+infisical export --env dev --path <path> --format json --silent 2>/dev/null | jq -r '.[].key'          # names on 0.28.x
+infisical secrets get NAME --plain --silent 2>/dev/null | wc -c                                        # 12 = "*not found*"
+infisical secrets get NAME --plain --silent 2>/dev/null | gh secret set NAME --repo <owner>/<repo>     # forward
 ```
 
-Not for `pnpm world`: it injects every root secret into processes the world
-starts, and omits `DAYTONA_API_URL`, so the Daytona key is ignored. Use the
-scoped forms above.
-
-## Discover, check, and forward without ever seeing a value
-
-Always run from the repo root; outside it `infisical` errors and emits an empty stdout, which a downstream `gh secret set` will silently store.
-
-```bash
-# Which secrets exist? Names only, via structured output. Never list with
-# --plain or the default table: both print values, and multi-line values
-# (private keys) defeat any line-based filter such as cut or awk.
-infisical secrets --env dev --output json --silent 2>/dev/null | jq -r '.[].secretKey'
-
-# The same on CLI 0.28.x, which has no --output json (keys only, via jq):
-infisical export --env dev --path <path> --format json --silent 2>/dev/null | jq -r '.[].key'
-
-# Does NAME exist and is it non-empty? Prints a byte count, never the value.
-# 12 is the "*not found*" placeholder older CLIs print (with exit 0), not a value.
-infisical secrets get NAME --plain --silent 2>/dev/null | wc -c
-
-# Forward NAME to a consumer in one pipe (e.g. a GitHub Actions secret).
-infisical secrets get NAME --plain --silent 2>/dev/null | gh secret set NAME --repo <owner>/<repo>
-```
-
-## Rules
-
-- Never echo, print, or otherwise log secret values.
-- Never write secrets to files, logs, commit messages, PR bodies, or comments.
-- Only use `--plain` with `secrets get NAME` inside command substitution, as in `export NAME="$(...)"`, or piped straight into a single consumer as above. Never use `--plain` to list.
-- Never pass a secret-bearing stream through `grep`, `rg`, `awk`, `sed`, `cut`, `head`, or any line-based filter: multi-line values and one mismatched pattern both land values in the tool output. Listing is `--output json | jq -r '.[].secretKey'` (or, on 0.28.x, `export --format json | jq -r '.[].key'`) only.
-- Treat every `infisical secrets ...` command as printing values unless it is the JSON name listing above, piped into `wc -c`, or piped into a consumer.
-- If a secret does not exist, STOP and tell the user exactly which secret name and environment to add in Infisical; do not invent values.
+Every other `infisical secrets ...` form prints values. A missing secret: stop and tell the user the exact name and environment to add.
