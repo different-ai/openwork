@@ -38,6 +38,43 @@ shared mode on that row. The redirect sent to the provider, the client
 registration, credentials, grants, and bindings do not change; only
 transactions signed with the stale mode keep failing closed.
 
+## Public-domain changes
+
+`mcpOAuthDomainRecovery` is available on Cloud and self-hosted deployments and
+starts **off**. Enable it through the feature registry rollout controls (or the
+self-hosted operator lock) after updating `DEN_API_PUBLIC_URL`. Request hosts
+never select the replacement callback. Turning it off stops further automatic
+replacement; it does not undo a completed provider registration or delete data.
+
+With recovery enabled, an explicit Connect/reconnect detects a recorded
+callback on a different public origin. It keeps the stored callback **mode**
+(shared or per-connection). The intentional hosted web-proxy compatibility
+callback is not treated as an obsolete domain.
+
+- **Dynamic / client-metadata registrations:** when authorization is needed,
+  Den requests a replacement using the active public callback and the provider's
+  advertised registration mechanisms. It does not assume dynamic registration
+  exists or bypass provider approval. The old registration stays saved until a
+  replacement is successfully persisted; a discovery or registration failure
+  leaves it available for ordinary calls/refreshes. Concurrent registration
+  attempts cannot overwrite an administrator-supplied client or a newer winner.
+- **Administrator-supplied clients:** Connect returns a configuration-required
+  warning naming the new callback. An organization admin updates the existing
+  OAuth application's redirect allowlist in the provider console, then saves
+  the same client ID in Connections and reconnects. Omitting the secret retains
+  the saved secret. Saving confirms the provider change; Den cannot verify the
+  provider console or alter its allowlist itself.
+
+No connection deletion is needed: connection IDs, access grants, tool policies,
+plugin bindings and account rows stay in place. Ordinary calls do not migrate a
+registration or discard working tokens just because the origin changed. When
+an automatically registered client is successfully replaced, existing access
+tokens and scopes remain, but refresh grants and pending PKCE transactions
+bound to the old client are cleared for all identities on that connection.
+Members with still-valid access tokens can continue until they need to sign in
+again; an old refresh token is never sent with the replacement client. Existing
+revision and single-use checks reject callbacks from replaced registrations.
+
 ## Add a connection
 
 In Cloud → Connections, enter the MCP server URL. OpenWork automatically runs
