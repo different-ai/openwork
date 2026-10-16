@@ -24,6 +24,7 @@ import {
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace, resolveManagedEngineCwd, shouldStartManagedEngine } from "./workspaces.js";
 import { runtimeStorageDir } from "./runtime-db.js";
+import { managedEngineIsolationEnv } from "./managed-engine-isolation.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { migrateOpenworkCloudMcpRuntimeConfig } from "./cloud-mcp-health.js";
 import { migrateWorkspaceRuntimeConfigToEngineGlobal } from "./runtime-opencode-config-store.js";
@@ -61,6 +62,7 @@ if (args.version) {
 
 let webRoot: string | null = null;
 let webTokensPath: string | null = null;
+let pluginDepsArchive: string | null = null;
 if (args.web) {
   // Everything below is read by resolveServerConfig / the engine spawn through
   // process.env, so it must be settled before the config is resolved.
@@ -96,14 +98,8 @@ if (args.web) {
   });
   process.env.OPENWORK_OPENCODE_BIN = engine.bin;
   setInstalledOpencodeVersion(engine.installedVersion);
-  if (packageRoot && engine.source !== "env") {
-    const seed = await seedOpencodePluginDeps({
-      archive: opencodePluginDepsArchive(packageRoot, constants.opencodeVersion),
-      configDir: opencodeGlobalConfigDir(process.env),
-    });
-    if (seed.seeded) console.log(`Prepared OpenCode plugin dependencies in ${seed.durationMs} ms`);
-    else if (seed.reason === "failed") console.log(`Could not prepare OpenCode plugin dependencies (${seed.error}); OpenCode will install them.`);
-  }
+  // Seeded into the managed engine's private config folder once it is known.
+  if (packageRoot && engine.source !== "env") pluginDepsArchive = opencodePluginDepsArchive(packageRoot, constants.opencodeVersion);
 }
 
 const config = await resolveServerConfig(args);
@@ -149,7 +145,17 @@ if (manageEngine) {
   });
   await mkdir(managedOpencodeCwd, { recursive: true });
   const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+  const isolationEnv = await managedEngineIsolationEnv(runtimeStorageDir(config));
+  if (pluginDepsArchive) {
+    const seed = await seedOpencodePluginDeps({
+      archive: pluginDepsArchive,
+      configDir: opencodeGlobalConfigDir(isolationEnv),
+    });
+    if (seed.seeded) console.log(`Prepared OpenCode plugin dependencies in ${seed.durationMs} ms`);
+    else if (seed.reason === "failed") console.log(`Could not prepare OpenCode plugin dependencies (${seed.error}); OpenCode will install them.`);
+  }
   const engineEnv: Record<string, string | undefined> = {
+    ...isolationEnv,
     ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
     ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
     OPENWORK_SERVER_URL: serverUrl,

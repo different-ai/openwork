@@ -45,6 +45,7 @@ import {
 } from "./runtime-opencode-config-store.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
 import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
+import { globalSkillDirectories } from "./skills.js";
 
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
@@ -116,6 +117,11 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkGatewayQuotaPluginPath(),
       ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin)),
     ],
+    // The managed engine no longer reads ~/.config/opencode (see
+    // managed-engine-isolation.ts), but the skill picker still lists the
+    // skills folder there as global skills. Register only that folder, as the
+    // v2 engine does, so a picked global skill can still be used.
+    skills: { paths: [globalSkillDirectories().openwork] },
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))
       .filter(([name]) => !name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX))),

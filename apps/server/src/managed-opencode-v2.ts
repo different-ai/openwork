@@ -12,6 +12,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
+import { managedEngineConfigHome } from "./managed-engine-isolation.js";
 
 export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
 
@@ -334,7 +335,7 @@ export async function createManagedOpencodeV2Server(
   for (const key of [
     "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP",
     "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "CI",
-    "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
+    "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
     "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
     "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
   ]) {
@@ -344,11 +345,16 @@ export async function createManagedOpencodeV2Server(
   // A caller may deliberately provide a config file; never inherit the server's
   // OPENCODE_CONFIG or OPENCODE_PURE settings implicitly.
   if (options.env?.OPENCODE_CONFIG) inherited.OPENCODE_CONFIG = options.env.OPENCODE_CONFIG;
+  // OPENCODE_CONFIG_DIR already replaces the global config folder; never let
+  // anything else in the engine fall back to a separate OpenCode install's
+  // ~/.config/opencode either (see managed-engine-isolation.ts).
+  const xdgConfigHome = options.env?.XDG_CONFIG_HOME ?? managedEngineConfigHome(options.rootDir);
 
   await mkdir(options.rootDir, { recursive: true, mode: 0o700 });
   await chmod(options.rootDir, 0o700);
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await chmod(configDir, 0o700);
+  await mkdir(xdgConfigHome, { recursive: true, mode: 0o700 });
   await mkdir(gatewayQuotaPluginDirectory, { recursive: true, mode: 0o700 });
   await writeFile(join(gatewayQuotaPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(gatewayQuotaPluginDirectory, "server.js"),
@@ -384,6 +390,7 @@ export async function createManagedOpencodeV2Server(
       OPENCODE_PASSWORD: password,
       OPENCODE_DB: join(options.rootDir, "opencode.db"),
       OPENCODE_CONFIG_DIR: configDir,
+      XDG_CONFIG_HOME: xdgConfigHome,
       ...(opencodeModelsUrl === undefined ? {} : { OPENCODE_MODELS_URL: opencodeModelsUrl }),
     },
     stdio: ["ignore", "pipe", "pipe"],

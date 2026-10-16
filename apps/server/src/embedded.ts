@@ -35,6 +35,7 @@ import {
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace, resolveManagedEngineCwd, shouldStartManagedEngine } from "./workspaces.js";
 import { runtimeStorageDir } from "./runtime-db.js";
+import { managedEngineIsolationEnv } from "./managed-engine-isolation.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { migrateOpenworkCloudMcpRuntimeConfig } from "./cloud-mcp-health.js";
 import { migrateWorkspaceRuntimeConfigToEngineGlobal } from "./runtime-opencode-config-store.js";
@@ -220,11 +221,13 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     });
     await duringStartup(() => mkdir(cwd, { recursive: true }));
     const opencodeModelsUrl = await duringStartup(() => resolveOpencodeModelsUrl());
+    const isolationEnv = await duringStartup(() => managedEngineIsolationEnv(runtimeStorageDir(config)));
 
     const opencodeBin = options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN;
     // Shared by the first spawn and by any later rollover standby, so a
     // replacement engine is identical apart from its port.
     const engineEnv: Record<string, string | undefined> = {
+      ...isolationEnv,
       ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
       ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
       OPENWORK_SERVER_URL: serverUrl,
