@@ -1,9 +1,12 @@
 ---
-title: "Self-host"
-description: "Run OpenWork on your own server or infrastructure."
+title: "Self-host OpenWork"
+sidebarTitle: "Self-host"
+description: "Self-host OpenWork with Helm on Kubernetes, Docker Compose for evaluation, or your own container and VM infrastructure."
 ---
 
-Most users just use the [desktop app](https://openworklabs.com/download). Self-hosting is for teams that want OpenWork to run on their own server, VPC, or private cloud and then connect the desktop app to it remotely.
+Most users just use the [desktop app](https://openworklabs.com/download). Self-hosting is for teams that want OpenWork's team control plane or workspace runtimes to run on their own server, VPC, or private cloud. The desktop keeps its workspace runtime local and can sign in to a self-hosted control plane.
+
+Start with [Docker Compose for evaluation](/self-host/evaluate-with-docker-compose) or the [Helm deployment guides for Kubernetes](/self-host/deploy-to-your-cloud/overview). **Kubernetes is not required.** [Choose your deployment platform](/self-host/platforms/overview) for VMs, ECS/Fargate, managed container services, and on-premises infrastructure.
 
 Want hosted workspaces, team Collections, or shared providers without running infra? Use [OpenWork Cloud](/cloud/get-started) instead. Rolling this out across a company? [Book a call](https://calendar.app.google/86QpCENvhfEzDFLu5) about [Enterprise](/cloud/enterprise).
 
@@ -19,9 +22,10 @@ Want hosted workspaces, team Collections, or shared providers without running in
 | Helm on Amazon EKS | Production on AWS with Amazon RDS for MySQL | [Deploy on AWS](/self-host/deploy-to-your-cloud/aws) |
 | Helm on Azure AKS | Production on Azure with Azure Database for MySQL | [Deploy on Azure](/self-host/deploy-to-your-cloud/azure) |
 | Helm on Google GKE | Production on Google Cloud with Cloud SQL for MySQL | [Deploy on Google Cloud](/self-host/deploy-to-your-cloud/google-cloud) |
-| Another container platform (for example, Amazon ECS/Fargate) | Teams that do not run Kubernetes | Use the published images and the service boundaries below |
+| ECS/Fargate | Teams using AWS containers without Kubernetes | [ECS planning and draft Terraform module](/self-host/platforms/aws-ecs) |
+| Other container platforms, VMs, or on-premises | Teams adapting OpenWork to their existing infrastructure | [Choose your platform](/self-host/platforms/overview) |
 
-The tested production path is the published Helm chart on managed Kubernetes. The repository does not ship Terraform modules or ECS task definitions. If you run on ECS/Fargate or another container platform, deploy the published `openwork-den-web`, `openwork-den-api`, and optional `openwork-inference` images from GHCR with your own infrastructure code, and mirror what the chart does: Den web on port `3005`, Den API on port `8788`, database migrations before Den API receives traffic, a MySQL 8-compatible database, and HTTPS in front of both hostnames. See [Deploy to your cloud](/self-host/deploy-to-your-cloud/overview) for the common architecture and the [Docker packaging](https://github.com/different-ai/openwork/tree/dev/packaging/docker) for image details.
+The tested production path is the published Helm chart on managed Kubernetes. The repository also includes a [draft ECS Terraform module](/self-host/platforms/aws-ecs). For other platforms, use the published images and map the [common requirements](/self-host/platforms/overview#common-requirements) to your infrastructure: Den web, Den API, MySQL, migrations, HTTPS, and secrets. These planning guides do not establish a tested installation on every platform. Cloud workspaces need a separate worker provisioner and durable runtime storage.
 
 ## What you deploy
 
@@ -171,8 +175,8 @@ You can check the [**Enterprise**](/cloud/enterprise) page or [book a 30-minute 
   <Accordion title="Can I self-host OpenWork for free?">
     The desktop app is free and open source, and self-hosting the full platform is free for organizations with up to 5 users under the EE License; larger organizations need a plan. Shared keys, skills, and SSO need the Team plan, and SCIM and desktop policies need Enterprise; plans cost the same on Cloud and self-hosted. See [Pricing and licensing](/start-here/pricing-and-licensing).
   </Accordion>
-  <Accordion title="Is there a Terraform module or an ECS deployment?">
-    Not in the repository today. The supported production path is Helm on EKS, AKS, or GKE. You can run the published images on ECS/Fargate with your own infrastructure code by following the service boundaries in [Deployment options](#deployment-options).
+  <Accordion title="Can I deploy without Kubernetes?">
+    Yes. OpenWork's published container images can be adapted to VMs and other container platforms. See [Choose your platform](/self-host/platforms/overview) for requirements and the existing draft ECS Terraform module. Helm on EKS, AKS, or GKE remains the tested production path; the other platform pages are planning guidance.
   </Accordion>
   <Accordion title="Which database does self-hosted OpenWork need?">
     A MySQL 8-compatible database, such as Amazon RDS for MySQL, Azure Database for MySQL, Cloud SQL for MySQL, or PlanetScale. Postgres is not required.

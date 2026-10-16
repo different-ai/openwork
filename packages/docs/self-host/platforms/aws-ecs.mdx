@@ -1,0 +1,25 @@
+---
+title: "Deploy OpenWork on AWS ECS and Fargate"
+sidebarTitle: "AWS ECS / Fargate"
+description: "Plan OpenWork on ECS Fargate with the draft Terraform module, Amazon RDS for MySQL, and HTTPS, without Kubernetes."
+---
+
+You can deploy the OpenWork team control plane on ECS Fargate without an EKS cluster. The repository includes a [draft Terraform module](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs) for Den web, Den API, RDS for MySQL, an HTTPS Application Load Balancer, and Secrets Manager.
+
+## Deployment approach
+
+Use the module README and complete example, pinned to a commit. It records an end-to-end test in an AWS test account and the scenarios still untested, including upgrades, private-subnet networking, multiple API replicas, and cloud workspaces. Treat it as a draft when planning production.
+
+## What you need
+
+- A VPC and subnets across at least two availability zones, with approved image-registry and provider access.
+- Two HTTPS hostnames and an ACM certificate or Route 53 zone.
+- Private MySQL connectivity, verified database TLS, and encrypted backups.
+- An encrypted Terraform state backend and access controls for secrets.
+- Release-specific migration planning; configure email for invitations and password reset.
+
+Cloud workers require a separate provisioner; the module does not deploy a worker fleet. See [Deploy on AWS](/self-host/deploy-to-your-cloud/aws) for the documented EKS path and the draft ECS option.
+
+## Next step
+
+Review the [common requirements](/self-host/platforms/overview#common-requirements) and [licensing](/start-here/pricing-and-licensing). For help assessing the draft module against your environment, [ask us about ECS deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20AWS%20ECS&body=Platform%3A%20AWS%20ECS%20%2F%20Fargate%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Faws-ecs%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).

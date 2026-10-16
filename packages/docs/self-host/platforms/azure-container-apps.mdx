@@ -1,0 +1,25 @@
+---
+title: "Plan OpenWork on Azure Container Apps"
+sidebarTitle: "Azure Container Apps"
+description: "Assess OpenWork's container services, MySQL, ingress, and background-work requirements for Azure Container Apps."
+---
+
+Azure Container Apps provides a container hosting option for adapting OpenWork's team control plane without operating AKS. This page is planning guidance; OpenWork does not ship a tested Container Apps installation template.
+
+## Deployment approach
+
+Plan separate container apps for Den web and Den API, with Azure Database for MySQL or another MySQL 8-compatible database. Translate the [common requirements](/self-host/platforms/overview#common-requirements) into your Container Apps environment. For the tested Kubernetes route, use [Deploy on Azure](/self-host/deploy-to-your-cloud/azure).
+
+## What you need
+
+- Access to compatible images, secrets, and private database networking.
+- HTTPS web/API hostnames and ingress target ports matching the services.
+- A controlled migration job before the new API receives traffic.
+- A scaling policy that keeps required background work running; review scale-to-zero behavior.
+- Separate provisioned worker runtimes and durable storage if you enable cloud workspaces.
+
+[Container Apps HTTP ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview) supports WebSockets but documents a 240-second request timeout. Check the enabled MCP and streaming flows against that limit before committing to the topology.
+
+## Next step
+
+Review [licensing](/start-here/pricing-and-licensing) and [private network planning](/start-here/private-network-deployment). For help validating the ingress and runtime choices, [ask us about Container Apps deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20Azure%20Container%20Apps&body=Platform%3A%20Azure%20Container%20Apps%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Fazure-container-apps%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).

@@ -1,0 +1,58 @@
+---
+title: "Self-host OpenWork: choose your deployment platform"
+sidebarTitle: "Choose your platform"
+description: "Compare self-hosted OpenWork deployment paths: Helm on Kubernetes, Docker Compose, Linux VMs, and managed container platforms."
+---
+
+You do not need Kubernetes to self-host OpenWork. The desktop app runs locally, and the team control plane has published Linux container images you can adapt to your infrastructure. Choose the environment you already use to see the requirements and the available deployment path.
+
+Start with [Docker Compose for evaluation](/self-host/evaluate-with-docker-compose), use the [Helm chart on Kubernetes](/self-host/deploy-to-your-cloud/overview) for the tested production path, or plan a deployment on your existing container or VM platform below.
+
+The [desktop app](https://openworklabs.com/download) is MIT-licensed. The team control plane uses the EE License; review [Pricing and licensing](/start-here/pricing-and-licensing) for evaluation and production terms.
+
+## Choose your environment
+
+The Helm guides document the tested production path on EKS, AKS, and GKE. Google Cloud also has a Cloud Run starter for Den Web and Den API. The ECS Terraform module is a draft. The other pages below are planning guides based on OpenWork's service requirements and the platform's capabilities; they are not tested installation recipes.
+
+| Environment | Deployment path |
+| --- | --- |
+| [Docker Compose and virtual machines](/self-host/platforms/docker-and-vms) | Docker Compose for evaluation; your own container setup for production. Includes EC2, Azure VMs, Compute Engine, Hetzner, and other Linux hosts. |
+| [AWS ECS / Fargate](/self-host/platforms/aws-ecs) | Existing draft Terraform module with RDS and HTTPS. |
+| [Azure Container Apps](/self-host/platforms/azure-container-apps) | Adapt the web and API images to Container Apps and managed MySQL. |
+| [Google Cloud Run](/self-host/platforms/google-cloud-run) | Cloud Run starter for Den Web and Den API; assess background work and durable workers separately. |
+| [Render](/self-host/platforms/render) | Container services with an external MySQL-compatible database. |
+| [Railway](/self-host/platforms/railway) | Separate container services, MySQL, and persistent volumes where needed. |
+| [Fly.io](/self-host/platforms/fly-io) | Machines, service routing, and a MySQL-compatible database. |
+| [DigitalOcean](/self-host/platforms/digitalocean) | Droplets, Kubernetes, or App Platform for the control plane. |
+| [Coolify](/self-host/platforms/coolify) | Container services on your own Docker hosts. |
+| [On-premises and private clouds](/self-host/platforms/on-premises) | Linux VMs or Kubernetes inside your network. |
+| [Vercel](/self-host/platforms/vercel) | Den web frontend, with the API and workers hosted separately. |
+| Kubernetes: [AWS EKS](/self-host/deploy-to-your-cloud/aws), [Azure AKS](/self-host/deploy-to-your-cloud/azure), [Google GKE](/self-host/deploy-to-your-cloud/google-cloud) | Published Helm chart and detailed operator runbooks. |
+
+## Common requirements
+
+For the team control plane, map these pieces to your platform:
+
+| Piece | Requirement |
+| --- | --- |
+| Den web | `ghcr.io/different-ai/openwork-den-web`; default port `3005`. |
+| Den API | `ghcr.io/different-ai/openwork-den-api`; default port `8788`. |
+| Database | A MySQL 8-compatible database, durable storage, backups, and verified TLS in production. PostgreSQL is not a substitute. |
+| Migrations | A migration task using the matching API image, completed before traffic reaches the new API. Follow release-specific upgrade procedures for existing data. |
+| Network | Trusted HTTPS web and API origins, private database access, and proxy support for streaming and any WebSocket traffic the enabled features use. |
+| Configuration | `DEN_BASE_URL`, an internal `DEN_API_BASE` on Den web, and `DEN_API_PUBLIC_URL` when the API is not at `api.<web-host>`. Keep authentication and encryption secrets in a secret store. |
+| Operations | Pin compatible image versions; configure health checks, email for invitations/password reset, and the [first administrator](/self-host/deploy-to-your-cloud/first-administrator). Size services for your workload. |
+
+Use the [service and configuration reference](/start-here/self-host#what-you-deploy), [Docker packaging](https://github.com/different-ai/openwork/tree/dev/packaging/docker), and [Helm chart configuration](https://github.com/different-ai/openwork/tree/dev/packaging/helm/openwork-ee) when translating these requirements. Enabling [OpenWork Gateway](/self-host/gateway) adds a separate service.
+
+## Plan worker runtimes separately
+
+Running Den web, Den API, and MySQL gives you the team control plane. Cloud workspaces also need a configured worker provisioner, isolated execution environments, and durable workspace/data storage. The evaluation stack uses a stub provisioner and does not create real workers. A container host is not automatically a worker provisioner.
+
+For a standalone workspace, [OpenWork server and its web client](/start-here/self-host#what-you-deploy) are a different deployment scope. The desktop app runs its own local workspace runtime.
+
+## Another platform?
+
+If your environment runs Linux containers or VMs, start with the requirements above. For Nomad, Docker Swarm, CapRover, or another orchestrator, map the services, migration task, secrets, networking, and durable storage to its equivalents. A static host or function runtime alone does not provide the whole stack.
+
+You can [evaluate with Docker Compose](/self-host/evaluate-with-docker-compose) while planning. For help with your target environment, [ask us about your deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20planning&body=Platform%3A%20%0ATeam%20size%3A%20%0ANetwork%20or%20deployment%20constraints%3A%20) or [book a call](https://calendar.app.google/86QpCENvhfEzDFLu5).

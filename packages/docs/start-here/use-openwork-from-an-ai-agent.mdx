@@ -33,6 +33,12 @@ These links always point to the latest stable release. Then [run your first task
 
 Full walkthrough: [Team quickstart](/cloud/team-quickstart). For a headless, agent-run setup, follow [start.md](https://openworklabs.com/start.md). It uses the `openwork-bootstrap` CLI from `https://openworklabs.com/install.sh`, which needs Node.js 20+ and doesn't install the desktop app.
 
+## My infrastructure: plan a self-hosted deployment
+
+Kubernetes is not required. Use [Choose your deployment platform](/self-host/platforms/overview) for Helm on Kubernetes, Docker Compose evaluation, and requirements for VMs, managed containers, and private clouds. The Helm production guides, draft ECS module, and platform planning pages describe different levels of deployment guidance; do not present a planning page as a tested installer.
+
+Start with the [Docker Compose evaluation](/self-host/evaluate-with-docker-compose) for a control-plane trial. Production needs the selected platform's networking, secrets, database, and migration setup. Cloud workspaces also need a configured worker provisioner and durable runtime storage. Review [licensing](/start-here/pricing-and-licensing); the desktop app and team control plane have different licenses.
+
 ## Inside my agent: connect the MCP Gateway
 
 Server URL: `https://api.openworklabs.com/mcp/agent`. Sign-in uses OAuth in the browser. You need an OpenWork Cloud account.
