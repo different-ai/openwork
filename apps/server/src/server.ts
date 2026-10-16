@@ -700,6 +700,17 @@ async function sendWithOwnershipProof(proof: Promise<void>, send: () => Promise<
   return sending;
 }
 
+/**
+ * An unexpected proxy failure becomes a generic 500 for the caller. Desktop
+ * telemetry only captures it while a Cloud session is active, so also write
+ * the real error to the local server log; otherwise the request log records
+ * where the proxy failed but never what threw.
+ */
+function reportProxyFailure(error: unknown, request: Request, route: string) {
+  captureServerException(error, { method: request.method, route, requestSignal: request.signal });
+  console.error(`[openwork-server] OpenCode proxy error (${request.method} ${route}):`, error);
+}
+
 export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
   const m = method.toUpperCase();
   const scope = actor.scope ?? "viewer";
@@ -962,7 +973,7 @@ export async function startServer(
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
             recordUnhandledErrorCause(error);
-            captureServerException(error, { method: request.method, route: "/workspace/:id/opencode/*", requestSignal: request.signal });
+            reportProxyFailure(error, request, "/workspace/:id/opencode/*");
           }
           const apiError = error instanceof ApiError
             ? error
@@ -1026,7 +1037,7 @@ export async function startServer(
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
             recordUnhandledErrorCause(error);
-            captureServerException(error, { method: request.method, route: "/workspace/:id/opencode2/*", requestSignal: request.signal });
+            reportProxyFailure(error, request, "/workspace/:id/opencode2/*");
           }
           const apiError = error instanceof ApiError
             ? error
@@ -1097,7 +1108,7 @@ export async function startServer(
           const requestCanceled = isExpectedRequestCancellation(error, request.signal);
           if (!(error instanceof ApiError) && !requestCanceled) {
             recordUnhandledErrorCause(error);
-            captureServerException(error, { method: request.method, route: "/opencode/*", requestSignal: request.signal });
+            reportProxyFailure(error, request, "/opencode/*");
           }
           const apiError = error instanceof ApiError
             ? error
