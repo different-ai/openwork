@@ -1,3 +1,4 @@
+import { registerLocalKeyShareRoutes } from "./inference-provider-key-share.js"
 import { randomBytes } from "node:crypto"
 import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
@@ -407,6 +408,7 @@ function awsSsoWriteError(error: unknown): unknown {
 }
 
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  registerLocalKeyShareRoutes(app)
   registerOrgGatewayUsageRoutes(app)
   registerOrgGatewayUsageLimitRoutes(app)
   // Agent-facing management reads never refresh or change the catalog. The existing provider summaries do.

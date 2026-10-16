@@ -210,6 +210,8 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Inference providers (reads, member OAuth, uncovered mutations)
   read("/v1/inference-providers", "inference_provider.list", IP, res("provider")),
+  read("/v1/inference-providers/share-local-key/eligibility", "inference_provider.local_key_share.eligibility", IP, res("provider"), "Secret-free device-key share eligibility and organization-scoped teams."),
+  change("POST", "/v1/inference-providers/share-local-key", "inference_provider.local_key_share.create", IP, res("provider"), "Creates the provider, encrypted credential, access grants and idempotent receipt in one transaction; no upstream credential probe. Not covered by the provider emitter; request evidence contains no key or request body."),
   read("/v1/inference-providers/model-management", "inference_provider.model_management.list", IP, res("provider")),
   read("/v1/inference-providers/member-connections", "inference_provider.member_connection.list", IPO, res("provider_credential")),
   read("/v1/inference-providers/:inferenceProviderId", "inference_provider.read", IP, res("provider", "inferenceProviderId"), "Credential metadata incl. member emails; no secrets."),

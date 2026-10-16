@@ -136,6 +136,7 @@ jobs:
           pnpm --filter @openwork-ee/den-api build:workspace-dependencies
           pnpm dev:den:mysql
           pnpm --filter @openwork-ee/den-api test:api
+          pnpm --filter @openwork-ee/den-api test:local-key-share:db
       - name: Check sandbox contracts and adapters (no cloud resources)
         run: |
           pnpm --filter @openwork/sandbox build
