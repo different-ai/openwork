@@ -50,8 +50,14 @@ export type HeadlessRunnerActor = { userId: string; organizationId: string }
 export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
-  /** `messageId` is the turn the token is minted for, so a caller can remember which run it belongs to. */
-  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string; readOnly?: boolean }) => Promise<{ token: string }>
+  /**
+   * `sessionId` and `messageId` are the turn the token is minted for, so a caller can remember which run it belongs
+   * to. `resumeGrant` (feature `headlessDurableTurns`): a credential the runner can exchange with Den for a fresh token
+   * for this turn, so it can continue the turn on its own after a restart.
+   */
+  mintToken: (
+    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean },
+  ) => Promise<{ token: string; resumeGrant?: string }>
   /** The longest a minted MCP token may live; a turn asking for longer gets this. */
   maxTokenTtlMs: number
 }
@@ -315,14 +321,21 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[]; readOnly?: boolean; interrupt?: boolean },
     ): Promise<RunnerResult<{ state: string }>> {
       const ttlMs = Math.min(input.ttlMs ?? deps.maxTokenTtlMs, deps.maxTokenTtlMs)
-      const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
+      const { token, resumeGrant } = await deps.mintToken({
+        ...actor,
+        ttlMs,
+        sessionId: input.sessionId,
+        messageId: input.messageId,
+        ...(input.readOnly ? { readOnly: true } : {}),
+      })
       const { status, payload } = await request(deps, "POST", `${sessionPath(input.sessionId)}/turns`, {
         messageId: input.messageId,
         prompt: input.prompt,
         ...(input.model ? { model: input.model } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.interrupt ? { interrupt: true } : {}),
-        credentials: { mcpToken: token, ...(input.readOnly ? { readOnly: true } : {}) },
+        // A grant is only minted where `headlessDurableTurns` is on; without one the body is exactly as before.
+        credentials: { mcpToken: token, ...(input.readOnly ? { readOnly: true } : {}), ...(resumeGrant ? { resumeGrant } : {}) },
       })
       if (status !== 202) return { ok: false, status, error: errorCode(payload, `headless_send_${status}`) }
       const accepted = z.object({ state: z.string() }).safeParse(payload)

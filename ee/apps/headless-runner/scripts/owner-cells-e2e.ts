@@ -1,6 +1,7 @@
 /** Boots the real Worker host with a streamed mock model; all database state is isolated in a temporary project. */
 import assert from "node:assert/strict"
 import { execFileSync, spawn, type ChildProcess } from "node:child_process"
+import { randomBytes } from "node:crypto"
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type ServerResponse } from "node:http"
 import { createServer as createNetServer } from "node:net"
@@ -24,6 +25,7 @@ let worker: ChildProcess | null = null
 let output = ""
 let base = ""
 let slowCalls = 0
+let durableCalls = 0
 const hanging: ServerResponse[] = []
 const modelKeys: string[] = []
 const seenReadResults: string[] = []
@@ -46,6 +48,10 @@ const model = createServer(async (request, response) => {
       hanging.push(response)
       return
     }
+    if (prompt.includes("[durable]") && !result && durableCalls++ === 0) {
+      hanging.push(response)
+      return
+    }
     if (result && prompt.includes("[read]")) seenReadResults.push(String(result.content))
     const read = prompt.includes("[read]")
     const tool = { index: 0, id: "call_note", type: "function", function: {
@@ -58,6 +64,21 @@ const model = createServer(async (request, response) => {
     response.writeHead(500).end(String(error))
   }
 })
+
+// Den's resume-token exchange (self-resume): answers every grant with a fresh token and records who asked.
+const callbackToken = `test_callback_${crypto.randomUUID().replaceAll("-", "")}`
+const grantKey = `test_grant_key_${crypto.randomUUID().replaceAll("-", "")}`
+const grant = `hrg_${randomBytes(32).toString("base64url")}`
+const exchanges: Array<{ authorization: string | undefined; grant: string; sessionId: string; messageId: string }> = []
+const den = createServer(async (request, response) => {
+  const chunks: Buffer[] = []
+  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+  if (request.method !== "POST" || request.url !== "/v1/headless/resume-token") return void response.writeHead(404).end()
+  const body = z.object({ grant: z.string(), sessionId: z.string(), messageId: z.string() }).strict().parse(JSON.parse(Buffer.concat(chunks).toString()))
+  exchanges.push({ authorization: request.headers.authorization, ...body })
+  response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ mcpToken: `test-fresh-token-${exchanges.length}`, expiresAt: new Date(Date.now() + 3_600_000).toISOString(), readOnly: false }))
+})
+let denPort = 0
 
 async function freePort() {
   const server = createNetServer()
@@ -79,6 +100,10 @@ async function start(modelPort: number) {
     HEADLESS_MODEL: "test-model",
     // Slack and Automations send no model key of their own; the runner's default key answers them.
     HEADLESS_MODEL_API_KEY: "test-default-key",
+    // Self-resume: turns sent with a resume grant keep going after a restart with nobody re-sending them.
+    HEADLESS_DEN_API_URL: `http://127.0.0.1:${denPort}`,
+    HEADLESS_DEN_CALLBACK_TOKEN: callbackToken,
+    HEADLESS_GRANT_KEY: grantKey,
   }
   writeFileSync(join(temporary, ".dev.vars"), Object.entries(vars).map(([key, value]) => `${key}=${value}`).join("\n"))
   // celld requires main to be inside the project. Bundle into our isolated project instead of clobbering .dev.vars.
@@ -145,6 +170,10 @@ try {
   await new Promise<void>((resolve) => model.listen(0, "127.0.0.1", resolve))
   const address = model.address()
   assert.ok(address && typeof address === "object")
+  await new Promise<void>((resolve) => den.listen(0, "127.0.0.1", resolve))
+  const denAddress = den.address()
+  assert.ok(denAddress && typeof denAddress === "object")
+  denPort = denAddress.port
   await start(address.port)
   assert.equal((await fetch(`${base}/v1/models`)).status, 401)
   assert.equal((await call("/v1/sessions", ownerA, { method: "POST", body: JSON.stringify({ owner: ownerB }) })).status, 400)
@@ -219,10 +248,17 @@ try {
   console.log("PASS Den's Slack adapter (create, send, read to the answer, stop, unknown session) unchanged on this runtime")
 
   assert.equal((await send(main, "msg_slow", "[slow] [write] Resume after restart")).status, 202)
+  // Another person's turn, sent with a resume grant (as Den sends them with headlessDurableTurns on).
+  const durable = await call(`/v1/sessions/${other}/turns`, ownerB, { method: "POST", body: JSON.stringify({
+    messageId: "msg_durable", prompt: "[durable] [write] Keep going on your own", credentials: { modelApiKey: "test-turn-key", resumeGrant: grant },
+  }) })
+  assert.equal(durable.status, 202, await durable.clone().text())
+  assert.ok(!(await durable.text()).includes(grant))
   const deadline = Date.now() + 10_000
-  while (!hanging.length && Date.now() < deadline) await sleep(100)
-  assert.equal(hanging.length, 1)
+  while (hanging.length < 2 && Date.now() < deadline) await sleep(100)
+  assert.equal(hanging.length, 2)
   assert.equal((await view(main)).status, "busy")
+  assert.equal((await view(other, ownerB)).status, "busy")
   await stop()
   for (const response of hanging.splice(0)) response.destroy()
   await start(address.port)
@@ -238,6 +274,23 @@ try {
   assert.equal((await call(`/v1/sessions/${main}`)).status, 200)
   assert.equal((await call(`/v1/sessions/${main}/files/content?path=memory/note.md`)).status, 200)
   console.log("PASS runtime-kill recovery, resume, persisted memory, and deleting a side chat without deleting its owner's state")
+
+  // Nobody re-sends msg_durable, or even reads that cell: its alarm wakes it on the restarted runtime, recovery
+  // marks the turn interrupted, and the runner exchanges the grant with Den and resumes the turn itself.
+  const resumedBy = Date.now() + 90_000
+  while (!exchanges.some((entry) => entry.messageId === "msg_durable") && Date.now() < resumedBy) await sleep(250)
+  assert.deepEqual(exchanges, [{ authorization: `Bearer ${callbackToken}`, grant, sessionId: other, messageId: "msg_durable" }])
+  const finished = Date.now() + 30_000
+  let durableView = await view(other, ownerB)
+  while (durableView.turns.find((turn) => turn.messageId === "msg_durable")?.status !== "completed" && Date.now() < finished) {
+    await sleep(200)
+    durableView = await view(other, ownerB)
+  }
+  assert.equal(durableView.turns.find((turn) => turn.messageId === "msg_durable")?.status, "completed", JSON.stringify(durableView.turns))
+  assert.equal(durableView.finalAssistantText, "Memory checked.")
+  assert.equal(durableCalls, 2, "the turn's model call was made again after the restart")
+  assert.ok(!output.includes(grant) && !output.includes("test-fresh-token"), "no grant or token in the runtime's logs")
+  console.log(`PASS a turn with a resume grant completes after a ${runtime} restart with no caller re-send (alarm → Den exchange → resume)`)
 
   // The way off this host: a conversation's export imports into a Node runner and re-exports byte for byte.
   const exported = await call(`/v1/sessions/${main}/export`)
@@ -264,5 +317,7 @@ try {
   for (const response of hanging) response.destroy()
   model.closeAllConnections()
   await new Promise<void>((resolve) => model.close(() => resolve()))
+  den.closeAllConnections()
+  await new Promise<void>((resolve) => den.close(() => resolve()))
   rmSync(temporary, { recursive: true, force: true })
 }

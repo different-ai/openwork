@@ -11,6 +11,7 @@ import {
   FreeAutoPurchaseTable,
   ConnectedAccountTable,
   DesktopHandoffGrantTable,
+  HeadlessResumeGrantTable,
   ExternalIdentityTable,
   InvitationTable,
   InferenceOrgLimitPolicyTable,
@@ -1755,6 +1756,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, userId))
         await tx.delete(AuthAccountTable).where(eq(AuthAccountTable.userId, userId))
         await tx.delete(DesktopHandoffGrantTable).where(eq(DesktopHandoffGrantTable.user_id, userId))
+        await tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.userId, userId))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
         if (membershipRows.length > 0) {

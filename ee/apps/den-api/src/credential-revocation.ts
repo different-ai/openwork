@@ -9,6 +9,7 @@ import {
 import { recordOrganizationSessionsRevoked } from "./audit/domain/sessions.js"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
+import { revokeHeadlessResumeGrantsForMember } from "./headless-runner/resume-grant-revocation.js"
 
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthSessionTable.$inferSelect.userId
@@ -17,6 +18,7 @@ export type MembershipCredentialRevocationCounts = {
   sessions: number
   oauthAccessTokens: number
   oauthRefreshTokens: number
+  headlessResumeGrants: number
 }
 
 /** Why an organization change revoked the user's sessions (session.revoked reasonCode). */
@@ -30,7 +32,7 @@ export async function revokeMembershipSessionCredentials(input: {
   reason: MembershipSessionRevocationReason
 }): Promise<MembershipCredentialRevocationCounts> {
   if (!input.userId) {
-    return { sessions: 0, oauthAccessTokens: 0, oauthRefreshTokens: 0 }
+    return { sessions: 0, oauthAccessTokens: 0, oauthRefreshTokens: 0, headlessResumeGrants: 0 }
   }
 
   // A request that read the membership before this change must not cache it
@@ -103,9 +105,13 @@ export async function revokeMembershipSessionCredentials(input: {
       .where(inArray(OAuthRefreshTokenTable.id, oauthRefreshTokens.map((token) => token.id)))
   }
 
+  // Headless runner resume grants could otherwise mint fresh MCP tokens for the member's turns.
+  const headlessResumeGrants = await revokeHeadlessResumeGrantsForMember({ organizationId: input.organizationId, userId: input.userId })
+
   return {
     sessions: sessions.length,
     oauthAccessTokens: oauthAccessTokens.length,
     oauthRefreshTokens: oauthRefreshTokens.length,
+    headlessResumeGrants,
   }
 }

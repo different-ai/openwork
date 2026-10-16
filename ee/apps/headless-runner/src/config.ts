@@ -13,6 +13,14 @@ const safeUrl = z
   .url()
   .refine(isSafeUrl, "must be https (http is allowed only for loopback hosts)")
   .transform((value) => value.replace(/\/+$/, ""))
+/** Den's API may also be a private service on the same network: plain http to a dotless host (`http://den-api:8787`). */
+const denUrl = z
+  .url()
+  .refine((value) => {
+    const url = new URL(value)
+    return isSafeUrl(value) || (url.protocol === "http:" && !url.hostname.includes("."))
+  }, "must be https (http is allowed only for loopback hosts and dotless internal hosts)")
+  .transform((value) => value.replace(/\/+$/, ""))
 
 const csv = z
   .string()
@@ -93,6 +101,13 @@ const configSchema = z.object({
   HEADLESS_SENTRY_RELEASE: optionalText,
   /** Set by the runner image at build time; tagged on error reports. */
   HEADLESS_RUNNER_VERSION: optionalText,
+  /**
+   * Self-resume (all three, or none): Den's API, the token the runner calls it with, and the key that encrypts turns'
+   * resume grants at rest. With them the runner resumes interrupted turns itself and refreshes MCP tokens in place.
+   */
+  HEADLESS_DEN_API_URL: optionalText.pipe(denUrl.optional()),
+  HEADLESS_DEN_CALLBACK_TOKEN: optionalText.refine((value) => value === undefined || value.length >= 32, "must be at least 32 characters"),
+  HEADLESS_GRANT_KEY: optionalText.refine((value) => value === undefined || value.length >= 32, "must be at least 32 characters"),
 })
 
 export type Config = {
@@ -123,7 +138,11 @@ export type Config = {
   computer?: ComputerProviderConfig & { scope?: string; idlePauseMs: number; keepDays: number }
   /** Where error reports go; unset (no DSN) sends none. */
   errorReporting?: ErrorReportingConfig
+  /** Turns with a resume grant keep going on their own (see self-resume.ts); unset, callers resume them. */
+  selfResume?: SelfResumeConfig
 }
+
+export type SelfResumeConfig = { denApiUrl: string; callbackToken: string; grantKey: string }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const parsed = configSchema.safeParse(env)
@@ -158,7 +177,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     fileLimits: { maxFileBytes: value.HEADLESS_FILES_MAX_BYTES, maxSessionBytes: value.HEADLESS_FILES_MAX_SESSION_BYTES },
     computer: computerConfig(value),
     errorReporting: errorReportingConfig(value),
+    selfResume: selfResumeConfig(value),
   }
+}
+
+/** All three settings or none: a runner set up halfway would quietly never resume anything. */
+function selfResumeConfig(value: z.infer<typeof configSchema>): Config["selfResume"] {
+  const { HEADLESS_DEN_API_URL: denApiUrl, HEADLESS_DEN_CALLBACK_TOKEN: callbackToken, HEADLESS_GRANT_KEY: grantKey } = value
+  if (!denApiUrl && !callbackToken && !grantKey) return undefined
+  if (!denApiUrl || !callbackToken || !grantKey) {
+    const missing = [!denApiUrl && "HEADLESS_DEN_API_URL", !callbackToken && "HEADLESS_DEN_CALLBACK_TOKEN", !grantKey && "HEADLESS_GRANT_KEY"].filter(Boolean)
+    throw new Error(`Invalid headless-runner configuration:\nself-resume needs HEADLESS_DEN_API_URL, HEADLESS_DEN_CALLBACK_TOKEN and HEADLESS_GRANT_KEY together; missing ${missing.join(", ")}`)
+  }
+  return { denApiUrl, callbackToken, grantKey }
 }
 
 function errorReportingConfig(value: z.infer<typeof configSchema>): Config["errorReporting"] {

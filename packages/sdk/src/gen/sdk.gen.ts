@@ -16415,12 +16415,14 @@ export class DenClient extends HeyApiClient {
   /**
    * A short-lived token for one Workbot turn
    *
-   * For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.
+   * For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. With `sessionId` and `messageId`, and where turns keep going on their own for the workspace, also returns a resume grant for that turn. Refused when Workbot is off for the workspace.
    */
   public createWorkbotRunToken<ThrowOnError extends boolean = false>(
     parameters?: {
       ttlMs?: number;
       readOnly?: boolean;
+      sessionId?: string;
+      messageId?: string;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -16431,6 +16433,8 @@ export class DenClient extends HeyApiClient {
           args: [
             { in: "body", key: "ttlMs" },
             { in: "body", key: "readOnly" },
+            { in: "body", key: "sessionId" },
+            { in: "body", key: "messageId" },
           ],
         },
       ],

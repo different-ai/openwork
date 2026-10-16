@@ -277,6 +277,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  headlessDurableTurns: {
+    label: "Workbot: tasks keep going on their own",
+    description: "Workbot, Slack and Automations answers keep going after a restart, deploy or server failure, without waiting for someone to reopen the chat.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

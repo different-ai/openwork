@@ -29,6 +29,12 @@ Workbot ── + owner header ────┘   (src/worker/index.ts)  └─ ce
    `HEADLESS_FILES=s3`. Keep `wrangler.jsonc`'s `name` and class name: celld derives every cell's identity from
    them.
 3. Point `DEN_HEADLESS_RUNNER_URL` (den-api) and `WORKBOT_RUNNER_URL` (Workbot) at it. Tokens stay the same.
+4. For [self-resume](./README.md#self-resume), put `HEADLESS_DEN_API_URL`, `HEADLESS_DEN_CALLBACK_TOKEN` and
+   `HEADLESS_GRANT_KEY` in `CELLD_RUNNER_VARS` (all three, or cells refuse to start). Without them turns wait for their
+   callers after a crash or deploy, as before. With them each cell keeps a durable alarm while it has turns running or
+   waiting to resume: after a node dies, the alarm wakes the cell on another node, startup recovery marks its turns
+   interrupted, and the runner resumes them with fresh tokens from Den. A cell stores its own name (`cell` in its
+   Durable Object storage) on its first request, so an alarm, which has no request, acts only for the cell it was set by.
 
 **Keep the runner current.** Nodes only run what was last deployed to the bucket; they never build from the repo. In
 production, `.github/workflows/celld-runner-deploy.yml` does it on every `dev` push that changes the runner or a
@@ -151,7 +157,8 @@ CELLD_BIN=/path/to/celld pnpm --filter @openwork-ee/headless-runner worker:e2e:c
 `owner-cells-e2e.ts` boots the real runtime with a streaming mock model and checks: Workbot owner routing and
 isolation between people; side chats sharing memory and listing; owner-less conversations; **Den's own Slack adapter**
 (`headlessRemoteCall`: create, send, read to the answer, stop, unknown session); idempotent re-sends; and killing
-the runtime mid-turn, then interrupted-turn recovery and resume with nothing lost.
+the runtime mid-turn, then interrupted-turn recovery and resume with nothing lost, and a turn sent with a resume grant
+completing after the kill with no caller re-send (its alarm, a fake Den exchange, and the runner's own resume).
 
 Not covered locally: celld's multi-node failover and bucket durability (celld's own guarantees; check them on the
 real fleet before pointing production at it), and the Freestyle/Daytona computer inside celld, which bundles but

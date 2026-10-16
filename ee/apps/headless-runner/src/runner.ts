@@ -7,6 +7,7 @@ import { ModelError, normalizeTranscript, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
 import { REACTION_TOOL_NAMES, REACTION_TOOLS, reactionEndsTurn, runReactionTool } from "./reactions.js"
 import { asAttachment, runSavedFileTool, SAVED_FILE_TOOL_NAMES, SAVED_FILE_TOOLS, type SavedFiles } from "./saved-files.js"
+import type { SelfResume, SweepResult } from "./self-resume.js"
 
 import {
   MAX_OPEN_TASKS,
@@ -110,6 +111,11 @@ export type RunnerOptions = {
   computer?: SessionComputer
   /** Turns that end `failed` are reported here (codes and ids only); without it, nothing is reported. */
   errors?: ErrorReporter
+  /**
+   * Keeps turns' resume grants and exchanges them with Den (see self-resume.ts): a turn with a grant refreshes its MCP
+   * token in place instead of pausing, and `selfResume` resumes interrupted ones. Without it grants are ignored.
+   */
+  resume?: SelfResume
   now?: () => number
   /** Waits between repeated steps; tests pass a fake. Rejects with the signal's reason when the turn is stopped. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>
@@ -372,6 +378,22 @@ export class Runner {
   }
 
   send(input: SendInput): SendResult {
+    return this.accept(input, true)
+  }
+
+  /**
+   * Resumes interrupted turns that have a resume grant, the way their callers would: the same messageId with a fresh
+   * MCP token from Den. A no-op without self-resume.
+   */
+  selfResume(): Promise<SweepResult> {
+    const resume = this.options.resume
+    if (!resume) return Promise.resolve({ resumed: 0, waiting: 0, failed: 0 })
+    // The grant is already kept: the runner found it there.
+    return resume.sweep(({ sessionId, messageId, credentials }) => this.accept({ sessionId, messageId, prompt: "", credentials }, false))
+  }
+
+  /** `rememberGrant`: keep the caller's resume grant for this turn (false when the runner resumes it with the kept one). */
+  private accept(input: SendInput, rememberGrant: boolean): SendResult {
     const { store } = this.options
     if (!store.getSession(input.sessionId)) return { ok: false, error: "unknown_session" }
     const existing = store.getTurn(input.sessionId, input.messageId)
@@ -396,8 +418,13 @@ export class Runner {
     const turn = store.getTurn(input.sessionId, input.messageId)
     if (!turn) throw new Error("turn_missing_after_admission")
     if (input.interrupt && turn.kind === undefined) this.supersede(input.sessionId, input.messageId)
+    // A grant is kept (encrypted) and held only with self-resume; without it the runner ignores grants.
+    const { resumeGrant, ...withoutGrant } = input.credentials
+    const resume = this.options.resume
+    if (resume && resumeGrant && rememberGrant) resume.remember(input.sessionId, input.messageId, resumeGrant)
+    const credentials = resume ? input.credentials : withoutGrant
     // Resuming a task or a report keeps it in its lane.
-    this.enqueue({ sessionId: input.sessionId, messageId: input.messageId, kind: turn.kind ?? "message" }, { credentials: input.credentials, at: Date.now() })
+    this.enqueue({ sessionId: input.sessionId, messageId: input.messageId, kind: turn.kind ?? "message" }, { credentials, at: Date.now() })
     return { ok: true, state, turn: store.getTurn(input.sessionId, input.messageId) ?? turn }
   }
 
@@ -450,9 +477,10 @@ export class Runner {
     for (const job of this.queue) if (job.sessionId === sessionId && job.kind !== "task" && job.messageId !== follower) job.superseded = true
   }
 
-  /** Resolves when every queued and running turn has settled. */
+  /** Resolves when every queued and running turn has settled, and every resume grant received is written. */
   async idle() {
     while (this.running.size || this.queue.length) await Promise.all([...this.running])
+    await this.options.resume?.settled()
   }
 
   /** Stops accepting work and interrupts in-flight turns so they can be resumed later. */
@@ -549,19 +577,19 @@ export class Runner {
     const events = this.options.events
     const key = `${sessionId}:${messageId}`
     const held = this.credentials.get(key)
-    const credentials = held?.credentials ?? {}
+    let credentials = held?.credentials ?? {}
     this.credentials.delete(key)
-    const timeout = Number.isFinite(limits.turnTimeoutMs)
-      ? setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
-      : undefined
+    const startTimeout = () =>
+      Number.isFinite(limits.turnTimeoutMs) ? setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs) : undefined
+    let timeout = startTimeout()
     const signal = controller.signal
     let tools: ToolSession | null = null
     const startedAt = Date.now()
     const inherited = held?.inherited === true
     // When the credentials were issued, for the tasks and report this turn passes them to; this turn itself counts
     // their age from when it started, unless it inherited them.
-    const issuedAt = held?.at ?? startedAt
-    const credentialsAt = inherited ? issuedAt : startedAt
+    let issuedAt = held?.at ?? startedAt
+    let credentialsAt = inherited ? issuedAt : startedAt
     let steps = 0
     let toolCalls = 0
     let lastStep = ""
@@ -580,6 +608,26 @@ export class Runner {
     // A follow-up interrupted this answer (see supersede): it wraps up at the next safe point, keeping what it said.
     const superseded = () => this.controllers.get(lane)?.superseded === true
     const wrapUp = () => store.setTurnStatus(sessionId, messageId, "aborted", "superseded")
+    /**
+     * Den's fresh MCP token for this turn, from its resume grant, in place of pausing for `credentials_refresh`: the
+     * turn, and the tasks and report it starts from now on, count the token's age from now. False when the turn has
+     * no grant or Den gave no token; the turn then pauses as without self-resume.
+     */
+    const refreshCredentials = async () => {
+      const grant = credentials.resumeGrant
+      if (!grant || !this.options.resume) return false
+      const fresh = await this.options.resume.refresh(sessionId, messageId, grant)
+      // A grant never widens a turn: a read-only token for a turn that writes waits for its caller instead.
+      if (!fresh || (fresh.readOnly && credentials.readOnly !== true)) return false
+      credentials = { ...credentials, mcpToken: fresh.mcpToken }
+      credentialsAt = Date.now()
+      issuedAt = credentialsAt
+      // The turn timeout applies to each stretch between refreshes, as it does to each resumed run.
+      clearTimeout(timeout)
+      timeout = startTimeout()
+      console.log(`[headless-runner] turn credentials refreshed ${JSON.stringify({ sessionId, messageId })}`)
+      return true
+    }
     const closeUnanswered = (reason: string) => {
       for (const call of unansweredCalls(turnMessages())) {
         store.appendMessage(sessionId, messageId, { role: "tool", callId: call.id, name: call.name, output: reason, isError: true })
@@ -602,6 +650,10 @@ export class Runner {
       if (!apiKey) {
         store.setTurnStatus(sessionId, messageId, "failed", "model_credentials_missing")
         return
+      }
+      // Inherited credentials may already be too old: a turn with a grant gets fresh ones before it connects.
+      if (kind !== "report" && this.options.mcp && credentials.mcpToken && inherited && Date.now() - credentialsAt >= limits.credentialRefreshMs) {
+        await refreshCredentials()
       }
       if (kind !== "report" && this.options.mcp && credentials.mcpToken) {
         try {
@@ -688,12 +740,24 @@ export class Runner {
         // Between steps: the step a follow-up arrived during has finished, so nothing is cut off mid-way.
         if (superseded()) return wrapUp()
         if (waitBeforeNextStep) await sleep(waitBeforeNextStep, signal)
-        // Between steps, never mid-call, so no tool is cut off. The caller resumes the turn right away with a
-        // fresh MCP token; a caller that stopped supervising simply never resumes it. Inherited credentials may
-        // already be too old before the first step.
+        // Between steps, never mid-call, so no tool is cut off. A turn with a resume grant swaps in a fresh MCP
+        // token and goes on; otherwise it pauses, and the caller resumes it right away with a fresh one (a caller
+        // that stopped supervising simply never resumes it). Inherited credentials may already be too old before
+        // the first step.
         if (tools && (step > 0 || inherited) && Date.now() - credentialsAt >= limits.credentialRefreshMs) {
-          store.setTurnStatus(sessionId, messageId, "interrupted", "credentials_refresh")
-          return
+          const reconnected = (await refreshCredentials()) && credentials.mcpToken && this.options.mcp
+            ? await this.options.mcp({ token: credentials.mcpToken, signal }).catch(() => null)
+            : null
+          if (signal.aborted) {
+            await reconnected?.close().catch(() => undefined)
+            signal.throwIfAborted()
+          }
+          if (!reconnected) {
+            store.setTurnStatus(sessionId, messageId, "interrupted", "credentials_refresh")
+            return
+          }
+          await tools.close().catch(() => undefined)
+          tools = reconnected
         }
         const streamStep = modelStep
         // A task sees only its own brief and work; the conversation sees everything but tasks' work.
