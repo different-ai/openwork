@@ -296,6 +296,7 @@ Failures are data:
 | `ParseError`            | Source is empty or cannot be parsed.                                                                     |
 | `UnsupportedSyntax`     | Parsed JavaScript is outside the supported subset.                                                       |
 | `UnknownTool`           | A program referenced a tool the host did not provide.                                                    |
+| `ToolUnavailable`       | The host knows the tool but has disabled it for this execution; no call was admitted or dispatched.     |
 | `InvalidToolInput`      | Tool input failed schema decoding or safe-data copying.                                                  |
 | `InvalidToolOutput`     | Tool output failed schema decoding or safe-data copying.                                                 |
 | `InvalidDataValue`      | Program data violated the plain-data contract (depth, circularity, blocked properties, non-data values). |
