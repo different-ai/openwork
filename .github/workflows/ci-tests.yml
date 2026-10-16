@@ -117,6 +117,8 @@ jobs:
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
+      - name: Test MCP connector state in the agent context
+        run: pnpm --filter openwork-server test:mcp-connectors
       # Uses the pinned OpenCode that Setup tests put on PATH.
       - name: Run Den provider unit tests
         run: |

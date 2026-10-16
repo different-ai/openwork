@@ -6,8 +6,13 @@ import { openworkReadTransport, type OpenworkReadTransport } from "./opencode-pl
 import { createV2ReadAdapter, readV2SessionActivity } from "./opencode-v2-read-adapter.js";
 import { isRecord } from "./workspace-kv-store.js";
 import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
+import { readV2McpDescriptors, withEngineMcpContributions } from "./opencode-v2-mcp-descriptors.js";
 
-const requestSchema = z.object({ name: z.enum(["openwork_context", "openwork_query", "openwork_skills"]), input: z.unknown() });
+const requestSchema = z.object({
+  name: z.enum(["openwork_context", "openwork_query", "openwork_skills"]),
+  input: z.unknown(),
+  sessionId: z.string().min(1).optional(),
+});
 // Advertise only reads this bridge executes. Native MCP discovery owns remote
 // tool names; v1 executor spellings and unregistered commands do not belong here.
 function readAffordances(value: unknown): unknown {
@@ -63,9 +68,11 @@ export async function createV2ContextBridge(hostRequest: (path: string, init?: R
       const result = await openworkReadTransport.run(transport, async () => {
         if (call.name === "openwork_query") return plugin.tool.openwork_query.execute(call.input);
         const context: unknown = JSON.parse(await plugin.tool.openwork_context.execute());
-        const filtered = readAffordances(context);
+        // Connector status comes from the caller's workspace engine.
+        const mcps = call.sessionId ? await readV2McpDescriptors(read, call.sessionId).catch(() => []) : [];
+        const filtered = withEngineMcpContributions(readAffordances(context), mcps);
         return JSON.stringify(isRecord(filtered) ? { ...filtered, instructions: {
-          context: "Use openwork_query for the discovered read-only affordances. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
+          context: "Use openwork_query for the discovered read-only affordances. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts. Each connected connector's guidance says how to call its tools: inside execute under its toolNamespace."
         } } : filtered);
       });
       return new Response(result, { headers: { "Content-Type": "application/json" } });

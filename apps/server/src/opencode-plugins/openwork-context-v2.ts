@@ -43,7 +43,7 @@ export default {
             const response = await fetch(context.options.url, {
               method: "POST", redirect: "error", signal: call.signal,
               headers: { Authorization: `Bearer ${context.options.token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name, input }),
+              body: JSON.stringify({ name, input, sessionId: call.sessionID }),
             });
             if (!response.ok) throw new Error(`OpenWork read failed (${response.status})`);
             return { content: [{ type: "text", text: await response.text() }] };

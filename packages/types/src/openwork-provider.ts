@@ -19,6 +19,10 @@ export const openworkFeatureContributionSchema = z.object({
   provider: openworkProviderRefSchema,
   affordances: z.array(openworkAffordanceDescriptorSchema),
   guidance: z.array(openworkGuidanceDescriptorSchema),
+  // MCP connectors only: engine status and how to reach their tools.
+  status: z.string().trim().min(1).optional(),
+  toolNamePrefix: z.string().trim().min(1).optional(),
+  toolNamespace: z.string().trim().min(1).optional(),
 })
 export type OpenworkFeatureContribution = z.infer<typeof openworkFeatureContributionSchema>
 

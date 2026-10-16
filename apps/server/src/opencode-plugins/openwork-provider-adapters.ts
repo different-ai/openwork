@@ -11,6 +11,8 @@ import type {
   OpenworkGuidanceDescriptor,
 } from "@openwork/types/openwork-provider";
 import { z } from "zod";
+import { mcpNamespace } from "../opencode-v2-mcp-readiness.js";
+import type { OpenWorkEngineMcpStatusClient } from "./openwork-extensions-preview-steering.js";
 
 // Epoch milliseconds or an ISO-8601 string; resolve with sessionTimestampMs.
 const sessionTimestampArgSchema = z.union([z.number().int().nonnegative(), z.string().trim().min(1)])
@@ -80,7 +82,31 @@ export type ConnectSkillDescriptor = {
 export type EngineMcpDescriptor = {
   name: string;
   status?: string;
+  /** v2 serves MCP tools through the `execute` tool; absent means direct tools. */
+  toolAccess?: "codemode";
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export async function readEngineMcpDescriptors(
+  client: OpenWorkEngineMcpStatusClient | undefined,
+  directory: string | undefined,
+): Promise<EngineMcpDescriptor[]> {
+  if (!client) return [];
+  try {
+    const result = await client.mcp.status(directory ? { query: { directory } } : undefined);
+    const payload = isRecord(result) && result.data !== undefined ? result.data : result;
+    if (!isRecord(payload)) return [];
+    return Object.entries(payload).map(([name, entry]) => {
+      const raw = typeof entry === "string" ? entry : isRecord(entry) ? entry.status : undefined;
+      return typeof raw === "string" && raw.trim().length > 0 ? { name, status: raw } : { name };
+    });
+  } catch {
+    return [];
+  }
+}
 
 const noEffects: OpenworkAffordanceEffects = {
   data: "none",
@@ -325,11 +351,53 @@ function connectContribution(
 }
 
 function mcpContribution(mcp: EngineMcpDescriptor): OpenworkFeatureContribution {
+  const provider: OpenworkProviderRef = { id: mcp.name, kind: "mcp" };
+  const ref = `mcp:${mcp.name}`;
+  const status = mcp.status ?? "unknown";
+  if (status !== "connected") {
+    const description = status === "needs_auth"
+      ? "Needs sign-in. The user must authorize this connector; its tools are unavailable until then."
+      : `Not connected (status: ${status}). Its tools are unavailable.`;
+    return {
+      featureId: ref,
+      provider,
+      affordances: [],
+      status,
+      guidance: [{ ref, title: `${mcp.name} connector`, description, provider, loading: "catalog" }],
+    };
+  }
+  // Engines do not list MCP tools, so point at the namespace they are named by.
+  const namespace = mcpNamespace(mcp.name);
+  if (mcp.toolAccess === "codemode") {
+    return {
+      featureId: ref,
+      provider,
+      affordances: [],
+      status,
+      toolNamespace: namespace,
+      guidance: [{
+        ref,
+        title: `${mcp.name} connector`,
+        description: `Connected. Its tools are in the execute tool's Code Mode catalog under the "${namespace}" namespace; call them inside execute as tools["${namespace}"].<tool>(input). They are not in OpenCode config files, and openwork_query cannot run them.`,
+        provider,
+        loading: "eager",
+      }],
+    };
+  }
+  const toolNamePrefix = `${namespace}_`;
   return {
-    featureId: `mcp:${mcp.name}`,
-    provider: { id: mcp.name, kind: "mcp" },
+    featureId: ref,
+    provider,
     affordances: [],
-    guidance: [],
+    status,
+    toolNamePrefix,
+    guidance: [{
+      ref,
+      title: `${mcp.name} connector`,
+      description: `Connected. Its tools appear in your tool list with names starting "${toolNamePrefix}"; call them directly. They are not in OpenCode config files, and openwork_query cannot run them.`,
+      provider,
+      loading: "eager",
+    }],
   };
 }
 

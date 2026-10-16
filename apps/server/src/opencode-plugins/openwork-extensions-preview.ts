@@ -37,13 +37,13 @@ import {
 } from "./openwork-extensions-preview-steering.js";
 import {
   buildOpenworkProviderContributions,
+  readEngineMcpDescriptors,
   sessionCreateArgsSchema,
   sessionReadArgsSchema,
   sessionSearchArgsSchema,
   sessionSendArgsSchema,
   sessionTimestampMs,
   type ConnectSkillDescriptor,
-  type EngineMcpDescriptor,
 } from "./openwork-provider-adapters.js";
 
 type ExtensionActionPayload = {
@@ -351,26 +351,6 @@ async function readConnectSkillDescriptors(): Promise<ConnectSkillDescriptor[]> 
       await serverGet("/experimental/connect/skills"),
     );
     return parsed.success ? parsed.data.skills : [];
-  } catch {
-    return [];
-  }
-}
-
-async function readEngineMcpDescriptors(
-  client: OpenWorkEngineMcpStatusClient | undefined,
-  directory: string | undefined,
-): Promise<EngineMcpDescriptor[]> {
-  if (!client) return [];
-  try {
-    const result = await client.mcp.status(directory ? { query: { directory } } : undefined);
-    const payload = isRecord(result) && result.data !== undefined ? result.data : result;
-    if (!isRecord(payload)) return [];
-    return Object.entries(payload).map(([name, entry]) => {
-      const status = typeof entry === "string"
-        ? entry
-        : optionalStringProperty(entry, "status");
-      return status ? { name, status } : { name };
-    });
   } catch {
     return [];
   }
