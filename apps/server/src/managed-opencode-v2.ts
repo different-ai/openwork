@@ -1,9 +1,10 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
+import type { SourcedPolicyRule } from "@openwork/types/den/policy-rules";
 import { agentPermissionEngineV2Rules, type AgentPermissionRule, type EngineV2PermissionRule } from "./agent-permission-engine.js";
 import type { OrganizationMcpServers } from "./organization-mcp-names.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkAgentPermissionsV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkAgentPermissionsV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath, openworkPoliciesV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { pathToFileURL } from "node:url";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
@@ -64,6 +65,8 @@ export interface ManagedOpencodeV2ServerOptions {
    * registered, which they leave alone.
    */
   agentPermissions?: () => Promise<{ rules: AgentPermissionRule[]; organizationMcp: OrganizationMcpServers }>;
+  /** The signed-in member's team rules, which the OpenWork policies plugin applies inside the engine. */
+  teamRules?: () => Promise<SourcedPolicyRule[]>;
 }
 
 export interface OpencodeV2Health {
@@ -217,6 +220,8 @@ export function renderOpencodeV2Config(input: {
   agentPermissionRules?: AgentPermissionRule[];
   organizationMcp?: OrganizationMcpServers;
   agentPermissionsPluginDirectory?: string;
+  teamRules?: SourcedPolicyRule[];
+  policiesPluginDirectory?: string;
 }): Record<string, unknown> {
   const disabled = new Set(input.disabledProviderIds ?? []);
   const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id));
@@ -291,6 +296,10 @@ export function renderOpencodeV2Config(input: {
       package: pathToFileURL(input.agentPermissionsPluginDirectory).href,
       options: { rules: input.agentPermissionRules, organizationMcp: input.organizationMcp ?? {} },
     }] : []),
+    ...(input.teamRules?.length && input.policiesPluginDirectory ? [{
+      package: pathToFileURL(input.policiesPluginDirectory).href,
+      options: { rules: input.teamRules },
+    }] : []),
   ];
   // The engine applies the last matching rule, so the managed execution
   // denials come last: an agent permission exception never lifts them.
@@ -318,6 +327,7 @@ export async function createManagedOpencodeV2Server(
   const mcpReadinessPluginDirectory = join(instanceRoot, "mcp-readiness-plugin");
   const contextPluginDirectory = join(instanceRoot, "context-plugin");
   const agentPermissionsPluginDirectory = join(instanceRoot, "agent-permissions-plugin");
+  const policiesPluginDirectory = join(instanceRoot, "policies-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   let url = "";
@@ -366,6 +376,10 @@ export async function createManagedOpencodeV2Server(
   await writeFile(join(mcpReadinessPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(mcpReadinessPluginDirectory, "server.js"),
     `export { default } from ${JSON.stringify(pathToFileURL(openworkMcpReadinessV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(policiesPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(policiesPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(policiesPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkPoliciesV2PluginPath()).href)};\n`, { mode: 0o600 });
   if (options.contextTools) {
     await mkdir(contextPluginDirectory, { recursive: true, mode: 0o700 });
     await writeFile(join(contextPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
@@ -474,6 +488,7 @@ export async function createManagedOpencodeV2Server(
       contextTools: options.contextTools,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       ...(options.agentPermissions ? await agentPermissionsConfig(options.agentPermissions) : {}),
+      ...(options.teamRules ? { teamRules: await options.teamRules(), policiesPluginDirectory } : {}),
       skills,
     }), null, 2)}\n`;
     // The engine watches this file and reloads its model catalog on every
