@@ -1,3 +1,4 @@
+import { messageNotice } from "@/lib/session-run";
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
 // Relative so the pure grouping contract stays importable from alias-free
@@ -148,7 +149,7 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
   while (index < messages.length) {
     const message = messages[index]
 
-    if (message.role !== "assistant") {
+    if (message.role !== "assistant" || messageNotice(message)) {
       items.push({ index, message })
       index++
       continue
@@ -156,7 +157,7 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
     const assistantMessages: UIMessageWithIndex[] = []
 
-    while (index < messages.length && messages[index].role === "assistant") {
+    while (index < messages.length && messages[index].role === "assistant" && !messageNotice(messages[index])) {
       assistantMessages.push({ message: messages[index], index });
       index++
     }
@@ -169,7 +170,7 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
 type AssistantRenderGroup =
   | { kind: "text"; text: string }
-  | { kind: "reasoning"; text: string; isStreaming: boolean }
+  | { kind: "reasoning"; text: string; isStreaming: boolean; startedAt?: number; endedAt?: number }
   | { kind: "file"; part: FileUIPart }
   | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
   | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[]; thoughts: AggregateThought[] }
@@ -270,9 +271,7 @@ export function getAssistantRenderGroups(
       return
     }
 
-    if (!part.text.trim()) {
-      return
-    }
+    if (!part.text.trim() && !part.providerMetadata?.opencode?.startedAt && part.state !== "streaming") return
 
     // A thought in the middle of an aggregate run embeds into the run at
     // its chronological slot instead of opening a new top-level group.
@@ -293,7 +292,9 @@ export function getAssistantRenderGroups(
       return
     }
 
-    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming" })
+    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming" || (typeof part.providerMetadata?.opencode?.startedAt === "number" && typeof part.providerMetadata?.opencode?.endedAt !== "number"),
+      ...(typeof part.providerMetadata?.opencode?.startedAt === "number" ? { startedAt: part.providerMetadata.opencode.startedAt } : {}),
+      ...(typeof part.providerMetadata?.opencode?.endedAt === "number" ? { endedAt: part.providerMetadata.opencode.endedAt } : {}) })
   }
 
   for (const part of filteredParts) {
