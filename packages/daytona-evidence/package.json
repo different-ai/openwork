@@ -11,14 +11,16 @@
     "./checkpoints": "./src/checkpoints.ts",
     "./credentials": "./src/credentials.ts",
     "./review-provider": "./src/review-provider.ts",
-    "./previews": "./src/previews.ts"
+    "./previews": "./src/previews.ts",
+    "./routes": "./src/routes.ts"
   },
   "engines": {
     "node": ">=24"
   },
   "dependencies": {
     "@openwork/evidence-provider": "workspace:*",
-    "@openwork/freestyle": "workspace:*"
+    "@openwork/freestyle": "workspace:*",
+    "@openwork/sandbox-connect": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",

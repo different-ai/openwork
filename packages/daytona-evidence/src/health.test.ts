@@ -21,7 +21,8 @@ function fakeApi(overrides: Partial<DaytonaApi> = {}) {
     waitForSandbox: async () => sandbox,
     readFile: async (_vm: Sandbox, path: string) => path.endsWith("built-from-sha") ? sha : path.endsWith("evidence-ready") ? "web-v1" : fingerprint,
     previewUrl: async () => ({ url: session.cdp.url, token: session.cdp.previewToken }), writeFile: async () => {},
-    execChecked: async () => JSON.stringify(healthy), deleteSandbox: async () => {}, ...overrides,
+    execChecked: async () => JSON.stringify(healthy), deleteSandbox: async () => {},
+    createSshAccess: async () => { throw new Error("no SSH in this fake"); }, ...overrides,
   });
 }
 
@@ -228,4 +229,43 @@ test("unrelated or changed ownership is neither inspected nor deleted", async ()
     execChecked: async () => { assert.fail("must not inspect unrelated VM"); }, deleteSandbox: async () => { assert.fail("must not delete unrelated VM"); } });
   await assert.rejects(launchDaytonaEvidenceWorld({ sandbox, runtimeFingerprint: fingerprint }, sha, api), /unrelated prepared world/);
   await assert.rejects(launchDaytonaEvidenceWorld({ sandbox: { ...sandbox, labels: {} }, runtimeFingerprint: fingerprint }, sha, api), /unrelated prepared world/);
+});
+
+test("run 38970708595: preview proxy 502s for the whole window, the SSH gateway still connects", async () => {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { createServer } = await import("node:http");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  // Stands in for the in-VM gateway on :8081: CDP only with this world's cookie.
+  let cookie = "";
+  const gateway = createServer((req, res) => {
+    if (req.headers.cookie !== cookie) { res.writeHead(401).end(); return; }
+    res.writeHead(200, { "content-type": "application/json" }).end(cdpBody);
+  });
+  await new Promise<void>((resolve) => gateway.listen(0, "127.0.0.1", resolve));
+  const address = gateway.address();
+  assert.ok(address && typeof address === "object");
+  // Stands in for Daytona's SSH gateway: forwards -L to the gateway above.
+  const dir = await mkdtemp(join(tmpdir(), "fake-daytona-ssh-"));
+  await writeFile(join(dir, "ssh.mjs"), `import net from "node:net";
+const args = process.argv.slice(2);
+const local = Number(args[args.indexOf("-L") + 1].split(":")[1]);
+net.createServer((socket) => { const up = net.connect(${address.port}, "127.0.0.1"); socket.pipe(up).pipe(socket); up.on("error", () => socket.destroy()); socket.on("error", () => up.destroy()); }).listen(local, "127.0.0.1");
+process.on("SIGTERM", () => process.exit(0));`);
+  const revoked: string[] = [];
+  const api = fakeApi({
+    writeFile: async (_vm, _path, content) => { cookie = `__Host-openwork-preview=${JSON.parse(content).token}`; },
+    createSshAccess: async () => ({ token: "ssh-token", host: "ssh.example.test", port: 22 }),
+    revokeSshAccess: async (_id, token) => { revoked.push(token); },
+    deleteSandbox: async () => { assert.fail("a reachable world must not be deleted"); },
+  });
+  try {
+    const session = await launchDaytonaEvidenceWorld({ sandbox, runtimeFingerprint: fingerprint }, sha, api, {
+      pauseMs: 10, probe: async () => new Response('{"message":"bad gateway"}', { status: 502 }), ssh: { command: [process.execPath, join(dir, "ssh.mjs")] },
+    });
+    assert.equal(session.browser.route.label, "daytona-ssh");
+    assert.match(await (await fetch(`${session.browser.url}/json/version`)).text(), /Chrome\/123/);
+    await session.browser.close();
+    assert.deepEqual(revoked, ["ssh-token"]);
+  } finally { gateway.closeAllConnections(); gateway.close(); }
 });

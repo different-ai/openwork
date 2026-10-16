@@ -163,6 +163,9 @@ importers:
       '@openwork/labs':
         specifier: workspace:*
         version: link:../labs
+      '@openwork/sandbox-connect':
+        specifier: link:../../../packages/sandbox-connect
+        version: link:../../../packages/sandbox-connect
       '@openwork/world':
         specifier: link:../../../packages/world
         version: link:../../../packages/world

@@ -12,7 +12,7 @@ const sandbox: Sandbox = { id: "owned", name: "owned", state: "started", labels:
 function fakeApi(overrides: Partial<DaytonaApi> = {}) {
   return Object.assign(new DaytonaApi({ apiKey: "k", apiUrl: "https://x.test/api", region: "r" }, async () => {
     throw new Error("unexpected provider call");
-  }), overrides);
+  }), { createSshAccess: async () => { throw new Error("no SSH in this fake"); } }, overrides);
 }
 
 function layer(events: string[]) {
@@ -95,13 +95,16 @@ test("a prepared world uses the normal private access handshake without allocati
       assert.equal(access.sourceSha, sha); assert.equal(access.sandboxId, sandbox.id); writes.push(access.token);
     } });
   const original = globalThis.fetch;
-  globalThis.fetch = async (_url, init) => {
-    assert.ok(init?.headers); return new Response(JSON.stringify({ Browser: "Chrome/123", webSocketDebuggerUrl: "ws://127.0.0.1:9999/devtools/browser/test" }), { status: 200 });
+  globalThis.fetch = async (url) => {
+    // Access headers are added by the loopback relay, never by the caller.
+    assert.match(String(url), /^http:\/\/127\.0\.0\.1:\d+\/json\/version$/); return new Response(JSON.stringify({ Browser: "Chrome/123", webSocketDebuggerUrl: "ws://127.0.0.1:9999/devtools/browser/test" }), { status: 200 });
   };
   try {
     const session = await launchDaytonaEvidenceWorld({ sandbox, runtimeFingerprint: fingerprint }, sha, api);
     assert.equal(session.id, sandbox.id);
     assert.equal(session.cookie, `__Host-openwork-preview=${writes[0]}`);
     assert.equal(session.cdp.previewToken, "preview-token");
+    assert.equal(session.browser.route.label, "daytona-preview");
+    await session.browser.close();
   } finally { globalThis.fetch = original; }
 });

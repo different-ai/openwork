@@ -29,6 +29,7 @@
     "@openwork/world": "link:../../../packages/world",
     "mysql2": "^3.11.3",
     "@openwork/evidence-provider": "link:../../../packages/evidence-provider",
-    "@openwork/daytona-evidence": "link:../../../packages/daytona-evidence"
+    "@openwork/daytona-evidence": "link:../../../packages/daytona-evidence",
+    "@openwork/sandbox-connect": "link:../../../packages/sandbox-connect"
   }
 }

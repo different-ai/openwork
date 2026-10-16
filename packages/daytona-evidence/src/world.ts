@@ -1,10 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import { DaytonaApi, type Sandbox } from "./api.ts";
 import type { DaytonaEvidenceLaunch } from "./builder.ts";
 
 import { COPY_KIND, EVIDENCE_KIND } from "./kinds.ts";
 import { boundedDiagnostic, failureLayer, inspectGuest, safeExternalResponse } from "./health.ts";
+import { daytonaPreviewRoute, daytonaSshRoute } from "./routes.ts";
+import { connectSandboxPort, isCdpVersion, RELAY_UNREACHABLE_HEADER, SandboxConnectError, type Readiness, type RouteOutcome, type SandboxConnection, type SandboxRoute, type SshOptions } from "@openwork/sandbox-connect";
 
 export { EVIDENCE_KIND };
 const ROOT = "/opt/openwork-preview";
@@ -38,10 +39,12 @@ export interface CdpWaitOptions {
   diagnosticTimeoutMs?: number;
   /** Known credentials to suppress even if echoed as an otherwise valid trace ID. */
   secrets?: readonly string[];
+  /** Overrides for the SSH client (tests use a stand-in). */
+  ssh?: Omit<SshOptions, "signal" | "readyTimeoutMs">;
 }
 
 /** Starts an isolated template copy, or takes ownership of this run's freshly prepared VM. */
-export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch, sourceSha: string, api = new DaytonaApi(), options: CdpWaitOptions = {}): Promise<DaytonaEvidenceSession> {
+export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch, sourceSha: string, api = new DaytonaApi(), options: CdpWaitOptions = {}): Promise<DaytonaEvidenceSession & { browser: SandboxConnection }> {
   if (!/^[a-f0-9]{40}$/.test(sourceSha) || !/^[a-f0-9]{40}$/.test(template.runtimeFingerprint)) throw new Error("Full source SHA and runtime fingerprint required");
   if ("sandbox" in template && (template.sandbox.labels.kind !== EVIDENCE_KIND || template.sandbox.labels.sourceSha !== sourceSha)) {
     throw new Error("Refusing to adopt an unrelated prepared world");
@@ -71,26 +74,30 @@ export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch
     await api.writeFile(sandbox, ACCESS_FILE, JSON.stringify({ sandboxId: sandbox.id, sourceSha, token, expiresAt }), 0o600);
     const session: DaytonaEvidenceSession = { id: sandbox.id, sourceSha, cookie: `__Host-openwork-preview=${token}`, expiresAt,
       viewer: { url: viewer.url, previewToken: viewer.token }, cdp: { url: cdp.url, previewToken: cdp.token } };
-    await waitForCdp(session, { ...options, secrets: [...credentials] });
-    return session;
+    // The SSH gateway is a second, independent way in; without it only the preview proxy is tried.
+    const ssh = await daytonaSshRoute(api, sandbox.id, 8081, { cookie: session.cookie }, WORLD_MINUTES).catch(() => undefined);
+    if (ssh) credentials.add(ssh.user);
+    const browser = await connectEvidenceCdp(session, { ...options, routes: ssh ? [ssh] : [], secrets: [...credentials] });
+    return { ...session, browser };
   } catch (error) {
     if (!owned) throw error;
     // Persist the safe external facts before a toolbox call can stall. This
     // synchronous fallback also survives failure of a caller's diagnostic sink.
     const external = error instanceof CdpReadinessError ? error.history : [];
+    const routes = error instanceof CdpReadinessError ? error.routes : [];
     const publicResource = (value: string | undefined, pattern: RegExp) => value && pattern.test(value)
       && ![...credentials].some((secret) => secret.length > 0 && value.toLowerCase().includes(secret.toLowerCase())) ? value : undefined;
     const context = { sourceSha,
       sandboxId: publicResource(created.id, /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/),
       parentSnapshot: publicResource(diagnosticSandbox.snapshot, /^ow-dy-evidence-(?:image|web)-v1-[a-f0-9]{40}$/) };
-    try { console.error(JSON.stringify({ stage: "daytona-evidence-external", ...context, external })); }
+    try { console.error(JSON.stringify({ stage: "daytona-evidence-external", ...context, external, routes })); }
     catch { /* A broken log sink must not mask the original failure or skip teardown. */ }
     // Collect while the owned VM still exists. Never publish the error text,
     // URLs, access file, service environment, or unfiltered guest logs.
     await boundedDiagnostic(async () => {
       const health = await inspectGuest(api, diagnosticSandbox).catch(() => undefined);
       const status = external.at(-1)?.status ?? 0;
-      const summary = JSON.stringify({ stage: "daytona-evidence-launch", ...context, at: new Date().toISOString(), layer: external.length > 0 ? failureLayer(health, status, external.at(-1)?.body) : "unresolved", external, health: health ?? "unavailable" });
+      const summary = JSON.stringify({ stage: "daytona-evidence-launch", ...context, at: new Date().toISOString(), layer: external.length > 0 ? failureLayer(health, status, external.at(-1)?.body) : "unresolved", external, routes, health: health ?? "unavailable" });
       if (options.diagnostic) await options.diagnostic(summary);
       else console.error(summary);
     }, options.diagnosticTimeoutMs);
@@ -101,9 +108,12 @@ export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch
 
 export class CdpReadinessError extends Error {
   readonly history: ReturnType<typeof safeExternalResponse>[];
-  constructor(history: ReturnType<typeof safeExternalResponse>[]) {
-    super(`The evidence browser did not answer (HTTP ${history.at(-1)?.status ?? 0})`);
+  /** How each route fared (preview, SSH): kind, label and a fixed reason word. */
+  readonly routes: RouteOutcome[];
+  constructor(history: ReturnType<typeof safeExternalResponse>[], routes: RouteOutcome[] = []) {
+    super(`The evidence browser did not answer (HTTP ${history.at(-1)?.status ?? 0}${routes.length > 1 ? `; ${routes.map((route) => `${route.route.label} ${route.result}${route.reason ? ` ${route.reason}` : ""}`).join(", ")}` : ""})`);
     this.history = history;
+    this.routes = routes;
   }
 }
 
@@ -123,33 +133,47 @@ async function boundedBody(response: Response) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** The resumed browser answers through both access checks; auth errors are not boot delays. */
-export async function waitForCdp(session: DaytonaEvidenceSession, options: CdpWaitOptions = {}) {
+export const PREVIEW_ROUTE_LABEL = "daytona-preview";
+
+/**
+ * Connects to the resumed browser through both access checks, racing the
+ * preview proxy against any extra routes (the SSH gateway). Returns a loopback
+ * CDP URL the caller closes. Preview probes are kept, sanitized, for the
+ * failure classifier; auth errors are not boot delays.
+ */
+export async function connectEvidenceCdp(session: Pick<DaytonaEvidenceSession, "cdp" | "cookie">, options: CdpWaitOptions & { routes?: readonly SandboxRoute[] } = {}): Promise<SandboxConnection> {
   const history: ReturnType<typeof safeExternalResponse>[] = [];
   const probe = options.probe ?? fetch;
   const secrets = [...(options.secrets ?? []), session.cdp.previewToken, session.cookie, session.cookie.slice(session.cookie.indexOf("=") + 1)];
   const attempts = options.attempts ?? 60;
-  const deadline = Date.now() + 70_000;
-  for (let attempt = 0; attempt < attempts && Date.now() < deadline; attempt++) {
-    let status = 0;
-    try {
-      const response = await probe(`${session.cdp.url}/json/version`, { headers: { cookie: session.cookie, "x-daytona-preview-token": session.cdp.previewToken, "x-daytona-skip-preview-warning": "true" }, signal: AbortSignal.timeout(Math.min(10_000, deadline - Date.now())) });
-      status = response.status;
-      const body = await boundedBody(response).catch(() => "");
-      history.push(safeExternalResponse(status, response.headers, body, secrets));
-      if (response.ok) {
-        try {
-          const version: unknown = JSON.parse(body);
-          if (typeof version === "object" && version !== null && "Browser" in version && "webSocketDebuggerUrl" in version
-            && typeof version.Browser === "string" && typeof version.webSocketDebuggerUrl === "string") return;
-        } catch { /* A 200 HTML/error page is not a live CDP endpoint. */ }
-      }
-    } catch { history.push(safeExternalResponse(0, new Headers(), "")); }
-    if (history.length > 8) history.shift();
-    if ([401, 403].includes(status)) break;
-    if (attempt + 1 < attempts && Date.now() < deadline) await delay(options.pauseMs ?? 1_000);
+  let previewChecks = 0;
+  const preview = { ...daytonaPreviewRoute({ url: session.cdp.url, token: session.cdp.previewToken }, { cookie: session.cookie }), label: PREVIEW_ROUTE_LABEL };
+  try {
+    return await connectSandboxPort([preview, ...(options.routes ?? [])], { timeoutMs: 70_000, pauseMs: options.pauseMs ?? 1_000, ssh: options.ssh, async check(url, route, signal): Promise<Readiness> {
+      const isPreview = route.label === PREVIEW_ROUTE_LABEL;
+      let status = 0;
+      try {
+        const response = await (isPreview ? probe : fetch)(`${url}/json/version`, { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
+        // The relay's own "could not reach Daytona" is a network failure (0), not a provider 502.
+        status = response.headers.has(RELAY_UNREACHABLE_HEADER) ? 0 : response.status;
+        const body = await boundedBody(response).catch(() => "");
+        if (isPreview) history.push(safeExternalResponse(status, response.headers, body, secrets));
+        if (response.ok && isCdpVersion(body)) return "ready";
+      } catch { if (isPreview && !signal.aborted) history.push(safeExternalResponse(0, new Headers(), "")); }
+      if (history.length > 8) history.shift();
+      if ([401, 403].includes(status)) return "fail";
+      if (isPreview && ++previewChecks >= attempts) return "fail";
+      return "retry";
+    } });
+  } catch (error) {
+    if (error instanceof SandboxConnectError) throw new CdpReadinessError(history, error.outcomes);
+    throw error;
   }
-  throw new CdpReadinessError(history);
+}
+
+/** Waits until the evidence browser answers, then closes the probe connection. */
+export async function waitForCdp(session: Pick<DaytonaEvidenceSession, "cdp" | "cookie">, options: CdpWaitOptions = {}) {
+  await (await connectEvidenceCdp(session, options)).close();
 }
 
 export async function deleteDaytonaEvidenceWorld(id: string, api = new DaytonaApi()) {
