@@ -1,7 +1,7 @@
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import { ApiError } from "./errors.js";
 import { hasV1Chat, hasV1ChatsSince, opencodeV1DatabasePath, runOpencodeV1HistoryMigration, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
-import { executionRules } from "./managed-policy-rules.js";
+import { executionRules, teamEngineRules } from "./managed-policy-rules.js";
 import { agentPermissionEngineMcpDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 import { registeredOrganizationMcpServers } from "./connect-mcp-server-catalog.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
@@ -827,7 +827,7 @@ export function createEngineV2Preview(options: {
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
-        return executionRules(runtime.managedPolicy?.execution);
+        return [...executionRules(runtime.managedPolicy?.execution), ...teamEngineRules(runtime.managedPolicy?.rules)];
       },
       // The engine reads ~/.claude/skills and ~/.agents/skills itself, but its
       // config folder is OpenWork's own, so it never sees these two global
@@ -839,6 +839,7 @@ export function createEngineV2Preview(options: {
         const workspaceIds = (await listRuntimeOpencodeConfigRows(config)).map((row) => row.workspaceId);
         return { rules, organizationMcp: await registeredOrganizationMcpServers(config, workspaceIds) };
       },
+      teamRules: async () => (await readGlobalRuntimeOpencodeConfig(config)).managedPolicy?.rules ?? [],
     });
     sidecar = managed;
     if (!enabled || !allowRunning) {

@@ -47,3 +47,4 @@ export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("ope
 export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");
 export const openworkMcpReadinessV2PluginPath = () => openworkPluginPath("openwork-mcp-readiness-v2");
 export const openworkAgentPermissionsV2PluginPath = () => openworkPluginPath("openwork-agent-permissions-v2");
+export const openworkPoliciesV2PluginPath = () => openworkPluginPath("openwork-policies-v2");
