@@ -318,10 +318,11 @@ class ManagedDesktopPolicy {
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
     ]);
     const policy = fresh ?? this.knownPolicy();
-    const rules = policy
-      ? agentPermissionRulesOf(policy)
-      : agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy);
-    return rules.filter((rule) => rule.action === "webfetch");
+    const verified = policy ?? (await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy;
+    return [
+      ...agentPermissionRulesOf(verified),
+      ...(verified?.rules ?? []).map((rule) => ({ ...rule, permissionSet: true })),
+    ].filter((rule) => rule.action === "webfetch");
   }
   /** Refuses a local skill or MCP server the member's team rules block, using the last verified policy. */
   async assertTeamRule(action: "skill" | "mcp", name: string): Promise<void> {

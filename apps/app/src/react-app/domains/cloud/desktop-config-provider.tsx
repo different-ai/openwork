@@ -310,11 +310,11 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const denUnreachable = freshConfigStatus === "failed";
   const websiteRules = useMemo(() => {
     if (!isSignedIn && denAuth.status !== "checking") return [];
-    if (known) return (config.agentPermissions?.rules ?? []).filter((rule) => rule.action === "webfetch");
+    if (known) return [...(config.agentPermissions?.rules ?? []), ...(config.rules ?? [])].filter((rule) => rule.action === "webfetch");
     if (denUnreachable) return [];
     const cached = readCachedDenDesktopConfig(getDenDesktopConfigCacheKey());
-    return cached && cached.agentPermissions === undefined ? [] : null;
-  }, [config.agentPermissions, denAuth.status, denUnreachable, isSignedIn, known]);
+    return cached && cached.agentPermissions === undefined && (cached.rules?.length ?? 0) === 0 ? [] : null;
+  }, [config.agentPermissions, config.rules, denAuth.status, denUnreachable, isSignedIn, known]);
   useEffect(() => {
     void window.__OPENWORK_ELECTRON__?.browser?.setAgentPermissionRules?.(websiteRules);
   }, [websiteRules]);

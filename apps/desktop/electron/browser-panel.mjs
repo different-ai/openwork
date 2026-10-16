@@ -80,12 +80,19 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function websiteAddress(url) {
     return String(url).replace(/^ws(s?):/i, "http$1:");
   }
+  // The existing agent policy and permission-set policy both apply: one
+  // cannot allow a page that the other keeps closed or asks about first.
+  function websiteRuleDecision(rules, address) {
+    const agent = decideAgentPermission(rules.filter((rule) => rule.permissionSet !== true), "webfetch", [address]);
+    const team = decideAgentPermission(rules.filter((rule) => rule.permissionSet === true), "webfetch", [address]);
+    return team.effect !== "allow" && stricterAgentPermissionDecision(agent.effect, team.effect) === team.effect ? team : agent;
+  }
   /** What the rules decide for an address; while new rules load, nothing opens. */
   function websiteDecision(url) {
     if (websiteRules === null) {
       return { effect: "deny", waiting: true, message: "Your organization's agent permissions are still loading. This page opens once they have." };
     }
-    const decision = decideAgentPermission(websiteRules, "webfetch", [websiteAddress(url)]);
+    const decision = websiteRuleDecision(websiteRules, websiteAddress(url));
     return decision.rule && decision.effect !== "allow"
       ? { effect: decision.effect, rule: decision.rule, message: agentPermissionDenialMessage(decision.rule, decision.resource) }
       : { effect: "allow" };
@@ -174,7 +181,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
   /** What rules decide for an address, with a site the member approved under "Ask first" allowed. */
   function approvedEffect(rules, approvals, address) {
-    const effect = decideAgentPermission(rules, "webfetch", [address]).effect;
+    const effect = websiteRuleDecision(rules, address).effect;
     if (effect !== "ask") return effect;
     try { return approvals.has(new URL(address).origin) ? "allow" : effect; } catch { return effect; }
   }
