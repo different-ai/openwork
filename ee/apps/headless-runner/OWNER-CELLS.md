@@ -29,8 +29,10 @@ Workbot ── + owner header ────┘   (src/worker/index.ts)  └─ ce
    `HEADLESS_FILES=s3`. Keep `wrangler.jsonc`'s `name` and class name: celld derives every cell's identity from
    them.
 3. Point `DEN_HEADLESS_RUNNER_URL` (den-api) and `WORKBOT_RUNNER_URL` (Workbot) at it. Tokens stay the same.
-4. For [self-resume](./README.md#self-resume), put `HEADLESS_DEN_API_URL`, `HEADLESS_DEN_CALLBACK_TOKEN` and
-   `HEADLESS_GRANT_KEY` in `CELLD_RUNNER_VARS` (all three, or cells refuse to start). Without them turns wait for their
+4. For [self-resume](./README.md#self-resume), give the bundle `HEADLESS_DEN_API_URL`, `HEADLESS_DEN_CALLBACK_TOKEN` and
+   `HEADLESS_GRANT_KEY`, all three or cells refuse to start: either in `CELLD_RUNNER_VARS`, or (production) as the
+   `HEADLESS_DEN_API_URL` variable and the two secrets of the `celld-production` environment, which the deploy
+   workflow merges only when all three are set. Without them turns wait for their
    callers after a crash or deploy, as before. With them each cell keeps a durable alarm while it has turns running or
    waiting to resume: after a node dies, the alarm wakes the cell on another node, startup recovery marks its turns
    interrupted, and the runner resumes them with fresh tokens from Den. A cell stores its own name (`cell` in its

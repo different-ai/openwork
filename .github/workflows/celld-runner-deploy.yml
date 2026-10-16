@@ -151,6 +151,9 @@ jobs:
       - name: Bundle the runner
         env:
           HEADLESS_SENTRY_DSN: ${{ secrets.HEADLESS_SENTRY_DSN }}
+          HEADLESS_DEN_API_URL: ${{ vars.HEADLESS_DEN_API_URL }}
+          HEADLESS_DEN_CALLBACK_TOKEN: ${{ secrets.HEADLESS_DEN_CALLBACK_TOKEN }}
+          HEADLESS_GRANT_KEY: ${{ secrets.HEADLESS_GRANT_KEY }}
         run: |
           set -euo pipefail
           umask 077
@@ -164,6 +167,15 @@ jobs:
               + { HEADLESS_RUNNER_VERSION: (.HEADLESS_RUNNER_VERSION // $version) }
           ' "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
           mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
+          # Self-resume (headlessDurableTurns): the runner refuses a partial set, so merge all three or none.
+          if [ -n "${HEADLESS_DEN_API_URL:-}" ] && [ -n "${HEADLESS_DEN_CALLBACK_TOKEN:-}" ] && [ -n "${HEADLESS_GRANT_KEY:-}" ]; then
+            jq --arg url "$HEADLESS_DEN_API_URL" --arg token "$HEADLESS_DEN_CALLBACK_TOKEN" --arg key "$HEADLESS_GRANT_KEY" \
+              '. + { HEADLESS_DEN_API_URL: $url, HEADLESS_DEN_CALLBACK_TOKEN: $token, HEADLESS_GRANT_KEY: $key }' \
+              "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
+            mv "$RUNNER_TEMP/vars.merged.json" "$RUNNER_TEMP/vars.json"
+          elif [ -n "${HEADLESS_DEN_API_URL:-}${HEADLESS_DEN_CALLBACK_TOKEN:-}${HEADLESS_GRANT_KEY:-}" ]; then
+            echo "::warning title=Self-resume not configured::set all of HEADLESS_DEN_API_URL (variable), HEADLESS_DEN_CALLBACK_TOKEN and HEADLESS_GRANT_KEY (secrets) on celld-production, or none"
+          fi
           jq -r '.[]' "$RUNNER_TEMP/vars.json" | while IFS= read -r value; do [ -n "$value" ] && echo "::add-mask::$value"; done
           cd ee/apps/headless-runner
           pnpm exec tsx scripts/celld-bundle.ts "$RUNNER_TEMP/celld" "$RUNNER_TEMP/vars.json"
