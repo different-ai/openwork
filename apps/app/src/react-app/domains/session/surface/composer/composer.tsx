@@ -325,13 +325,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   // An edit always replaces its original turn through the immediate send path.
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
-    if (!hasContent) return;
-    if (props.submissionPreparing) return;
+    if (!hasContent || props.disabled) return;
     // A new Enter after Stop is fresh work, not a follow-up to the interrupted
     // turn. The immediate send path fences admission on the shared interruption
     // promise; dropping Enter here silently leaves the person's draft unsent.
     if (props.stopping) {
-      void props.onSend();
+      if (!props.submissionPreparing) void props.onSend();
       return;
     }
     if (props.busy && !props.editing) {
@@ -339,8 +338,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       else void props.onQueue();
       return;
     }
+    if (props.submissionPreparing) return;
     void props.onSend();
-  }, [props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+  }, [props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
 

@@ -7,6 +7,8 @@ import { useLocation, useNavigate } from "react-router";
 import { usePendingConversationStore, withPendingGroupAssignments, type PendingConversation } from "../chat/pending-conversation-store";
 import { workspaceSessionRoute } from "../../../shell/workspace-routes";
 import { useSessionPrefetchIntent } from "../surface/session-history";
+import { hasPendingComposerAutoSend, subscribeComposerAutoSend } from "../surface/composer-auto-send";
+import { getQueuedDrainState, subscribeQueuedDrain } from "../surface/queued-drain-machine";
 import {
   AlertCircle,
   AlertTriangle,
@@ -135,7 +137,7 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { cn } from "@/lib/utils";
-import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
+import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import {
   SIDEBAR_ROW_LANE,
@@ -228,9 +230,52 @@ function SidebarReorderItem(props: React.ComponentProps<typeof Reorder.Item>) {
   );
 }
 
+const sidebarAdmissionObservations = new WeakMap<object, { runStartedAt: number; observed: boolean }>();
+
+function useSessionStarting(workspaceId: string, sessionId: string | undefined, status: string | undefined) {
+  const subscribe = React.useCallback((listener: () => void) => {
+    if (!sessionId) return () => {};
+    const unsubscribeDrain = subscribeQueuedDrain(sessionId, listener);
+    const unsubscribeAutoSend = subscribeComposerAutoSend(sessionId, listener);
+    return () => {
+      unsubscribeDrain();
+      unsubscribeAutoSend();
+    };
+  }, [sessionId]);
+  const getSnapshot = React.useCallback(() => {
+    if (!sessionId) return false;
+    const admission = getQueuedDrainState(sessionId);
+    if (admission.phase.kind === "sending" || admission.phase.kind === "awaiting_observation") return admission;
+    return admission.phase.kind === "ready" && hasPendingComposerAutoSend(sessionId);
+  }, [sessionId]);
+  const pending = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const runStartedAt = useSessionActivityStore((state) => sessionId
+    ? state.recordsByWorkspaceId[workspaceId]?.[sessionId]?.runStartedAt ?? 0
+    : 0);
+  const admission = typeof pending === "boolean" ? undefined : pending;
+  const token = admission?.attemptsByItemId;
+  const previous = token ? sidebarAdmissionObservations.get(token) : undefined;
+  const observed = previous?.observed === true || isActiveWorkSessionStatus(status)
+    || (admission?.phase.kind === "sending" && admission.phase.busySeen)
+    || (runStartedAt > 0 && (previous
+      ? runStartedAt > previous.runStartedAt
+      : admission?.phase.kind === "awaiting_observation" && runStartedAt >= admission.phase.admittedAt));
+
+  React.useLayoutEffect(() => {
+    if (!token) return;
+    sidebarAdmissionObservations.set(token, {
+      runStartedAt: previous?.runStartedAt ?? runStartedAt,
+      observed: observed || sidebarAdmissionObservations.get(token)?.observed === true,
+    });
+  }, [token, previous?.runStartedAt, runStartedAt, observed]);
+
+  return Boolean(pending) && !observed && (status === undefined || status === "idle");
+}
+
 interface SessionStatusIndicatorProps {
   status?: string;
   isActiveWork: boolean;
+  isStarting?: boolean;
   isUnread: boolean;
   /** Names the delegated child asking, e.g. "Needs permission: Audit four open PRs". */
   attentionLabel?: string;
@@ -259,11 +304,11 @@ function ShowMoreSessionsButton({
 }
 
 /** Activity and outcomes share the fixed glyph slot before the session title. */
-function SessionStatusIndicator({ status, isActiveWork, isUnread, attentionLabel, attentionSource }: SessionStatusIndicatorProps) {
+function SessionStatusIndicator({ status, isActiveWork, isStarting, isUnread, attentionLabel, attentionSource }: SessionStatusIndicatorProps) {
   return (
     <SidebarGlyphSlot>
-      {isActiveWork ? (
-        <SessionDotMatrixLoader label={isSessionActivityStatus(status) && status !== "idle"
+      {isActiveWork || isStarting ? (
+        <SessionDotMatrixLoader label={isStarting ? "Starting" : isSessionActivityStatus(status) && status !== "idle"
           ? getSessionActivityStatusLabel(status)
           : t("workspace_list.session_streaming")} />
       ) : (
@@ -1903,6 +1948,7 @@ export function SessionMenuItem({
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
   const sessionAttentionLabel = ctx.sessionAttentionLabelById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
+  const isStarting = useSessionStarting(workspaceId, session.id, sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
   const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
@@ -1936,13 +1982,15 @@ export function SessionMenuItem({
 
   const { dragProps, dropPosition } = useSessionReorderTarget(session.id, workspaceId, draggable);
 
-  const accessibleState = resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
-    ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
-    : isNeedsAttentionSessionStatus(sessionActivityStatus)
-      ? `${displayTitle}, ${sessionAttentionLabel ?? t("workspace_list.session_needs_attention")}`
-      : isUnread
-        ? `${displayTitle}, ${t("workspace_list.session_unread")}`
-        : itemTitle;
+  const accessibleState = isStarting
+    ? `${displayTitle}, Starting`
+    : resolvedActiveWork && isSessionActivityStatus(sessionActivityStatus)
+      ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
+      : isNeedsAttentionSessionStatus(sessionActivityStatus)
+        ? `${displayTitle}, ${sessionAttentionLabel ?? t("workspace_list.session_needs_attention")}`
+        : isUnread
+          ? `${displayTitle}, ${t("workspace_list.session_unread")}`
+          : itemTitle;
 
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
@@ -1962,6 +2010,7 @@ export function SessionMenuItem({
     <SessionStatusIndicator
       status={sessionActivityStatus}
       isActiveWork={resolvedActiveWork}
+      isStarting={isStarting}
       isUnread={isUnread}
       attentionLabel={sessionAttentionLabel}
       attentionSource={ctx.sessionAttentionSourceById?.[session.id]}
