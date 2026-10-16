@@ -11,6 +11,7 @@ import { attributeAuditRequest, auditUserPrincipalKey } from "../audit/request-c
 import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
+import { headlessTurnModelKey } from "../headless-runner/model-key.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
@@ -51,7 +52,11 @@ const sessionSchema = z.object({
   model: z.string().nullable().optional(),
 }).meta({ ref: "WorkbotSession" })
 
-const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
+const runTokenSchema = z.object({
+  token: z.string(),
+  expiresAt: z.iso.datetime(),
+  modelApiKey: z.string().optional().describe("The member's AI Gateway key for this turn, only where the headless runner calls this deployment's Gateway."),
+}).meta({ ref: "WorkbotRunToken" })
 const signedOutSchema = z.object({ error: z.string(), message: z.string().optional() })
 
 /** Plenty for one person's turns (each send and resume needs one); stops a runaway client minting in a loop. */
@@ -351,7 +356,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "A short-lived token for one Workbot turn",
       description:
-        "For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.",
+        "For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour, plus the member's AI Gateway key where the runner calls this deployment's Gateway. Refused when Workbot is off for the workspace.",
       responses: {
         200: jsonResponse("The token.", runTokenSchema),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -379,7 +384,9 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
       const ttlMs = c.req.valid("json").ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
       const { token } = await mintHeadlessRunMcpToken({ ...principal, ttlMs, readOnly })
-      return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString() })
+      // Only where the runner calls this deployment's AI Gateway: the member's own Gateway key, for this turn.
+      const modelApiKey = await headlessTurnModelKey(principal)
+      return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString(), ...(modelApiKey ? { modelApiKey } : {}) })
     },
   )
 }

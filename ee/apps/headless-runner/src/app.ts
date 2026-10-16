@@ -85,8 +85,11 @@ export function createApp(input: {
   store: Store
   runner: Runner
   apiToken: string
-  /** Models a caller may pick per turn; without it only the default is listed. */
-  models?: () => Promise<ModelCatalog>
+  /**
+   * Models a caller may pick per turn; without it only the default is listed. `callerApiKey` is the Gateway key a
+   * trusted caller sent with this request, used only when the runner has no key of its own.
+   */
+  models?: (callerApiKey?: string) => Promise<ModelCatalog>
   /** Live session events; without it the events route is not served. */
   events?: SessionEvents
   /** Saved files; without them the file routes answer `files_not_configured`. */
@@ -116,7 +119,9 @@ export function createApp(input: {
     return c.json({ error: "internal_error" }, 500)
   })
 
-  app.get("/v1/models", async (c) => c.json(input.models ? await input.models() : { defaultModel: "", models: [] }))
+  // The header name matches HEADLESS_MODEL_KEY_HEADER in @openwork-ee/headless-protocol.
+  app.get("/v1/models", async (c) =>
+    c.json(input.models ? await input.models(c.req.header("x-openwork-model-api-key")?.trim() || undefined) : { defaultModel: "", models: [] }))
 
   app.post("/v1/sessions", async (c) => {
     const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))

@@ -57,8 +57,13 @@ TRANSIENT_STATUS = {429, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530}
 RETRY_DELAYS = (5, 10, 20, 40, 60, 60, 60, 60)
 
 
+# The control plane's edge blocks Python's default User-Agent as a bot (403,
+# Cloudflare error 1010), so every call to it names the installer.
+USER_AGENT = "openwork-managed-installer"
+
+
 def post(origin, path, payload, token=None):
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
     if token:
         headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(origin.rstrip("/") + path,

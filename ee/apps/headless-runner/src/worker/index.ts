@@ -119,7 +119,8 @@ router.get("/v1/models", async (c) => {
     catalog = gatewayModelCatalog(config)
     catalogs.set(config, catalog)
   }
-  return c.json(await catalog())
+  // The header name matches HEADLESS_MODEL_KEY_HEADER in @openwork-ee/headless-protocol.
+  return c.json(await catalog(c.req.header("x-openwork-model-api-key")?.trim() || undefined))
 })
 router.all("/v1/*", (c) => {
   const rawOwner = c.req.header(OWNER_HEADER)

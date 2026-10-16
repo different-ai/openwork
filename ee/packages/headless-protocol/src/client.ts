@@ -50,11 +50,19 @@ export type HeadlessRunnerActor = { userId: string; organizationId: string }
 export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
-  /** `messageId` is the turn the token is minted for, so a caller can remember which run it belongs to. */
-  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string; readOnly?: boolean }) => Promise<{ token: string }>
+  /**
+   * `messageId` is the turn the token is minted for, so a caller can remember which run it belongs to. A deployment
+   * whose runner calls its own AI Gateway also returns the member's Gateway key, sent with that turn only.
+   */
+  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string; readOnly?: boolean }) => Promise<{ token: string; modelApiKey?: string }>
   /** The longest a minted MCP token may live; a turn asking for longer gets this. */
   maxTokenTtlMs: number
+  /** The Gateway key the runner lists models with, when it has no key of its own. Sent with that request only. */
+  catalogModelApiKey?: () => Promise<string | undefined>
 }
+
+/** Carries a caller-supplied model key on `GET /v1/models`; turns carry theirs in `credentials`. */
+export const HEADLESS_MODEL_KEY_HEADER = "x-openwork-model-api-key"
 
 /** queued | running | completed | failed | interrupted | aborted; kept open so a new runner status never breaks reads. */
 export type RunnerTurnStatus = string
@@ -170,10 +178,10 @@ export type RunnerResult<T> = { ok: true; value: T } | { ok: false; status: numb
 
 const REQUEST_TIMEOUT_MS = 15_000
 
-async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown) {
+async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
   const response = await deps.fetch(`${deps.config.url}${path}`, {
     method,
-    headers: runnerHeaders(deps.config, { "content-type": "application/json" }),
+    headers: runnerHeaders(deps.config, { "content-type": "application/json", ...headers }),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
@@ -307,14 +315,14 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number; attachments?: string[]; readOnly?: boolean; interrupt?: boolean },
     ): Promise<RunnerResult<{ state: string }>> {
       const ttlMs = Math.min(input.ttlMs ?? deps.maxTokenTtlMs, deps.maxTokenTtlMs)
-      const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
+      const { token, modelApiKey } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId, ...(input.readOnly ? { readOnly: true } : {}) })
       const { status, payload } = await request(deps, "POST", `${sessionPath(input.sessionId)}/turns`, {
         messageId: input.messageId,
         prompt: input.prompt,
         ...(input.model ? { model: input.model } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.interrupt ? { interrupt: true } : {}),
-        credentials: { mcpToken: token, ...(input.readOnly ? { readOnly: true } : {}) },
+        credentials: { mcpToken: token, ...(modelApiKey ? { modelApiKey } : {}), ...(input.readOnly ? { readOnly: true } : {}) },
       })
       if (status !== 202) return { ok: false, status, error: errorCode(payload, `headless_send_${status}`) }
       const accepted = z.object({ state: z.string() }).safeParse(payload)
@@ -466,7 +474,8 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     /** The models the runner's Gateway route can serve. Null when unavailable. */
     async listModels(): Promise<HeadlessModelCatalog | null> {
       try {
-        const { status, payload } = await request(deps, "GET", "/v1/models")
+        const modelApiKey = await deps.catalogModelApiKey?.()
+        const { status, payload } = await request(deps, "GET", "/v1/models", undefined, modelApiKey ? { [HEADLESS_MODEL_KEY_HEADER]: modelApiKey } : {})
         const parsed = modelCatalogSchema.safeParse(payload)
         return status === 200 && parsed.success ? parsed.data : null
       } catch {

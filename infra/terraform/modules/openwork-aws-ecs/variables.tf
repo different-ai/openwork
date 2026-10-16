@@ -419,6 +419,57 @@ variable "workbot_listener_rule_priority" {
   default     = 40
 }
 
+variable "ai_gateway" {
+  description = <<-EOT
+    The AI Gateway: the organization's own model gateway. Turns on AI Providers,
+    Limits and OpenWork Models in Den (GATEWAY_ENABLED), and serves models to
+    desktops and the headless runner at domain_name (default gateway.<domain_name>,
+    which a module-created certificate includes). Shares Den's database.
+  EOT
+  type = object({
+    enabled       = optional(bool, false)
+    domain_name   = optional(string, "")
+    cpu           = optional(number, 512)
+    memory        = optional(number, 1024)
+    desired_count = optional(number, 1)
+  })
+  default = {}
+
+  validation {
+    condition     = var.ai_gateway.desired_count >= 1 && floor(var.ai_gateway.desired_count) == var.ai_gateway.desired_count
+    error_message = "ai_gateway.desired_count must be a positive integer."
+  }
+}
+
+variable "ai_gateway_image" {
+  description = "Full AI Gateway image reference. Empty uses ghcr.io/different-ai/openwork-inference:<openwork_version>."
+  type        = string
+  default     = ""
+}
+
+variable "ai_gateway_listener_rule_priority" {
+  description = "Priority of the AI Gateway host rule on the HTTPS listener (created with ai_gateway.enabled). Must be unique on that listener."
+  type        = number
+  default     = 50
+}
+
+variable "headless_model_auth" {
+  description = <<-EOT
+    How the headless runner pays for model calls. runner: its own
+    headless_model_api_key. member_gateway_key: it calls this deployment's AI
+    Gateway (point headless_runner.model_base_url at <ai_gateway_url>/api/v1) and
+    each turn carries the key of the member it runs for, so their provider
+    access, limits and usage apply. Needs ai_gateway.enabled.
+  EOT
+  type        = string
+  default     = "runner"
+
+  validation {
+    condition     = contains(["runner", "member_gateway_key"], var.headless_model_auth)
+    error_message = "headless_model_auth must be runner or member_gateway_key."
+  }
+}
+
 variable "slack_assistant_enabled" {
   description = "Turn on the Slack assistant (members mention OpenWork in Slack and get replies in the thread). Replies run on the headless runner, so enable it too. You still create the Slack app in Den's connector settings."
   type        = bool

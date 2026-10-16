@@ -49,7 +49,8 @@ const statements = [
   // Reads, and creates that have no resource-level permissions.
   allow("Read", ["ec2:Describe*", "ecs:Describe*", "ecs:List*", "ecs:RegisterTaskDefinition", "elasticloadbalancing:Describe*", "rds:Describe*",
     "rds:ListTagsForResource", "acm:DescribeCertificate", "acm:ListTagsForCertificate", "acm:RequestCertificate", "acm:AddTagsToCertificate",
-    "servicediscovery:Get*", "servicediscovery:List*", "events:DescribeRule", "events:ListTargetsByRule", "events:ListTagsForResource"], "*", inRegion),
+    "servicediscovery:Get*", "servicediscovery:List*", "events:DescribeRule", "events:ListTargetsByRule", "events:ListTagsForResource",
+    "elasticfilesystem:Describe*", "elasticfilesystem:ListTagsForResource"], "*", inRegion),
   // A dedicated account gets its own VPC; its network actions cannot be scoped before the VPC exists.
   when("IsDedicated", allow("DedicatedNetwork", ["ec2:CreateVpc", "ec2:ModifyVpcAttribute", "ec2:CreateSubnet", "ec2:ModifySubnetAttribute",
     "ec2:CreateInternetGateway", "ec2:AttachInternetGateway", "ec2:AllocateAddress", "ec2:CreateNatGateway", "ec2:CreateRouteTable",
@@ -73,6 +74,14 @@ const statements = [
   // Creating an instance also names the default option and parameter groups.
   allow("OwnDatabase", ["rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:CreateDBSubnetGroup", "rds:ModifyDBSubnetGroup", "rds:AddTagsToResource"],
     [arn("rds", "db:${Name}-den-*"), arn("rds", "subgrp:${Name}-den-*"), arn("rds", "og:*"), arn("rds", "pg:*")]),
+  // The headless runner (Slack replies, cloud Automations, Workbot) keeps its
+  // SQLite database on an encrypted EFS file system tagged for this deployment.
+  allow("NewFileSystem", ["elasticfilesystem:CreateFileSystem", "elasticfilesystem:CreateAccessPoint", "elasticfilesystem:TagResource"],
+    [arn("elasticfilesystem", "file-system/*"), arn("elasticfilesystem", "access-point/*")], tagged("aws:RequestTag/Deployment")),
+  allow("OwnFileSystem", ["elasticfilesystem:CreateMountTarget", "elasticfilesystem:CreateAccessPoint", "elasticfilesystem:ModifyMountTargetSecurityGroups",
+    "elasticfilesystem:TagResource"], [arn("elasticfilesystem", "file-system/*"), arn("elasticfilesystem", "access-point/*")], tagged("aws:ResourceTag/Deployment")),
+  // A mount target's network interface, in the deployment's service subnets.
+  allow("MountTargetInterfaces", "ec2:CreateNetworkInterface", [arn("ec2", "subnet/*"), arn("ec2", "network-interface/*"), arn("ec2", "security-group/*")]),
   allow("ReplaceFailedCertificate", "acm:DeleteCertificate", arn("acm", "certificate/*"), tagged("aws:ResourceTag/Deployment")),
   allow("NewServiceDiscovery", ["servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:CreateService", "servicediscovery:TagResource"], "*", inRegion),
   allow("OwnServiceDiscovery", "servicediscovery:UpdateService", "*", { StringEquals: { "aws:RequestedRegion": ref("AWS::Region"), "aws:ResourceTag/Deployment": ref("DeploymentId") } }),
@@ -94,12 +103,12 @@ const policy = {
     { Sid: "ExecutionPolicy", Effect: "Allow", Action: "iam:AttachRolePolicy", Resource: iamRole("${Name}-den-*"), Condition: { ArnEquals: { "iam:PolicyARN": sub("arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy") } } },
     { Sid: "PassTaskRoles", Effect: "Allow", Action: "iam:PassRole", Resource: iamRole("${Name}-den-*"), Condition: { StringEquals: { "iam:PassedToService": "ecs-tasks.amazonaws.com" } } },
     { Sid: "PassHealthRole", Effect: "Allow", Action: "iam:PassRole", Resource: iamRole("${Health}"), Condition: { StringEquals: { "iam:PassedToService": "lambda.amazonaws.com" } } },
-    { Sid: "ServiceLinkedRoles", Effect: "Allow", Action: "iam:CreateServiceLinkedRole", Resource: sub("arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/*"), Condition: { StringEquals: { "iam:AWSServiceName": ["ecs.amazonaws.com", "elasticloadbalancing.amazonaws.com", "rds.amazonaws.com"] } } },
+    { Sid: "ServiceLinkedRoles", Effect: "Allow", Action: "iam:CreateServiceLinkedRole", Resource: sub("arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/*"), Condition: { StringEquals: { "iam:AWSServiceName": ["ecs.amazonaws.com", "elasticloadbalancing.amazonaws.com", "rds.amazonaws.com", "elasticfilesystem.amazonaws.com"] } } },
     { Sid: "HealthAgent", Effect: "Allow", Action: ["lambda:CreateFunction", "lambda:GetFunction", "lambda:GetFunctionConfiguration", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:ListVersionsByFunction", "lambda:GetFunctionCodeSigningConfig", "lambda:AddPermission", "lambda:GetPolicy", "lambda:TagResource", "lambda:ListTags", "lambda:InvokeFunction"], Resource: arn("lambda", "function:${Health}") },
     { Sid: "HealthSchedule", Effect: "Allow", Action: ["events:PutRule", "events:PutTargets", "events:TagResource"], Resource: arn("events", "rule/${Health}") },
     { Sid: "Logs", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:ListTagsLogGroup", "logs:ListTagsForResource", "logs:TagResource", "logs:TagLogGroup"], Resource: [arn("logs", "log-group:/ecs/${Name}/*"), arn("logs", "log-group:/aws/lambda/${Health}"), arn("logs", "log-group:/aws/lambda/${Health}:*"), sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}*")] },
     { Sid: "ListLogs", Effect: "Allow", Action: "logs:DescribeLogGroups", Resource: "*" },
-    { Sid: "AppSecrets", Effect: "Allow", Action: ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], Resource: arn("secretsmanager", "secret:${Name}-den-*") },
+    { Sid: "AppSecrets", Effect: "Allow", Action: ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], Resource: [arn("secretsmanager", "secret:${Name}-den-*"), arn("secretsmanager", "secret:${Name}-runner-*")] },
     { Sid: "NoNestedBuilds", Effect: "Deny", Action: ["codebuild:StartBuild", "codebuild:UpdateProject", "codebuild:CreateProject"], Resource: "*" },
     { Sid: "StateBucket", Effect: "Allow", Action: ["s3:ListBucket", "s3:GetBucketLocation"], Resource: get("StateBucket", "Arn") },
     // State and its S3-native lock file, for this deployment only.
@@ -127,7 +136,7 @@ def handler(event, context):
 `;
 const template = {
   AWSTemplateFormatVersion: "2010-09-09",
-  Description: "OpenWork installer. Creates a customer-owned runner and retained, encrypted Terraform state. The runner provisions billable ECS, RDS and load balancer resources (and, in a dedicated account, a VPC with a NAT gateway), plus a read-only health agent that reports status to OpenWork.",
+  Description: "OpenWork installer. Creates a customer-owned runner and retained, encrypted Terraform state. The runner provisions billable ECS, RDS, EFS and load balancer resources (and, in a dedicated account, a VPC with a NAT gateway), plus a read-only health agent that reports status to OpenWork.",
   Parameters: {
     DeploymentId: { Type: "String", AllowedPattern: "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" }, RunId: { Type: "String", AllowedPattern: "[a-f0-9-]{36}" },
     Challenge: { Type: "String", AllowedPattern: "[a-f0-9]{64}" }, ExpectedAccountId: { Type: "String", AllowedPattern: "[0-9]{12}" },

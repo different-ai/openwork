@@ -28,6 +28,15 @@ locals {
   workbot_url     = "https://${local.workbot_host}"
   workbot_image   = var.workbot_image != "" ? var.workbot_image : "ghcr.io/different-ai/openwork-workbot:${var.openwork_version}"
 
+  # AI Gateway: the organization's own model gateway (AI Providers, Limits and
+  # OpenWork Models in Den). Desktops and the runner reach it publicly; den-api
+  # through a dotless Service Connect alias, which its config accepts over http.
+  ai_gateway_enabled      = var.ai_gateway.enabled
+  ai_gateway_host         = var.ai_gateway.domain_name != "" ? var.ai_gateway.domain_name : "gateway.${var.domain_name}"
+  ai_gateway_url          = "https://${local.ai_gateway_host}"
+  ai_gateway_internal_url = "http://ai-gateway:8791"
+  ai_gateway_image        = var.ai_gateway_image != "" ? var.ai_gateway_image : "ghcr.io/different-ai/openwork-inference:${var.openwork_version}"
+
   # den-web reaches den-api privately through Cloud Map, not the public ALB.
   internal_api_url = "http://den-api.${aws_service_discovery_private_dns_namespace.this.name}:8788"
 
@@ -80,7 +89,7 @@ locals {
     SMTP_PORT                              = tostring(var.smtp.port)
     SMTP_USER                              = var.smtp.username
     SMTP_SECURE                            = local.bool[var.smtp.secure]
-  }, local.web_environment, local.agent_environment, var.extra_environment)
+  }, local.web_environment, local.agent_environment, local.ai_gateway_environment, var.extra_environment)
 
   # Empty values are dropped below, so these are unset while Web is off.
   web_environment = {
@@ -109,6 +118,17 @@ locals {
     DEN_AUTOMATIONS_RUNTIME_ENABLED = var.slack_assistant_enabled ? "true" : ""
     DEN_WORKBOT_URL                 = local.workbot_enabled ? local.workbot_url : ""
     DEN_FEATURE_WORKBOT             = local.workbot_enabled ? "true" : ""
+  }
+
+  # den-api reads these at boot: GATEWAY_ENABLED turns on AI Providers, Limits and
+  # OpenWork Models in Den; the URLs are where it and desktops reach the Gateway.
+  ai_gateway_environment = {
+    GATEWAY_ENABLED          = local.ai_gateway_enabled ? "true" : ""
+    GATEWAY_PUBLIC_BASE_URL  = local.ai_gateway_enabled ? local.ai_gateway_url : ""
+    GATEWAY_PROXY_BASE_URL   = local.ai_gateway_enabled ? local.ai_gateway_internal_url : ""
+    INFERENCE_PROXY_BASE_URL = local.ai_gateway_enabled ? local.ai_gateway_url : ""
+    # The runner has no model key: each turn carries the member's Gateway key.
+    DEN_HEADLESS_MODEL_AUTH = local.runner_enabled && var.headless_model_auth == "member_gateway_key" ? "member_gateway_key" : ""
   }
 
   environment_list = [for k, v in local.environment : { name = k, value = v } if v != ""]

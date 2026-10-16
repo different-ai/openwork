@@ -242,9 +242,9 @@ resource "aws_ecs_service" "api" {
     registry_arn = aws_service_discovery_service.api.arn
   }
 
-  # Client only: resolves http://headless-runner.
+  # Client only: resolves http://headless-runner and http://ai-gateway.
   dynamic "service_connect_configuration" {
-    for_each = local.runner_managed ? [1] : []
+    for_each = local.runner_managed || local.ai_gateway_enabled ? [1] : []
     content {
       enabled   = true
       namespace = aws_service_discovery_private_dns_namespace.this.arn
@@ -256,7 +256,8 @@ resource "aws_ecs_service" "api" {
     rollback = true
   }
 
-  depends_on = [aws_lb_listener_rule.api_host, aws_secretsmanager_secret_version.app, aws_secretsmanager_secret_version.runner]
+  # The runner and the AI Gateway start first, so their Service Connect aliases exist when den-api's tasks start.
+  depends_on = [aws_lb_listener_rule.api_host, aws_secretsmanager_secret_version.app, aws_secretsmanager_secret_version.runner, aws_ecs_service.runner, aws_ecs_service.ai_gateway]
 }
 
 resource "aws_ecs_service" "web" {

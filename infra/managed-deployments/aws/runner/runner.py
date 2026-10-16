@@ -45,7 +45,9 @@ def report(sequence, step, outcome="succeeded", error_code=None):
     for attempt in range(3):
         try:
             request = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
-                                             headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
+                                             headers={"Content-Type": "application/json", "Authorization": "Bearer " + token,
+                                                      # The control plane's edge blocks Python's default User-Agent.
+                                                      "User-Agent": "openwork-managed-installer"})
             with urllib.request.urlopen(request, timeout=30) as response:
                 if json.load(response).get("ok") is not True:
                     raise ValueError("progress not accepted")

@@ -93,6 +93,32 @@ class RetryTests(unittest.TestCase):
         self.assertTrue(240 <= sum(waited) <= 400)
 
 
+class UserAgentTests(unittest.TestCase):
+    """The control plane's edge answers Python's default User-Agent with 403 (Cloudflare error 1010)."""
+
+    def test_enrollment_names_the_installer(self):
+        sent = []
+        def urlopen(request, timeout):
+            sent.append(request)
+            return io.BytesIO(b'{"token": "t"}')
+        with patch.object(bootstrap.urllib.request, "urlopen", urlopen):
+            bootstrap.post("https://api.example.test", "/v1/managed-deployments/x/enroll", {})
+        self.assertEqual(sent[0].get_header("User-agent"), "openwork-managed-installer")
+
+    def test_progress_reports_name_the_installer(self):
+        sent = []
+        def urlopen(request, timeout):
+            sent.append(request)
+            return io.BytesIO(b'{"ok": true}')
+        with tempfile.TemporaryDirectory() as directory:
+            token = Path(directory) / "token"
+            token.write_text("t")
+            environment = {"RUNNER_TOKEN_FILE": str(token), "CONTROL_PLANE_ORIGIN": "https://api.example.test", "DEPLOYMENT_ID": "d", "RUN_ID": "r"}
+            with patch.dict(os.environ, environment), patch.object(runner.urllib.request, "urlopen", urlopen):
+                runner.report(1, "runner_connected")
+        self.assertEqual(sent[0].get_header("User-agent"), "openwork-managed-installer")
+
+
 class SigningTests(unittest.TestCase):
     def test_stdlib_signature_matches_botocore(self):
         from botocore.auth import SigV4Auth
@@ -297,6 +323,15 @@ class TemplateTests(unittest.TestCase):
     def test_dedicated_account_can_build_its_network(self):
         actions = {a for s in runner_statements(self.template, "dedicated") for a in actions_of(s)}
         self.assertTrue({"ec2:CreateVpc", "ec2:CreateNatGateway", "ec2:CreateSecurityGroup"} <= actions)
+
+    def test_runner_storage_and_secrets_stay_inside_this_deployment(self):
+        for mode in ("dedicated", "existing"):
+            statements = {s["Sid"]: s for s in runner_statements(self.template, mode) if s["Effect"] == "Allow"}
+            self.assertIn("aws:RequestTag/Deployment", statements["NewFileSystem"]["Condition"]["StringEquals"])
+            self.assertIn("aws:ResourceTag/Deployment", statements["OwnFileSystem"]["Condition"]["StringEquals"])
+            secrets = json.dumps(statements["AppSecrets"]["Resource"])
+            self.assertIn("secret:${Name}-den-*", secrets)
+            self.assertIn("secret:${Name}-runner-*", secrets)
 
     def test_customer_state_is_retained_encrypted_and_private(self):
         bucket = self.template["Resources"]["StateBucket"]

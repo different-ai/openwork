@@ -13,6 +13,11 @@ output "openwork_web_url" {
   value       = local.web_enabled ? local.gateway_url : null
 }
 
+output "ai_gateway_url" {
+  description = "AI Gateway URL desktops and the headless runner call. Null unless ai_gateway.enabled."
+  value       = local.ai_gateway_enabled ? local.ai_gateway_url : null
+}
+
 output "workbot_url" {
   description = "Workbot URL. Null unless workbot.enabled."
   value       = local.workbot_enabled ? local.workbot_url : null
@@ -65,6 +70,7 @@ output "service_names" {
     den_gateway     = one(aws_ecs_service.gateway[*].name)
     headless_runner = one(aws_ecs_service.runner[*].name)
     workbot         = one(aws_ecs_service.workbot[*].name)
+    ai_gateway      = one(aws_ecs_service.ai_gateway[*].name)
   } : k => v if v != null }
 }
 

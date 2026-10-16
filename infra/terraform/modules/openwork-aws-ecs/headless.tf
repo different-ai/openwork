@@ -219,6 +219,10 @@ resource "aws_ecs_task_definition" "runner" {
       error_message = "headless_runner.enabled needs headless_runner.model (a model id at headless_runner.model_base_url)."
     }
     precondition {
+      condition     = var.headless_model_auth != "member_gateway_key" || (local.ai_gateway_enabled && startswith(var.headless_runner.model_base_url, local.ai_gateway_url))
+      error_message = "headless_model_auth = member_gateway_key needs ai_gateway.enabled and headless_runner.model_base_url on the AI Gateway (<ai_gateway_url>/api/v1)."
+    }
+    precondition {
       condition     = var.headless_computer.provider != "daytona" || (var.daytona_api_key != "" && var.headless_computer.snapshot != "")
       error_message = "Daytona computers need daytona_api_key and headless_computer.snapshot (a computer image, not the Web image)."
     }

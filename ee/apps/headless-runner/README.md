@@ -134,7 +134,7 @@ in an S3 bucket instead of a disk: [OWNER-CELLS.md](./OWNER-CELLS.md).
 | `HEADLESS_MODEL_PROTOCOL` | required | `anthropic` or `openai` |
 | `HEADLESS_MODEL_BASE_URL` | required | e.g. `https://gateway.openworklabs.com/api/v1/providers/ipr_…` |
 | `HEADLESS_MODEL` | required | Default model alias (`gwm_…`) |
-| `HEADLESS_MODEL_API_KEY` | unset | Fallback key for single-tenant use; callers normally send their own |
+| `HEADLESS_MODEL_API_KEY` | unset | Fallback key for single-tenant use; callers normally send their own. Without it, `GET /v1/models` lists the Gateway's models with the key a trusted caller sends in `x-openwork-model-api-key` (never kept) |
 | `HEADLESS_MCP_URL` | unset | e.g. `https://api.openworklabs.com/mcp/agent` |
 | `HEADLESS_MCP_TOOL_ALLOWLIST` | all | Comma-separated MCP tool names |
 | `HEADLESS_DB_PATH` | `./data/headless.sqlite` | Put it on a persistent volume |

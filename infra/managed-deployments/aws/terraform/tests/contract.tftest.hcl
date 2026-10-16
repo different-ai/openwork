@@ -90,3 +90,15 @@ run "existing_vpc_and_cluster" {
     error_message = "Services run in the customer's cluster with names unique to this deployment."
   }
 }
+
+run "everything_but_openwork_web" {
+  command = plan
+  assert {
+    condition     = alltrue([for key in ["den_api", "den_web", "ai_gateway", "headless_runner", "workbot"] : contains(keys(module.platform.service_names), key)]) && !contains(keys(module.platform.service_names), "den_gateway")
+    error_message = "A managed install runs the AI Gateway, the headless runner and Workbot, but not OpenWork Web."
+  }
+  assert {
+    condition     = module.platform.ai_gateway_url == "https://gateway.openwork.example.com" && module.platform.openwork_web_url == null
+    error_message = "The AI Gateway serves gateway.<domain_name>; OpenWork Web stays off."
+  }
+}

@@ -25,10 +25,12 @@ published release and approved customer-project install pass. Design and contrac
 - A **public Route 53 hosted zone in that account** containing the address,
   for example `openwork.example.com` in zone `example.com` (or a delegated
   `openwork.example.com` zone). The installer creates `openwork.example.com`,
-  `api.openwork.example.com` and their certificates.
-- One of the supported regions. Expect roughly $100–150 a month at the small
-  size (two Fargate services, `db.t4g.micro` RDS MySQL, an Application Load
-  Balancer, one NAT gateway, public IPv4 addresses). AWS bills the customer.
+  `api.openwork.example.com`, `gateway.openwork.example.com` (AI Gateway),
+  `chat.openwork.example.com` (Workbot) and their certificate.
+- One of the supported regions. Expect roughly $150–200 a month at the small
+  size (five Fargate services, a small EFS file system, `db.t4g.micro` RDS
+  MySQL, an Application Load Balancer, one NAT gateway, public IPv4 addresses).
+  AWS bills the customer.
 - If the domain (or a parent domain) has CAA records, they must allow
   `amazon.com`, or AWS cannot issue the HTTPS certificate. The installer
   reports this as a certificate failure; fix the record and retry, and the
@@ -36,6 +38,21 @@ published release and approved customer-project install pass. Design and contrac
 - Brand-new AWS accounts sometimes start with a CodeBuild build quota of zero.
   If the stack fails with "CodeBuild is not yet available in this new AWS
   account", request the CodeBuild concurrent-build quota increase and retry.
+
+## What gets installed
+
+Everything except OpenWork Web (which needs a Daytona account):
+
+- **Den** (web app and API).
+- **AI Gateway** at `gateway.<domain>`: AI Providers, Limits and OpenWork
+  Models in Den. Admins connect their own model providers there.
+- **Headless runner**, which runs **Slack replies**, **cloud Automations** and
+  **Workbot** (`chat.<domain>`). It has no model key of its own: each turn uses
+  the Gateway key of the member it runs for, so their provider access and
+  limits apply. After setup, an admin adds an AI provider in AI Providers, then
+  picks the default model in **Manage › Workbot**. Until then those turns fail
+  with "An admin needs to check the headless runner's model access". Slack also
+  needs its app created in Den's Slack connector.
 
 ## Customer flow
 

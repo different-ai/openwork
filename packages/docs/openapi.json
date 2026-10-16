@@ -27468,6 +27468,10 @@
             "type": "string",
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          },
+          "modelApiKey": {
+            "description": "The member's AI Gateway key for this turn, only where the headless runner calls this deployment's Gateway.",
+            "type": "string"
           }
         },
         "required": [
@@ -101002,7 +101006,7 @@
         ],
         "x-mcp": false,
         "summary": "A short-lived token for one Workbot turn",
-        "description": "For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.",
+        "description": "For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour, plus the member's AI Gateway key where the runner calls this deployment's Gateway. Refused when Workbot is off for the workspace.",
         "responses": {
           "200": {
             "description": "The token.",

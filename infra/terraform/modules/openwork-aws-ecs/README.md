@@ -16,6 +16,7 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 | Secrets | One Secrets Manager secret, injected as ECS `secrets` |
 | Logs | CloudWatch `/ecs/<name>/den-api` and `/ecs/<name>/den-web` |
 | Headless runner and Workbot (optional) | Managed Node runner (Service Connect, SQLite on EFS) or an existing celld/S3 fleet; diskless `workbot` at `chat.<domain_name>` (`headless_runner`, `workbot`) |
+| AI Gateway (optional) | `ai-gateway` Fargate service at `gateway.<domain_name>` (image `openwork-inference`): AI Providers, Limits and OpenWork Models in Den (`ai_gateway`) |
 | OpenWork Web (optional) | `den-gateway` Fargate service at `web.<domain_name>`, sandboxes in your Daytona organization (`openwork_web_enabled = true`) |
 
 It sets the same environment the [`openwork-ee` Helm chart](../../../../packaging/helm/openwork-ee)
@@ -144,6 +145,26 @@ After `terraform apply`:
 - **Anything else** (SSO, proxies, Gateway, observability): add env vars with
   `extra_environment` and secrets with `extra_secrets`.
 
+## AI Gateway
+
+Without it, Den's AI Providers, Limits and OpenWork Models tabs say "This
+feature is not part of your deployment system". With it, admins connect their
+own AI providers (Anthropic, OpenAI, Bedrock, Azure, Vertex and others), choose
+models and set usage limits in Den; desktops and the headless runner call the
+Gateway with each member's own Gateway key.
+
+```hcl
+  ai_gateway = { enabled = true } # https://gateway.<domain_name>
+```
+
+The module adds the `ai-gateway` service (port 8791, `/health`), a host rule on
+the HTTPS listener, the hostname to a module-created certificate and Route 53,
+and sets `GATEWAY_ENABLED=true`, `GATEWAY_PUBLIC_BASE_URL` and
+`GATEWAY_PROXY_BASE_URL=http://ai-gateway:8791` (Service Connect) on Den, the
+same settings as the Helm chart's `gateway.enabled`. The Gateway uses Den's
+database and encryption key; den-api's migrations create its tables. The
+chart's optional usage-retention job is not created here.
+
 ## Slack, headless Automations and Workbot
 
 These run agent turns without a member's desktop or a sandbox, on the
@@ -168,6 +189,29 @@ keep `service_subnet_ids` in different availability zones).
     desired_count = 2    # encrypted-cookie sign-in, no disk or sticky sessions
   }
 ```
+
+### Paying for the runner's models with members' Gateway keys
+
+With the AI Gateway on, the runner can run without a model key of its own:
+
+```hcl
+  ai_gateway          = { enabled = true }
+  headless_model_auth = "member_gateway_key"
+  headless_runner = {
+    enabled        = true
+    model_base_url = "https://gateway.<domain_name>/api/v1"
+    model          = "set-a-default-model-in-den" # shown as the runner default until an admin picks one
+  }
+```
+
+Each turn then carries the Gateway key of the member it runs for (Den sets
+`DEN_HEADLESS_MODEL_AUTH=member_gateway_key`), so that member's provider access,
+usage limits and usage records apply to their Slack replies, cloud Automations
+and Workbot chats. The runner keeps the key in memory for that turn only and
+lists models with the earliest owner's key. After adding a provider, an admin
+picks the default model in Den › Manage › Workbot; until then turns fail with
+"An admin needs to check the headless runner's model access". Single-organization
+installs only (the module's default).
 
 Workbot stores sign-in state in encrypted cookies using one shared
 `WORKBOT_SESSION_SECRET` in Secrets Manager. It has no EFS mount or
@@ -312,4 +356,6 @@ several deployments can share one Daytona organization.
 
 About $3/day: den-api 1 vCPU/2 GB and den-web 0.5 vCPU/1 GB on Fargate, a
 db.t4g.micro RDS, and an ALB. ElastiCache adds about $0.40/day. A NAT
-gateway, if your VPC needs one, adds about $1/day.
+gateway, if your VPC needs one, adds about $1/day. The AI Gateway (0.5 vCPU/1 GB) adds about
+$0.60/day; the headless runner (0.5 vCPU/1 GB, plus EFS) about $0.60/day; and
+Workbot (0.25 vCPU/0.5 GB) about $0.30/day.

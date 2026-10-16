@@ -158,11 +158,12 @@ export function createDen(options: { apiUrl: string; publicUrl: string }) {
       if (status !== 200 || !parsed.success) throw new Error(`den_session_${status}`)
       return parsed.data
     },
-    async runToken(accessToken: string, input: { readOnly?: boolean } = {}): Promise<string> {
+    /** The turn's MCP token, and the member's AI Gateway key where the runner calls this deployment's Gateway. */
+    async runToken(accessToken: string, input: { readOnly?: boolean } = {}): Promise<{ token: string; modelApiKey?: string }> {
       const { status, payload } = await authorized("POST", "/v1/workbot/run-token", accessToken, input)
-      const parsed = z.object({ token: z.string() }).safeParse(payload)
+      const parsed = z.object({ token: z.string(), modelApiKey: z.string().min(1).optional() }).safeParse(payload)
       if (status !== 200 || !parsed.success) throw new Error(`den_run_token_${status}`)
-      return parsed.data.token
+      return parsed.data
     },
     /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
     async connections(accessToken: string) {

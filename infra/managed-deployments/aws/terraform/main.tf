@@ -149,6 +149,25 @@ module "platform" {
 
   den_api = local.profile.den_api
   den_web = local.profile.den_web
+
+  # Everything except OpenWork Web (which needs a Daytona account). The AI
+  # Gateway turns on AI Providers, Limits and OpenWork Models. Slack replies,
+  # cloud Automations and Workbot run on the headless runner, which has no model
+  # key of its own: it calls this deployment's AI Gateway with the key of the
+  # member each turn runs for. An admin adds an AI provider in Den, then picks
+  # the default model in Manage > Workbot; until then turns fail with a clear
+  # "check the model" message instead of using anyone else's key.
+  ai_gateway          = { enabled = true }
+  headless_model_auth = "member_gateway_key"
+  headless_runner = {
+    enabled        = true
+    model_protocol = "anthropic"
+    model_base_url = "https://gateway.${var.domain_name}/api/v1"
+    model          = "set-a-default-model-in-den"
+  }
+  workbot                 = { enabled = true }
+  slack_assistant_enabled = true
+  automations_enabled     = true
   database = merge(local.profile.database, {
     backup_retention_days = 7
     deletion_protection   = !var.test_disposable

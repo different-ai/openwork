@@ -63,17 +63,21 @@ export async function createRuntime(config: Config, store: Store) {
   return { app, runner, recovered, blobKind: blobs?.kind ?? "off", computer }
 }
 
-/** The Gateway's model list, cached for five minutes; on failure only the default model is offered. */
+/**
+ * The Gateway's model list, cached for five minutes; on failure only the default model is offered. A runner without
+ * its own key lists with the key its trusted caller sent for this request (never kept), when there is one.
+ */
 export function gatewayModelCatalog(config: Config) {
   let cachedModels: { at: number; models: ModelOption[] } | null = null
-  return async () => {
+  return async (callerApiKey?: string) => {
     const fallback = [{ id: config.model.model, name: config.model.model }]
-    if (!config.model.defaultApiKey) return { defaultModel: config.model.model, models: fallback }
+    const apiKey = config.model.defaultApiKey ?? callerApiKey
+    if (!apiKey) return { defaultModel: config.model.model, models: fallback }
     if (!cachedModels || Date.now() - cachedModels.at > 5 * 60_000) {
       try {
         cachedModels = {
           at: Date.now(),
-          models: await fetchGatewayModels({ baseUrl: config.model.baseUrl, protocol: config.model.protocol, apiKey: config.model.defaultApiKey }),
+          models: await fetchGatewayModels({ baseUrl: config.model.baseUrl, protocol: config.model.protocol, apiKey }),
         }
       } catch {
         return { defaultModel: config.model.model, models: fallback }

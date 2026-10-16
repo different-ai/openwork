@@ -42,7 +42,7 @@ export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRun
       } catch {
         // The run still works; only a desktop handoff's thread report is lost.
       }
-      return minted
+      return { ...minted, modelApiKey: await (await import("../headless-runner/model-key.js")).headlessTurnModelKey(input) }
     },
   }
 }

@@ -135,6 +135,11 @@ const EnvSchema = z.object({
   DEN_AUTOMATIONS_BATCH_SIZE: z.string().optional(),
   DEN_AUTOMATIONS_MAX_CONCURRENCY: z.string().optional(),
   DEN_HEADLESS_AUTOMATIONS_MAX_CONCURRENCY: z.string().optional(),
+  /**
+   * How the headless runner pays for model calls. runner: its own HEADLESS_MODEL_API_KEY. member_gateway_key: each
+   * turn carries the member's key for this deployment's AI Gateway, so usage, limits and provider access are theirs.
+   */
+  DEN_HEADLESS_MODEL_AUTH: z.enum(["runner", "member_gateway_key"]).default("runner"),
   DEN_AUTOMATIONS_LEASE_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUN_TIMEOUT_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS: z.string().optional(),
@@ -624,6 +629,10 @@ const publicProxyTrustedOrigins = Array.from(new Set([
   ...publicUrlTrustedOrigins,
 ]))
 const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
+// The runner lists models with the owner's Gateway key, which only names one organization on a single-org install.
+if (parsed.DEN_HEADLESS_MODEL_AUTH === "member_gateway_key" && (!gatewayDeployment.enabled || orgMode !== "single_org")) {
+  throw new Error("DEN_HEADLESS_MODEL_AUTH=member_gateway_key needs GATEWAY_ENABLED=true and DEN_ORG_MODE=single_org")
+}
 // SSRF guard for External MCP Connection URLs: on hosted (multi-tenant)
 // deployments, Den must not fetch private/reserved addresses on behalf of
 // users. Self-hosted deployments whose MCP servers legitimately live on a
@@ -849,6 +858,7 @@ export const env = {
   // Keep known public Models destinations even when Gateway management is off.
   modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   gatewayEnabled: gatewayDeployment.enabled,
+  headlessModelAuth: parsed.DEN_HEADLESS_MODEL_AUTH,
   gatewayProxyBaseUrl: gatewayDeployment.proxyBaseUrl,
   // Existing member payloads retain their legacy destination until explicitly configured.
   gatewayPublicBaseUrl: gatewayDeployment.publicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
