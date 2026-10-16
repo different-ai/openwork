@@ -86,8 +86,12 @@ export async function mcpPost(fetcher: McpFetch, url: string, headers: Record<st
 }
 
 export type McpResourceReader = {
+  /** Capabilities the server declared in its initialize result. */
+  capabilities: Record<string, unknown>;
   /** Resource text, or null when the read failed or returned no matching text. */
   read(uri: string): Promise<string | null>;
+  /** JSON-RPC result of one request on the session, or null when it failed. */
+  request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown> | null>;
 };
 
 /**
@@ -115,7 +119,8 @@ export async function openMcpResourceReader(input: {
     },
   });
   if (!initialized.response.ok) return null;
-  const protocolVersion = jsonRpcResult(initialized.payload)?.protocolVersion;
+  const initializeResult = jsonRpcResult(initialized.payload);
+  const protocolVersion = initializeResult?.protocolVersion;
   // These are the Streamable HTTP revisions supported by this discovery client.
   if (protocolVersion !== "2025-06-18" && protocolVersion !== "2025-03-26") return null;
   const sessionId = initialized.response.headers.get("mcp-session-id");
@@ -128,16 +133,15 @@ export async function openMcpResourceReader(input: {
   const notification = await mcpPost(input.fetcher, url, sessionHeaders, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
   if (notification.response.status !== 202 || notification.payload !== null) return null;
   let nextId = 2;
+  const request = async (method: string, params: Record<string, unknown>) => {
+    const response = await mcpPost(input.fetcher, url, sessionHeaders, { id: nextId++, jsonrpc: "2.0", method, params });
+    return response.response.ok ? jsonRpcResult(response.payload) : null;
+  };
   return {
+    capabilities: isRecord(initializeResult?.capabilities) ? initializeResult.capabilities : {},
+    request,
     async read(uri) {
-      const resource = await mcpPost(input.fetcher, url, sessionHeaders, {
-        id: nextId++,
-        jsonrpc: "2.0",
-        method: "resources/read",
-        params: { uri },
-      });
-      if (!resource.response.ok) return null;
-      const contents = jsonRpcResult(resource.payload)?.contents;
+      const contents = (await request("resources/read", { uri }))?.contents;
       if (!Array.isArray(contents)) return null;
       const text = contents.find((item) => isRecord(item) && item.uri === uri && typeof item.text === "string")?.text;
       return typeof text === "string" ? text : null;

@@ -102,6 +102,7 @@ import {
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillTools } from "./skill-created-app.js"
 import { registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
+import { registerSkillsExtension } from "./skills-extension.js"
 import {
   connectionActionSearchCard,
   connectionActionAppMeta,
@@ -204,6 +205,8 @@ async function mcpRequestInfo(request: Request): Promise<{ method: string | null
   return { method, resourceUri, generatedCatalog: needsGeneratedArtifactCatalog(method, params) }
 }
 
+// Legacy discovery index read by desktops released before the MCP Skills
+// extension; skills/list (skills-extension.ts) carries the same catalog.
 export const AGENT_SKILL_INDEX_URI = "skill://index.json"
 export const AGENT_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
 
@@ -525,6 +528,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       remoteSessionEvents: remoteSessionEventsEnabled,
       remoteSessionStatus: Boolean(memberIdentity && organizationFeatures.remoteSessionSubagents),
     })
+    registerSkillsExtension({ server, loadSkills: loadRemoteSkills, modelDiscovery: organizationFeatures.implicitCloudSkills })
     if (remoteSessionEventsEnabled) registerRemoteSessionReceiptResources({ server, ...receiptStores, ...receiptScope })
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {

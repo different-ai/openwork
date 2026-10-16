@@ -6,7 +6,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { z } from "zod"
 
-import { createAgentMcpServer, AGENT_MCP_GUIDANCE_URI } from "../src/mcp/agent-server.js"
+// Skills registration imports Den configuration; initialize the test's inert
+// configuration before loading the server. Metadata tests do not connect to MySQL.
+process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_metadata_test"
+process.env.DEN_DB_ENCRYPTION_KEY = "metadata-test-db-encryption-key-not-for-production-1234567890"
+process.env.BETTER_AUTH_SECRET = "metadata-test-auth-secret-not-for-production-1234567890"
+process.env.BETTER_AUTH_URL = "http://127.0.0.1:8790"
+const { createAgentMcpServer, AGENT_MCP_GUIDANCE_URI } = await import("../src/mcp/agent-server.js")
 
 for (const appServers of [true, false]) {
   for (const remoteSessionEvents of [true, false]) {

@@ -1,3 +1,4 @@
+import { skillsExtensionServerCapabilities } from "./skills-extension.js"
 import { McpServer } from "@modelcontextprotocol/server"
 import { workflowArtifactAppServerCapabilities } from "./workflow-artifact-app.js"
 import { REMOTE_SESSION_RECEIPT_INSTRUCTIONS } from "./remote-session-resources.js"
@@ -66,7 +67,7 @@ export function createAgentMcpServer(options: { appServers?: boolean; remoteSess
     icons: [{ src: "https://openworklabs.com/openwork-logo.svg", mimeType: "image/svg+xml", sizes: ["any"] }],
   }, {
     capabilities: {
-      ...workflowArtifactAppServerCapabilities,
+      extensions: { ...workflowArtifactAppServerCapabilities.extensions, ...skillsExtensionServerCapabilities },
       tools: { listChanged: true },
       resources: { listChanged: true, ...(options.remoteSessionEvents ? { subscribe: true } : {}) },
     },
