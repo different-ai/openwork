@@ -1,4 +1,5 @@
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
+import { createLiveProvidersChannel, isLiveGatewaySpec, liveProviderRecord } from "./opencode-v2-live-providers.js";
 import { ApiError } from "./errors.js";
 import { hasV1Chat, hasV1ChatsSince, opencodeV1DatabasePath, runOpencodeV1HistoryMigration, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
@@ -495,6 +496,12 @@ export function createEngineV2Preview(options: {
   env?: Pick<EnvService, "list" | "onChange">;
   deferStart?: boolean;
   hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
+  /**
+   * The organization's `gatewayLiveModels` switch. When on, AI Gateway
+   * providers reach the engine through the context plugin in memory instead
+   * of its config file. Read on every provider mirror.
+   */
+  liveGatewayModels?: () => boolean;
   waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
 }): EngineV2Preview {
   const { config } = options;
@@ -548,6 +555,8 @@ export function createEngineV2Preview(options: {
   let mirrorError: string | undefined;
   const workspaceReadiness = new Map<string, Promise<void>>();
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
+  // AI Gateway providers served to the context plugin when live delivery is on.
+  const liveProviders = createLiveProvidersChannel();
   // One MCP reconciler per folder, keyed by directory.
   const mcpLocations = new Map<string, McpLocation>();
   let mcpHealthTimer: ReturnType<typeof setInterval> | undefined;
@@ -746,16 +755,27 @@ export function createEngineV2Preview(options: {
     const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, localKeys);
     const specs = mapped.specs.filter((spec) => !disabled.has(spec.id));
     const nextMirroredProviderIds = specs.map((spec) => spec.id);
-    await active.setProviders(specs, disabledProviderIds);
-    mirroredSpecs = specs;
-    workspaceReadiness.clear();
+    // Live delivery: AI Gateway providers go to the context plugin in memory;
+    // only the rest (legacy, local, built-in) goes through the config file.
+    // Published first when turning on and last when turning off, so the
+    // engine never has a moment with neither copy.
+    const live = options.liveGatewayModels?.() === true && contextBridge !== undefined;
+    const liveSpecs = live ? specs.filter(isLiveGatewaySpec) : [];
+    const fileSpecs = live ? specs.filter((spec) => !isLiveGatewaySpec(spec)) : specs;
+    if (live) liveProviders.publish(true, liveSpecs.map(liveProviderRecord));
+    await active.setProviders(fileSpecs, disabledProviderIds);
+    if (!live) liveProviders.publish(false, []);
+    // Readiness waits only for providers the config file loads, so a change
+    // that touched only live providers leaves folders ready.
+    if (JSON.stringify(fileSpecs) !== JSON.stringify(mirroredSpecs)) workspaceReadiness.clear();
+    mirroredSpecs = fileSpecs;
     mirroredProviderIds = nextMirroredProviderIds;
     skippedProviderIds = [...mapped.skippedProviderIds];
     lastMirroredAt = new Date().toISOString();
     pushed();
     // Re-check folders already in use now, so their next prompt pays nothing.
     for (const directory of mcpLocations.keys()) void ensureWorkspaceReady(directory).catch(() => undefined);
-    const catalog = await waitForEngineV2Catalog(active, workspaceDir, specs);
+    const catalog = await waitForEngineV2Catalog(active, workspaceDir, fileSpecs);
     currentCatalogModelIds = catalog.modelIds;
     lastError = catalog.lastError;
   }
@@ -817,7 +837,7 @@ export function createEngineV2Preview(options: {
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest) : undefined;
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, liveProviders) : undefined;
     const globalSkills = globalSkillDirectories();
     const managed = await createManagedOpencodeV2Server({
       contextTools: contextBridge,

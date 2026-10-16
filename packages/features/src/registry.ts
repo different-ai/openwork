@@ -221,6 +221,13 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  gatewayLiveModels: {
+    label: "Desktop: AI Gateway models update live",
+    description: "On the OpenCode v2 engine, models from the organization's AI Gateway providers appear in the desktop model picker within seconds of an admin change, without reloading the engine. Legacy providers keep updating as before.",
+    since: "2026-10",
+    deployments: everywhere,
+    default: false,
+  },
   orgDefaultModel: {
     label: "Desktop: organization default model",
     description: "Organization admins choose the model new desktop chats start with, for everyone or per team. Applies to the OpenCode v2 engine only; members can still change the model in each chat.",

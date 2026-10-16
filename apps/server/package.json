@@ -19,6 +19,7 @@
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:readiness": "bun test test/opencode-stop-fence.test.ts test/opencode-v2-mcp-readiness.test.ts",
+    "test:gateway-live-models": "bun test test/gateway-live-models.test.ts test/gateway-live-models-engine.test.ts",
     "test:fresh-install-engine": "bun test test/engine-fresh-install-default.test.ts",
     "test:history-migration": "bun test test/opencode-v2-staged-history.test.ts",
     "prepublishOnly": "pnpm build:npm-bundle"

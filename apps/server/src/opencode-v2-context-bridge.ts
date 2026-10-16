@@ -6,8 +6,10 @@ import { openworkReadTransport, type OpenworkReadTransport } from "./opencode-pl
 import { createV2ReadAdapter, readV2SessionActivity } from "./opencode-v2-read-adapter.js";
 import { isRecord } from "./workspace-kv-store.js";
 import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
+import type { LiveProvidersChannel } from "./opencode-v2-live-providers.js";
 
-const requestSchema = z.object({ name: z.enum(["openwork_context", "openwork_query", "openwork_skills"]), input: z.unknown() });
+const requestSchema = z.object({ name: z.enum(["openwork_context", "openwork_query", "openwork_skills", "openwork_live_providers"]), input: z.unknown() });
+const liveProvidersInput = z.object({ revision: z.number().int().optional(), waitMs: z.number().int().min(0).max(25_000).optional() });
 // Advertise only reads this bridge executes. Native MCP discovery owns remote
 // tool names; v1 executor spellings and unregistered commands do not belong here.
 function readAffordances(value: unknown): unknown {
@@ -24,7 +26,10 @@ function readAffordances(value: unknown): unknown {
  * Build this host entry as one bundle: packaged desktops relocate engine plugin
  * files, and the shared factory and its request-local transport must use the
  * same AsyncLocalStorage instance rather than separately bundled copies. */
-export async function createV2ContextBridge(hostRequest: (path: string, init?: RequestInit) => Promise<unknown>) {
+export async function createV2ContextBridge(
+  hostRequest: (path: string, init?: RequestInit) => Promise<unknown>,
+  liveProviders?: Pick<LiveProvidersChannel, "read">,
+) {
   const token = randomBytes(32).toString("base64url");
   const plugin = await OpenWorkExtensionsPreview();
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
@@ -44,6 +49,13 @@ export async function createV2ContextBridge(hostRequest: (path: string, init?: R
       // runs in the background and never participates in prompt admission.
       if (call.name === "openwork_skills") {
         return Response.json(await read("/experimental/connect/skills"));
+      }
+      // Internal: the plugin's held read for live AI Gateway providers. It
+      // returns as soon as the list changes, so it never holds a host request.
+      if (call.name === "openwork_live_providers") {
+        const input = liveProvidersInput.parse(call.input ?? {});
+        if (!liveProviders) return Response.json({ revision: 0, enabled: false, providers: [] });
+        return Response.json(await liveProviders.read(input, request.signal));
       }
       const transport: OpenworkReadTransport = {
         engine: "v2",

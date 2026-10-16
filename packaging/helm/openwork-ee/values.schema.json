@@ -258,6 +258,16 @@
               ],
               "description": "Desktop: running background tasks in chat: The desktop chat shows how many commands the agent left running in the background, and adds a short row when each one finishes. Renders DEN_FEATURE_BACKGROUND_SHELL_TASKS."
             },
+            "gatewayLiveModels": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: AI Gateway models update live: On the OpenCode v2 engine, models from the organization's AI Gateway providers appear in the desktop model picker within seconds of an admin change, without reloading the engine. Legacy providers keep updating as before. Renders DEN_FEATURE_GATEWAY_LIVE_MODELS."
+            },
             "orgDefaultModel": {
               "enum": [
                 "",

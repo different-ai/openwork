@@ -2450,6 +2450,7 @@
               "engineV2Upgrade",
               "remoteSessionEvents",
               "backgroundShellTasks",
+              "gatewayLiveModels",
               "orgDefaultModel",
               "gatewayProviderUsageLimits",
               "teamAccessRows",
@@ -2702,6 +2703,9 @@
                     "backgroundShellTasks": {
                       "type": "boolean"
                     },
+                    "gatewayLiveModels": {
+                      "type": "boolean"
+                    },
                     "orgDefaultModel": {
                       "type": "boolean"
                     },
@@ -2752,6 +2756,7 @@
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
+                    "gatewayLiveModels",
                     "orgDefaultModel",
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
@@ -4108,6 +4113,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "gatewayLiveModels": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "orgDefaultModel": {
                       "type": "object",
                       "properties": {
@@ -4470,6 +4531,7 @@
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
+                    "gatewayLiveModels",
                     "orgDefaultModel",
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
@@ -4917,6 +4979,9 @@
                     "backgroundShellTasks": {
                       "type": "boolean"
                     },
+                    "gatewayLiveModels": {
+                      "type": "boolean"
+                    },
                     "orgDefaultModel": {
                       "type": "boolean"
                     },
@@ -4967,6 +5032,7 @@
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
+                    "gatewayLiveModels",
                     "orgDefaultModel",
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
@@ -6323,6 +6389,62 @@
                         "overrideApplies"
                       ]
                     },
+                    "gatewayLiveModels": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "unavailable",
+                            "killed",
+                            "lock",
+                            "override",
+                            "everyone"
+                          ]
+                        },
+                        "everyone": {
+                          "type": "boolean"
+                        },
+                        "killed": {
+                          "type": "boolean"
+                        },
+                        "lock": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "override": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "overrideApplies": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "source",
+                        "everyone",
+                        "killed",
+                        "lock",
+                        "override",
+                        "overrideApplies"
+                      ]
+                    },
                     "orgDefaultModel": {
                       "type": "object",
                       "properties": {
@@ -6685,6 +6807,7 @@
                     "engineV2Upgrade",
                     "remoteSessionEvents",
                     "backgroundShellTasks",
+                    "gatewayLiveModels",
                     "orgDefaultModel",
                     "gatewayProviderUsageLimits",
                     "teamAccessRows",
@@ -30724,6 +30847,9 @@
                         "backgroundShellTasks": {
                           "type": "boolean"
                         },
+                        "gatewayLiveModels": {
+                          "type": "boolean"
+                        },
                         "orgDefaultModel": {
                           "type": "boolean"
                         },
@@ -30774,6 +30900,7 @@
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
+                        "gatewayLiveModels",
                         "orgDefaultModel",
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",
@@ -32130,6 +32257,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "gatewayLiveModels": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgDefaultModel": {
                           "type": "object",
                           "properties": {
@@ -32492,6 +32675,7 @@
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
+                        "gatewayLiveModels",
                         "orgDefaultModel",
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",
@@ -32688,6 +32872,9 @@
                         "backgroundShellTasks": {
                           "type": "boolean"
                         },
+                        "gatewayLiveModels": {
+                          "type": "boolean"
+                        },
                         "orgDefaultModel": {
                           "type": "boolean"
                         },
@@ -32738,6 +32925,7 @@
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
+                        "gatewayLiveModels",
                         "orgDefaultModel",
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",
@@ -34094,6 +34282,62 @@
                             "overrideApplies"
                           ]
                         },
+                        "gatewayLiveModels": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "unavailable",
+                                "killed",
+                                "lock",
+                                "override",
+                                "everyone"
+                              ]
+                            },
+                            "everyone": {
+                              "type": "boolean"
+                            },
+                            "killed": {
+                              "type": "boolean"
+                            },
+                            "lock": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "override": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "overrideApplies": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "enabled",
+                            "source",
+                            "everyone",
+                            "killed",
+                            "lock",
+                            "override",
+                            "overrideApplies"
+                          ]
+                        },
                         "orgDefaultModel": {
                           "type": "object",
                           "properties": {
@@ -34456,6 +34700,7 @@
                         "engineV2Upgrade",
                         "remoteSessionEvents",
                         "backgroundShellTasks",
+                        "gatewayLiveModels",
                         "orgDefaultModel",
                         "gatewayProviderUsageLimits",
                         "teamAccessRows",

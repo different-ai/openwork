@@ -123,6 +123,9 @@ jobs:
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr ../apps/server/test/session-title-sigv4.vitest.test.ts
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
+      # The real-engine comparison runs where OPENWORK_OPENCODE2_BIN is set.
+      - name: Test live AI Gateway models on OpenCode v2
+        run: pnpm --filter openwork-server test:gateway-live-models
       # Uses the pinned OpenCode that Setup tests put on PATH.
       - name: Run Den provider unit tests
         run: |

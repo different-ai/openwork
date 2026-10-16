@@ -756,6 +756,7 @@ export type AdminFeature = {
     | "engineV2Upgrade"
     | "remoteSessionEvents"
     | "backgroundShellTasks"
+    | "gatewayLiveModels"
     | "orgDefaultModel"
     | "gatewayProviderUsageLimits"
     | "teamAccessRows"
@@ -824,6 +825,7 @@ export type AdminOrganizationsPageResponse = {
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
+      gatewayLiveModels: boolean;
       orgDefaultModel: boolean;
       gatewayProviderUsageLimits: boolean;
       teamAccessRows: boolean;
@@ -1057,6 +1059,15 @@ export type AdminOrganizationsPageResponse = {
         override: boolean | null;
         overrideApplies: boolean;
       };
+      gatewayLiveModels: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
       orgDefaultModel: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
@@ -1198,6 +1209,7 @@ export type AdminOverviewResponse = {
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
+      gatewayLiveModels: boolean;
       orgDefaultModel: boolean;
       gatewayProviderUsageLimits: boolean;
       teamAccessRows: boolean;
@@ -1423,6 +1435,15 @@ export type AdminOverviewResponse = {
         overrideApplies: boolean;
       };
       backgroundShellTasks: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      gatewayLiveModels: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -7629,6 +7650,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
+      gatewayLiveModels: boolean;
       orgDefaultModel: boolean;
       gatewayProviderUsageLimits: boolean;
       teamAccessRows: boolean;
@@ -7854,6 +7876,15 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       backgroundShellTasks: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      gatewayLiveModels: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;
@@ -7991,6 +8022,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       engineV2Upgrade: boolean;
       remoteSessionEvents: boolean;
       backgroundShellTasks: boolean;
+      gatewayLiveModels: boolean;
       orgDefaultModel: boolean;
       gatewayProviderUsageLimits: boolean;
       teamAccessRows: boolean;
@@ -8216,6 +8248,15 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
         overrideApplies: boolean;
       };
       backgroundShellTasks: {
+        enabled: boolean;
+        source: "unavailable" | "killed" | "lock" | "override" | "everyone";
+        everyone: boolean;
+        killed: boolean;
+        lock: boolean | null;
+        override: boolean | null;
+        overrideApplies: boolean;
+      };
+      gatewayLiveModels: {
         enabled: boolean;
         source: "unavailable" | "killed" | "lock" | "override" | "everyone";
         everyone: boolean;

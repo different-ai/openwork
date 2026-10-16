@@ -825,6 +825,8 @@ export async function startServer(
       if (!response.ok) throw new Error(`OpenWork read failed (${response.status})`);
       return payload;
     },
+    // Read on each provider mirror, which only runs after the sync below exists.
+    liveGatewayModels: () => cloudProviderSync.liveGatewayModelsEnabled(),
   });
   const cloudProviderSync = new CloudProviderSync({
     config,
@@ -845,6 +847,10 @@ export async function startServer(
         : engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config));
     },
     logger: toManagedProviderAuthLogger(logger),
+    onLiveGatewayModelsChanged: () => {
+      const status = engineV2Preview.status();
+      if (status.chatRouting && status.running) void engineV2Preview.refreshProviders().catch(() => undefined);
+    },
   });
   const anonymousInference = new AnonymousInferenceService(config, logger);
   anonymousInference.onEngineConfigChanged = () => { if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending(); };

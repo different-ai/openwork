@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
+import { registerLiveProviders, type LiveProvidersContext } from "./openwork-live-providers-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
 
 const browserResult = z.object({
@@ -15,7 +16,7 @@ type Tool = {
   options: { codemode: boolean };
   execute(input: unknown, context: { signal: AbortSignal; sessionID: string }): Promise<z.infer<typeof browserResult>>;
 };
-type Context = CloudSkillContext & {
+type Context = CloudSkillContext & LiveProvidersContext & {
   options: { url: string; token: string; browser?: { url: string; token: string } };
   tool: { transform(callback: (editor: { add(tool: Tool): void }) => void): Promise<{ dispose(): Promise<void> }> };
 };
@@ -68,6 +69,7 @@ export default {
       }
     });
     const stopSkills = await registerCloudSkillDiscovery(context);
-    return async () => { await stopSkills(); await registration.dispose(); };
+    const stopProviders = await registerLiveProviders(context);
+    return async () => { await stopProviders(); await stopSkills(); await registration.dispose(); };
   },
 };

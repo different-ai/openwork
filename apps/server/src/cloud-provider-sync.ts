@@ -240,10 +240,20 @@ export type CloudProviderSyncOptions = {
   fetchImpl?: typeof globalThis.fetch;
   logger?: CloudProviderSyncLogger;
   intervalMs?: number;
+  /** How often Den's inventory revision is checked while live gateway models are on. */
+  revisionCheckMs?: number;
+  /** The organization's `gatewayLiveModels` switch changed; providers must be re-mirrored. */
+  onLiveGatewayModelsChanged?: () => void;
 };
 
 const requestTimeoutMs = 8_000;
 const defaultIntervalMs = 5 * 60 * 1_000;
+/**
+ * With live gateway models a provider change should reach the picker in
+ * seconds. Den's inventory revision is a cached counter made for frequent
+ * reads, so it is checked often and the full provider pass runs only when it moved.
+ */
+const defaultRevisionCheckMs = 10_000;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -578,6 +588,35 @@ async function fetchProviders(
   return { llmProviders, inferenceProviders };
 }
 
+/** The member's `gatewayLiveModels` switch, or null when Den cannot say (the last value is kept). */
+async function fetchLiveGatewayModels(
+  fetchImpl: typeof globalThis.fetch,
+  session: CloudProviderDenSession,
+  signal: AbortSignal,
+): Promise<boolean | null> {
+  try {
+    const payload = await requestJson(fetchImpl, session, "/v1/org", signal);
+    const features = isRecord(payload) && isRecord(payload.features) ? payload.features : null;
+    return features ? features.gatewayLiveModels === true : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Den's opaque inventory revision, or null when it cannot be read or determined. */
+async function fetchInventoryRevision(
+  fetchImpl: typeof globalThis.fetch,
+  session: CloudProviderDenSession,
+  signal: AbortSignal,
+): Promise<string | null> {
+  try {
+    const payload = await requestJson(fetchImpl, session, "/v1/org/inventory-revision", signal);
+    return isRecord(payload) && typeof payload.revision === "string" ? payload.revision : null;
+  } catch {
+    return null;
+  }
+}
+
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (!isRecord(value)) return value;
@@ -829,6 +868,12 @@ export class CloudProviderSync {
   private suspended = false;
   private providerFetchController = new AbortController();
   private readonly reloadRetryMs: number;
+  private readonly revisionCheckMs: number;
+  private readonly onLiveGatewayModelsChanged?: () => void;
+  private liveGatewayModels = false;
+  /** Den's inventory revision read at the start of the last successful pass. */
+  private syncedRevision: string | null = null;
+  private revisionTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: CloudProviderSyncOptions) {
     this.config = options.config;
@@ -839,6 +884,13 @@ export class CloudProviderSync {
     this.logger = options.logger;
     this.intervalMs = options.intervalMs ?? configuredIntervalMs();
     this.reloadRetryMs = configuredReloadRetryMs();
+    this.revisionCheckMs = options.revisionCheckMs ?? defaultRevisionCheckMs;
+    this.onLiveGatewayModelsChanged = options.onLiveGatewayModelsChanged;
+  }
+
+  /** Whether the signed-in organization has `gatewayLiveModels` on (as of the last pass). */
+  liveGatewayModelsEnabled(): boolean {
+    return this.session !== null && this.liveGatewayModels;
   }
 
   setSession(session: CloudProviderDenSession): Promise<void> {
@@ -851,6 +903,7 @@ export class CloudProviderSync {
       || this.managedProviderIds.size > 0
       || this.ownedEnvKeys.size > 0;
     this.contextGeneration += 1;
+    this.resetLiveGatewayState();
     this.stopReloadRetry();
 
     if (!hasMaterializedContext && !this.suspended) {
@@ -904,6 +957,7 @@ export class CloudProviderSync {
     this.providerFetchController.abort();
     this.providerFetchController = new AbortController();
     this.contextGeneration += 1;
+    this.resetLiveGatewayState();
     this.pendingSession = null;
     this.session = null;
     this.stopInterval();
@@ -922,6 +976,7 @@ export class CloudProviderSync {
   async clearSession(): Promise<void> {
     this.suspended = false;
     this.contextGeneration += 1;
+    this.resetLiveGatewayState();
     this.pendingSession = null;
     this.session = null;
     this.stopInterval();
@@ -1028,6 +1083,14 @@ export class CloudProviderSync {
     return `${session.baseUrl}\u0000${session.orgId}\u0000${session.token}`;
   }
 
+  /** The switch and revision belong to one organization and account. */
+  private resetLiveGatewayState(): void {
+    const wasLive = this.liveGatewayModels;
+    this.liveGatewayModels = false;
+    this.syncedRevision = null;
+    if (wasLive) this.onLiveGatewayModelsChanged?.();
+  }
+
   private resetMaterializationState(): void {
     this.materializationContextKey = null;
     this.materializationContextHash = null;
@@ -1084,11 +1147,38 @@ export class CloudProviderSync {
       if (this.session) void this.run("interval");
     }, this.intervalMs);
     this.interval.unref();
+    this.scheduleRevisionCheck();
   }
 
   private stopInterval(): void {
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
+    if (this.revisionTimer) clearTimeout(this.revisionTimer);
+    this.revisionTimer = null;
+  }
+
+  /**
+   * Live gateway models only: a pass runs as soon as Den's inventory revision
+   * moves past the one the last pass started from. Off, nothing is requested.
+   */
+  private scheduleRevisionCheck(): void {
+    if (this.revisionTimer) clearTimeout(this.revisionTimer);
+    const timer = setTimeout(() => {
+      this.revisionTimer = null;
+      void this.checkRevision().finally(() => {
+        if (this.session && !this.suspended && this.interval && !this.revisionTimer) this.scheduleRevisionCheck();
+      });
+    }, this.revisionCheckMs);
+    timer.unref();
+    this.revisionTimer = timer;
+  }
+
+  private async checkRevision(): Promise<void> {
+    const session = this.session;
+    if (!session || this.suspended || !this.liveGatewayModels || this.activeRun) return;
+    const revision = await fetchInventoryRevision(this.fetchImpl, session, this.providerFetchController.signal);
+    if (this.session !== session || revision === null || revision === this.syncedRevision) return;
+    await this.run("inventory_revision").catch(() => undefined);
   }
 
   /**
@@ -1179,11 +1269,19 @@ export class CloudProviderSync {
         this.resetMaterializationState();
       }
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
-      const [{ llmProviders, inferenceProviders }, storedEnv] = await Promise.all([
+      // Read before the providers, so a change made during this pass moves
+      // the revision past it and the next check runs another pass.
+      const revision = this.liveGatewayModels
+        ? await fetchInventoryRevision(this.fetchImpl, session, this.providerFetchController.signal)
+        : null;
+      const [{ llmProviders, inferenceProviders }, storedEnv, liveGatewayModels] = await Promise.all([
         fetchProviders(this.fetchImpl, session, this.providerFetchController.signal),
         this.env.list(),
+        fetchLiveGatewayModels(this.fetchImpl, session, this.providerFetchController.signal),
       ]);
       if (request.generation !== this.contextGeneration) return { status: "no_session" };
+      const liveGatewayModelsChanged = liveGatewayModels !== null && liveGatewayModels !== this.liveGatewayModels;
+      if (liveGatewayModels !== null) this.liveGatewayModels = liveGatewayModels;
       if (inferenceProviders === undefined && hadGatewayProviders && matchesMaterializationContext) {
         throw new Error("den_inference_provider_list_unavailable");
       }
@@ -1204,6 +1302,9 @@ export class CloudProviderSync {
       this.updateProviderStatus(prepared);
       this.skippedProviders = prepared.skipped;
       this.fingerprint = prepared.fingerprint;
+      if (!reloadError) this.syncedRevision = revision;
+      // The engine decides per mirror which path gateway providers take.
+      if (liveGatewayModelsChanged) this.onLiveGatewayModelsChanged?.();
       if (reloadError) {
         const message = reloadError instanceof Error ? reloadError.message : "cloud_provider_engine_reload_failed";
         this.lastRun = { at: new Date().toISOString(), status: "failed", message, detail };
